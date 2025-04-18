@@ -25,17 +25,18 @@ Please `cd` to one of the following folder, then use GNU `stow -t TARGET PACKAGE
 ## Debian-Based
 ```bash
 sudo apt install git stow zsh emacs
-git clone https://github.com/kuanyui/.dotfiles-public.git
-cd .dotfiles-public
 
-cd user
+# user
+git clone https://github.com/kuanyui/.dotfiles-public.git
+cd .dotfiles-public/user
 rm ~/.bashrc
 stow -t ~/ zsh emacs bash zsh
 chsh -s /bin/zsh
 
-cd -
-cd root
-sudo rm /root/.bashrc
-sudo stow -t /root/ emacs bash zsh
-sudo chsh -s /bin/zsh
+# root (for security concering, separately clone the repo)
+git clone https://github.com/kuanyui/.dotfiles-public.git
+cd .dotfiles-public/root
+rm /root/.bashrc
+stow -t ~/ emacs bash zsh
+chsh -s /bin/zsh
 ```
