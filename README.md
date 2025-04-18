@@ -20,3 +20,12 @@ Please `cd` to one of the following folder, then use GNU `stow -t TARGET PACKAGE
 
 - `/root/*` is for root.
 - `/user/*` is for non-privileged user.
+
+# Quick Start For VM
+## Debian-Based
+```
+sudo apt install git stow zsh emacs
+git clone https://github.com/kuanyui/.dotfiles-public.git
+cd .dotfiles-public
+# run stow commands
+```
