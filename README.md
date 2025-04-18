@@ -31,9 +31,11 @@ cd .dotfiles-public
 cd user
 rm ~/.bashrc
 stow -t ~/ zsh emacs bash zsh
+chsh -s /bin/zsh
 
 cd -
 cd root
 sudo rm /root/.bashrc
 sudo stow -t /root/ emacs bash zsh
+sudo chsh -s /bin/zsh
 ```
