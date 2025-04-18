@@ -23,9 +23,17 @@ Please `cd` to one of the following folder, then use GNU `stow -t TARGET PACKAGE
 
 # Quick Start For VM
 ## Debian-Based
-```
+```bash
 sudo apt install git stow zsh emacs
 git clone https://github.com/kuanyui/.dotfiles-public.git
 cd .dotfiles-public
-# run stow commands
+
+cd user
+rm ~/.bashrc
+stow -t ~/ zsh emacs bash zsh
+
+cd -
+cd root
+sudo rm /root/.bashrc
+sudo stow -t /root/ emacs bash zsh
 ```
