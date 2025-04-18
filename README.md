@@ -34,9 +34,10 @@ stow -t ~/ zsh emacs bash zsh
 chsh -s /bin/zsh
 
 # root (for security concering, separately clone the repo)
+su -
 git clone https://github.com/kuanyui/.dotfiles-public.git
-cd .dotfiles-public/root
-rm /root/.bashrc
+cd ~/.dotfiles-public/root
+rm ~/.bashrc
 stow -t ~/ emacs bash zsh
 chsh -s /bin/zsh
 ```
