@@ -117,3 +117,6 @@ fi
 if [ -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]; then
         source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 fi
+
+# PATH for pipx                                                                 
+PATH="${PATH}:${HOME}/.local/bin"
