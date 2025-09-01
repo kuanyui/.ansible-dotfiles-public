@@ -171,6 +171,16 @@ the previous directory."
 (global-set-key (kbd "C-M-_") 'undo-tree-redo)
 (global-set-key (kbd "M-?") 'undo-tree-redo)
 
+;; ======================================================
+;; systemd units
+;; ======================================================
+(add-to-list 'auto-mode-alist '("\\.service\\'" . conf-unix-mode))
+(add-to-list 'auto-mode-alist '("\\.socket\\'" . conf-unix-mode))
+(add-to-list 'auto-mode-alist '("\\.timer\\'" . conf-unix-mode))
+(add-to-list 'auto-mode-alist '("\\.target\\'" . conf-unix-mode))
+(add-to-list 'auto-mode-alist '("\\.mount\\'" . conf-unix-mode))
+(add-to-list 'auto-mode-alist '("\\.path\\'" . conf-unix-mode))
+
 ;;======================================================
 ;; multiple-cursors / move-text / duplicate-thing
 ;;======================================================
