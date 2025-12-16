@@ -49,6 +49,10 @@
 ;; Dired
 ;; ======================================================
 (require 'dired)
+
+(require 'diredfl)   ; More font-lock for dired.
+(diredfl-global-mode)
+
 (defun my-dired-backward ()
   "Go back to the parent directory (..), and the cursor will be moved to where
 the previous directory."
