@@ -39,6 +39,21 @@
 (global-set-key (kbd "C-x C-r") 'recentz-files)
 (global-set-key (kbd "C-x C-d") 'recentz-directories)
 (global-set-key (kbd "C-x C-p") 'recentz-projects)
+(global-set-key (kbd "C-x C-S-r") 'recentz-tramp-files)         ;; (Optional, because it's equivalient to C-u C-x C-r)
+(global-set-key (kbd "C-x C-S-d") 'recentz-tramp-directories)   ;; (Optional, the reason is same above)
+(global-set-key (kbd "C-x C-S-p") 'recentz-tramp-projects)      ;; (Optional, the reason is same above)
+
+;; ======================================================
+;; IDO
+;; ======================================================
+
+;; Use up/down keys to navigate among Ido candidates
+(defun my-ido-bind-key-for-vertical ()
+  "Keybindings for vertically-displayed ido-mode candidates list.
+(Use up/down to navigate among candidates)"
+  (define-key ido-completion-map (kbd "<down>") 'ido-next-match)
+  (define-key ido-completion-map (kbd "<up>")   'ido-prev-match))
+(add-hook 'ido-setup-hook #'my-ido-bind-key-for-vertical)
 
 ;; ======================================================
 ;; Other mine
@@ -111,6 +126,9 @@ the previous directory."
 (require 'apparmor-mode)
 (add-to-list 'auto-mode-alist '("/etc/apparmor.d/.*" . apparmor-mode))
 
+;; ======================================================
+;; YAML
+;; ======================================================
 (require 'yaml-mode)
 (add-to-list 'auto-mode-alist '("\\.ya?ml\\'" . yaml-mode))
 
