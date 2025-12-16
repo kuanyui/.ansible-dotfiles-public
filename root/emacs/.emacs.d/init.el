@@ -111,6 +111,9 @@ the previous directory."
 (require 'apparmor-mode)
 (add-to-list 'auto-mode-alist '("/etc/apparmor.d/.*" . apparmor-mode))
 
+(require 'yaml-mode)
+(add-to-list 'auto-mode-alist '("\\.ya?ml\\'" . yaml-mode))
+
 ;; ======================================================
 ;; Misc
 ;; ======================================================
