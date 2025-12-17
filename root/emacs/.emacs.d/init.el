@@ -272,6 +272,18 @@ the previous directory."
 
 (define-key mc/mark-more-like-this-extended-keymap (kbd "DEL") 'backward-delete-char-untabify)
 
+;;======================================================
+;; `symbol-overlay' (highlight / jump between symbols)
+;;======================================================
+(require 'symbol-overlay)
+(setq symbol-overlay-idle-time 0.2)
+(global-set-key (kbd "C-c M-n") 'symbol-overlay-put)
+(global-set-key (kbd "C-M-\"") 'symbol-overlay-put)
+(global-set-key (kbd "C-c C-M-\"") 'symbol-overlay-remove-all)
+(global-set-key (kbd "M-n") 'symbol-overlay-jump-next)
+(global-set-key (kbd "M-p") 'symbol-overlay-jump-prev)
+(global-set-key (kbd "C-c M-p") 'symbol-overlay-rename)
+
 ;; ============================================
 ;; Coldnew's Font Size Conf for Org-Table
 ;; ============================================
