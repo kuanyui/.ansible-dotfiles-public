@@ -23,6 +23,39 @@
 (set-face-attribute 'minibuffer-prompt nil :foreground "#a40000" :background "#ffafaf")
 
 ;; ======================================================
+;; `tab-bar-mode' (built-in since Emacs 27)
+;; ======================================================
+(setq tab-bar-show nil)
+(tab-bar-mode 1)
+
+(global-set-key (kbd "<f11>") 'tab-bar-switch-to-prev-tab)
+(global-set-key (kbd "<f12>") 'tab-bar-switch-to-next-tab)
+
+(require 'cl-lib)
+(defun my-list-insert-at (lst index elem)
+  "Return a new list with ELEM inserted at INDEX."
+  (append (cl-subseq lst 0 index)
+	  (list elem)
+	  (cl-subseq lst index)))
+
+(defun my-mode-line-tab-bar-index ()
+  "Get formatted `tab-bar--current-tab-index' for `mode-line-format'."
+  (when (and (bound-and-true-p tab-bar-mode)
+	     (fboundp 'tab-bar--current-tab-index))
+    (format "[%d] " (tab-bar--current-tab-index))))
+(defvar my-mode-line-tab-bar-index '(:eval (my-mode-line-tab-bar-index))
+  "Used in `mode-line-format' to show the index of `tab-bar-mode'")
+
+;; Setup `mode-line-format' to show tab-bar index in modeline
+(let* ((already-inserted (member my-mode-line-tab-bar-index mode-line-format))
+       (vc-index (cl-position '(vc-mode vc-mode) mode-line-format :test #'equal)))
+  (when (and vc-index (not already-inserted))
+    (setq-default mode-line-format
+		  (my-list-insert-at mode-line-format
+				     vc-index
+				     my-mode-line-tab-bar-index))))
+
+;; ======================================================
 ;; iBuffer
 ;; ======================================================
 (require 'ibuffer)
@@ -65,9 +98,6 @@
 ;; ======================================================
 (require 'dired)
 
-(require 'diredfl)   ; More font-lock for dired.
-(diredfl-global-mode)
-
 (defun my-dired-backward ()
   "Go back to the parent directory (..), and the cursor will be moved to where
 the previous directory."
@@ -95,6 +125,8 @@ the previous directory."
 (put 'dired-find-alternate-file 'disabled nil) ; avoid dired from asking some annoying question
 (define-key dired-mode-map (kbd "q") 'my-dired-backward)  ; q to go upward
 
+(require 'diredfl)   ; More font-lock for dired.
+(diredfl-global-mode)
 
 ;; ======================================================
 ;; Shell
