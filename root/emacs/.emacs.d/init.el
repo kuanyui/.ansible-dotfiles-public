@@ -63,6 +63,21 @@
 (autoload 'ibuffer "ibuffer" "List buffers." t)
 
 ;; ======================================================
+;; Eval & Revert buffer
+;; ======================================================
+(defun eval-buffer-and-message ()
+  (interactive)
+  (eval-buffer)
+  (message "Eval done!"))
+(define-key emacs-lisp-mode-map (kbd "C-c C-e") 'eval-buffer-and-message)
+
+(defun revert-buffer-without-confirm ()
+  (interactive)
+  (revert-buffer nil t)
+  (message "Buffer reverted."))
+(global-set-key (kbd "C-c C-r") 'revert-buffer-without-confirm)
+
+;; ======================================================
 ;; Recent files
 ;; ======================================================
 (require 'recentz)  ; fuck recentf
