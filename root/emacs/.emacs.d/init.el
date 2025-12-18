@@ -344,9 +344,12 @@ the previous directory."
 ;; `diff-hl' (available in Debian repo, pkg name is `elpa-diff-hl')
 ;; ======================================================
 (when (require 'diff-hl nil 'noerror)
-  (global-diff-hl-mode 1)
-  (add-hook 'vc-dir-mode-hook #'diff-hl-dir-mode)
-  (diff-hl-flydiff-mode 1))
+  (global-diff-hl-mode 1)   ; Indicate modified lines according to VC
+  (diff-hl-margin-mode 1)   ; Also show character (+-) instead of only color.
+  (diff-hl-flydiff-mode 1)  ; Real-time update state
+  (add-hook 'dired-mode-hook 'diff-hl-dired-mode-unless-remote) ; In Dired buffer
+  (add-hook 'vc-dir-mode-hook #'diff-hl-dir-mode)  ; In `vc-dir' buffer
+  )
 
 ;; ======================================================
 ;; `magit' (available in Debian repo, pkg name is `elpa-magit')
