@@ -338,6 +338,29 @@ the previous directory."
 (global-set-key (kbd "M-p") 'symbol-overlay-jump-prev)
 (global-set-key (kbd "C-c M-p") 'symbol-overlay-rename)
 
+;; ======================================================
+;; `diff-hl' (available in Debian repo, pkg name is `elpa-diff-hl')
+;; ======================================================
+(when (require 'diff-hl nil 'noerror)
+  (global-diff-hl-mode 1)
+  (add-hook 'vc-dir-mode-hook #'diff-hl-dir-mode)
+  (diff-hl-flydiff-mode 1))
+
+;; ======================================================
+;; `magit' (available in Debian repo, pkg name is `elpa-magit')
+;; ======================================================
+(global-set-key (kbd "C-x g s") 'magit-status)
+(global-set-key (kbd "C-x g l") 'magit-log)
+(global-set-key (kbd "C-x g b") 'magit-blame)
+(add-to-list 'auto-mode-alist '(".gitmodules" . conf-mode))
+
+(with-eval-after-load 'magit
+  (require 'magit)
+  (setq git-commit-summary-max-length 600)
+  (remove-hook 'git-commit-setup-hook 'git-commit-turn-on-auto-fill)
+  (setq magit-log-margin '(t "%Y-%02m-%d %a %H:%M:%S" magit-log-margin-width t 18))
+  )
+
 ;; ============================================
 ;; Coldnew's Font Size Conf for Org-Table
 ;; ============================================
