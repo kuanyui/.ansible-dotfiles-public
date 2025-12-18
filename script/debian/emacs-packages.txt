@@ -1,0 +1,12 @@
+# -*- sh -*-
+
+elpa-helm-core
+elpa-markdown-mode
+elpa-magit
+elpa-diff-hl
+elpa-marginalia
+elpa-rainbow-delimiters
+elpa-systemd
+
+# elpa-undo-tree
+# elpa-yaml-mode
