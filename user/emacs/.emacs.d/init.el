@@ -154,18 +154,57 @@ the previous directory."
       ((member system-type 'cygwin) (setq shell-file-name "/bin/bash")))
 
 ;; ======================================================
-;; Backup files
+;; Centralized backup / temporary files
 ;; ======================================================
-;; https://www.emacswiki.org/emacs/BackupDirectory
-(defvar --backup-directory (concat user-emacs-directory "_tmp/backups"))
-(defvar --undotree-directory (concat user-emacs-directory "_tmp/undotree"))
+;; Don't use .#FILENAME
+;; https://stackoverflow.com/questions/5738170/why-does-emacs-create-temporary-symbolic-links-for-modified-files/12974060#12974060
+;; Non-nil means use lockfiles to avoid editing collisions.
+(setq create-lockfiles nil)  ;; Nobody cares multiple editors are editing the same file.
 
-(setq backup-directory-alist
-      `((".*" . ,temporary-file-directory)))
-(setq auto-save-file-name-transforms
-      `((".*" ,temporary-file-directory t)))
-(setq undo-tree-history-directory-alist
-      `((".*" . ,temporary-file-directory)))
+(setq backup-by-copying t)
+(setq delete-old-versions t)
+(setq kept-new-versions 8)
+(setq kept-old-versions 3)
+(setq version-control t)
+
+;; https://www.emacswiki.org/emacs/BackupDirectory
+;; Local
+(defvar my-emacs-tmp-directory       (concat user-emacs-directory "_tmp/") "All directories and files under this folder should be mode of 0o700 and 0o600")
+(defvar my-autosavelist-directory    (concat user-emacs-directory "_tmp/autosavelist/") "Auto-save list files (e.g. .saves-*, save-*). See variable `auto-save-list-file-prefix'")
+(defvar my-backup-directory          (concat user-emacs-directory "_tmp/backups/") "Centralized backup files (e.g. file~, file.~N~). See variable `backup-directory-alist'")
+(defvar my-autosave-directory        (concat user-emacs-directory "_tmp/autosave/") "Centralized auto-save files (e.g. #file#). See variable `auto-save-file-name-transforms'")
+(defvar my-undotree-directory        (concat user-emacs-directory "_tmp/undotree/") "Persistent undo-tree history files (e.g. ~undo-tree~*). See variable `undo-tree-history-directory-alist'")
+;; TRAMP
+(defvar my-tramp-backup-directory    (concat user-emacs-directory "_tmp/tramp/backups/") "For TRAMP. See variable `tramp-backup-directory-alist'")
+(defvar my-tramp-autosave-directory  (concat user-emacs-directory "_tmp/tramp/autosave/") "For TRAMP. See variable `tramp-auto-save-directory'")
+(defvar my-tramp-persistency-file    (concat user-emacs-directory "_tmp/tramp/tramp_persistency") "For TRAMP. See variable `tramp-persistency-file-name'")
+;; Other State
+(defvar my-desktop-directory         (concat user-emacs-directory "_tmp/state/desktop/") "For `desktop-save-mode'. See variable `desktop-dirname'")
+(defvar my-save-place-file           (concat user-emacs-directory "_tmp/state/save-place") "For `save-place-mode'. See variable `save-place-file'")
+
+;; Ensure the directories are created
+(dolist (dir (list my-emacs-tmp-directory
+		   my-autosavelist-directory
+		   my-backup-directory
+		   my-autosave-directory
+		   my-undotree-directory
+		   my-tramp-backup-directory
+		   my-tramp-autosave-directory
+		   my-desktop-directory
+		   ))
+  (make-directory dir t)
+  (set-file-modes dir #o700))
+
+(setq auto-save-list-file-prefix (concat my-autosavelist-directory "save-"))
+(setq backup-directory-alist `((".*" . ,my-backup-directory)))
+(setq auto-save-file-name-transforms `((".*" ,my-autosave-directory t)))
+(setq undo-tree-history-directory-alist `((".*" . ,my-undotree-directory)))
+
+(setq tramp-backup-directory-alist `((".*" . ,my-tramp-backup-directory)))
+(setq tramp-auto-save-directory my-tramp-autosave-directory)
+(setq tramp-persistency-file-name my-tramp-persistency-file)
+(setq desktop-dirname my-desktop-directory)
+(setq save-place-file my-save-place-file)
 
 ;; ======================================================
 ;; apparmor
