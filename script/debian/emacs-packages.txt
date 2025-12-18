@@ -1,12 +1,22 @@
 # -*- sh -*-
 
+
 elpa-helm-core
-elpa-markdown-mode
+elpa-vertico
+elpa-marginalia
+elpa-orderless
+
 elpa-magit
 elpa-diff-hl
-elpa-marginalia
+
 elpa-rainbow-delimiters
+
+elpa-markdown-mode
 elpa-systemd
+
+# =========================
+# manually installed
+# =========================
 
 # elpa-undo-tree
 # elpa-yaml-mode

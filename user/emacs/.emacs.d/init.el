@@ -104,9 +104,41 @@
 (add-hook 'ido-setup-hook #'my-ido-bind-key-for-vertical)
 
 ;; ======================================================
-;; Other mine
+;; Minibuffer
 ;; ======================================================
 (require 'minibuffer-enhancements)
+(savehist-mode t)      ;; Save Minibuffer History
+
+;; ======================================================
+;; Minibuffer :: `vertico' - vertical interactive Zsh-liked completion (optional, available in Debian official repo)
+;; ======================================================
+(when (locate-library "vertico")
+  (setq vertico-multiform-commands
+	'((describe-symbol (vertico-sort-function . vertico-sort-alpha))))
+  (setq vertico-multiform-categories
+	'((symbol (vertico-sort-function . vertico-sort-alpha))))
+  (vertico-mode t)
+  (vertico-grid-mode -1) ;; Show items line-by-line
+  (define-key vertico-map "?" #'minibuffer-completion-help)
+  (define-key vertico-map (kbd "TAB") #'minibuffer-complete)
+  (define-key vertico-map (kbd "M-g") #'vertico-grid-mode)
+  ;;(define-key vertico-map (kbd "C-j") #'minibuffer-force-complete-and-exit)
+  )
+
+;; ======================================================
+;; Minibuffer :: `marginalia' - Show extra info in right-side (optional, available in Debian official repo)
+;; ======================================================
+(when (locate-library "marginalia")
+  (marginalia-mode)      ;; Show elisp description summary in M-x
+)
+;; ======================================================
+;; Minibuffer :: `orderless' - Fuzzy searching for `find-file' & `M-x' (optional, available in Debian official repo)
+;; ======================================================
+(when (require 'orderless nil 'no-error)
+  (setq completion-styles '(orderless))
+  (setq completion-category-defaults nil)
+  (setq completion-category-overrides '((file (styles partial-completion))))
+  )
 
 ;; ======================================================
 ;; Dired
@@ -285,14 +317,22 @@ the previous directory."
 (global-set-key (kbd "M-?") 'undo-tree-redo)
 
 ;; ======================================================
-;; systemd units
+;; systemd units (`systemd-mode' is available in Debian official repo.)
+;; If not found `systemd-mode', use `conf-unix-mode' as fallback.
 ;; ======================================================
-(add-to-list 'auto-mode-alist '("\\.service\\'" . conf-unix-mode))
-(add-to-list 'auto-mode-alist '("\\.socket\\'" . conf-unix-mode))
-(add-to-list 'auto-mode-alist '("\\.timer\\'" . conf-unix-mode))
-(add-to-list 'auto-mode-alist '("\\.target\\'" . conf-unix-mode))
-(add-to-list 'auto-mode-alist '("\\.mount\\'" . conf-unix-mode))
-(add-to-list 'auto-mode-alist '("\\.path\\'" . conf-unix-mode))
+(when (not (locate-library "systemd"))
+  (add-to-list 'auto-mode-alist '("\\.service\\'" . conf-unix-mode))
+  (add-to-list 'auto-mode-alist '("\\.socket\\'" . conf-unix-mode))
+  (add-to-list 'auto-mode-alist '("\\.timer\\'" . conf-unix-mode))
+  (add-to-list 'auto-mode-alist '("\\.target\\'" . conf-unix-mode))
+  (add-to-list 'auto-mode-alist '("\\.mount\\'" . conf-unix-mode))
+  (add-to-list 'auto-mode-alist '("\\.path\\'" . conf-unix-mode)))
+
+;; ======================================================
+;; `rainbow-delimiters' (optional, avail in Debian official repo)
+;; ======================================================
+(when (locate-library "rainbow-delimiters")
+  (add-hook 'prog-mode-hook #'rainbow-delimiters-mode))
 
 ;;======================================================
 ;; multiple-cursors / move-text / duplicate-thing
