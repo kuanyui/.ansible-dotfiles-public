@@ -379,6 +379,7 @@ the previous directory."
 (global-set-key (kbd "M-n") 'symbol-overlay-jump-next)
 (global-set-key (kbd "M-p") 'symbol-overlay-jump-prev)
 (global-set-key (kbd "C-c M-p") 'symbol-overlay-rename)
+(add-hook 'prog-mode-hook 'symbol-overlay-mode)
 
 ;; ======================================================
 ;; `diff-hl' (available in Debian repo, pkg name is `elpa-diff-hl')
