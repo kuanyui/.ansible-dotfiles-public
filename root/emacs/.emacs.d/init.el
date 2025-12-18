@@ -206,6 +206,8 @@ the previous directory."
 (setq desktop-dirname my-desktop-directory)
 (setq save-place-file my-save-place-file)
 
+(save-place-mode 1)  ; Store cursor places after closing buffer
+
 ;; ======================================================
 ;; apparmor
 ;; ======================================================
