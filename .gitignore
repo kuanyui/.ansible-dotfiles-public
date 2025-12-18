@@ -18,6 +18,6 @@ transient/
 .DS_Store
 .mc-lists.el
 *.elc
-.emacs.d/_tmp/
-.emacs.d/elpa/
-.emacs.d/tramp/
+**/.emacs.d/_tmp/
+**/.emacs.d/elpa/
+**/.emacs.d/tramp/
