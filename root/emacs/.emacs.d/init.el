@@ -407,6 +407,14 @@ the previous directory."
   (setq magit-log-margin '(t "%Y-%02m-%d %a %H:%M:%S" magit-log-margin-width t 18))
   )
 
+;; ======================================================
+;; Markdown
+;; ======================================================
+(setq markdown-enable-math t)
+(setq markdown-fontify-code-blocks-natively t)
+(setq markdown-enable-highlighting-syntax t)
+(setq markdown-fontify-whole-heading-line t)
+
 ;; ============================================
 ;; Coldnew's Font Size Conf for Org-Table
 ;; ============================================
