@@ -415,6 +415,19 @@ the previous directory."
 (setq markdown-enable-highlighting-syntax t)
 (setq markdown-fontify-whole-heading-line t)
 
+;;======================================================
+;; Whitespace
+;;======================================================
+(require 'whitespace)
+(setq whitespace-action '(auto-cleanup))
+(setq whitespace-style '(trailing space-before-tab indentation empty space-after-tab))
+(global-whitespace-mode t)
+
+(defun my-whitespace-cleanup ()
+  (let ((whitespace-style '(trailing)))
+    (whitespace-cleanup)))
+(add-hook 'before-save-hook 'my-whitespace-cleanup)
+
 ;; ============================================
 ;; Coldnew's Font Size Conf for Org-Table
 ;; ============================================
