@@ -150,16 +150,16 @@
 the previous directory."
   (interactive)
   (let* ((DIR (or (uniquify-buffer-base-name)
-                  (buffer-name))))
+		  (buffer-name))))
     (if (equal DIR "*Find*")
-        (quit-window t)
+	(quit-window t)
       (progn (find-alternate-file "..")
-             (goto-char (point-min))
-             (while (and (not (eobp))
-                         (not (equal (dired-get-filename t :no-error) DIR)))
-               (next-line))
-             ;;(revert-buffer)
-             ))))
+	     (goto-char (point-min))
+	     (while (and (not (eobp))
+			 (not (equal (dired-get-filename t :no-error) DIR)))
+	       (next-line))
+	     ;;(revert-buffer)
+	     ))))
 
 ;; Always use the current Dired buffer to open the next directory
 (defun dired-my-find-alternate-file ()
@@ -289,16 +289,16 @@ the previous directory."
 (global-set-key [(meta ?/)] 'hippie-expand)
 (setq hippie-expand-try-functions-list
       '(try-expand-dabbrev
-        try-expand-dabbrev-visible
-        try-expand-dabbrev-all-buffers
-        try-expand-dabbrev-from-kill
-        try-complete-file-name-partially
-        try-complete-file-name
-        try-expand-all-abbrevs
-        try-expand-list
-        try-expand-line
-        try-complete-lisp-symbol-partially
-        try-complete-lisp-symbol))
+	try-expand-dabbrev-visible
+	try-expand-dabbrev-all-buffers
+	try-expand-dabbrev-from-kill
+	try-complete-file-name-partially
+	try-complete-file-name
+	try-expand-all-abbrevs
+	try-expand-list
+	try-expand-line
+	try-complete-lisp-symbol-partially
+	try-complete-lisp-symbol))
 
 ;; ======================================================
 ;; Undo-tree and redo
@@ -423,13 +423,13 @@ the previous directory."
 Otherwise, return DPI (1 inch = 2.54 cm)
 "
   (let* ((screen0 (car (display-monitor-attributes-list)))
-         (mm (alist-get 'mm-size screen0))
-         (px (alist-get 'geometry screen0))
-         (w-mm (nth 0 mm))
-         (w-px (nth 2 px))
-         )
+	 (mm (alist-get 'mm-size screen0))
+	 (px (alist-get 'geometry screen0))
+	 (w-mm (nth 0 mm))
+	 (w-px (nth 2 px))
+	 )
     (if (eq w-mm nil)
-        nil
+	nil
       (* 25.4 (/ w-px (float w-mm)))
       )))
 
@@ -440,7 +440,7 @@ Otherwise, return DPI (1 inch = 2.54 cm)
 	(set-face-attribute 'default nil :font "Consolas-9"))
     (if (eq system-type 'windows-nt)
 	(setq emacs-cjk-font "Consolas"
-              emacs-english-font "Consolas"))
+	      emacs-english-font "Consolas"))
 
     (defvar emacs-english-font "DejaVu Sans Mono" "The font name of English.")
     (defvar emacs-cjk-font "Noto Sans CJK JP" "The font name for CJK.")
@@ -454,11 +454,11 @@ Otherwise, return DPI (1 inch = 2.54 cm)
     ;; Auto adjust font-size for Hi-res screen
     (let ((dpi (get-screen-pixel-density)))
       (setq emacs-font-size-pair
-            (cond
-             ((eq dpi nil) (error "This should not be executed under terminal."))
-             ((> dpi 150) '(17 . 20))
-             (t '(12 . 14))
-             )))
+	    (cond
+	     ((eq dpi nil) (error "This should not be executed under terminal."))
+	     ((> dpi 150) '(17 . 20))
+	     (t '(12 . 14))
+	     )))
 
     (defvar emacs-font-size-pair-list
       '(( 5 .  6) (9 . 10) (10 . 12)(12 . 14)
@@ -470,19 +470,19 @@ Otherwise, return DPI (1 inch = 2.54 cm)
     (defun font-exist-p (fontname)
       "Test if this font is exist or not."
       (if (or (not fontname) (string= fontname ""))
-          nil
+	  nil
 	(if (not (x-list-fonts fontname)) nil t)))
 
     (defun set-font (english chinese size-pair)
       "Setup emacs English and Chinese font on x window-system."
 
       (if (font-exist-p english)
-          (set-frame-font (format "%s:pixelsize=%d" english (car size-pair)) t))
+	  (set-frame-font (format "%s:pixelsize=%d" english (car size-pair)) t))
 
       (if (font-exist-p chinese)
-          (dolist (charset '(kana han symbol cjk-misc bopomofo))
-            (set-fontset-font (frame-parameter nil 'font) charset
-                              (font-spec :family chinese :size (cdr size-pair))))))
+	  (dolist (charset '(kana han symbol cjk-misc bopomofo))
+	    (set-fontset-font (frame-parameter nil 'font) charset
+			      (font-spec :family chinese :size (cdr size-pair))))))
     ;; Setup font size based on emacs-font-size-pair
     (set-font emacs-english-font emacs-cjk-font emacs-font-size-pair)
 
@@ -491,11 +491,11 @@ Otherwise, return DPI (1 inch = 2.54 cm)
       (let ((scale-steps emacs-font-size-pair-list))
 	(if (< step 0) (setq scale-steps (reverse scale-steps)))
 	(setq emacs-font-size-pair
-              (or (cadr (member emacs-font-size-pair scale-steps))
-                  emacs-font-size-pair))
+	      (or (cadr (member emacs-font-size-pair scale-steps))
+		  emacs-font-size-pair))
 	(when emacs-font-size-pair
-          (message "emacs font size set to %.1f" (car emacs-font-size-pair))
-          (set-font emacs-english-font emacs-cjk-font emacs-font-size-pair))))
+	  (message "emacs font size set to %.1f" (car emacs-font-size-pair))
+	  (set-font emacs-english-font emacs-cjk-font emacs-font-size-pair))))
 
     (defun increase-emacs-font-size ()
       "Decrease emacs's font-size acording emacs-font-size-pair-list."
