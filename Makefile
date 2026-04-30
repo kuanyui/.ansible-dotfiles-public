@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all unstow check-user check-root help
+.PHONY: apply-user apply-root apply-all unstow check-user check-root check-all help
 
 help:
 	@echo "Targets:"
@@ -11,6 +11,7 @@ help:
 	@echo "  unstow       Remove existing stow symlinks from ~/ and /root"
 	@echo "  check-user   Dry-run diff for user dotfiles"
 	@echo "  check-root   Dry-run diff for root dotfiles"
+	@echo "  check-all    Dry-run diff for both"
 
 apply-user:
 	$(PLAYBOOK) $(PLAYBOOKS)/user.yml
@@ -29,3 +30,6 @@ check-user:
 
 check-root:
 	$(PLAYBOOK) --check --diff -K $(PLAYBOOKS)/root.yml
+
+check-all:
+	$(PLAYBOOK) --check --diff -K $(PLAYBOOKS)/all.yml

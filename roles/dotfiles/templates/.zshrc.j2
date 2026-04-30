@@ -4,7 +4,9 @@
 # If not running interactively, don't do anything
 [ -z "$PS1" ] && return
 
+{% raw %}
 PS1="%F{gray}[%f%B%F{green}%n%f%b@%B%F{blue}%M%f%b%F{gray}:%f%B%F{red}%~%f%b%F{gray}]%F{yellow}%#%f%b (%D{%Y-%m-%d %H:%M:%S}) "
+{% endraw %}
 # PS1='%B%F{green}%n@%m%f:%F{blue}%~%F{yellow}%#%f%b '  # HOST ROOT
 # PS1="%F{247}[%f%B%F{154}%n%f%b@%B%F{81}%M%f%b%F{247}:%f%B%F{231}%~%f%b%F{247}]%f"   # 256 colors
 
@@ -90,8 +92,8 @@ function emacsx() {
 
 function dotfiles-public-update () {
     cd ~/.dotfiles-public/{{ 'root' if is_root else 'user' }}/ &&
-	git fetch --all &&
-	git reset --hard origin/master &&
+    git fetch --all &&
+    git reset --hard origin/master &&
 }
 
 function apt-install-without-recommends () {
@@ -100,10 +102,10 @@ function apt-install-without-recommends () {
 
 function apt-install-without-recommends-diff-dry-run () {
     if [ $UID -eq 0 ]; then
-	echo "Please run as non-root for GUI (meld)"
-	diff --width=$COLUMNS --suppress-common-lines --side-by-side --color <(apt-get install --dry-run $@) <(apt-get install --dry-run --no-install-recommends $@)
+        echo "Please run as non-root for GUI (meld)"
+        diff --width=$COLUMNS --suppress-common-lines --side-by-side --color <(apt-get install --dry-run $@) <(apt-get install --dry-run --no-install-recommends $@)
     else
-	meld <(apt-get install --dry-run $@) <(apt-get install --dry-run --no-install-recommends $@)
+        meld <(apt-get install --dry-run $@) <(apt-get install --dry-run --no-install-recommends $@)
     fi
 }
 ### ============================================
