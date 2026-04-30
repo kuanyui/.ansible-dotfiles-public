@@ -2,15 +2,50 @@
 - name: Verify required variables are set
   ansible.builtin.assert:
     that:
-      - dotfiles_src_dir != ""
       - target_home != ""
       - target_user != ""
       - target_group != ""
-    msg: "dotfiles_src_dir, target_home, target_user, target_group must all be set by the calling playbook"
+    msg: "target_home, target_user, target_group must all be set by the calling playbook"
 
-- name: Deploy each dotfiles package
-  ansible.builtin.include_tasks: deploy_package.yml
-  loop: "{{ dotfiles_packages }}"
-  loop_control:
-    loop_var: package
-    label: "{{ package }}"
+- name: Create directories for static files
+  ansible.builtin.file:
+    path: "{{ target_home }}/{{ item.path }}"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+  when: item.state == 'directory'
+  with_filetree: "{{ role_path }}/files/"
+
+- name: Deploy static dotfiles
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ target_home }}/{{ item.path }}"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: preserve
+    follow: false
+    force: true
+  when: item.state == 'file'
+  with_filetree: "{{ role_path }}/files/"
+
+- name: Create directories for templated dotfiles
+  ansible.builtin.file:
+    path: "{{ target_home }}/{{ item.path }}"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+  when: item.state == 'directory'
+  with_filetree: "{{ role_path }}/templates/"
+
+- name: Deploy templated dotfiles
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ target_home }}/{{ item.path | regex_replace('\\.j2$', '') }}"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0644"
+    force: true
+  when: item.state == 'file'
+  with_filetree: "{{ role_path }}/templates/"

@@ -89,13 +89,13 @@ function emacsx() {
 }
 
 function dotfiles-public-update () {
-    cd ~/.dotfiles-public/user/ &&
+    cd ~/.dotfiles-public/{{ 'root' if is_root else 'user' }}/ &&
 	git fetch --all &&
 	git reset --hard origin/master &&
 }
 
 function apt-install-without-recommends () {
-    sudo apt install --no-install-recommends $@
+    {% if not is_root %}sudo {% endif %}apt install --no-install-recommends $@
 }
 
 function apt-install-without-recommends-diff-dry-run () {
@@ -120,6 +120,8 @@ fi
 if [ -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]; then
         source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 fi
+{% if not is_root %}
 
 # PATH for pipx
 PATH="${PATH}:${HOME}/.local/bin"
+{% endif %}

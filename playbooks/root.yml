@@ -1,7 +1,4 @@
 ---
-# Deploy root/ dotfiles to /root.
-# Files are COPIED (not symlinked) so non-privileged users cannot alter root's config.
-# Requires sudo: run with -K or set ANSIBLE_BECOME_PASS.
 - name: Deploy root dotfiles
   hosts: localhost
   connection: local
@@ -9,9 +6,9 @@
   become_user: root
   gather_facts: true
   vars:
-    dotfiles_src_dir: "{{ playbook_dir }}/../root"
     target_home: /root
     target_user: root
     target_group: root
+    is_root: true
   roles:
     - dotfiles

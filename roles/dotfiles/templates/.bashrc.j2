@@ -115,6 +115,14 @@ if [ -f ~/.bash_aliases ]; then
     . ~/.bash_aliases
 fi
 
+{% if is_root %}
+function jitsi-restart {
+    systemctl restart prosody
+    systemctl restart jicofo
+    systemctl restart jitsi-videobridge2
+}
+
+{% endif %}
 alias sz='source ~/.bashrc'
 alias ta='if tmux attach-session -t 0;then;else tmux;fi'
 
@@ -137,6 +145,3 @@ alias ls='ls --color=auto '
 alias sc="sudo systemctl"
 alias jc="sudo journalctl"
 alias jc-clear="sudo journalctl --vacuum-time=5d"   #  Delete journal logs which are older than 5 days
-
-
-

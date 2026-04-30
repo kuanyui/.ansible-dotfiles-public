@@ -19,9 +19,15 @@
 ;; ======================================================
 (add-to-list 'custom-theme-load-path "~/.emacs.d/lisps/")
 (load-theme 'moe-dark :no-confirm)
+{% if is_root %}
 (set-face-attribute 'mode-line nil :background "#ef2929" :foreground "#ffffff")
 (set-face-attribute 'mode-line-buffer-id nil :background "#ef2929" :foreground "#080808")
 (set-face-attribute 'minibuffer-prompt nil :foreground "#a40000" :background "#ffafaf")
+{% else %}
+(set-face-attribute 'mode-line nil :background "#33aaff" :foreground "#ffffff")
+(set-face-attribute 'mode-line-buffer-id nil :background "#33aaff" :foreground "#080808")
+(set-face-attribute 'minibuffer-prompt nil :foreground "#0077ff" :background "#afefff")
+{% endif %}
 
 ;; ======================================================
 ;; `tab-bar-mode' (built-in since Emacs 27)
