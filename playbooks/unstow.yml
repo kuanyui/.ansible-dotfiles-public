@@ -1,0 +1,75 @@
+---
+# Explicitly remove stow-managed symlinks pointing to this repo.
+# Normally not needed: the copy module in user.yml / root.yml already
+# replaces symlinks with real files.  Use this playbook only if you want
+# a clean slate before applying (e.g. to catch orphaned symlinks).
+
+- name: Remove user stow-managed symlinks
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: "Resolve this repo's real path"
+      ansible.builtin.command: realpath "{{ playbook_dir }}/.."
+      register: _repo_path
+      changed_when: false
+
+    - name: Find and remove symlinks in user home pointing into this repo
+      ansible.builtin.shell: |
+        set -euo pipefail
+        repo="{{ _repo_path.stdout }}"
+        removed=0
+        while IFS= read -r -d '' link; do
+          target=$(readlink -f "$link" 2>/dev/null || true)
+          if [[ "$target" == "$repo"/* ]]; then
+            rm "$link"
+            echo "removed: $link"
+            (( removed++ )) || true
+          fi
+        done < <(find "{{ ansible_env.HOME }}" -maxdepth 6 -type l -print0 2>/dev/null)
+        echo "__removed__:$removed"
+      args:
+        executable: /bin/bash
+      register: _user_unstow
+      changed_when: "'__removed__:0' not in _user_unstow.stdout"
+
+    - name: Show removed user symlinks
+      ansible.builtin.debug:
+        msg: "{{ _user_unstow.stdout_lines | reject('match', '^__removed__') | list }}"
+      when: _user_unstow.changed
+
+- name: Remove root stow-managed symlinks
+  hosts: localhost
+  connection: local
+  become: true
+  become_user: root
+  gather_facts: true
+  tasks:
+    - name: "Resolve this repo's real path"
+      ansible.builtin.command: realpath "{{ playbook_dir }}/.."
+      register: _repo_path
+      changed_when: false
+
+    - name: Find and remove symlinks in /root pointing into this repo
+      ansible.builtin.shell: |
+        set -euo pipefail
+        repo="{{ _repo_path.stdout }}"
+        removed=0
+        while IFS= read -r -d '' link; do
+          target=$(readlink -f "$link" 2>/dev/null || true)
+          if [[ "$target" == "$repo"/* ]]; then
+            rm "$link"
+            echo "removed: $link"
+            (( removed++ )) || true
+          fi
+        done < <(find /root -maxdepth 6 -type l -print0 2>/dev/null)
+        echo "__removed__:$removed"
+      args:
+        executable: /bin/bash
+      register: _root_unstow
+      changed_when: "'__removed__:0' not in _root_unstow.stdout"
+
+    - name: Show removed root symlinks
+      ansible.builtin.debug:
+        msg: "{{ _root_unstow.stdout_lines | reject('match', '^__removed__') | list }}"
+      when: _root_unstow.changed

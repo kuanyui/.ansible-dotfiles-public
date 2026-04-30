@@ -1,0 +1,16 @@
+---
+- name: Verify required variables are set
+  ansible.builtin.assert:
+    that:
+      - dotfiles_src_dir != ""
+      - target_home != ""
+      - target_user != ""
+      - target_group != ""
+    msg: "dotfiles_src_dir, target_home, target_user, target_group must all be set by the calling playbook"
+
+- name: Deploy each dotfiles package
+  ansible.builtin.include_tasks: deploy_package.yml
+  loop: "{{ dotfiles_packages }}"
+  loop_control:
+    loop_var: package
+    label: "{{ package }}"

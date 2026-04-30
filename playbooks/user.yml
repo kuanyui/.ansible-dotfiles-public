@@ -1,0 +1,14 @@
+---
+# Deploy user/ dotfiles to the current user's home directory.
+# Run as the target user (no become required).
+- name: Deploy user dotfiles
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    dotfiles_src_dir: "{{ playbook_dir }}/../user"
+    target_home: "{{ ansible_env.HOME }}"
+    target_user: "{{ ansible_user_id }}"
+    target_group: "{{ ansible_user_id }}"
+  roles:
+    - dotfiles

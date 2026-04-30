@@ -1,0 +1,14 @@
+---
+# List of stow-style package subdirectories to deploy.
+# Add new packages here when you create new subdirs.
+dotfiles_packages:
+  - bash
+  - zsh
+  - emacs
+  - tmux
+
+# These must be overridden by each playbook.
+dotfiles_src_dir: ""   # absolute path to user/ or root/ source tree
+target_home: ""        # destination home directory
+target_user: ""        # owner of deployed files
+target_group: ""       # group of deployed files
