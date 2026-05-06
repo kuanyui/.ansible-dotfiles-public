@@ -1,8 +1,8 @@
 # dotfiles (Public Version)
 
-- No personal/sensitive information - safe to `git clone` without SSH key.
-- Safe to use for `root`.
-- Primarily tested on Debian 12 (bookworm), but should work on other distros.
+- No personal/sensitive information - safe to `git clone` via HTTPS (in other word, without SSH key).
+- Safe to use for `root` - all related packages are either installed via distro's official package repo, or manually audited (ex: Emacs packages).
+- Primarily tested on Debian 13 and Fedora 44, but should work on other distros.
 
 > [!NOTE]
 > For dotfiles inside containers (Podman, Docker), see [container-template](https://github.com/kuanyui/container-template) instead.
@@ -15,15 +15,18 @@ Managed with Ansible roles, following Ansible conventions:
 group_vars/
   all.yml         # global variables (e.g. setup_emacs, setup_zsh)
 roles/
-  dotfiles/
-    tasks/        # playbook logic
-    files/        # static files, implicit lookup path for the copy module
-    templates/    # Jinja2 templates, implicit lookup path for the template module
-    defaults/     # default variables
-  emacs/
+  dotfiles/       # [ROLE] .zshrc, .bashrc, .emacs.d for ${USER} & root
+    tasks/          # playbook logic
+    files/          # static files, implicit lookup path for the copy module
+    templates/      # Jinja2 templates, implicit lookup path for the template module
+    defaults/       # default variables
+  emacs/          # [ROLE] install emacs & emacs packages via distros' package manager
     tasks/
     defaults/
-  zsh/
+  packages/       # [ROLE] install some frequently used packages from distros' official repo
+    tasks/
+    defaults/
+  zsh/            # [ROLE] install zsh & zsh plugins via distros' package manager, then `chsh`
     tasks/
 playbooks/        # entry playbooks
 inventory.ini     # defines hosts and groups (here: just localhost)
@@ -46,12 +49,12 @@ ansible.cfg       # project-level Ansible configuration (e.g. inventory path, de
 sudo apt install --yes git make ansible-core
 ```
 
-**Fedora**
+**Fedora / RHEL**
 ```bash
 sudo dnf install --assumeyes git make ansible-core
 ```
 
-**openSUSE**
+**openSUSE / SLES**
 ```bash
 sudo zypper install --no-confirm git make ansible-core
 ```
