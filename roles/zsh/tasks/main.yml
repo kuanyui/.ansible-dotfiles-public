@@ -5,7 +5,9 @@
       - zsh-syntax-highlighting
       - zsh-autosuggestions
     state: present
-  when: install_zsh
+  when:
+    - install_zsh
+    - ansible_os_family in ['Debian', 'RedHat']
 
 - name: Set zsh as default shell for {{ target_user }}
   ansible.builtin.user:
