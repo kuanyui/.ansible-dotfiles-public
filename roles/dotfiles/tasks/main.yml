@@ -82,7 +82,8 @@
 - name: Deploy templated dotfiles
   ansible.builtin.template:
     src: "{{ item.path }}"
-    dest: "{{ target_home }}{{ item.path | replace(role_path + '/templates', '') | regex_replace('\.j2$', '') }}"
+    dest: |-
+      {{ target_home }}{{ item.path | replace(role_path + '/templates', '') | regex_replace('\.j2$', '') }}
     owner: "{{ target_user }}"
     group: "{{ target_group }}"
     mode: "0644"
