@@ -1,3 +1,7 @@
 ---
 install_emacs: true
 install_zsh: true
+install_basic_tools: true
+install_net_tools: false
+install_sys_tools: false
+install_wayland_tools: false

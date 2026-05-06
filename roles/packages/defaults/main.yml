@@ -1,0 +1,34 @@
+---
+install_basic_tools: false
+install_sys_tools: true
+install_net_tools: true
+install_wayland_tools: false
+
+packages_basic_tools:
+  common:
+    - git
+    - make
+    - ripgrep
+    - tmux
+    - stow
+packages_sys_tools:
+  common:
+    - htop
+    - iotop
+    - sysstat
+    - nvtop
+    - cpuid
+  debian:
+    - cpu-x  # not in default Fedora/RHEL repos
+  redhat: []
+
+packages_net_tools:
+  common:
+    - nethogs
+    - traceroute
+    - net-tools
+    - tcpdump
+
+packages_wayland_tools:
+  common:
+    - wl-clipboard

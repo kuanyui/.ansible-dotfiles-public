@@ -1,0 +1,44 @@
+---
+- name: Install basic tools
+  ansible.builtin.package:
+    name: "{{ packages_basic_tools.common }}"
+    state: present
+  when: install_basic_tools
+
+- name: Install network tools
+  ansible.builtin.package:
+    name: "{{ packages_net_tools.common }}"
+    state: present
+  when: install_net_tools
+
+- name: Install system tools (common)
+  ansible.builtin.package:
+    name: "{{ packages_sys_tools.common }}"
+    state: present
+  when: install_sys_tools
+
+- name: Install system tools (Debian)
+  ansible.builtin.apt:
+    name: "{{ packages_sys_tools.debian }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when:
+    - install_sys_tools
+    - ansible_os_family == 'Debian'
+    - packages_sys_tools.debian | length > 0
+
+- name: Install system tools (RedHat)
+  ansible.builtin.dnf:
+    name: "{{ packages_sys_tools.redhat }}"
+    state: present
+  when:
+    - install_sys_tools
+    - ansible_os_family == 'RedHat'
+    - packages_sys_tools.redhat | length > 0
+
+- name: Install Wayland tools
+  ansible.builtin.package:
+    name: "{{ packages_wayland_tools.common }}"
+    state: present
+  when: install_wayland_tools
