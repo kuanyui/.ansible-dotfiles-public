@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all unstow check-user check-root check-all pull help
+.PHONY: apply-user apply-root apply-all unstow check-user check-root check-all pull pull--amended help
 
 ###
 ### - Common targets: The following targets can be run in host, also inside container:
@@ -53,6 +53,16 @@ check-root:  ## Dry-run diff for root dotfiles
 
 check-all:  ## Dry-run diff for both user and root
 	$(PLAYBOOK) --check --diff -K $(PLAYBOOKS)/all.yml
+
+pull--amended:  ## Reset HEAD^^^, then pull (requires clean worktree - for squashing debug commits)
+	@if git diff --quiet && git diff --cached --quiet; then \
+	        echo "Worktree is clean - resetting HEAD^^^..."; \
+	        git reset --hard HEAD^^^; \
+	        $(MAKE) pull; \
+	else \
+	        echo "ERROR: Worktree is not clean. Commit or stash your changes first."; \
+	        exit 1; \
+	fi
 
 pull:  ## Git reset hard to origin/master (destructive, requires confirmation)
 	@git fetch origin
