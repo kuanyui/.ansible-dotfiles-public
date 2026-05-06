@@ -3,53 +3,72 @@ PLAYBOOKS := playbooks
 
 .PHONY: apply-user apply-root apply-all unstow check-user check-root check-all pull help
 
-help:
-	@echo "Targets:"
-	@echo "  apply-user   Deploy user/ dotfiles to current user home (no sudo)"
-	@echo "  apply-root   Deploy root/ dotfiles to /root          (needs sudo)"
-	@echo "  apply-all    Both of the above"
-	@echo "  unstow       Remove existing stow symlinks from ~/ and /root"
-	@echo "  check-user   Dry-run diff for user dotfiles"
-	@echo "  check-root   Dry-run diff for root dotfiles"
-	@echo "  check-all    Dry-run diff for both"
-	@echo "  pull         Reset hard to origin/master (destructive, requires confirmation)"
+###
+### - Common targets: The following targets can be run in host, also inside container:
+###
 
-apply-user:
-	$(PLAYBOOK) $(PLAYBOOKS)/user.yml
+help:     ## Show this self-documented help message.
+	@# Some operating system / Linux distro may use `mawk` (e.g. Ubuntu), so prefer more portable `perl` over `awk`.
+	@export S=`basename $${SHELL}`; if [ $${S} != "zsh" ] && [ $${S} != "fish" ]; then echo "(Tip: You are using \`$${S}\`, but you can consider to use \`zsh\` or \`fish\` because they support tab compoletions for Makefile targets & variables.)"; fi
 
-apply-root:
-	$(PLAYBOOK) -K $(PLAYBOOKS)/root.yml
+	@if command -v perl >/dev/null 2>&1; then \
+	        printf "\033[36m=============================================================\033[0m\n" ; \
+	        printf "\033[36m Variables                                                   \033[0m\n" ; \
+	        printf "\033[36m=============================================================\033[0m\n" ; \
+	        perl -ne 'if (/^## /) { $$comment = $$_; $$next = <>; if ($$next =~ /^([A-Za-z0-9_]+)\s*[:?+]?=\s*(.*)$$/) { printf "\033[35m%-30s\033[0m %s", $$1, substr($$comment, 3); } }' $(MAKEFILE_LIST); \
+	        printf "\n"; \
+	        printf "\033[36m=============================================================\033[0m\n" ; \
+	        printf "\033[36m Targets                                                     \033[0m\n" ; \
+	        printf "\033[36m=============================================================\033[0m\n" ; \
+	        perl -ne 'if (/^([a-zA-Z0-9_-]+):.*?## (.*)$$/) { printf "\033[32m%-30s\033[0m %s\n", $$1, $$2; } elsif (/^[ \t]*### *(.*)/) { print "\033[34m$$1\033[0m\n"; }' $(MAKEFILE_LIST); \
+	else \
+	        printf "\033[36m=============================================================\033[0m\n" ; \
+	        printf "\033[36m Variables                                                   \033[0m\n" ; \
+	        printf "\033[36m=============================================================\033[0m\n" ; \
+	        gawk '/^## /{comment=$$0; getline; if ($$1 ~ /^[A-Za-z0-9_]+$$/ && match($$0, /^[^:?+]*[:?+]?=/, m)) printf "\033[35m%-30s\033[0m %s\n", $$1, substr(comment, 4)}' $(MAKEFILE_LIST) ; \
+	        printf "\n"; \
+	        printf "\033[36m=============================================================\033[0m\n" ; \
+	        printf "\033[36m Targets                                                     \033[0m\n" ; \
+	        printf "\033[36m=============================================================\033[0m\n" ; \
+	        gawk 'match($$0, /^([a-zA-Z0-9_-]+):.*?## (.*)$$/, m){printf "\033[32m%-30s\033[0m %s\n", m[1], m[2]} match($$0, /^[ \\t]*### *(.*)/, m){printf "\033[34m%s\033[0m\n", m[1]}' $(MAKEFILE_LIST); \
+	fi
 
-apply-all:
-	$(PLAYBOOK) -K $(PLAYBOOKS)/all.yml
-
-unstow:
+unstow:  ## [Legacy] Remove existing stow symlinks from ~/ and /root
 	$(PLAYBOOK) -K $(PLAYBOOKS)/unstow.yml
 
-check-user:
+apply-user:  ## Deploy dotfiles to current user home (no sudo)
+	$(PLAYBOOK) $(PLAYBOOKS)/user.yml
+
+apply-root:  ## Deploy dotfiles to /root (needs sudo)
+	$(PLAYBOOK) -K $(PLAYBOOKS)/root.yml
+
+apply-all:  ## Deploy dotfiles for both current user and root
+	$(PLAYBOOK) -K $(PLAYBOOKS)/all.yml
+
+check-user:  ## Dry-run diff for user dotfiles
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/user.yml
 
-check-root:
+check-root:  ## Dry-run diff for root dotfiles
 	$(PLAYBOOK) --check --diff -K $(PLAYBOOKS)/root.yml
 
-check-all:
+check-all:  ## Dry-run diff for both user and root
 	$(PLAYBOOK) --check --diff -K $(PLAYBOOKS)/all.yml
 
-pull:
+pull:  ## Git reset hard to origin/master (destructive, requires confirmation)
 	@echo "This will run: git fetch origin && git reset --hard origin/master"
 	@git fetch origin
 	@git diff --stat HEAD origin/master
 	@if git diff --quiet HEAD origin/master; then \
-		echo "Already up to date, nothing to do."; \
+	        echo "Already up to date, nothing to do."; \
 	else \
-		echo ""; \
-		echo "WARNING: The above changes will be discarded from your local tree."; \
-		read -r -p "Type 'yes' to continue: " ans; \
-		if [ "$$ans" = "yes" ]; then \
-			git reset --hard origin/master; \
-			echo "Done."; \
-		else \
-			echo "Aborted."; \
-			exit 1; \
-		fi \
+	        echo ""; \
+	        echo "WARNING: The above changes will be discarded from your local tree."; \
+	        read -r -p "Type 'yes' to continue: " ans; \
+	        if [ "$$ans" = "yes" ]; then \
+	                git reset --hard origin/master; \
+	                echo "Done."; \
+	        else \
+	                echo "Aborted."; \
+	                exit 1; \
+	        fi \
 	fi
