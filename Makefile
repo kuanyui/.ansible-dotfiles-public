@@ -59,12 +59,16 @@ pull:  ## Git reset hard to origin/master (destructive, requires confirmation)
 	@git diff --stat master origin/master
 	@if git diff --quiet master origin/master; then \
 	        echo "Already up to date, nothing to do."; \
+	elif git diff --quiet && git diff --cached --quiet; then \
+	        echo "No changes in working tree, no staged changes in index - resetting without confirmation..."; \
+	        git checkout master; \
+	        git reset --hard origin/master; \
+	        echo "Done."; \
 	else \
 	        echo ""; \
-	        echo "WARNING: The above changes will be discarded from your local tree."; \
+	        echo "WARNING: You have uncommitted changes in working tree or staging area that will be lost after reset."; \
 	        read -r -p "Type 'yes' to continue: " ans; \
 	        if [ "$$ans" = "yes" ]; then \
-	                git stash; \
 	                git checkout master; \
 	                git reset --hard origin/master; \
 	                echo "Done."; \
