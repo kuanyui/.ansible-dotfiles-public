@@ -35,6 +35,13 @@ ansible.cfg       # project-level Ansible configuration (e.g. inventory path, de
 ### Prerequisites
 
 **Debian / Ubuntu**
+
+> [!NOTE]
+> On a fresh Debian install, your user may not be in the `sudo` group. If so, run the following first, then re-login:
+> ```bash
+> su -c "/usr/sbin/usermod -aG sudo $USER"
+> ```
+
 ```bash
 sudo apt install git ansible-core
 ```
