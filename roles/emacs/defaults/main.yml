@@ -1,0 +1,33 @@
+---
+install_emacs: true
+
+emacs_packages_debian:
+  - elpa-helm-core
+  - elpa-vertico
+  - elpa-marginalia
+  - elpa-orderless
+  - elpa-magit
+  - elpa-diff-hl
+  - elpa-rainbow-delimiters
+  - elpa-markdown-mode
+  - elpa-systemd
+  - elpa-company
+  - elpa-flycheck
+  - elpa-dockerfile-mode
+  - elpa-git-commit
+  - elpa-jinja2-mode
+  - elpa-projectile
+  # manually installed
+  # - elpa-undo-tree
+  # - elpa-yaml-mode
+
+emacs_packages_redhat:
+  - emacs-magit
+  - emacs-yaml-mode
+  - emacs-dockerfile-mode
+  - emacs-flycheck
+  - emacs-flycheck-pycheckers
+  - emacs-json-mode
+  - emacs-company-mode
+  # manually installed
+  # - emacs-undo-tree
