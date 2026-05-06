@@ -1,43 +1,54 @@
 # dotfiles (Public Version)
-## What is this?
 
-- A minimalized dotfile which contains no personal sensitive information.
-- Can be `git clone` without SSH key.
-- Trustable, can be safely installed for `root`.
-- Mainly tested on Debian 12 (bookworm), but should be also used by other distro.
-
-## Suitable Environment
-- `root` (`stow -t /root ...`) on localhost desktop.
-- Debian in VirtualBox
-- Debian on remote server.
+- No personal/sensitive information - safe to `git clone` without SSH key.
+- Safe to use for `root`.
+- Primarily tested on Debian 12 (bookworm), but should work on other distros.
 
 > [!NOTE]
-> For `.dotfiles` inside containers (Podman, Docker), please see [container-template](https://github.com/kuanyui/container-template) instead.
+> For dotfiles inside containers (Podman, Docker), see [container-template](https://github.com/kuanyui/container-template) instead.
 
-## How to install
+## Directory Structure
 
-Please `cd` to one of the following folder, then use GNU `stow -t TARGET PACKAGE_NAME` to install.
+Managed with Ansible roles, following Ansible conventions:
 
-- `/root/*` is for root.
-- `/user/*` is for non-privileged user.
+```
+roles/
+  dotfiles/
+    tasks/        # playbook logic
+    files/        # static files, implicit lookup path for the copy module
+    templates/    # Jinja2 templates, implicit lookup path for the template module
+    defaults/     # default variables
+playbooks/        # entry playbooks
+```
 
-# Quick Start For VM
-## Debian-Based
+## Installation
+
+### Prerequisites
+
+**Debian / Ubuntu**
 ```bash
-sudo apt install git stow zsh curl emacs
+sudo apt install git ansible-core
+```
 
-# user
-git clone https://github.com/kuanyui/.dotfiles-public.git
-cd .dotfiles-public/user
-rm ~/.bashrc
-stow -t ~/ zsh emacs bash zsh
-chsh -s /bin/zsh
+**Fedora**
+```bash
+sudo dnf install git ansible-core
+```
 
-# root (for security concering, separately clone the repo)
-su -
+**openSUSE**
+```bash
+sudo zypper install git ansible-core
+```
+
+**Arch Linux**
+```bash
+sudo pacman -S git ansible
+```
+
+### Quick Start
+
+```bash
 git clone https://github.com/kuanyui/.dotfiles-public.git
-cd ~/.dotfiles-public/root
-rm ~/.bashrc
-stow -t ~/ emacs bash zsh
-chsh -s /bin/zsh
+cd .dotfiles-public
+ansible-playbook playbooks/main.yml
 ```
