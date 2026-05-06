@@ -11,5 +11,6 @@
     target_group: root
     is_root: true
   roles:
+    - zsh
     - emacs
     - dotfiles

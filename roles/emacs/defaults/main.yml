@@ -1,6 +1,4 @@
 ---
-install_emacs: true
-
 emacs_packages_debian:
   - elpa-helm-core
   - elpa-vertico

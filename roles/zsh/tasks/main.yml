@@ -1,0 +1,23 @@
+---
+- name: Install zsh plugins
+  ansible.builtin.package:
+    name:
+      - zsh-syntax-highlighting
+      - zsh-autosuggestions
+    state: present
+  when: install_zsh
+
+- name: Set zsh as default shell for {{ target_user }}
+  ansible.builtin.user:
+    name: "{{ target_user }}"
+    shell: /bin/zsh
+  when: install_zsh
+
+- name: Set zsh as default shell for invoking user
+  ansible.builtin.user:
+    name: "{{ ansible_env.SUDO_USER }}"
+    shell: /bin/zsh
+  when:
+    - install_zsh
+    - ansible_env.SUDO_USER is defined
+    - ansible_env.SUDO_USER != target_user

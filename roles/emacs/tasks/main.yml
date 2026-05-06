@@ -12,6 +12,7 @@
     update_cache: true
     cache_valid_time: 3600
   when:
+    - install_emacs
     - ansible_os_family == 'Debian'
     - emacs_packages_debian | length > 0
 
@@ -20,5 +21,6 @@
     name: "{{ emacs_packages_redhat }}"
     state: present
   when:
+    - install_emacs
     - ansible_os_family == 'RedHat'
     - emacs_packages_redhat | length > 0

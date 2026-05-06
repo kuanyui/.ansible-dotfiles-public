@@ -12,13 +12,22 @@
 Managed with Ansible roles, following Ansible conventions:
 
 ```
+group_vars/
+  all.yml         # global variables (e.g. install_emacs, install_zsh)
 roles/
   dotfiles/
     tasks/        # playbook logic
     files/        # static files, implicit lookup path for the copy module
     templates/    # Jinja2 templates, implicit lookup path for the template module
     defaults/     # default variables
+  emacs/
+    tasks/
+    defaults/
+  zsh/
+    tasks/
 playbooks/        # entry playbooks
+inventory.ini     # defines hosts and groups (here: just localhost)
+ansible.cfg       # project-level Ansible configuration (e.g. inventory path, defaults)
 ```
 
 ## Installation

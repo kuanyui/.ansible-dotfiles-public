@@ -14,7 +14,9 @@
     owner: "{{ target_user }}"
     group: "{{ target_group }}"
     mode: "0755"
-  when: item.state == 'directory'
+  when:
+    - item.state == 'directory'
+    - install_emacs or not (item.path | regex_search('\.emacs\.d'))
   with_filetree: "{{ role_path }}/files/"
 
 - name: Deploy static dotfiles
@@ -26,7 +28,9 @@
     mode: preserve
     follow: false
     force: true
-  when: item.state == 'file'
+  when:
+    - item.state == 'file'
+    - install_emacs or not (item.path | regex_search('\.emacs\.d'))
   with_filetree: "{{ role_path }}/files/"
 
 - name: Create directories for templated dotfiles
@@ -36,7 +40,9 @@
     owner: "{{ target_user }}"
     group: "{{ target_group }}"
     mode: "0755"
-  when: item.state == 'directory'
+  when:
+    - item.state == 'directory'
+    - install_emacs or not (item.path | regex_search('\.emacs\.d'))
   with_filetree: "{{ role_path }}/templates/"
 
 - name: Deploy templated dotfiles
@@ -47,5 +53,8 @@
     group: "{{ target_group }}"
     mode: "0644"
     force: true
-  when: item.state == 'file'
+  when:
+    - item.state == 'file'
+    - install_emacs or not (item.path | regex_search('\.emacs\.d'))
+    - install_zsh or item.path != '.zshrc.j2'
   with_filetree: "{{ role_path }}/templates/"
