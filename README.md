@@ -43,22 +43,22 @@ ansible.cfg       # project-level Ansible configuration (e.g. inventory path, de
 > ```
 
 ```bash
-sudo apt install git ansible-core
+sudo apt install --yes git make ansible-core
 ```
 
 **Fedora**
 ```bash
-sudo dnf install git ansible-core
+sudo dnf install --assumeyes git make ansible-core
 ```
 
 **openSUSE**
 ```bash
-sudo zypper install git ansible-core
+sudo zypper install --no-confirm git make ansible-core
 ```
 
 **Arch Linux**
 ```bash
-sudo pacman -S git ansible
+sudo pacman -S --noconfirm git make ansible
 ```
 
 ### Quick Start
