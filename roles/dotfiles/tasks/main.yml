@@ -7,54 +7,87 @@
       - target_group != ""
     msg: "target_home, target_user, target_group must all be set by the calling playbook"
 
+- name: Find directories in static dotfiles
+  ansible.builtin.find:
+    paths: "{{ role_path }}/files"
+    file_type: directory
+    recurse: true
+    hidden: true
+  delegate_to: localhost
+  become: false
+  register: _dotfile_static_dirs
+
 - name: Create directories for static files
   ansible.builtin.file:
-    path: "{{ target_home }}/{{ item.path }}"
+    path: "{{ target_home }}{{ item.path | replace(role_path + '/files', '') }}"
     state: directory
     owner: "{{ target_user }}"
     group: "{{ target_group }}"
     mode: "0755"
-  when:
-    - item.state == 'directory'
-    - setup_emacs or not (item.path | regex_search('\.emacs\.d'))
-  with_filetree: "{{ role_path }}/files/"
+  loop: "{{ _dotfile_static_dirs.files }}"
+  when: setup_emacs or not (item.path | regex_search('\.emacs\.d'))
+
+- name: Find static dotfiles
+  ansible.builtin.find:
+    paths: "{{ role_path }}/files"
+    file_type: file
+    recurse: true
+    hidden: true
+  delegate_to: localhost
+  become: false
+  register: _dotfile_static_files
 
 - name: Deploy static dotfiles
   ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ target_home }}/{{ item.path }}"
+    src: "{{ item.path }}"
+    dest: "{{ target_home }}{{ item.path | replace(role_path + '/files', '') }}"
     owner: "{{ target_user }}"
     group: "{{ target_group }}"
     mode: preserve
     follow: false
     force: true
-  when:
-    - item.state == 'file'
-    - setup_emacs or not (item.path | regex_search('\.emacs\.d'))
-  with_filetree: "{{ role_path }}/files/"
+  loop: "{{ _dotfile_static_files.files }}"
+  when: setup_emacs or not (item.path | regex_search('\.emacs\.d'))
+
+- name: Find directories in templated dotfiles
+  ansible.builtin.find:
+    paths: "{{ role_path }}/templates"
+    file_type: directory
+    recurse: true
+    hidden: true
+  delegate_to: localhost
+  become: false
+  register: _dotfile_template_dirs
 
 - name: Create directories for templated dotfiles
   ansible.builtin.file:
-    path: "{{ target_home }}/{{ item.path }}"
+    path: "{{ target_home }}{{ item.path | replace(role_path + '/templates', '') }}"
     state: directory
     owner: "{{ target_user }}"
     group: "{{ target_group }}"
     mode: "0755"
-  when:
-    - item.state == 'directory'
-    - setup_emacs or not (item.path | regex_search('\.emacs\.d'))
-  with_filetree: "{{ role_path }}/templates/"
+  loop: "{{ _dotfile_template_dirs.files }}"
+  when: setup_emacs or not (item.path | regex_search('\.emacs\.d'))
+
+- name: Find templated dotfiles
+  ansible.builtin.find:
+    paths: "{{ role_path }}/templates"
+    file_type: file
+    recurse: true
+    hidden: true
+  delegate_to: localhost
+  become: false
+  register: _dotfile_template_files
 
 - name: Deploy templated dotfiles
   ansible.builtin.template:
-    src: "{{ item.src }}"
-    dest: "{{ target_home }}/{{ item.path | regex_replace('\\.j2$', '') }}"
+    src: "{{ item.path }}"
+    dest: "{{ target_home }}{{ item.path | replace(role_path + '/templates', '') | regex_replace('\.j2$', '') }}"
     owner: "{{ target_user }}"
     group: "{{ target_group }}"
     mode: "0644"
     force: true
+  loop: "{{ _dotfile_template_files.files }}"
   when:
-    - item.state == 'file'
     - setup_emacs or not (item.path | regex_search('\.emacs\.d'))
-    - setup_zsh or item.path != '.zshrc.j2'
-  with_filetree: "{{ role_path }}/templates/"
+    - setup_zsh or not (item.path | regex_search('\.zshrc\.j2$'))
