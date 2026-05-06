@@ -66,12 +66,12 @@ sudo pacman -S --noconfirm git make ansible
 ```bash
 git clone https://github.com/kuanyui/.dotfiles-public.git
 cd .dotfiles-public
-ansible-playbook playbooks/all.yml
+make apply-all
 ```
 
 This deploys dotfiles for both the current user and root. To deploy separately:
 
 ```bash
-ansible-playbook playbooks/user.yml   # current user only
-ansible-playbook playbooks/root.yml   # root only (requires sudo)
+make apply-user   # current user only
+make apply-root   # root only (requires sudo)
 ```
