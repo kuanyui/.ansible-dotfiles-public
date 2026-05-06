@@ -55,16 +55,17 @@ check-all:  ## Dry-run diff for both user and root
 	$(PLAYBOOK) --check --diff -K $(PLAYBOOKS)/all.yml
 
 pull:  ## Git reset hard to origin/master (destructive, requires confirmation)
-	@echo "This will run: git fetch origin && git reset --hard origin/master"
 	@git fetch origin
-	@git diff --stat HEAD origin/master
-	@if git diff --quiet HEAD origin/master; then \
+	@git diff --stat master origin/master
+	@if git diff --quiet master origin/master; then \
 	        echo "Already up to date, nothing to do."; \
 	else \
 	        echo ""; \
 	        echo "WARNING: The above changes will be discarded from your local tree."; \
 	        read -r -p "Type 'yes' to continue: " ans; \
 	        if [ "$$ans" = "yes" ]; then \
+	                git stash; \
+	                git checkout master; \
 	                git reset --hard origin/master; \
 	                echo "Done."; \
 	        else \
