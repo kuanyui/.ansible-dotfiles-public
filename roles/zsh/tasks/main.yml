@@ -1,4 +1,10 @@
 ---
+- name: Install zsh
+  ansible.builtin.package:
+    name: zsh
+    state: present
+  when: install_zsh
+
 - name: Install zsh plugins
   ansible.builtin.package:
     name:
