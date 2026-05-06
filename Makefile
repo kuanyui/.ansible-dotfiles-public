@@ -40,19 +40,19 @@ apply-user:  ## Deploy dotfiles to current user home (no sudo)
 	$(PLAYBOOK) $(PLAYBOOKS)/user.yml
 
 apply-root:  ## Deploy dotfiles to /root (needs sudo)
-	$(PLAYBOOK) -K $(PLAYBOOKS)/root.yml
+	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/root.yml
 
 apply-all:  ## Deploy dotfiles for both current user and root
-	$(PLAYBOOK) -K $(PLAYBOOKS)/all.yml
+	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/all.yml
 
 check-user:  ## Dry-run diff for user dotfiles
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/user.yml
 
 check-root:  ## Dry-run diff for root dotfiles
-	$(PLAYBOOK) --check --diff -K $(PLAYBOOKS)/root.yml
+	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/root.yml
 
 check-all:  ## Dry-run diff for both user and root
-	$(PLAYBOOK) --check --diff -K $(PLAYBOOKS)/all.yml
+	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/all.yml
 
 pull--amended:  ## Reset HEAD^^^, then pull (requires clean worktree - for squashing debug commits)
 	@if git diff --quiet && git diff --cached --quiet; then \
