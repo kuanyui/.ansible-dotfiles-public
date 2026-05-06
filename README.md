@@ -13,7 +13,7 @@ Managed with Ansible roles, following Ansible conventions:
 
 ```
 group_vars/
-  all.yml         # global variables (e.g. install_emacs, install_zsh)
+  all.yml         # global variables (e.g. setup_emacs, setup_zsh)
 roles/
   dotfiles/
     tasks/        # playbook logic

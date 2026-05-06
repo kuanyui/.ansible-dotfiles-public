@@ -1,9 +1,4 @@
 ---
-install_basic_tools: false
-install_sys_tools: true
-install_net_tools: true
-install_wayland_tools: false
-
 packages_basic_tools:
   common:
     - git
