@@ -66,7 +66,7 @@ pull--amended:  ## Reset HEAD^^^, then pull (requires clean worktree - for squas
 
 pull:  ## Git reset hard to origin/master (destructive, requires confirmation)
 	@git fetch origin
-	@git diff --stat master origin/master
+	@git --no-pager diff --stat master origin/master
 	@if git diff --quiet master origin/master; then \
 	        echo "Already up to date, nothing to do."; \
 	elif git diff --quiet && git diff --cached --quiet; then \
