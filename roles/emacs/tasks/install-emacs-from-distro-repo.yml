@@ -1,7 +1,7 @@
 ---
 - name: Install emacs
   ansible.builtin.package:
-    name: emacs
+    name: "{{ emacs_itself_package_name }}"
     state: present
   when: setup_emacs
 

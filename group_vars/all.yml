@@ -1,4 +1,5 @@
 ---
+has_gui_support: true
 setup_emacs: true
 setup_zsh: true
 packages_install_basic_tools: true

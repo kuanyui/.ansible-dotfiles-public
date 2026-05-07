@@ -1,4 +1,15 @@
 ---
+_emacs_itself_nox_package_names:
+  Debian: emacs-nox
+  RedHat: emacs-nw
+  Suse: emacs-nox
+
+emacs_itself_package_name: >-
+  {{ has_gui_support | ternary(
+    'emacs',
+    _emacs_itself_nox_package_names[ansible_os_family]
+  ) }}
+
 emacs_packages_debian:
   - elpa-helm-core
   - elpa-vertico
