@@ -1,15 +1,30 @@
 ---
+- name: Packages to install when packages_install_basic_tools is true
+  ansible.builtin.debug:
+    msg: "{{ packages_basic_tools.common }}"
+  when: packages_install_basic_tools
+
 - name: Install basic tools
   ansible.builtin.package:
     name: "{{ packages_basic_tools.common }}"
     state: present
   when: packages_install_basic_tools
 
+- name: Packages to install when packages_install_net_tools is true
+  ansible.builtin.debug:
+    msg: "{{ packages_net_tools.common }}"
+  when: packages_install_net_tools
+
 - name: Install network tools
   ansible.builtin.package:
     name: "{{ packages_net_tools.common }}"
     state: present
   when: packages_install_net_tools
+
+- name: Packages to install when packages_install_sys_tools is true
+  ansible.builtin.debug:
+    msg: "common={{ packages_sys_tools.common }} debian={{ packages_sys_tools.debian }} redhat={{ packages_sys_tools.redhat }}"
+  when: packages_install_sys_tools
 
 - name: Install system tools (common)
   ansible.builtin.package:
@@ -36,6 +51,11 @@
     - packages_install_sys_tools
     - ansible_os_family == 'RedHat'
     - packages_sys_tools.redhat | length > 0
+
+- name: Packages to install when packages_install_wayland_tools is true
+  ansible.builtin.debug:
+    msg: "{{ packages_wayland_tools.common }}"
+  when: packages_install_wayland_tools
 
 - name: Install Wayland tools
   ansible.builtin.package:
