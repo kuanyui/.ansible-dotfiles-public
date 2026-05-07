@@ -68,7 +68,13 @@ pull:  ## Git reset hard to origin/master (destructive, requires confirmation)
 	@git fetch origin
 	@git --no-pager diff --stat master origin/master
 	@if git diff --quiet master origin/master; then \
-	        echo "Already up to date, nothing to do."; \
+	        if ! git symbolic-ref HEAD > /dev/null 2>&1; then \
+	                echo "master is up to date, but HEAD is detached - switching to master..."; \
+	                git checkout master; \
+	                echo "Done."; \
+	        else \
+	                echo "Already up to date, nothing to do."; \
+	        fi; \
 	elif git diff --quiet && git diff --cached --quiet; then \
 	        echo "No changes in working tree, no staged changes in index - resetting without confirmation..."; \
 	        git checkout master; \
