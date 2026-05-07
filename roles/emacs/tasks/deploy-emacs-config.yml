@@ -1,0 +1,80 @@
+---
+- name: Find directories in static emacs config
+  ansible.builtin.find:
+    paths: "{{ role_path }}/files"
+    file_type: directory
+    recurse: true
+    hidden: true
+  delegate_to: localhost
+  become: false
+  register: _emacs_static_dirs
+
+- name: Create directories for static emacs config
+  ansible.builtin.file:
+    path: "{{ target_home }}{{ item.path | replace(role_path + '/files', '') }}"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+  loop: "{{ _emacs_static_dirs.files }}"
+
+- name: Find static emacs config files
+  ansible.builtin.find:
+    paths: "{{ role_path }}/files"
+    file_type: file
+    recurse: true
+    hidden: true
+  delegate_to: localhost
+  become: false
+  register: _emacs_static_files
+
+- name: Deploy static emacs config
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ target_home }}{{ item.path | replace(role_path + '/files', '') }}"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: preserve
+    follow: false
+    force: true
+  loop: "{{ _emacs_static_files.files }}"
+
+- name: Find directories in templated emacs config
+  ansible.builtin.find:
+    paths: "{{ role_path }}/templates"
+    file_type: directory
+    recurse: true
+    hidden: true
+  delegate_to: localhost
+  become: false
+  register: _emacs_template_dirs
+
+- name: Create directories for templated emacs config
+  ansible.builtin.file:
+    path: "{{ target_home }}{{ item.path | replace(role_path + '/templates', '') }}"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+  loop: "{{ _emacs_template_dirs.files }}"
+
+- name: Find templated emacs config files
+  ansible.builtin.find:
+    paths: "{{ role_path }}/templates"
+    file_type: file
+    recurse: true
+    hidden: true
+  delegate_to: localhost
+  become: false
+  register: _emacs_template_files
+
+- name: Deploy templated emacs config
+  ansible.builtin.template:
+    src: "{{ item.path }}"
+    dest: |-
+      {{ target_home }}{{ item.path | replace(role_path + '/templates', '') | regex_replace('\.j2$', '') }}
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0644"
+    force: true
+  loop: "{{ _emacs_template_files.files }}"

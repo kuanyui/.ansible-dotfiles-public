@@ -10,3 +10,5 @@
     is_root: false
   roles:
     - dotfiles
+    - emacs
+    - zsh

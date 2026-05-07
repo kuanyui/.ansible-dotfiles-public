@@ -1,26 +1,6 @@
 ---
-- name: Install emacs
-  ansible.builtin.package:
-    name: emacs
-    state: present
+- ansible.builtin.include_tasks: install-emacs-from-distro-repo.yml
+  when: is_root
+
+- ansible.builtin.include_tasks: deploy-emacs-config.yml
   when: setup_emacs
-
-- name: Install emacs packages (Debian)
-  ansible.builtin.apt:
-    name: "{{ emacs_packages_debian }}"
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-  when:
-    - setup_emacs
-    - ansible_os_family == 'Debian'
-    - emacs_packages_debian | length > 0
-
-- name: Install emacs packages (RedHat)
-  ansible.builtin.dnf:
-    name: "{{ emacs_packages_redhat }}"
-    state: present
-  when:
-    - setup_emacs
-    - ansible_os_family == 'RedHat'
-    - emacs_packages_redhat | length > 0

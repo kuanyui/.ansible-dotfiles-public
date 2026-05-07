@@ -25,7 +25,6 @@
     group: "{{ target_group }}"
     mode: "0755"
   loop: "{{ _dotfile_static_dirs.files }}"
-  when: setup_emacs or not (item.path | regex_search('\.emacs\.d'))
 
 - name: Find static dotfiles
   ansible.builtin.find:
@@ -47,7 +46,6 @@
     follow: false
     force: true
   loop: "{{ _dotfile_static_files.files }}"
-  when: setup_emacs or not (item.path | regex_search('\.emacs\.d'))
 
 - name: Find directories in templated dotfiles
   ansible.builtin.find:
@@ -67,7 +65,6 @@
     group: "{{ target_group }}"
     mode: "0755"
   loop: "{{ _dotfile_template_dirs.files }}"
-  when: setup_emacs or not (item.path | regex_search('\.emacs\.d'))
 
 - name: Find templated dotfiles
   ansible.builtin.find:
@@ -89,6 +86,3 @@
     mode: "0644"
     force: true
   loop: "{{ _dotfile_template_files.files }}"
-  when:
-    - setup_emacs or not (item.path | regex_search('\.emacs\.d'))
-    - setup_zsh or not (item.path | regex_search('\.zshrc\.j2$'))

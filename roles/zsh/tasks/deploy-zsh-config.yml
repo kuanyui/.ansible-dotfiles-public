@@ -1,0 +1,9 @@
+---
+- name: Deploy .zshrc
+  ansible.builtin.template:
+    src: .zshrc.j2
+    dest: "{{ target_home }}/.zshrc"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0644"
+    force: true
