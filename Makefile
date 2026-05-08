@@ -3,9 +3,9 @@ PLAYBOOKS := playbooks
 
 .PHONY: apply-user apply-root apply-all unstow check-user check-root check-all pull pull--amended help
 
-###
-### - Common targets: The following targets can be run in host, also inside container:
-###
+### -------------------------------------------------------------------------
+### Basic
+### -------------------------------------------------------------------------
 
 help:     ## Show this self-documented help message.
 	@# Some operating system / Linux distro may use `mawk` (e.g. Ubuntu), so prefer more portable `perl` over `awk`.
@@ -36,6 +36,11 @@ help:     ## Show this self-documented help message.
 unstow:  ## [Legacy] Remove existing stow symlinks from ~/ and /root
 	$(PLAYBOOK) -K $(PLAYBOOKS)/unstow.yml
 
+### -------------------------------------------------------------------------
+### Apply playbooks
+### -------------------------------------------------------------------------
+
+
 apply-user:  ## Deploy dotfiles to current user home (no sudo)
 	$(PLAYBOOK) $(PLAYBOOKS)/user.yml
 
@@ -48,6 +53,10 @@ apply-all:  ## Deploy dotfiles for both current user and root
 apply-podman:  ## Configure podman runtime (needs sudo for package install)
 	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/podman.yml
 
+### -------------------------------------------------------------------------
+### Dry-run (--check --diff)
+### -------------------------------------------------------------------------
+
 check-user:  ## Dry-run diff for user dotfiles
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/user.yml
 
@@ -59,6 +68,10 @@ check-all:  ## Dry-run diff for both user and root
 
 check-podman:  ## Dry-run diff for podman runtime config
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/podman.yml
+
+### -------------------------------------------------------------------------
+### Update this repo
+### -------------------------------------------------------------------------
 
 pull--amended:  ## Reset HEAD^^^, then pull (requires clean worktree - for squashing debug commits)
 	@if git diff --quiet && git diff --cached --quiet; then \

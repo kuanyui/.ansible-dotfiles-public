@@ -1,4 +1,4 @@
-# dotfiles (Public Version)
+# .ansible-dotfiles (Public Version)
 ## What is This?
 - A minimalized dotfiles managed via Ansible, for quickly setuping a fresh install of a Linux system, especially for either:
   - Virtual machine
@@ -16,26 +16,22 @@
 
 Managed with Ansible roles, following is Ansible directory structure conventions and what each role does:
 
-```
+```sh
+playbooks/           # entry playbooks (user.yml / root.yml / all.yml / podman.yml)
+inventory.ini        # hosts and groups (localhost only)
+ansible.cfg          # project-level Ansible config
 group_vars/
-  all.yml         # global variables (e.g. setup_emacs, setup_zsh)
-roles/
-  dotfiles/       # [ROLE] .zshrc, .bashrc, .emacs.d for ${USER} & root
-    tasks/          # playbook logic
-    files/          # static files, implicit lookup path for the copy module
-    templates/      # Jinja2 templates, implicit lookup path for the template module
-    defaults/       # default variables
-  emacs/          # [ROLE] install emacs & emacs packages via distros' package manager
-    tasks/
-    defaults/
-  packages/       # [ROLE] install some frequently used packages from distros' official repo
-    tasks/
-    defaults/
-  zsh/            # [ROLE] install zsh & zsh plugins via distros' package manager, then `chsh`
-    tasks/
-playbooks/        # entry playbooks
-inventory.ini     # defines hosts and groups (here: just localhost)
-ansible.cfg       # project-level Ansible configuration (e.g. inventory path, defaults)
+  └─ all.yml         # global variables (e.g. setup_emacs, setup_zsh, setup_podman)
+roles/               # roles
+  ├─ dotfiles/       # ├─ [ROLE] .zshrc, .bashrc, .tmux.conf for ${USER} & root
+  │   ├─ tasks/      # │   ├─ playbook logic
+  │   ├─ files/      # │   ├─ static files, implicit lookup path for the copy module
+  │   ├─ templates/  # │   ├─ jinja2 templates, implicit lookup path for the template module
+  │   └─ defaults/   # │   └─ default variables
+  ├─ emacs/          # ├─ [ROLE] install emacs & elisp packages via distro package manager
+  ├─ packages/       # ├─ [ROLE] frequently used packages from distro official repos
+  ├─ podman/         # ├─ [ROLE] configure podman OCI runtime (e.g. libkrun on openSUSE)
+  └─ zsh/            # └─ [ROLE] install zsh & plugins via distro package manager, then chsh
 ```
 
 ## Installation
@@ -72,8 +68,8 @@ sudo pacman -S --noconfirm git make ansible
 ### Quick Start
 
 ```bash
-git clone https://github.com/kuanyui/.dotfiles-public.git
-cd .dotfiles-public
+git clone https://github.com/kuanyui/.ansible-dotfiles.git
+cd .ansible-dotfiles
 make apply-all
 ```
 

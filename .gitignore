@@ -21,3 +21,5 @@ transient/
 **/.emacs.d/_tmp/
 **/.emacs.d/elpa/
 **/.emacs.d/tramp/
+.ansible-dotfiles/
+.ansible-dotfiles-personal/
