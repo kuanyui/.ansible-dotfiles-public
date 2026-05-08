@@ -45,6 +45,9 @@ apply-root:  ## Deploy dotfiles to /root (needs sudo)
 apply-all:  ## Deploy dotfiles for both current user and root
 	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/all.yml
 
+apply-podman:  ## Configure podman runtime (needs sudo for package install)
+	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/podman.yml
+
 check-user:  ## Dry-run diff for user dotfiles
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/user.yml
 
@@ -53,6 +56,9 @@ check-root:  ## Dry-run diff for root dotfiles
 
 check-all:  ## Dry-run diff for both user and root
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/all.yml
+
+check-podman:  ## Dry-run diff for podman runtime config
+	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/podman.yml
 
 pull--amended:  ## Reset HEAD^^^, then pull (requires clean worktree - for squashing debug commits)
 	@if git diff --quiet && git diff --cached --quiet; then \

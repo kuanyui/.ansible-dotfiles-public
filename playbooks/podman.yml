@@ -1,0 +1,10 @@
+---
+- name: Configure podman runtime
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    target_home: "{{ ansible_env.HOME }}"
+    target_user: "{{ ansible_user_id }}"
+  roles:
+    - podman

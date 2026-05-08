@@ -1,0 +1,8 @@
+---
+setup_podman: false
+podman_runtime: "default"  # "default" (remove managed config, let distro decide) | "libkrun"
+podman_runtime_scope: "user"  # "user" or "system"
+podman_libkrun_packages_suse:
+  - libkrun1
+  - libkrunfw
+  - crun
