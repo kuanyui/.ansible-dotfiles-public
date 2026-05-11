@@ -1,5 +1,5 @@
 ---
-- name: Check libkrun packages presence with rpm when setup_podman is true and podman_runtime is libkrun (openSUSE)
+- name: Check `libkrun` packages presence via `rpm -q` when `setup_podman` is true and `podman_runtime` is `libkrun` (openSUSE)
   ansible.builtin.command:
     argv: "{{ ['rpm', '-q'] + podman_libkrun_packages_suse }}"
   register: _libkrun_rpm_check
@@ -10,7 +10,7 @@
     - podman_runtime == 'libkrun'
     - ansible_facts['os_family'] == 'Suse'
 
-- name: Install missing libkrun packages via zypper when setup_podman is true and podman_runtime is libkrun (openSUSE)
+- name: Install missing `libkrun` packages via `zypper install` when `setup_podman` is true and `podman_runtime` is `libkrun` (openSUSE)
   ansible.builtin.command:
     argv: "{{ ['zypper', '--non-interactive', 'install'] + podman_libkrun_packages_suse }}"
   become: true
@@ -20,7 +20,7 @@
     - ansible_facts['os_family'] == 'Suse'
     - _libkrun_rpm_check.rc != 0
 
-- name: Query crun feature flags when setup_podman is true and podman_runtime is libkrun
+- name: Query `crun` feature flags via `crun --version` when `setup_podman` is true and `podman_runtime` is `libkrun`
   ansible.builtin.command: crun --version
   register: _crun_version
   changed_when: false
@@ -28,7 +28,7 @@
     - setup_podman
     - podman_runtime == 'libkrun'
 
-- name: Assert crun was built with +LIBKRUN when setup_podman is true and podman_runtime is libkrun
+- name: Assert `crun` was built with `+LIBKRUN` feature flag when `setup_podman` is true and `podman_runtime` is `libkrun`
   ansible.builtin.assert:
     that: "'+LIBKRUN' in _crun_version.stdout"
     fail_msg: >-
@@ -38,17 +38,17 @@
     - setup_podman
     - podman_runtime == 'libkrun'
 
-- name: Set containers.conf path when podman_runtime_scope is user
+- name: Set `_podman_containers_conf_path` to `~/.config/containers/containers.conf` when `podman_runtime_scope` is `user`
   ansible.builtin.set_fact:
     _podman_containers_conf_path: "{{ ansible_env.HOME }}/.config/containers/containers.conf"
   when: setup_podman and podman_runtime_scope == 'user'
 
-- name: Set containers.conf path when podman_runtime_scope is system
+- name: Set `_podman_containers_conf_path` to `/etc/containers/containers.conf` when `podman_runtime_scope` is `system`
   ansible.builtin.set_fact:
     _podman_containers_conf_path: "/etc/containers/containers.conf"
   when: setup_podman and podman_runtime_scope == 'system'
 
-- name: Create user containers config directory when setup_podman is true and podman_runtime_scope is user
+- name: Create `~/.config/containers/` directory when `setup_podman` is true and `podman_runtime_scope` is `user`
   ansible.builtin.file:
     path: "{{ ansible_env.HOME }}/.config/containers"
     state: directory
@@ -57,7 +57,7 @@
     - setup_podman
     - podman_runtime_scope == 'user'
 
-- name: Deploy containers.conf when setup_podman is true and podman_runtime is libkrun
+- name: Deploy `containers.conf` to `{{ _podman_containers_conf_path }}` when `setup_podman` is true and `podman_runtime` is `libkrun`
   ansible.builtin.template:
     src: containers.conf.j2
     dest: "{{ _podman_containers_conf_path }}"
@@ -67,7 +67,7 @@
     - setup_podman
     - podman_runtime == 'libkrun'
 
-- name: Query effective podman OCI runtime when setup_podman is true and podman_runtime is libkrun
+- name: Query effective `podman` OCI runtime via `podman info` when `setup_podman` is true and `podman_runtime` is `libkrun`
   ansible.builtin.command: podman info --format json
   register: _podman_info
   changed_when: false
@@ -75,7 +75,7 @@
     - setup_podman
     - podman_runtime == 'libkrun'
 
-- name: Assert podman is using krun as OCI runtime when setup_podman is true and podman_runtime is libkrun
+- name: Assert `podman` is using `krun` as effective OCI runtime when `setup_podman` is true and `podman_runtime` is `libkrun`
   ansible.builtin.assert:
     that: "(_podman_info.stdout | from_json).host.ociRuntime.name == 'krun'"
     fail_msg: >-
@@ -88,7 +88,7 @@
     - setup_podman
     - podman_runtime == 'libkrun'
 
-- name: Remove containers.conf to revert to distro default when setup_podman is true and podman_runtime is default
+- name: Remove `{{ _podman_containers_conf_path }}` to revert to distro default runtime when `setup_podman` is true and `podman_runtime` is `default`
   ansible.builtin.file:
     path: "{{ _podman_containers_conf_path }}"
     state: absent
