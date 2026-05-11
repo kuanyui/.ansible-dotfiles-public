@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all unstow check-user check-root check-all pull pull--amended help
+.PHONY: apply-user apply-root apply-all unstow check-user check-root check-all unapply-podman pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -52,6 +52,9 @@ apply-all:  ## Deploy dotfiles for both current user and root
 
 apply-podman:  ## Configure podman runtime (needs sudo for package install)
 	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/podman.yml
+
+unapply-podman:  ## Revert podman to distro default runtime (removes managed containers.conf; leaves libkrun packages installed)
+	$(PLAYBOOK) --ask-become-pass -e podman_runtime=default $(PLAYBOOKS)/podman.yml
 
 ### -------------------------------------------------------------------------
 ### Dry-run (--check --diff)

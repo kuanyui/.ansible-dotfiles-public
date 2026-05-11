@@ -4,6 +4,7 @@
   connection: local
   gather_facts: true
   vars:
+    setup_podman: true  # dedicated podman entry point - bypass the host-level opt-in gate
     target_home: "{{ ansible_env.HOME }}"
     target_user: "{{ ansible_user_id }}"
   roles:

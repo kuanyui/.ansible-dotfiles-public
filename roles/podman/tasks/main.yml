@@ -9,6 +9,24 @@
     - podman_runtime == 'libkrun'
     - ansible_os_family == 'Suse'
 
+- name: Query crun feature flags when setup_podman is true and podman_runtime is libkrun
+  ansible.builtin.command: crun --version
+  register: _crun_version
+  changed_when: false
+  when:
+    - setup_podman
+    - podman_runtime == 'libkrun'
+
+- name: Assert crun was built with +LIBKRUN when setup_podman is true and podman_runtime is libkrun
+  ansible.builtin.assert:
+    that: "'+LIBKRUN' in _crun_version.stdout"
+    fail_msg: >-
+      Installed crun lacks +LIBKRUN feature flag; podman cannot use the libkrun
+      handler even with libkrun1/libkrunfw installed. Check distro crun build.
+  when:
+    - setup_podman
+    - podman_runtime == 'libkrun'
+
 - name: Set containers.conf path when podman_runtime_scope is user
   ansible.builtin.set_fact:
     _podman_containers_conf_path: "{{ ansible_env.HOME }}/.config/containers/containers.conf"

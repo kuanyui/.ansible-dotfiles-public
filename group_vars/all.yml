@@ -7,5 +7,5 @@ packages_install_sys_tools: true
 packages_install_net_tools: true
 packages_install_wayland_tools: false
 setup_podman: false
-podman_runtime: "default"  # "default" | "libkrun"
+podman_runtime: "libkrun"  # "default" | "libkrun"
 podman_runtime_scope: "user"  # "user" | "system"
