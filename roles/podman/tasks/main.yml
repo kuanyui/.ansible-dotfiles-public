@@ -1,13 +1,24 @@
 ---
-- name: Install libkrun packages when setup_podman is true and podman_runtime is libkrun (openSUSE)
-  ansible.builtin.package:
-    name: "{{ podman_libkrun_packages_suse }}"
-    state: present
+- name: Check libkrun packages presence with rpm when setup_podman is true and podman_runtime is libkrun (openSUSE)
+  ansible.builtin.command:
+    argv: "{{ ['rpm', '-q'] + podman_libkrun_packages_suse }}"
+  register: _libkrun_rpm_check
+  changed_when: false
+  failed_when: false
+  when:
+    - setup_podman
+    - podman_runtime == 'libkrun'
+    - ansible_facts['os_family'] == 'Suse'
+
+- name: Install missing libkrun packages via zypper when setup_podman is true and podman_runtime is libkrun (openSUSE)
+  ansible.builtin.command:
+    argv: "{{ ['zypper', '--non-interactive', 'install'] + podman_libkrun_packages_suse }}"
   become: true
   when:
     - setup_podman
     - podman_runtime == 'libkrun'
-    - ansible_os_family == 'Suse'
+    - ansible_facts['os_family'] == 'Suse'
+    - _libkrun_rpm_check.rc != 0
 
 - name: Query crun feature flags when setup_podman is true and podman_runtime is libkrun
   ansible.builtin.command: crun --version
@@ -52,6 +63,27 @@
     dest: "{{ _podman_containers_conf_path }}"
     mode: "0644"
   become: "{{ (podman_runtime_scope == 'system') | bool }}"
+  when:
+    - setup_podman
+    - podman_runtime == 'libkrun'
+
+- name: Query effective podman OCI runtime when setup_podman is true and podman_runtime is libkrun
+  ansible.builtin.command: podman info --format json
+  register: _podman_info
+  changed_when: false
+  when:
+    - setup_podman
+    - podman_runtime == 'libkrun'
+
+- name: Assert podman is using krun as OCI runtime when setup_podman is true and podman_runtime is libkrun
+  ansible.builtin.assert:
+    that: "(_podman_info.stdout | from_json).host.ociRuntime.name == 'krun'"
+    fail_msg: >-
+      Expected podman OCI runtime to be 'krun' but it reports
+      '{{ (_podman_info.stdout | from_json).host.ociRuntime.name }}'.
+      Managed containers.conf at {{ _podman_containers_conf_path }} may not
+      have taken effect - check podman_runtime_scope or whether the playbook
+      ran as the intended user.
   when:
     - setup_podman
     - podman_runtime == 'libkrun'
