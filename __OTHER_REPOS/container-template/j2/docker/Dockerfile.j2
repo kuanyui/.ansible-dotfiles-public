@@ -1,7 +1,5 @@
-{% import "lib/macros.js" as macros %}
-
 # Remember to explicitly specify the platform...
-FROM --platform={{ ctx.image_platform }} {{ ctx.image_name }}
+FROM --platform={{ cfg.image_platform }} {{ cfg.image_name }}
 
 # Docker only. Don't supported by Podman / OCI.
 # SHELL ["/bin/bash", "-c"]
@@ -12,29 +10,29 @@ ENV TERM=xterm-256color
 # - Actually has no effect unless use `--publish-all (or `-P`) are used on `podman run`, which forwards to all exposed ports from random host ports.
 # - To forward specific ports from the host into the container, use `podman run --publish 58000:8000/tcp` instead.
 EXPOSE 8000/tcp
-{% if ctx.tz %}
-  {% macros.set_tz(ctx) %}
+{% if cfg.tz and cfg.distro in ['debian', 'ubuntu'] %}
+# - /etc/timezone is a human-readable text file.
+# - /etc/localtime is a symlink to a binary file in `/usr/share/zoneinfo/**`
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    export TZ="{{ cfg.tz }}" && \
+    echo "${TZ}" > /etc/timezone && \
+    ln -fs "/usr/share/zoneinfo/${TZ}" /etc/localtime && \
+    dpkg-reconfigure --frontend noninteractive tzdata
 {% endif %}
-
-{%
-  set pkgs = [
-    'less', 'curl', 'wget', 'make', 'git', 'mg', 'procps',
-    'zsh', 'zsh-syntax-highlighting', 'zsh-autosuggestions'
-    ]
-%}
-
 # Some basic packages
 # Some libraries are for rendering text in `magick`.
 RUN apt-get update && \
-    apt-get install --yes --no-install-recommends \
-    ca-certificates gpg \
-    less curl wget make git mg procps \
+    apt-get install --yes --no-install-recommends ca-certificates gpg \
+    nodejs npm \
+    less curl wget make git mg procps{% for pkg in cfg.distro_pkgs %} {{ pkg }}{% endfor %} \
     zsh zsh-syntax-highlighting zsh-autosuggestions
-
-{% if 'qemacs' in ctx.feature_presets %}
-  {% macros.install_qemacs(ctx) %}
+{% if 'qemacs' in cfg.feature_presets and cfg.distro in ['debian', 'ubuntu'] %}
+# Install qemacs
+RUN echo 'deb http://download.opensuse.org/repositories/home:/tarcjf/{{ cfg.obs_repo_name }}/ /' | tee /etc/apt/sources.list.d/home:tarcjf.list && \
+    curl -fsSL https://download.opensuse.org/repositories/home:tarcjf/{{ cfg.obs_repo_name }}/Release.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/home_tarcjf.gpg > /dev/null && \
+    apt update && \
+    apt install --yes --no-install-recommends qemacs
 {% endif %}
-
 # Create a non-previleged user (for safety), along with its home directory
 RUN groupadd -g 1000 user
 RUN useradd --create-home --shell /bin/bash --gid 1000 --uid 1000 user
@@ -62,16 +60,13 @@ RUN mkdir -p \
     ~/.local/share \
     ~/.local/lib \
     ~/.local/include
-
-{% if ctx.nodejs %}
+{% if cfg.nodejs %}
 RUN mkdir -p ~/.local/npm_global; \
     npm config set prefix ~/.local/npm_global
-
-{% if ctx.nodejs.npm_global_pkgs %}
-RUN npm install -g {{ ctx.nodejs.npm_global_pkgs | join(' ') }}
-{% endif %}
-{% endif %}
-
+{% if cfg.nodejs.npm_global_pkgs %}
+RUN npm install -g {{ cfg.nodejs.npm_global_pkgs | join(' ') }}
+{% endif -%}
+{% endif -%}
 # ------------------------------
 
 # Please remember to mount the project folder of host onto container via `podman run --volume=$HOST_PROJ_DIR:/home/user/MAIN`

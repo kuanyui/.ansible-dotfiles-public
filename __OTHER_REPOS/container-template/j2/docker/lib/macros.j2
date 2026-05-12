@@ -1,56 +1,44 @@
-{# -------- Time Zone ------- #}
+{#- ============================================================ Time Zone -#}
 
-{% macro set_tz(ctx) %}
-{% set tz = ctx.tz %}
-{% set distro = ctx.distro %}
-{% if tz %}
-# - /etc/localtime (Linux standard) is a symlink to a binary file in `/usr/share/zoneinfo/**`
-ENV TZ={{ tz }}
-{%- if distro in ['debian', 'ubuntu'] -%}
-# - /etc/timezone (Debian-only) is a human-readable text file.
-RUN export TZ="{{tz}}" && \
-    echo "{{tz}}" > /etc/timezone && \
-    ln -nfs "/usr/share/zoneinfo/{{tz}}" /etc/localtime && \
-    export DEBIAN_FRONTEND=noninteractive && \
+{%- macro set_tz(cfg) -%}
+{%- set tz = cfg.tz -%}
+{%- if cfg.distro in ['debian', 'ubuntu'] %}
+# - /etc/timezone is a human-readable text file.
+# - /etc/localtime is a symlink to a binary file in `/usr/share/zoneinfo/**`
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    export TZ="{{ tz }}" && \
+    echo "${TZ}" > /etc/timezone && \
+    ln -fs "/usr/share/zoneinfo/${TZ}" /etc/localtime && \
     dpkg-reconfigure --frontend noninteractive tzdata
-
-{%- elif distro in ['alpine'] -%}
+{%- elif cfg.distro == 'alpine' %}
 RUN apk add --no-cache tzdata && \
-    ln -nfs "/usr/share/zoneinfo/{{tz}}" /etc/localtime
-
-{%- elif distro in ['centos', 'fedora', 'rocky'] -%}
+    ln -nfs "/usr/share/zoneinfo/{{ tz }}" /etc/localtime
+{%- elif cfg.distro == 'redhat' %}
 RUN yum install -y tzdata && \
-    ln -nfs "/usr/share/zoneinfo/{{tz}}" /etc/localtime
-
-{%- elif distro in ['suse', 'opensuse', 'tumbleweed'] -%}
+    ln -nfs "/usr/share/zoneinfo/{{ tz }}" /etc/localtime
+{%- elif cfg.distro == 'suse' %}
 RUN zypper --non-interactive install --no-recommends timezone && \
-    ln -nfs "/usr/share/zoneinfo/{{tz}}" /etc/localtime
-
-{%- endif -%}
-{%- endif -%}
-{%- endmacro -%}
+    ln -nfs "/usr/share/zoneinfo/{{ tz }}" /etc/localtime
+{%- endif %}
+{%- endmacro %}
 
 
-{# ------------ QEmacs ------------- #}
-{% macro install_qemacs(ctx) %}
-{%- if ctx.distro in ['debian', 'ubuntu'] -%}
+{#- ============================================================== QEmacs -#}
+
+{%- macro install_qemacs(cfg) -%}
+{%- if cfg.distro in ['debian', 'ubuntu'] %}
 # Install qemacs
-RUN echo 'deb http://download.opensuse.org/repositories/home:/tarcjf/{{ ctx.obs_repo_name }}/ /' | tee /etc/apt/sources.list.d/home:tarcjf.list && \
-    curl -fsSL https://download.opensuse.org/repositories/home:tarcjf/{{ ctx.obs_repo_name }}/Release.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/home_tarcjf.gpg > /dev/null && \
+RUN echo 'deb http://download.opensuse.org/repositories/home:/tarcjf/{{ cfg.obs_repo_name }}/ /' | tee /etc/apt/sources.list.d/home:tarcjf.list && \
+    curl -fsSL https://download.opensuse.org/repositories/home:tarcjf/{{ cfg.obs_repo_name }}/Release.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/home_tarcjf.gpg > /dev/null && \
     apt update && \
     apt install --yes --no-install-recommends qemacs
-
-{%- elif ctx.distro in ['centos', 'fedora', 'rocky'] -%}
+{%- elif cfg.distro == 'redhat' %}
 # Install qemacs
-RUN dnf config-manager --add-repo https://download.opensuse.org/repositories/home:tarcjf/{{ ctx.obs_repo_name }}/home:tarcjf.repo && \
+RUN dnf config-manager --add-repo https://download.opensuse.org/repositories/home:tarcjf/{{ cfg.obs_repo_name }}/home:tarcjf.repo && \
     dnf install -y qemacs
-
-{%- elif distro in ['suse', 'opensuse', 'tumbleweed'] -%}
+{%- elif cfg.distro == 'suse' %}
 # Install qemacs
-RUN zypper ar -f https://download.opensuse.org/repositories/home:tarcjf/{{ ctx.obs_repo_name }}/home:tarcjf.repo && \
+RUN zypper ar -f https://download.opensuse.org/repositories/home:tarcjf/{{ cfg.obs_repo_name }}/home:tarcjf.repo && \
     zypper --non-interactive install --no-recommends qemacs
-
-{%- endif -%}
-{% endmacro %}
-
-
+{%- endif %}
+{%- endmacro %}
