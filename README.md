@@ -47,7 +47,7 @@ roles/               # roles
 > ```
 
 ```bash
-sudo apt install --yes git make ansible-core
+sudo apt install --yes --no-install-recommends git make ansible-core
 ```
 
 **Fedora / RHEL**
