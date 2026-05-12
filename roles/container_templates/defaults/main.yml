@@ -1,0 +1,50 @@
+---
+# `container_templates_output_dir` controls where the rendered Makefile +
+# Dockerfile + dotfiles trees land. Default points at the subrepo's `rendered/`
+# directory so that PR2 step 1 (j2 -> ansible migration) can be diff-validated
+# against the legacy `render_j2.py` output. A later commit will switch this to
+# `~/.local/share/container-templates/` once the install workflow is in place.
+container_templates_output_dir: "{{ playbook_dir }}/../__OTHER_REPOS/container-template/rendered"
+
+# `container_templates` enumerates every container variant this role renders.
+# Each entry mirrors the dataclass `ContainerConfig` in the legacy
+# `render_j2.py`; adding a new container only requires appending here.
+container_templates:
+  - name: claude
+    naming_prefix: claude_code
+    image_platform: linux/amd64
+    image_name: debian:12
+    tz: Asia/Taipei
+    distro_pkgs: []
+    feature_presets:
+      - zsh
+      - qemacs
+    nodejs:
+      npm_global_pkgs:
+        - "@anthropic-ai/claude-code"
+    agent:
+      target_suffix: claude
+      command: npx claude
+      display_name: claude-code
+    publish_ports: []
+
+  - name: codex
+    naming_prefix: codex
+    image_platform: linux/amd64
+    image_name: debian:12
+    tz: Asia/Taipei
+    distro_pkgs:
+      - links2
+    feature_presets:
+      - zsh
+      - qemacs
+    nodejs:
+      npm_global_pkgs:
+        - "@openai/codex"
+    agent:
+      target_suffix: codex
+      command: npx codex
+      display_name: codex
+      auth_note: "⚠️ Then use `links2` browser in container to finish the authentication to openai"
+    publish_ports:
+      - "1455:1455/tcp"

@@ -1,0 +1,65 @@
+---
+- name: Create per-container output dirs under `{{ container_templates_output_dir }}`
+  ansible.builtin.file:
+    path: "{{ container_templates_output_dir }}/{{ cfg.name }}/assets/dotfiles/{{ who }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ container_templates | product(['user', 'root']) | list }}"
+  loop_control:
+    loop_var: _pair
+    label: "{{ _pair.0.name }}/{{ _pair.1 }}"
+  vars:
+    cfg: "{{ _pair.0 }}"
+    who: "{{ _pair.1 }}"
+
+- name: Render README.md to `{{ container_templates_output_dir }}/<name>/README.md`
+  ansible.builtin.template:
+    src: README.md.j2
+    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/README.md"
+    mode: "0644"
+    trim_blocks: true
+    lstrip_blocks: false
+  loop: "{{ container_templates }}"
+  loop_control:
+    loop_var: cfg
+    label: "{{ cfg.name }}"
+
+- name: Render Makefile to `{{ container_templates_output_dir }}/<name>/Makefile`
+  ansible.builtin.template:
+    src: Makefile.j2
+    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/Makefile"
+    mode: "0644"
+    trim_blocks: false
+    lstrip_blocks: false
+  loop: "{{ container_templates }}"
+  loop_control:
+    loop_var: cfg
+    label: "{{ cfg.name }}"
+
+- name: Render Dockerfile to `{{ container_templates_output_dir }}/<name>/assets/Dockerfile`
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/assets/Dockerfile"
+    mode: "0644"
+    trim_blocks: false
+    lstrip_blocks: false
+  loop: "{{ container_templates }}"
+  loop_control:
+    loop_var: cfg
+    label: "{{ cfg.name }}"
+
+- name: Render `.zshrc` and `.bashrc` for `user` and `root` to `{{ container_templates_output_dir }}/<name>/assets/dotfiles/<who>/`
+  ansible.builtin.template:
+    src: "{{ shell }}rc.j2"
+    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/assets/dotfiles/{{ who }}/.{{ shell }}rc"
+    mode: "0644"
+    trim_blocks: true
+    lstrip_blocks: true
+  loop: "{{ container_templates | product(['user', 'root']) | product(['zsh', 'bash']) | list }}"
+  loop_control:
+    loop_var: _triple
+    label: "{{ _triple.0.0.name }}/{{ _triple.0.1 }}/.{{ _triple.1 }}rc"
+  vars:
+    cfg: "{{ _triple.0.0 }}"
+    who: "{{ _triple.0.1 }}"
+    shell: "{{ _triple.1 }}"

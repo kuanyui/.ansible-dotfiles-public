@@ -23,3 +23,5 @@ transient/
 **/.emacs.d/tramp/
 .ansible-dotfiles/
 .ansible-dotfiles-personal/
+__pycache__/
+*.pyc

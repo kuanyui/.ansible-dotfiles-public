@@ -1,0 +1,7 @@
+---
+- name: Render container templates via `roles/container_templates`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - container_templates
