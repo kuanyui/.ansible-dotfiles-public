@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Container app entry script for template `{{ cfg.name }}`. Invoked by the
+# launcher in `~/.local/bin/c-{{ cfg.name }}-<runtime>` (or directly for
+# advanced usage). All subcommands are host-side podman/docker operations.
+
+set -euo pipefail
+
+# ---------- Required vars (with smart defaults from launcher) ----------
+: "${PROJECT_NAME:?must be set (launcher sets it from cwd)}"
+: "${PROJECT_PATH:?must be set (launcher sets it from cwd)}"
+RUNTIME="${RUNTIME:-}"
+HIDE_GIT_DIR="${HIDE_GIT_DIR:-true}"
+HIDE_VSCODE_DIR="${HIDE_VSCODE_DIR:-true}"
+
+# ---------- Derived ----------
+PROJECT_PATH_ABS="$(realpath -- "$PROJECT_PATH")"
+[[ -d "$PROJECT_PATH_ABS" ]] || { echo "PROJECT_PATH '$PROJECT_PATH' ('$PROJECT_PATH_ABS') is not a directory" >&2; exit 1; }
+
+RUNTIME_OPT=()
+RUNTIME_SUFFIX=""
+if [[ -n "$RUNTIME" ]]; then
+    RUNTIME_OPT=(--runtime "$RUNTIME")
+    RUNTIME_SUFFIX="_$RUNTIME"
+fi
+
+IMAGE_NAME="{{ cfg.naming_prefix }}_image__${PROJECT_NAME}"
+CONTAINER_NAME="{{ cfg.naming_prefix }}_container__${PROJECT_NAME}${RUNTIME_SUFFIX}"
+ASSETS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/assets" && pwd)"
+
+# Hide-dir mask via dummy volume mount (other approaches noted below all failed)
+HIDE_DIRS_ARGS=()
+FAKE_MASK_DIR="/tmp/podman-mask-dir/$CONTAINER_NAME"
+if [[ "$HIDE_GIT_DIR" == "true" ]]; then
+    mkdir -p "$FAKE_MASK_DIR"
+    HIDE_DIRS_ARGS+=(--volume "$FAKE_MASK_DIR:/home/user/MAIN/.git:ro,Z")
+fi
+if [[ "$HIDE_VSCODE_DIR" == "true" ]]; then
+    mkdir -p "$FAKE_MASK_DIR"
+    HIDE_DIRS_ARGS+=(--volume "$FAKE_MASK_DIR:/home/user/MAIN/.vscode:ro,Z")
+fi
+
+# Engine detection (prefer podman)
+if command -v podman >/dev/null 2>&1; then
+    ENGINE=podman
+    USERNS_ARGS=(--userns=keep-id)
+else
+    ENGINE=docker
+    USERNS_ARGS=()
+fi
+
+# ---------- Subcommands ----------
+
+cmd_help() {
+    cat <<'EOF'
+Usage: <launcher> <subcommand>   (or `container.sh <subcommand>` for direct invocation)
+
+Subcommands:
+  help              Show this message
+  env               Print resolved environment for debug
+  init              build + run (idempotent build, fails if container exists)
+  build             Build image from Dockerfile in ./assets/
+  run               Create and start the container from the built image
+  rm                rmc + rmi (remove container then image)
+  rmc               Remove container (stops first)
+  rmi               Remove image (stops + removes container first)
+  start             Start an existing stopped container
+  stop              Stop running container
+  bash-user         exec /bin/bash as user `user`
+  bash-root         exec /bin/bash as user `root`
+  zsh-user          exec /bin/zsh as user `user`
+  zsh-root          exec /bin/zsh as user `root`
+EOF
+{% if cfg.agent %}
+    printf '  %-18sLaunch %s inside the container\n' '{{ cfg.agent.target_suffix }}' '{{ cfg.agent.display_name }}'
+{% endif %}
+    cat <<'EOF'
+
+Environment variables (override via `VAR=val <launcher> <subcommand>`):
+  PROJECT_NAME      (required, defaulted by launcher to basename of cwd)
+  PROJECT_PATH      (required, defaulted by launcher to cwd; mounted at /home/user/MAIN)
+  RUNTIME           OCI runtime for podman run (e.g. crun, krun). Empty = podman default.
+  HIDE_GIT_DIR      Default: true. Mask host's .git/ inside container.
+  HIDE_VSCODE_DIR   Default: true. Mask host's .vscode/ inside container.
+EOF
+}
+
+cmd_env() {
+    cat <<EOF
+========================================
+Container Engine:  $ENGINE
+========================================
+SCRIPT:            ${BASH_SOURCE[0]}
+ASSETS_DIR:        $ASSETS_DIR
+UID:               $(id -u)
+GID:               $(id -g)
+========================================
+PROJECT_NAME:      $PROJECT_NAME
+PROJECT_PATH:      $PROJECT_PATH ($PROJECT_PATH_ABS)
+RUNTIME:           $RUNTIME
+HIDE_GIT_DIR:      $HIDE_GIT_DIR
+========================================
+IMAGE_NAME:        $IMAGE_NAME
+CONTAINER_NAME:    $CONTAINER_NAME
+========================================
+EOF
+}
+
+cmd_build() {
+    echo "=============================================================="
+    echo "Build Image from Dockerfile"
+    echo "=============================================================="
+    BUILDAH_LAYERS=true "$ENGINE" build --tag "localhost/$IMAGE_NAME" "$ASSETS_DIR"
+}
+
+cmd_run() {
+    echo "=============================================================="
+    echo "Initialize the built Image into a running Container"
+    echo "=============================================================="
+    "$ENGINE" run --name "$CONTAINER_NAME" --detach --tty \
+        "${USERNS_ARGS[@]}" \
+        "${RUNTIME_OPT[@]}" \
+        --hostname "$CONTAINER_NAME" \
+{% for port in cfg.publish_ports %}
+        --publish "{{ port }}" \
+{% endfor %}
+        --volume "$PROJECT_PATH_ABS:/home/user/MAIN" \
+        "${HIDE_DIRS_ARGS[@]}" \
+        "localhost/$IMAGE_NAME"
+}
+
+cmd_init() { cmd_build; cmd_run; }
+
+cmd_start() { "$ENGINE" start "$CONTAINER_NAME"; }
+cmd_stop()  { "$ENGINE" stop "$CONTAINER_NAME" || true; }
+cmd_rmc()   { cmd_stop; "$ENGINE" container rm "$CONTAINER_NAME" || true; }
+cmd_rmi()   { cmd_rmc; "$ENGINE" image rm "localhost/$IMAGE_NAME" || true; }
+cmd_rm()    { cmd_rmc; cmd_rmi; }
+
+_exec_user() { cmd_start; "$ENGINE" exec --interactive --tty --user user --workdir /home/user/MAIN "$CONTAINER_NAME" "$@"; }
+_exec_root() { cmd_start; "$ENGINE" exec --interactive --tty --user root "$CONTAINER_NAME" "$@"; }
+
+cmd_bash_user() { _exec_user /bin/bash; }
+cmd_bash_root() { _exec_root /bin/bash; }
+cmd_zsh_user()  { _exec_user /bin/zsh; }
+cmd_zsh_root()  { _exec_root /bin/zsh; }
+
+{% if cfg.agent %}
+cmd_{{ cfg.agent.target_suffix | replace('-', '_') }}() { _exec_user {{ cfg.agent.command }}; }
+{% endif %}
+
+# ---------- Dispatch ----------
+sub="${1:-help}"; shift || true
+case "$sub" in
+    help|env|init|build|run|rm|rmi|rmc|start|stop|bash-user|bash-root|zsh-user|zsh-root{% if cfg.agent %}|{{ cfg.agent.target_suffix }}{% endif %})
+        # User-facing names keep hyphens; bash function names use underscores.
+        "cmd_${sub//-/_}" "$@"
+        ;;
+    *)
+        echo "Unknown subcommand: $sub" >&2
+        cmd_help >&2
+        exit 1
+        ;;
+esac

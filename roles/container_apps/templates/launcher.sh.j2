@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # {{ ansible_managed }}
 #
-# Launcher for container app `{{ app.template }}` running under OCI runtime
-# `{{ runtime }}`. Forwards args to the rendered Makefile, with PROJECT_NAME /
+# Launcher for container app `{{ app.template }}` under OCI runtime `{{ runtime }}`.
+# Forwards subcommand + args to the rendered container.sh, with PROJECT_NAME /
 # PROJECT_PATH defaulted from the current working directory.
 #
 # Examples:
-#   {{ app.template }}-{{ runtime }} c-init                      # from your project dir
-#   {{ app.template }}-{{ runtime }} PROJECT_NAME=foo c-init     # override one var
-#   {{ app.template }}-{{ runtime }} c-zsh-user
+#   c-{{ app.template }}-{{ runtime }} init                       # from your project dir
+#   c-{{ app.template }}-{{ runtime }} zsh-user
+#   PROJECT_NAME=foo c-{{ app.template }}-{{ runtime }} init      # override one var
 
-exec make -C "{{ container_apps_install_root }}/{{ app.template }}" \
-    RUNTIME={{ runtime }} \
-    PROJECT_NAME="${PROJECT_NAME:-$(basename "$PWD")}" \
-    PROJECT_PATH="${PROJECT_PATH:-$PWD}" \
-    "$@"
+export RUNTIME="{{ runtime }}"
+export PROJECT_NAME="${PROJECT_NAME:-$(basename "$PWD")}"
+export PROJECT_PATH="${PROJECT_PATH:-$PWD}"
+
+exec "{{ container_apps_install_root }}/{{ app.template }}/container.sh" "$@"

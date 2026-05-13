@@ -15,8 +15,8 @@ apps:
     runtimes: {{ app.runtimes | to_json }}
     variants:
 {% for runtime in app.runtimes %}
-      - launcher_name: {{ app.template }}-{{ runtime }}
-        launcher_path: {{ container_apps_bin_dir }}/{{ app.template }}-{{ runtime }}
-        completion_zsh: {{ container_apps_zsh_completion_dir }}/_{{ app.template }}-{{ runtime }}
+      - launcher_name: c-{{ app.template }}-{{ runtime }}
+        launcher_path: {{ container_apps_bin_dir }}/c-{{ app.template }}-{{ runtime }}
+        completion_zsh: {{ container_apps_zsh_completion_dir }}/_c-{{ app.template }}-{{ runtime }}
 {% endfor %}
 {% endfor %}

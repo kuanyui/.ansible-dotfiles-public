@@ -1,11 +1,14 @@
 #compdef {{ launcher_name }}
 # {{ ansible_managed }}
 #
-# zsh completion for `{{ launcher_name }}`. Parses make targets from the
-# rendered Makefile at install time, so the completion list always reflects
-# the current Makefile contents (including help text after `## `).
+# zsh completion for `{{ launcher_name }}`. Parses subcommands from the case
+# statement in container.sh - any change to the dispatch arm picks up
+# automatically on next shell start.
 
-local makefile="{{ container_apps_install_root }}/{{ app.template }}/Makefile"
-local -a targets
-targets=(${(f)"$(perl -ne 'print "$1:$2\n" if /^([a-zA-Z0-9_-]+):.*?## (.*)$/' "$makefile" 2>/dev/null)"})
-_describe 'make target' targets
+local script="{{ container_apps_install_root }}/{{ app.template }}/container.sh"
+local -a subs
+# The dispatch line looks like:
+#   help|env|init|build|run|rm|...|zsh-root)
+# Pull the first such alternation list out of the script.
+subs=(${(s.|.)"$(perl -ne 'if (/^\s*([a-zA-Z_][\w-]*(\|[a-zA-Z_][\w-]*)+)\)/) { print $1; exit }' "$script" 2>/dev/null)"})
+_describe 'subcommand' subs

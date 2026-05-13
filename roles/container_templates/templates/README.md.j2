@@ -7,18 +7,24 @@ Use `{{ cfg.agent.display_name }}` in Podman or Docker container, to avoid poten
 - `git` is not configured on purpose, to prevent `{{ cfg.agent.display_name }}` from doing someting dangerous.
 
 > [!NOTE]
-> Examples (rendered location is `~/.local/share/container-templates/{{ cfg.name }}/`):
+> Use via the installed launchers (rendered tree lives at `~/.local/share/container-templates/{{ cfg.name }}/`):
 > ```sh
-> # view help
-> make -C ~/.local/share/container-templates/{{ cfg.name }} PROJECT_NAME=my_project PROJECT_PATH=~/my_project
+> # run the {{ cfg.agent.display_name }} agent under default runtime (crun)
+> cd ~/my_project && c-{{ cfg.name }}-crun {{ cfg.agent.target_suffix }}
 >
-> # build image
-> make -C ~/.local/share/container-templates/{{ cfg.name }} PROJECT_NAME=my_project PROJECT_PATH=~/my_project c-build
+> # same, but inside a libkrun microVM (stronger isolation, no `podman exec`)
+> cd ~/my_project && c-{{ cfg.name }}-krun {{ cfg.agent.target_suffix }}
 >
-> # run {{ cfg.agent.display_name }} in container
-> make -C ~/.local/share/container-templates/{{ cfg.name }} PROJECT_NAME=my_project PROJECT_PATH=~/my_project c-{{ cfg.agent.target_suffix }}
+> # first-time setup (build image + start container)
+> cd ~/my_project && c-{{ cfg.name }}-crun init
+>
+> # get a shell inside the container
+> c-{{ cfg.name }}-crun zsh-user
+>
+> # advanced: invoke container.sh directly (skip launcher)
+> PROJECT_NAME=foo PROJECT_PATH=~/foo RUNTIME=crun \
+>     ~/.local/share/container-templates/{{ cfg.name }}/container.sh init
 {% if cfg.agent.auth_note is defined %}
->
 >```
 >
 > **{{ cfg.agent.auth_note }}**

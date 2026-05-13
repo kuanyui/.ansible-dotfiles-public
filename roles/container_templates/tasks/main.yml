@@ -24,12 +24,12 @@
     loop_var: cfg
     label: "{{ cfg.name }}"
 
-- name: Render Makefile to `{{ container_templates_output_dir }}/<name>/Makefile`
+- name: Render container.sh to `{{ container_templates_output_dir }}/<name>/container.sh`
   ansible.builtin.template:
-    src: Makefile.j2
-    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/Makefile"
-    mode: "0644"
-    trim_blocks: false
+    src: container.sh.j2
+    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/container.sh"
+    mode: "0755"
+    trim_blocks: true
     lstrip_blocks: false
   loop: "{{ container_templates }}"
   loop_control:

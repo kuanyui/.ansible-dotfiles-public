@@ -17,11 +17,11 @@
 - name: Install launcher script `~/.local/bin/<template>-<runtime>`
   ansible.builtin.template:
     src: launcher.sh.j2
-    dest: "{{ container_apps_bin_dir }}/{{ item.0.template }}-{{ item.1 }}"
+    dest: "{{ container_apps_bin_dir }}/c-{{ item.0.template }}-{{ item.1 }}"
     mode: "0755"
   loop: "{{ container_apps | subelements('runtimes') }}"
   loop_control:
-    label: "{{ item.0.template }}-{{ item.1 }}"
+    label: "c-{{ item.0.template }}-{{ item.1 }}"
   vars:
     app: "{{ item.0 }}"
     runtime: "{{ item.1 }}"
@@ -29,15 +29,15 @@
 - name: Install zsh completion `~/.local/share/zsh/site-functions/_<template>-<runtime>`
   ansible.builtin.template:
     src: _launcher.zsh.j2
-    dest: "{{ container_apps_zsh_completion_dir }}/_{{ item.0.template }}-{{ item.1 }}"
+    dest: "{{ container_apps_zsh_completion_dir }}/_c-{{ item.0.template }}-{{ item.1 }}"
     mode: "0644"
   loop: "{{ container_apps | subelements('runtimes') }}"
   loop_control:
-    label: "_{{ item.0.template }}-{{ item.1 }}"
+    label: "_c-{{ item.0.template }}-{{ item.1 }}"
   vars:
     app: "{{ item.0 }}"
     runtime: "{{ item.1 }}"
-    launcher_name: "{{ item.0.template }}-{{ item.1 }}"
+    launcher_name: "c-{{ item.0.template }}-{{ item.1 }}"
 
 - name: Write install manifest `{{ container_apps_install_root }}/.ansible-manifest.yml`
   ansible.builtin.template:
