@@ -1,0 +1,60 @@
+---
+- name: Render base templates into `{{ container_apps_install_root }}` via `roles/container_templates`
+  ansible.builtin.include_role:
+    name: container_templates
+  vars:
+    container_templates_output_dir: "{{ container_apps_install_root }}"
+
+- name: Ensure `bin_dir`, `zsh_completion_dir`, `bash_completion_dir` exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ container_apps_bin_dir }}"
+    - "{{ container_apps_zsh_completion_dir }}"
+    - "{{ container_apps_bash_completion_dir }}"
+
+- name: Install launcher script `{{ container_apps_bin_dir }}/c-<template>-<runtime>`
+  ansible.builtin.template:
+    src: launcher.sh.j2
+    dest: "{{ container_apps_bin_dir }}/c-{{ item.0.template }}-{{ item.1 }}"
+    mode: "0755"
+  loop: "{{ container_apps | subelements('runtimes') }}"
+  loop_control:
+    label: "c-{{ item.0.template }}-{{ item.1 }}"
+  vars:
+    app: "{{ item.0 }}"
+    runtime: "{{ item.1 }}"
+
+- name: Install zsh completion `{{ container_apps_zsh_completion_dir }}/_c-<template>-<runtime>`
+  ansible.builtin.template:
+    src: _launcher.zsh.j2
+    dest: "{{ container_apps_zsh_completion_dir }}/_c-{{ item.0.template }}-{{ item.1 }}"
+    mode: "0644"
+  loop: "{{ container_apps | subelements('runtimes') }}"
+  loop_control:
+    label: "_c-{{ item.0.template }}-{{ item.1 }}"
+  vars:
+    app: "{{ item.0 }}"
+    runtime: "{{ item.1 }}"
+    launcher_name: "c-{{ item.0.template }}-{{ item.1 }}"
+
+- name: Install bash completion `{{ container_apps_bash_completion_dir }}/c-<template>-<runtime>`
+  ansible.builtin.template:
+    src: _launcher.bash.j2
+    dest: "{{ container_apps_bash_completion_dir }}/c-{{ item.0.template }}-{{ item.1 }}"
+    mode: "0644"
+  loop: "{{ container_apps | subelements('runtimes') }}"
+  loop_control:
+    label: "c-{{ item.0.template }}-{{ item.1 }}"
+  vars:
+    app: "{{ item.0 }}"
+    runtime: "{{ item.1 }}"
+    launcher_name: "c-{{ item.0.template }}-{{ item.1 }}"
+
+- name: Write install manifest `{{ container_apps_install_root }}/.ansible-manifest.yml`
+  ansible.builtin.template:
+    src: manifest.yml.j2
+    dest: "{{ container_apps_install_root }}/.ansible-manifest.yml"
+    mode: "0644"

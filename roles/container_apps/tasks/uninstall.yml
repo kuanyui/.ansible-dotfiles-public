@@ -1,0 +1,48 @@
+---
+- name: Check whether install manifest `{{ container_apps_install_root }}/.ansible-manifest.yml` exists
+  ansible.builtin.stat:
+    path: "{{ container_apps_install_root }}/.ansible-manifest.yml"
+  register: _container_apps_manifest_stat
+
+- name: Skip uninstall - no manifest at `{{ container_apps_install_root }}/.ansible-manifest.yml` (already uninstalled?)
+  ansible.builtin.meta: end_play
+  when: not _container_apps_manifest_stat.stat.exists
+
+- name: Slurp install manifest
+  ansible.builtin.slurp:
+    src: "{{ container_apps_install_root }}/.ansible-manifest.yml"
+  register: _container_apps_manifest_raw
+
+- name: Parse install manifest
+  ansible.builtin.set_fact:
+    _container_apps_manifest: "{{ _container_apps_manifest_raw.content | b64decode | from_yaml }}"
+
+- name: Show recorded `install_root` / `bin_dir` / `zsh_completion_dir` / `bash_completion_dir` before removal
+  ansible.builtin.debug:
+    var: _container_apps_manifest
+
+- name: Collect all per-variant absolute paths (launcher + zsh + bash completions) from manifest
+  ansible.builtin.set_fact:
+    _container_apps_paths_to_remove: >-
+      {{
+        _container_apps_manifest.apps
+        | map(attribute='variants') | flatten
+        | map(attribute='launcher_path') | list
+        + _container_apps_manifest.apps
+        | map(attribute='variants') | flatten
+        | map(attribute='completion_zsh') | list
+        + _container_apps_manifest.apps
+        | map(attribute='variants') | flatten
+        | map(attribute='completion_bash') | list
+      }}
+
+- name: Remove launchers and completion files recorded in manifest
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _container_apps_paths_to_remove }}"
+
+- name: Remove `install_root` `{{ _container_apps_manifest.install_root }}` recursively
+  ansible.builtin.file:
+    path: "{{ _container_apps_manifest.install_root }}"
+    state: absent

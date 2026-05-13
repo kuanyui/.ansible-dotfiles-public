@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+#
+# bash completion for `{{ launcher_name }}`. Loaded on demand by the
+# bash-completion package's dynamic loader when the user first tab-completes
+# `{{ launcher_name }}`. Same parsing strategy as the zsh counterpart.
+
+_{{ launcher_name | replace('-', '_') }}() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local script="{{ container_apps_install_root }}/{{ app.template }}/container.sh"
+    local subs
+    subs="$(perl -ne 'if (/^\s*([a-zA-Z_][\w-]*(\|[a-zA-Z_][\w-]*)+)\)/) { print $1; exit }' "$script" 2>/dev/null | tr '|' ' ')"
+    mapfile -t COMPREPLY < <(compgen -W "$subs" -- "$cur")
+}
+complete -F _{{ launcher_name | replace('-', '_') }} {{ launcher_name }}

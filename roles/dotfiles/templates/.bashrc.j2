@@ -61,6 +61,17 @@ bind 'TAB:menu-complete'
 bind '"\e[Z":menu-complete-backward'
 bind 'set show-all-if-ambiguous on'
 
+# Source bash-completion if available; its dynamic loader will then auto-load
+# completion files from `~/.local/share/bash-completion/completions/<cmd>` on
+# first tab-completion of `<cmd>` (used by ansible-managed launchers).
+if ! shopt -oq posix; then
+    if [ -f /usr/share/bash-completion/bash_completion ]; then
+        . /usr/share/bash-completion/bash_completion
+    elif [ -f /etc/bash_completion ]; then
+        . /etc/bash_completion
+    fi
+fi
+
 # completion for Makefile target
 complete -W "\`grep -oE '^[a-zA-Z0-9_.-]+:([^=]|$)' ?akefile | sed 's/[^a-zA-Z0-9_.-]*$//'\`" make
 

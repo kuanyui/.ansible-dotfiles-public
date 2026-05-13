@@ -38,6 +38,11 @@ setopt share_history          # share command history data
 ### ============================================
 ### Completions
 ### ============================================
+# Pick up user-installed completion functions (e.g. ansible-managed launchers
+# under `~/.local/share/container-templates/` shipping per-launcher `_*` files).
+# Must run BEFORE `compinit` for new fpath entries to be scanned.
+fpath=(${HOME}/.local/share/zsh/site-functions $fpath)
+
 # I don't know why this `compinit` is not required in
 # `debian:bookworm` Docker image, but required in a real Debian
 # Bookworm (debian 12) installation...

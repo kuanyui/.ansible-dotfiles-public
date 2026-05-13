@@ -1,54 +1,11 @@
 ---
-- name: Render base templates into `{{ container_apps_install_root }}` via `roles/container_templates`
-  ansible.builtin.include_role:
-    name: container_templates
-  vars:
-    container_templates_output_dir: "{{ container_apps_install_root }}"
+- name: Validate `container_apps_state` is `present` or `absent`
+  ansible.builtin.assert:
+    that: container_apps_state in ['present', 'absent']
+    fail_msg: "container_apps_state must be `present` or `absent`, got `{{ container_apps_state }}`."
 
-- name: Ensure `~/.local/bin/` and `~/.local/share/zsh/site-functions/` exist
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    mode: "0755"
-  loop:
-    - "{{ container_apps_bin_dir }}"
-    - "{{ container_apps_zsh_completion_dir }}"
+- ansible.builtin.include_tasks: install.yml
+  when: container_apps_state == 'present'
 
-- name: Install launcher script `~/.local/bin/<template>-<runtime>`
-  ansible.builtin.template:
-    src: launcher.sh.j2
-    dest: "{{ container_apps_bin_dir }}/c-{{ item.0.template }}-{{ item.1 }}"
-    mode: "0755"
-  loop: "{{ container_apps | subelements('runtimes') }}"
-  loop_control:
-    label: "c-{{ item.0.template }}-{{ item.1 }}"
-  vars:
-    app: "{{ item.0 }}"
-    runtime: "{{ item.1 }}"
-
-- name: Install zsh completion `~/.local/share/zsh/site-functions/_<template>-<runtime>`
-  ansible.builtin.template:
-    src: _launcher.zsh.j2
-    dest: "{{ container_apps_zsh_completion_dir }}/_c-{{ item.0.template }}-{{ item.1 }}"
-    mode: "0644"
-  loop: "{{ container_apps | subelements('runtimes') }}"
-  loop_control:
-    label: "_c-{{ item.0.template }}-{{ item.1 }}"
-  vars:
-    app: "{{ item.0 }}"
-    runtime: "{{ item.1 }}"
-    launcher_name: "c-{{ item.0.template }}-{{ item.1 }}"
-
-- name: Write install manifest `{{ container_apps_install_root }}/.ansible-manifest.yml`
-  ansible.builtin.template:
-    src: manifest.yml.j2
-    dest: "{{ container_apps_install_root }}/.ansible-manifest.yml"
-    mode: "0644"
-
-- name: Reminder to add `{{ container_apps_zsh_completion_dir }}` to zsh `fpath`
-  ansible.builtin.debug:
-    msg: |
-      For zsh tab completion of installed launchers, add this to ~/.zshrc:
-        fpath=({{ container_apps_zsh_completion_dir }} $fpath)
-        autoload -Uz compinit && compinit
-      (PR3 will automate this via `roles/zsh`.)
+- ansible.builtin.include_tasks: uninstall.yml
+  when: container_apps_state == 'absent'
