@@ -25,11 +25,18 @@ PROJECT_NAME =
 ## (Required) Project folder path in host. This folder will be mounted into `/home/user/MAIN` in container.
 PROJECT_PATH =
 
+## (Optional) OCI runtime for `podman run` (e.g. `crun`, `krun`). Empty = let podman pick (typically `crun` on modern distros).
+## When set, `CONTAINER_NAME` is suffixed with `_$(RUNTIME)` so multiple runtime variants can coexist for the same project.
+RUNTIME ?=
+
+_RUNTIME_OPT := $(if $(RUNTIME),--runtime $(RUNTIME),)
+_RUNTIME_SUFFIX := $(if $(RUNTIME),_$(RUNTIME),)
+
 ## (Optional) This will becomes the name of the built Image. (default: `{{ cfg.naming_prefix }}_image__${PROJECT_NAME}`)
 IMAGE_NAME = {{ cfg.naming_prefix }}_image__$(PROJECT_NAME)
 
-## (Optional) This will becomes the name of the created Container. (default: `{{ cfg.naming_prefix }}_container__${PROJECT_NAME}`)
-CONTAINER_NAME = {{ cfg.naming_prefix }}_container__$(PROJECT_NAME)
+## (Optional) This will becomes the name of the created Container. (default: `{{ cfg.naming_prefix }}_container__${PROJECT_NAME}${_RUNTIME_SUFFIX}`)
+CONTAINER_NAME = {{ cfg.naming_prefix }}_container__$(PROJECT_NAME)$(_RUNTIME_SUFFIX)
 
 ## (Optional) Hide `.git/` directory inside container. (default: `true`)
 HIDE_GIT_DIR ?= true
@@ -214,6 +221,7 @@ c-env:   ## [Container] Display enviromnent variables for podman / docker
 	@echo "========================================"
 	@echo "PROJECT_NAME:      ${PROJECT_NAME}"
 	@echo "PROJECT_PATH:      ${PROJECT_PATH} (${PROJECT_PATH_ABS})"
+	@echo "RUNTIME:           ${RUNTIME}"
 	@echo "HIDE_GIT_DIR:      ${HIDE_GIT_DIR}"
 	@echo "========================================"
 	@echo "IMAGE_NAME:        ${IMAGE_NAME}"
@@ -238,6 +246,7 @@ c-run:     ## [Container] Initialize the built Image into a running Container
 	@echo "=============================================================="
 	$(_CONTAINER_ENGINE_CMD) run --name ${CONTAINER_NAME} --detach --tty \
 	    $(_CONTAINER_ENGINE_RUN_ARGS) \
+	    $(_RUNTIME_OPT) \
 	    --hostname ${CONTAINER_NAME} \
 {%- for port in cfg.publish_ports %}
 	    --publish {{ port }} \

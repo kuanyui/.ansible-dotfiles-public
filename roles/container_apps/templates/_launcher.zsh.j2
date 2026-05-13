@@ -1,0 +1,11 @@
+#compdef {{ launcher_name }}
+# {{ ansible_managed }}
+#
+# zsh completion for `{{ launcher_name }}`. Parses make targets from the
+# rendered Makefile at install time, so the completion list always reflects
+# the current Makefile contents (including help text after `## `).
+
+local makefile="{{ container_apps_install_root }}/{{ app.template }}/Makefile"
+local -a targets
+targets=(${(f)"$(perl -ne 'print "$1:$2\n" if /^([a-zA-Z0-9_-]+):.*?## (.*)$/' "$makefile" 2>/dev/null)"})
+_describe 'make target' targets

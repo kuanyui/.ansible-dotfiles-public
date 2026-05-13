@@ -1,0 +1,7 @@
+---
+- name: Install container apps (launchers + completions) via `roles/container_apps`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - container_apps

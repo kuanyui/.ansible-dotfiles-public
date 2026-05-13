@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+#
+# Manifest of files installed by `roles/container_apps`. PR3's uninstall
+# playbook reads this to know exactly which launcher / completion paths to
+# remove from outside `install_root`. Hand-editing is pointless: the next
+# `ansible-playbook playbooks/container_apps.yml` run overwrites it.
+managed_by: ansible
+source_role: container_apps
+install_root: {{ container_apps_install_root }}
+bin_dir: {{ container_apps_bin_dir }}
+zsh_completion_dir: {{ container_apps_zsh_completion_dir }}
+apps:
+{% for app in container_apps %}
+  - template: {{ app.template }}
+    runtimes: {{ app.runtimes | to_json }}
+    variants:
+{% for runtime in app.runtimes %}
+      - launcher_name: {{ app.template }}-{{ runtime }}
+        launcher_path: {{ container_apps_bin_dir }}/{{ app.template }}-{{ runtime }}
+        completion_zsh: {{ container_apps_zsh_completion_dir }}/_{{ app.template }}-{{ runtime }}
+{% endfor %}
+{% endfor %}

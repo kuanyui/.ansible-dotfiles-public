@@ -1,0 +1,27 @@
+---
+# Where the rendered Makefile + Dockerfile + dotfiles trees live. Shared with
+# `roles/container_templates` via `include_role` (this role injects this path
+# as `container_templates_output_dir`).
+container_apps_install_root: "{{ ansible_env.HOME }}/.local/share/container-templates"
+
+# Where to drop launcher scripts. Must be on the user's PATH for the launcher
+# names (e.g. `claude-crun`) to be invocable.
+container_apps_bin_dir: "{{ ansible_env.HOME }}/.local/bin"
+
+# Where to drop zsh completion files. Must be in zsh `fpath` for `compinit`
+# to pick them up. The user is responsible for adding this dir to fpath in
+# their host `~/.zshrc` (PR3 will automate this via `roles/zsh`).
+container_apps_zsh_completion_dir: "{{ ansible_env.HOME }}/.local/share/zsh/site-functions"
+
+# `container_apps` enumerates which `container_templates` entries to install
+# as launcher-driven apps, and which runtime variants to expose for each.
+# Each `(template, runtime)` pair produces one launcher at
+# `<bin_dir>/<template>-<runtime>` (e.g. `claude-crun`, `claude-krun`).
+#
+# `template` MUST match a `name` in `container_templates` (defined in
+# `roles/container_templates/defaults/main.yml`).
+container_apps:
+  - template: claude
+    runtimes: [crun, krun]
+  - template: codex
+    runtimes: [crun, krun]
