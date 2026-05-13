@@ -1,3 +1,5 @@
+<!-- {{ ansible_managed }} -->
+
 # {{ cfg.agent.target_suffix | capitalize }}
 Use `{{ cfg.agent.display_name }}` in Podman or Docker container, to avoid potential dangerous actions.
 
@@ -5,16 +7,16 @@ Use `{{ cfg.agent.display_name }}` in Podman or Docker container, to avoid poten
 - `git` is not configured on purpose, to prevent `{{ cfg.agent.display_name }}` from doing someting dangerous.
 
 > [!NOTE]
-> Examples:
+> Examples (rendered location is `~/.local/share/container-templates/{{ cfg.name }}/`):
 > ```sh
 > # view help
-> make -f ~/container-template/{{ cfg.name }}/Makefile PROJECT_NAME=my_project PROJECT_PATH=~/my_project
+> make -C ~/.local/share/container-templates/{{ cfg.name }} PROJECT_NAME=my_project PROJECT_PATH=~/my_project
 >
 > # build image
-> make -f ~/container-template/{{ cfg.name }}/Makefile PROJECT_NAME=my_project PROJECT_PATH=~/my_project c-build
+> make -C ~/.local/share/container-templates/{{ cfg.name }} PROJECT_NAME=my_project PROJECT_PATH=~/my_project c-build
 >
 > # run {{ cfg.agent.display_name }} in container
-> make -f ~/container-template/{{ cfg.name }}/Makefile PROJECT_NAME=my_project PROJECT_PATH=~/my_project c-{{ cfg.agent.target_suffix }}
+> make -C ~/.local/share/container-templates/{{ cfg.name }} PROJECT_NAME=my_project PROJECT_PATH=~/my_project c-{{ cfg.agent.target_suffix }}
 {% if cfg.agent.auth_note is defined %}
 >
 >```

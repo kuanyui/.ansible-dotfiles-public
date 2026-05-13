@@ -1,10 +1,12 @@
 ---
-# `container_templates_output_dir` controls where the rendered Makefile +
-# Dockerfile + dotfiles trees land. Default points at the subrepo's `rendered/`
-# directory so that PR2 step 1 (j2 -> ansible migration) can be diff-validated
-# against the legacy `render_j2.py` output. A later commit will switch this to
-# `~/.local/share/container-templates/` once the install workflow is in place.
-container_templates_output_dir: "{{ playbook_dir }}/../__OTHER_REPOS/container-template/rendered"
+# `container_templates_output_dir` is where the rendered Makefile + Dockerfile
+# + dotfiles trees land. The default is the install location used by daily
+# workflows (Makefile invoked via `make -C` or, after PR2 step 3b, by launcher
+# scripts in `~/.local/bin/`). Callers (e.g. `roles/container_apps` via
+# `include_role`, or one-off `ansible-playbook -e ...`) can override this to
+# stage rendered output elsewhere - useful for scaffolding a new project from
+# a template without touching the user's install.
+container_templates_output_dir: "{{ ansible_env.HOME }}/.local/share/container-templates"
 
 # `container_templates` enumerates every container variant this role renders.
 # Each entry mirrors the dataclass `ContainerConfig` in the legacy
