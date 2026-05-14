@@ -1,0 +1,9 @@
+# I don't know why this `compinit` is not required in
+# `debian:bookworm` Docker image, but required in a real Debian
+# Bookworm (debian 12) installation...
+autoload -U compinit
+compinit
+
+zstyle ':completion:*' menu select=1 _complete _ignored _approximate  # Tab completion can use arrow keys to select now
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'       # Case insensitive tab completion
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"         # Colored completion (different colors for dirs/files/etc)

@@ -1,4 +1,11 @@
 ---
+# `shared_*` vars expose byte-identical fragments stored under
+# `roles/_shared/templates/`. See `roles/_shared/README.md` for the rationale.
+# Lookup is lazy (runs each reference); fine for our scale.
+shared_zsh_ps1_lines: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/zsh_ps1_lines.j2') }}"
+shared_zsh_history: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/zsh_history.j2') }}"
+shared_zsh_compinit_and_zstyles: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/zsh_compinit_and_zstyles.j2') }}"
+
 has_gui_support: true
 setup_emacs: true
 setup_zsh: true
