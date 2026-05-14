@@ -19,3 +19,9 @@ packages_install_wayland_tools: false
 setup_podman: false
 podman_runtime: "libkrun"  # "default" | "libkrun"
 podman_runtime_scope: "user"  # "user" | "system"
+# `setup_container_apps`: install c-claude-*, c-codex-* launchers (and the
+# associated rendered Makefile/Dockerfile/dotfiles trees) under ~/.local/. Off
+# by default - containerised AI agents are a heavy opt-in, most hosts (servers,
+# VMs, fresh installs) shouldn't pull in podman + libkrun + npm globals
+# automatically. The dedicated `playbooks/container_apps.yml` overrides this.
+setup_container_apps: false

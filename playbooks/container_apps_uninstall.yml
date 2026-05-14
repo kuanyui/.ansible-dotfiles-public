@@ -4,6 +4,7 @@
   connection: local
   gather_facts: true
   vars:
+    setup_container_apps: true  # dedicated entry point - bypass the host-level opt-in gate
     container_apps_state: absent
   roles:
     - container_apps

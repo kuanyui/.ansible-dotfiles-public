@@ -1,11 +1,18 @@
 ---
-- name: Validate `container_apps_state` is `present` or `absent`
-  ansible.builtin.assert:
-    that: container_apps_state in ['present', 'absent']
-    fail_msg: "container_apps_state must be `present` or `absent`, got `{{ container_apps_state }}`."
+- name: Skip `container_apps` role unless `setup_container_apps` is true
+  ansible.builtin.debug:
+    msg: "Skipping container_apps (setup_container_apps={{ setup_container_apps | default(false) }})."
+  when: not setup_container_apps | default(false) | bool
 
-- ansible.builtin.include_tasks: install.yml
-  when: container_apps_state == 'present'
+- when: setup_container_apps | default(false) | bool
+  block:
+    - name: Validate `container_apps_state` is `present` or `absent`
+      ansible.builtin.assert:
+        that: container_apps_state in ['present', 'absent']
+        fail_msg: "container_apps_state must be `present` or `absent`, got `{{ container_apps_state }}`."
 
-- ansible.builtin.include_tasks: uninstall.yml
-  when: container_apps_state == 'absent'
+    - ansible.builtin.include_tasks: install.yml
+      when: container_apps_state == 'present'
+
+    - ansible.builtin.include_tasks: uninstall.yml
+      when: container_apps_state == 'absent'

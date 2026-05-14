@@ -12,3 +12,4 @@
     - dotfiles
     - emacs
     - zsh
+    - container_apps   # gated by `setup_container_apps` (default false in group_vars/all.yml)

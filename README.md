@@ -17,21 +17,30 @@
 Managed with Ansible roles, following is Ansible directory structure conventions and what each role does:
 
 ```sh
-playbooks/           # entry playbooks (user.yml / root.yml / all.yml / podman.yml)
-inventory.ini        # hosts and groups (localhost only)
-ansible.cfg          # project-level Ansible config
+playbooks/                # entry playbooks
+  ├─ user.yml             # ├─ deploy dotfiles + emacs + zsh + container_apps for current user
+  ├─ root.yml             # ├─ same for root
+  ├─ all.yml              # ├─ user.yml + root.yml
+  ├─ podman.yml           # ├─ dedicated entry: configure podman OCI runtime
+  ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
+  └─ container_apps_uninstall.yml   # └─ uninstall flow (reads install manifest)
+inventory.ini             # hosts and groups (localhost only)
+ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
 group_vars/
-  └─ all.yml         # global variables (e.g. setup_emacs, setup_zsh, setup_podman)
-roles/               # roles
-  ├─ dotfiles/       # ├─ [ROLE] .zshrc, .bashrc, .tmux.conf for ${USER} & root
-  │   ├─ tasks/      # │   ├─ playbook logic
-  │   ├─ files/      # │   ├─ static files, implicit lookup path for the copy module
-  │   ├─ templates/  # │   ├─ jinja2 templates, implicit lookup path for the template module
-  │   └─ defaults/   # │   └─ default variables
-  ├─ emacs/          # ├─ [ROLE] install emacs & elisp packages via distro package manager
-  ├─ packages/       # ├─ [ROLE] frequently used packages from distro official repos
-  ├─ podman/         # ├─ [ROLE] configure podman OCI runtime (e.g. libkrun on openSUSE)
-  └─ zsh/            # └─ [ROLE] install zsh & plugins via distro package manager, then chsh
+  └─ all.yml              # global variables + `setup_*` opt-in gates + `shared_*` partials
+roles/
+  ├─ _shared/             # [VIRTUAL] byte-identical dotfile fragments (templates only, no tasks)
+  ├─ dotfiles/            # [ROLE] .bashrc + .tmux.conf etc.
+  │   ├─ tasks/           #         playbook logic
+  │   ├─ files/           #         static files (copy module)
+  │   ├─ templates/       #         jinja2 templates (template module)
+  │   └─ defaults/        #         default variables
+  ├─ zsh/                 # [ROLE] install zsh + plugins, deploy .zshrc, chsh
+  ├─ emacs/               # [ROLE] install emacs + elisp packages
+  ├─ packages/            # [ROLE] frequently used packages from distro repos
+  ├─ podman/              # [ROLE] configure podman OCI runtime (e.g. libkrun on openSUSE)
+  ├─ container_templates/ # [ROLE] render Makefile/Dockerfile/dotfiles trees per container variant
+  └─ container_apps/      # [ROLE] consume container_templates output + install ~/.local/bin/c-<name> launchers
 ```
 
 ## Installation
