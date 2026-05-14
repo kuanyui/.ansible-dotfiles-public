@@ -8,7 +8,7 @@
 # This is the ~/.bashrc inside the container
 {% endif %}
 
-PS1='\[\e[1;32m\]\u@\h\[\e[m\]:\[\e[1;34m\]\W\[\e[1;33m\]\$\[\e[m\] '
+{{ shared_bash_ps1_line }}
 
 # Prevent Emacs TRAMP from failed to match the shell prompt.
 if [ "$TERM" = "dumb" ]; then
@@ -23,9 +23,7 @@ PATH={% if cfg.nodejs %}${HOME}/.local/npm_global/bin:{% endif %}${HOME}/.local/
 
 {% endif %}
 alias sz="source ~/.bashrc"
-alias ll='ls -al --color=auto '
-alias ls='ls --color=auto '
-
+{{ shared_aliases_ls }}
 alias sc="sudo systemctl"
 alias jc="sudo journalctl"
 alias jc-clear="sudo journalctl --vacuum-time=5d"   #  Delete journal logs which are older than 5 days
@@ -35,11 +33,7 @@ alias nvv='nvm ls'
 alias nv='nvm version'
 
 {% endif %}
-alias ..='cd ..'
-alias ...='cd ../../'
-alias ....='cd ../../../'
-alias .....='cd ../../../../'
-alias ......='cd ../../../../../'
+{{ shared_aliases_cd_shortcuts }}
 
 export HISTCONTROL=ignorespace
 {% if who == 'user' %}

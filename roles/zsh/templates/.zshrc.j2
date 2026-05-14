@@ -37,15 +37,8 @@ setopt AUTO_CD    # cd to directory without cd command
 alias sz='source ~/.zshrc'
 alias ta='if tmux attach-session -t 0;then;else tmux;fi'
 
-alias ll='ls -al --color=auto '
-alias ls='ls --color=auto '
-
-alias ..='cd ..'
-alias ...='cd ../../'
-alias ....='cd ../../../'
-alias .....='cd ../../../../'
-alias ......='cd ../../../../../'
-
+{{ shared_aliases_ls }}
+{{ shared_aliases_cd_shortcuts }}
 alias sc="systemctl"
 alias jc="journalctl"
 alias jc-clear="journalctl --vacuum-time=5d"   #  Delete journal logs which are older than 5 days
