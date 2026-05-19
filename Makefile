@@ -127,14 +127,20 @@ aa-log-recent:  ## Print recent AppArmor messages within `LOG_SINCE_SECS` (defau
 ### Sandbox dry-run (rootless podman + systemd + sshd; default --runtime krun)
 ### -------------------------------------------------------------------------
 
-# Default runtime is `krun` (microVM isolation). Override per invocation:
-#   make sandbox-apparmor SANDBOX_RUNTIME=crun
+# Default runtime is `crun` so systemd can run as PID 1 (libkrun rejects this -
+# see scripts/sandbox/Dockerfile rationale). Override per invocation:
 #   make sandbox-apparmor SANDBOX_RUNTIME=runc
 #   make sandbox-apparmor SANDBOX_RUNTIME=system  # use podman's configured default
-SANDBOX_RUNTIME ?= krun
+SANDBOX_RUNTIME ?= crun
 
-sandbox-apparmor:  ## Dry-run `apply-apparmor` in a throwaway podman+systemd+sshd sandbox; streams diff + runs `apparmor_parser --skip-kernel-load` post-check
-	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) apparmor
+# Optional: name of an AppArmor profile already loaded on the host. Layer-2
+# hardening for the sandbox container (the harness drops NET_RAW capability
+# unconditionally - this knob is for additional MAC confinement).
+#   make sandbox-apparmor SANDBOX_APPARMOR_PROFILE=local_attachmentless_podman_ai_agent
+SANDBOX_APPARMOR_PROFILE ?=
+
+sandbox-apparmor:  ## Dry-run `apply-apparmor` in a throwaway podman+systemd sandbox; streams diff + runs `apparmor_parser --skip-kernel-load` post-check
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) --apparmor-profile "$(SANDBOX_APPARMOR_PROFILE)" apparmor
 
 sandbox-clean:  ## Remove the cached sandbox base image to free disk (running sandbox containers are auto-removed after each run)
 	podman rmi localhost/ansible-dotfiles-sandbox:latest 2>/dev/null || true

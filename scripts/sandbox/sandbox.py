@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""Dry-run any project playbook in a throwaway podman + systemd + sshd sandbox.
+"""Dry-run any project playbook in a throwaway podman + systemd sandbox.
 
-Runs the playbook against an isolated Debian container (default `--runtime krun`
-for microVM isolation), captures a before/after file-tree diff of paths the
-playbook touches, runs the playbook again to check idempotence, and invokes
-any config-specific post-check (e.g. apparmor_parser --skip-kernel-load for
-apparmor profile syntax).
+Runs the playbook against an isolated Debian container (default --runtime crun,
+which gives real systemd as PID 1), captures a before/after file-tree diff of
+paths the playbook touches, runs the playbook again to check idempotence, and
+invokes any config-specific post-check (e.g. apparmor_parser --skip-kernel-load
+for apparmor profile syntax).
+
+Layer 2 hardening defaults (host kernel attack-surface reduction since crun
+shares the host kernel - microVM isolation would require Kata Containers, not
+libkrun, which is incompatible with systemd-as-PID-1):
+    --cap-drop=NET_RAW            no raw sockets inside sandbox
+    --security-opt apparmor=<X>   optional; pass via --apparmor-profile
 
 Usage:
     python3 scripts/sandbox/sandbox.py --help
     python3 scripts/sandbox/sandbox.py <config>
     python3 scripts/sandbox/sandbox.py apparmor
-    python3 scripts/sandbox/sandbox.py user --runtime crun
     python3 scripts/sandbox/sandbox.py user --runtime runc
-    python3 scripts/sandbox/sandbox.py root --runtime system
+    python3 scripts/sandbox/sandbox.py apparmor --apparmor-profile local_attachmentless_podman_ai_agent
 
 Configs live in scripts/sandbox/configs/<name>.py with a module-level
 `CONFIG = SandboxConfig(...)`. Private overlays can add configs via the
@@ -42,8 +47,6 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 SANDBOX_DIR = Path(__file__).resolve().parent
 DEFAULT_IMAGE = "debian:trixie"
 SANDBOX_USER = "sandboxuser"
-CACHE_DIR = Path.home() / ".cache" / "ansible-dotfiles-sandbox"
-SSH_KEY = CACHE_DIR / "ssh_key"
 IMAGE_TAG = "localhost/ansible-dotfiles-sandbox:latest"
 
 
@@ -52,92 +55,97 @@ IMAGE_TAG = "localhost/ansible-dotfiles-sandbox:latest"
 # =============================================================================
 
 class Container:
-    """RAII wrapper for the podman lifecycle: build image, run, ssh, cleanup."""
+    """RAII wrapper for the podman lifecycle: build image, run, exec, cleanup."""
 
     def __init__(
         self,
         runtime: str | None,
-        ssh_ready_timeout: int = 90,
+        startup_timeout: int = 90,
         keep_container_on_exit: bool = False,
+        apparmor_profile: str = "",
     ) -> None:
-        # runtime: "krun" | "crun" | "runc" | None (None = don't pass --runtime)
+        # runtime: "crun" | "runc" | None (None = don't pass --runtime)
+        # (krun is unsupported here: see Dockerfile rationale.)
         self.runtime = runtime
         self.name = f"ansible-sandbox-{os.getpid()}"
-        self._ssh_port: int | None = None
-        self._ssh_ready_timeout = ssh_ready_timeout
-        self._leave_running = keep_container_on_exit  # honored by __exit__
+        self._startup_timeout = startup_timeout
+        self._leave_running = keep_container_on_exit
+        self._apparmor_profile = apparmor_profile
 
     # ---------- lifecycle ----------
 
     def __enter__(self) -> "Container":
-        _ensure_ssh_key()
         self._build_image()
         self._run()
-        self._wait_ssh_ready(timeout=self._ssh_ready_timeout)
+        self._wait_systemd_ready(timeout=self._startup_timeout)
         return self
 
     def __exit__(self, *exc: object) -> None:
-        if getattr(self, "_leave_running", False):
+        if self._leave_running:
             return
         self._remove()
 
     def _build_image(self) -> None:
         print(f"==> Building sandbox image `{IMAGE_TAG}`...")
-        pubkey = (SSH_KEY.with_suffix(".pub")).read_text().strip()
         subprocess.run(
-            [
-                "podman", "build",
-                "--tag", IMAGE_TAG,
-                "--build-arg", f"SSH_AUTHORIZED_KEY={pubkey}",
-                str(SANDBOX_DIR),
-            ],
+            ["podman", "build", "--tag", IMAGE_TAG, str(SANDBOX_DIR)],
             check=True,
         )
 
     def _run(self) -> None:
-        print(f"==> Starting container `{self.name}` (runtime={self.runtime or 'default'})...")
+        print(
+            f"==> Starting container `{self.name}` "
+            f"(runtime={self.runtime or 'system-default'}, "
+            f"apparmor={self._apparmor_profile or 'podman-default'})..."
+        )
         cmd = [
             "podman", "run",
             "--name", self.name,
             "--detach",
-            # No `--systemd=always`: the sandbox image uses tini+sshd as PID 1,
-            # not systemd, because libkrun rejects systemd-as-system-manager
-            # (runs CMD as non-root user). See scripts/sandbox/Dockerfile.
-            #
-            # `127.0.0.1::22` = "publish container's port 22 to a random host
-            # port bound only to localhost". Just `0:22` would seem natural but
-            # podman rejects it ("port numbers must be between 1 and 65535");
-            # the documented "random host port" syntax is `[ip]::containerPort`
-            # or bare `containerPort`. 127.0.0.1 binding keeps the sandbox sshd
-            # off the LAN.
-            "--publish", "127.0.0.1::22",
+            # Required for systemd-as-PID-1 to find /sys/fs/cgroup wired up.
+            "--systemd=always",
+            # Layer 2 hardening - drop caps the sandbox doesn't need. NET_RAW
+            # specifically because no raw sockets are used; default podman
+            # rootless gives it.
+            "--cap-drop", "NET_RAW",
         ]
+        if self._apparmor_profile:
+            cmd += ["--security-opt", f"apparmor={self._apparmor_profile}"]
         if self.runtime:
             cmd += ["--runtime", self.runtime]
         cmd.append(IMAGE_TAG)
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
 
-    def _wait_ssh_ready(self, timeout: int) -> None:
+    def _wait_systemd_ready(self, timeout: int) -> None:
+        """Block until systemd inside container reaches 'running' or 'degraded'.
+
+        Polls `systemctl is-system-running` over `podman exec`. Returns silently
+        on success; dumps diagnostics + leaves container running on timeout.
+        """
         deadline = time.monotonic() + timeout
-        last_stderr = ""
+        last_state = ""
         while time.monotonic() < deadline:
             try:
-                self.ssh("true", check=True, capture_output=True, _retry=False)
-                print("==> sshd ready.")
-                return
-            except subprocess.CalledProcessError as e:
-                last_stderr = (e.stderr or "").strip()
-                time.sleep(2)
-        # Diagnostics on timeout: print podman state, leave container running.
+                r = self.exec(
+                    "systemctl", "is-system-running",
+                    user="root", check=False, capture_output=True,
+                )
+                last_state = (r.stdout or "").strip()
+                # `running` = ideal; `degraded` = boot done but some units failed
+                # (acceptable for sandbox - we'll still get realistic diff).
+                if last_state in ("running", "degraded"):
+                    print(f"==> systemd ready (state: {last_state}).")
+                    return
+            except subprocess.CalledProcessError:
+                pass
+            time.sleep(1)
+        # Timeout - diagnose + leave container alive for inspection.
         print(
-            f"\n!!! sshd inside `{self.name}` not reachable within {timeout}s.",
+            f"\n!!! systemd inside `{self.name}` not ready within {timeout}s "
+            f"(last state: {last_state or 'unknown'}).",
             file=sys.stderr,
         )
-        if last_stderr:
-            print(f"Last ssh stderr: {last_stderr}", file=sys.stderr)
-        print("\n--- `podman port <name> 22` (host port mapping) ---", file=sys.stderr)
-        subprocess.run(["podman", "port", self.name, "22"], check=False)
-        print("\n--- `podman logs --tail 100 <name>` (systemd boot output) ---", file=sys.stderr)
+        print("\n--- `podman logs --tail 100 <name>` ---", file=sys.stderr)
         subprocess.run(["podman", "logs", "--tail", "100", self.name], check=False)
         print(
             f"\nContainer left running for inspection. To clean up:\n"
@@ -153,78 +161,43 @@ class Container:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
 
-    # ---------- ssh / cp ----------
+    # ---------- exec / cp ----------
 
-    @property
-    def ssh_port(self) -> int:
-        if self._ssh_port is None:
-            out = subprocess.run(
-                ["podman", "port", self.name, "22"],
-                check=True, capture_output=True, text=True,
-            ).stdout.strip().splitlines()
-            # output looks like "0.0.0.0:43217" or "127.0.0.1:43217"
-            self._ssh_port = int(out[0].rsplit(":", 1)[1])
-        return self._ssh_port
-
-    def ssh(
+    def exec(
         self,
         *cmd: str,
         user: str = SANDBOX_USER,
         check: bool = True,
         capture_output: bool = False,
-        _retry: bool = True,
+        workdir: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        """Run a remote command via ssh, shlex-quoting each arg so no caller
-        can accidentally inject shell metacharacters via a config value.
+        """Run a remote command via `podman exec`. Args are passed directly to
+        execvp inside the container - no shell, no injection risk."""
+        podman_cmd = ["podman", "exec", "--user", user]
+        if workdir:
+            podman_cmd += ["--workdir", workdir]
+        podman_cmd.append(self.name)
+        podman_cmd.extend(cmd)
+        return subprocess.run(
+            podman_cmd, check=check, capture_output=capture_output, text=True,
+        )
 
-        Pass cmd as separate args; `c.ssh('tar', '-czf', archive, *paths)` is
-        always safe regardless of what `paths` contains. If you need shell
-        features (cd && ..., $(...)), pass them inside an explicit `bash -c`
-        argument and shlex.join the inner command yourself.
-        """
-        remote_cmd = shlex.join(cmd)
-        ssh_cmd = [
-            "ssh",
-            "-p", str(self.ssh_port),
-            "-i", str(SSH_KEY),
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR",
-            "-o", "ConnectTimeout=5",
-            f"{user}@127.0.0.1",
-            remote_cmd,
-        ]
-        return subprocess.run(ssh_cmd, check=check, capture_output=capture_output, text=True)
-
-    def cp_to(self, src: Path, container_dst: str, *, become_root: bool = False) -> None:
-        """Copy host path into container."""
-        target_for_podman_cp = f"{self.name}:{container_dst}"
-        subprocess.run(["podman", "cp", str(src), target_for_podman_cp], check=True)
-        if become_root:
-            self.ssh("sudo", "chown", "-R", "root:root", container_dst)
+    def cp_to(self, src: Path, container_dst: str) -> None:
+        subprocess.run(
+            ["podman", "cp", str(src), f"{self.name}:{container_dst}"],
+            check=True,
+        )
 
     def cp_from(self, container_src: str, dst: Path) -> None:
-        subprocess.run(["podman", "cp", f"{self.name}:{container_src}", str(dst)], check=True)
+        subprocess.run(
+            ["podman", "cp", f"{self.name}:{container_src}", str(dst)],
+            check=True,
+        )
 
 
 # =============================================================================
 # Helpers
 # =============================================================================
-
-def _ensure_ssh_key() -> None:
-    if SSH_KEY.exists():
-        return
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            "ssh-keygen", "-t", "ed25519", "-N", "",
-            "-f", str(SSH_KEY),
-            "-C", f"ansible-dotfiles-sandbox client key (host {os.uname().nodename})",
-        ],
-        check=True, stdout=subprocess.DEVNULL,
-    )
-    print(f"==> Generated sandbox SSH key at {SSH_KEY}.")
-
 
 def _snapshot(c: Container, paths: list[str], dst_host_file: Path) -> None:
     """Tar listed container paths into a file on the host."""
@@ -235,9 +208,12 @@ def _snapshot(c: Container, paths: list[str], dst_host_file: Path) -> None:
     # `--ignore-failed-read` lets tar warn-then-continue on paths that don't
     # exist yet (typical for "before" snapshot of dirs the playbook will create)
     # and still exit 0. No shell needed; safe regardless of what `paths` contains.
-    c.ssh("sudo", "tar", "--ignore-failed-read", "-czf", remote_tar, *paths)
+    c.exec(
+        "tar", "--ignore-failed-read", "-czf", remote_tar, *paths,
+        user="root",
+    )
     c.cp_from(remote_tar, dst_host_file)
-    c.ssh("sudo", "rm", "-f", remote_tar)
+    c.exec("rm", "-f", remote_tar, user="root")
 
 
 def _extract(tar_path: Path, out_dir: Path) -> None:
@@ -288,31 +264,26 @@ def _print_diff(before: Path, after: Path) -> None:
         print(f"  {p}")
 
 
-def _playbook_command(cfg: SandboxConfig) -> str:
-    """Build the shell-safe `cd && ansible-playbook ...` string.
-
-    Each ansible-playbook arg is shlex-quoted via `shlex.join` so any
-    `extra_ansible_vars` value with shell metachars is safely passed through.
-    `cd /playbook && ...` is the only intentional shell feature we use.
-    """
+def _ansible_playbook_argv(cfg: SandboxConfig) -> list[str]:
     extra_var_args: list[str] = []
     for k, v in cfg.extra_ansible_vars.items():
         extra_var_args += ["-e", f"{k}={v}"]
-    ansible_argv = [
+    return [
         "ansible-playbook",
         "-i", "localhost,",
         "-c", "local",
         *extra_var_args,
         f"/playbook/{cfg.playbook}",
     ]
-    # /playbook is a hardcoded constant path (no metachars). shlex.join makes
-    # ansible_argv shell-safe.
-    return f"cd /playbook && {shlex.join(ansible_argv)}"
 
 
 def _run_playbook(c: Container, cfg: SandboxConfig) -> int:
     """Run the playbook once, return exit code."""
-    result = c.ssh("bash", "-c", _playbook_command(cfg), check=False)
+    result = c.exec(
+        *_ansible_playbook_argv(cfg),
+        workdir="/playbook",
+        check=False,
+    )
     return result.returncode
 
 
@@ -322,7 +293,12 @@ def _check_idempotence(c: Container, cfg: SandboxConfig) -> int:
     print("=" * 60)
     print(" IDEMPOTENCE CHECK  (second run)")
     print("=" * 60)
-    result = c.ssh("bash", "-c", _playbook_command(cfg), check=False, capture_output=True)
+    result = c.exec(
+        *_ansible_playbook_argv(cfg),
+        workdir="/playbook",
+        check=False,
+        capture_output=True,
+    )
     rc = result.returncode
     out = (result.stdout or "") + (result.stderr or "")
     if rc != 0:
@@ -331,7 +307,7 @@ def _check_idempotence(c: Container, cfg: SandboxConfig) -> int:
             print(f"  {line}")
         return 1
     # any task that says `changed=<non-zero>` fails idempotence
-    bad = [line for line in out.splitlines() if "changed=" in line and not "changed=0" in line]
+    bad = [line for line in out.splitlines() if "changed=" in line and "changed=0" not in line]
     if bad:
         print("  FAIL - tasks still report changes on second run:")
         for line in bad:
@@ -346,9 +322,7 @@ def _check_idempotence(c: Container, cfg: SandboxConfig) -> int:
 # =============================================================================
 
 def _discover_configs() -> dict[str, SandboxConfig]:
-    """Import every <name>.py under configs/ (plus SANDBOX_CONFIGS_EXTRA_DIR) and
-    collect their module-level `CONFIG = SandboxConfig(...)` into a name -> cfg map.
-    """
+    """Import every <name>.py under configs/ (plus SANDBOX_CONFIGS_EXTRA_DIR)."""
     dirs: list[Path] = [SANDBOX_DIR / "configs"]
     extra = os.environ.get("SANDBOX_CONFIGS_EXTRA_DIR")
     if extra:
@@ -381,34 +355,36 @@ def _discover_configs() -> dict[str, SandboxConfig]:
 def run_sandbox(
     cfg: SandboxConfig,
     runtime: str | None,
-    ssh_ready_timeout: int = 90,
+    startup_timeout: int = 90,
     keep_container_on_exit: bool = False,
+    apparmor_profile: str = "",
 ) -> int:
     cfg.pre_flight(PROJECT_DIR)
     rc_total = 0
     with Container(
         runtime=runtime,
-        ssh_ready_timeout=ssh_ready_timeout,
+        startup_timeout=startup_timeout,
         keep_container_on_exit=keep_container_on_exit,
+        apparmor_profile=apparmor_profile,
     ) as c:
         # 1. extra packages
         if cfg.extra_packages_apt:
             print(f"==> Installing extra packages: {' '.join(cfg.extra_packages_apt)}")
-            c.ssh(
-                "sudo", "DEBIAN_FRONTEND=noninteractive",
+            c.exec(
                 "apt-get", "update", "-qq",
+                user="root",
             )
-            c.ssh(
-                "sudo", "DEBIAN_FRONTEND=noninteractive",
+            c.exec(
                 "apt-get", "install", "-y", "--no-install-recommends",
                 *cfg.extra_packages_apt,
+                user="root",
             )
 
         # 2. dummy commands
         for src in cfg.dummy_commands:
             print(f"==> Installing dummy command `{src.name}`...")
             c.cp_to(src, f"/usr/local/bin/{src.name}")
-            c.ssh("sudo", "chmod", "+x", f"/usr/local/bin/{src.name}")
+            c.exec("chmod", "+x", f"/usr/local/bin/{src.name}", user="root")
 
         # 3. extra files
         for host_src, container_dst in cfg.extra_files.items():
@@ -416,17 +392,19 @@ def run_sandbox(
                 print(f"==> Skipping extra_file `{host_src}` (not found on host).")
                 continue
             print(f"==> Copying `{host_src}` -> `{container_dst}`...")
-            # ensure parent dir
             parent = os.path.dirname(container_dst)
             if parent:
-                c.ssh("mkdir", "-p", parent)
+                c.exec("mkdir", "-p", parent, user="root")
             c.cp_to(host_src, container_dst)
-            c.ssh("sudo", "chown", "-R", f"{SANDBOX_USER}:{SANDBOX_USER}", container_dst)
+            c.exec(
+                "chown", "-R", f"{SANDBOX_USER}:{SANDBOX_USER}", container_dst,
+                user="root",
+            )
 
         # 4. copy project
         print("==> Copying project into container...")
         c.cp_to(PROJECT_DIR, "/playbook")
-        c.ssh("sudo", "chown", "-R", f"{SANDBOX_USER}:{SANDBOX_USER}", "/playbook")
+        c.exec("chown", "-R", f"{SANDBOX_USER}:{SANDBOX_USER}", "/playbook", user="root")
 
         # 5. snapshot before
         with tempfile.TemporaryDirectory() as td:
@@ -501,19 +479,30 @@ def main() -> int:
     ap.add_argument("config", choices=sorted(configs), help="config name (see below)")
     ap.add_argument(
         "--runtime",
-        choices=["krun", "crun", "runc", "system"],
-        default="krun",
+        choices=["crun", "runc", "system"],
+        default="crun",
         help=(
             "OCI runtime for `podman run --runtime <X>`. "
             "'system' = omit the flag entirely (use whatever podman has configured as default). "
-            "(default: krun)"
+            "Note: krun is intentionally absent - libkrun is incompatible with systemd-as-PID-1; "
+            "see scripts/sandbox/Dockerfile for rationale. (default: crun)"
         ),
     )
     ap.add_argument(
-        "--ssh-ready-timeout",
+        "--apparmor-profile",
+        default="",
+        help=(
+            "AppArmor profile to apply to the sandbox container (passed to "
+            "`--security-opt apparmor=<name>`). The named profile must already "
+            "be loaded on the host (`aa-status` to check). Default: empty - "
+            "podman uses its built-in `containers-default` if available."
+        ),
+    )
+    ap.add_argument(
+        "--startup-timeout",
         type=int,
         default=90,
-        help="Seconds to wait for systemd+sshd to come up inside the container before giving up. (default: 90)",
+        help="Seconds to wait for systemd inside the container to finish booting before giving up. (default: 90)",
     )
     ap.add_argument(
         "--keep-container-on-exit",
@@ -525,8 +514,9 @@ def main() -> int:
     return run_sandbox(
         configs[args.config],
         runtime=runtime,
-        ssh_ready_timeout=args.ssh_ready_timeout,
+        startup_timeout=args.startup_timeout,
         keep_container_on_exit=args.keep_container_on_exit,
+        apparmor_profile=args.apparmor_profile,
     )
 
 

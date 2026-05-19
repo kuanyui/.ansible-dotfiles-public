@@ -67,12 +67,19 @@ CONFIG = SandboxConfig(
     dummy_commands=[
         DUMMY_COMMANDS_DIR / cmd
         for cmd in (
+            # Real systemd runs as PID 1 in the sandbox image (because we
+            # default --runtime to crun, not libkrun), so `systemctl` is NOT
+            # stubbed - the role's `notify: Reload apparmor` handler exercises
+            # real systemd plumbing.
+            #
+            # apparmor_parser and friends still ARE stubbed: the sandbox kernel
+            # is the host kernel but the role calls `aa-enforce` against
+            # profiles that reference includes (e.g. abstractions/local_*) and
+            # we want syntax-validation (--skip-kernel-load) to be the only
+            # actual check, not a real kernel load that could conflict with
+            # whatever profiles the host already has loaded.
             "apparmor_parser",
             "aa-enforce", "aa-status", "aa-disable", "aa-complain",
-            # systemctl too: sandbox image has tini+sshd as PID 1, no systemd
-            # (libkrun rejects systemd-as-system-manager). The role calls
-            # `systemctl reload apparmor` etc. via handler; stub returns 0.
-            "systemctl",
         )
     ],
     extra_files={
