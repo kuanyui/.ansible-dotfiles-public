@@ -1,0 +1,84 @@
+---
+# Default to the user running the playbook; override in host_vars if needed
+apparmor_target_user: "{{ ansible_facts['user_id'] }}"
+apparmor_firefox_base_path: "/home/{{ apparmor_target_user }}/.mozilla/firefox"
+apparmor_allow_x11: false
+apparmor_xdg_download_subdir: "Downloads"   # fallback; overridden at runtime from user-dirs.dirs
+apparmor_xdg_pictures_subdir: "Pictures"   # fallback; overridden at runtime from user-dirs.dirs
+apparmor_xdg_screenshots_exists: false     # fallback; overridden at runtime by stat task
+
+# Static AppArmor profiles managed by this role.
+# src: filename under roles/apparmor/files/profiles/
+# dest: filename deployed to /etc/apparmor.d/ (no extension)
+apparmor_static_profiles:
+  - src: local_attachmentless_glycin.aa
+    dest: local_attachmentless_glycin
+  - src: local_attachmentless_mpv_gpu.aa
+    dest: local_attachmentless_mpv_gpu
+  - src: local_attachmentless_podman_ai_agent.aa
+    dest: local_attachmentless_podman_ai_agent
+
+# Abstraction fragments deployed to /etc/apparmor.d/abstractions/.
+# These are included by profiles via #include <abstractions/...> and must NOT be aa-enforce'd.
+apparmor_static_abstractions:
+  - src: local_mixin_glycin.aa
+    dest: abstractions/local_mixin_glycin
+  - src: local_mixin_deny_browser_config.aa
+    dest: abstractions/local_mixin_deny_browser_config
+  - src: local_mixin_deny_mounted_external_media.aa
+    dest: abstractions/local_mixin_deny_mounted_external_media
+  - src: local_mixin_deny_keyrings.aa
+    dest: abstractions/local_mixin_deny_keyrings
+  - src: local_mixin_deny_persistent_attack.aa
+    dest: abstractions/local_mixin_deny_persistent_attack
+  - src: local_mixin_gpu.aa
+    dest: abstractions/local_mixin_gpu
+  - src: local_mixin_gpu_chromium_based.aa
+    dest: abstractions/local_mixin_gpu_chromium_based
+  - src: local_mixin_audio.aa
+    dest: abstractions/local_mixin_audio
+  - src: local_mixin_gtk.aa
+    dest: abstractions/local_mixin_gtk
+  - src: local_mixin_tmpdir.aa
+    dest: abstractions/local_mixin_tmpdir
+  - src: local_mixin_sysinfo.aa
+    dest: abstractions/local_mixin_sysinfo
+  - src: local_mixin_qt.aa
+    dest: abstractions/local_mixin_qt
+  - src: local_mixin_xdg.aa
+    dest: abstractions/local_mixin_xdg
+  - src: local_mixin_kde.aa
+    dest: abstractions/local_mixin_kde
+  - src: local_mixin_container_base.aa
+    dest: abstractions/local_mixin_container_base
+
+# Profiles and abstractions deployed by template tasks (not static copy).
+# Listed here so the idempotent local_* cleanup in main.yml does not remove them.
+apparmor_template_profile_names:
+  - local_attachmentless_firefox
+  - local_pathbased_chromium
+  - local_pathbased_msedge
+  - local_pathbased_telegram
+  - local_pathbased_vscode
+  - local_pathbased_mpv
+  - local_pathbased_stardict
+  - local_pathbased_gwenview
+  - local_pathbased_mcomix
+  - local_pathbased_okular
+  - local_pathbased_vlc
+  - local_pathbased_mscore3
+  - local_pathbased_mscore
+  - local_pathbased_anydesk
+
+apparmor_template_abstraction_names:
+  - local_base_firefox
+  - local_base_mpv
+  - local_mixin_xdg_dir_pictures_screenshots
+  - local_mixin_xdg_dir_downloads
+  - local_mixin_deny_personal_dirs
+
+# Profiles deployed under old names that do not match local_* and therefore
+# cannot be caught by the idempotent cleanup. Remove entries once all managed
+# hosts have been converged.
+apparmor_static_profiles_stale: []
+  # - glycin

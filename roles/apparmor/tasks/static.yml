@@ -1,0 +1,44 @@
+---
+# =============================================
+# Explicit stale file removal
+# =============================================
+# For profiles deployed under old names that do not match local_* and therefore
+# cannot be caught by the idempotent cleanup in main.yml.
+
+- name: Remove explicitly listed stale AppArmor profiles
+  ansible.builtin.file:
+    path: "/etc/apparmor.d/{{ item }}"
+    state: absent
+  loop: "{{ apparmor_static_profiles_stale }}"
+  become: true
+  notify: Reload apparmor
+  tags: apparmor
+
+
+# =============================================
+# Deploy managed profiles
+# =============================================
+
+- name: Copy static AppArmor profiles to /etc/apparmor.d/
+  ansible.builtin.copy:
+    src: "profiles/{{ item.src }}"
+    dest: "/etc/apparmor.d/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ apparmor_static_profiles }}"
+  become: true
+  notify: Reload apparmor
+  tags: apparmor
+
+- name: Copy static AppArmor abstractions to /etc/apparmor.d/abstractions/
+  ansible.builtin.copy:
+    src: "profiles/{{ item.src }}"
+    dest: "/etc/apparmor.d/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ apparmor_static_abstractions }}"
+  become: true
+  notify: Reload apparmor
+  tags: apparmor

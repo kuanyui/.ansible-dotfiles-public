@@ -25,3 +25,7 @@ podman_runtime_scope: "user"  # "user" | "system"
 # VMs, fresh installs) shouldn't pull in podman + libkrun + npm globals
 # automatically. The dedicated `playbooks/container_apps.yml` overrides this.
 setup_container_apps: false
+# `setup_apparmor`: deploy AppArmor profiles for desktop GUI apps (Firefox /
+# Chromium / VLC / mpv / VSCode / Telegram / etc.) via `roles/apparmor`. Off by
+# default because target hosts are usually VMs where these profiles don't apply.
+setup_apparmor: false

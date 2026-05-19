@@ -18,12 +18,13 @@ Managed with Ansible roles, following is Ansible directory structure conventions
 
 ```sh
 playbooks/                # entry playbooks
-  ├─ user.yml             # ├─ deploy dotfiles + emacs + zsh + container_apps for current user
-  ├─ root.yml             # ├─ same for root
+  ├─ user.yml             # ├─ deploy dotfiles + emacs + zsh + container_apps + apparmor for current user
+  ├─ root.yml             # ├─ same for root (no container_apps/apparmor)
   ├─ all.yml              # ├─ user.yml + root.yml
   ├─ podman.yml           # ├─ dedicated entry: configure podman OCI runtime
   ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
-  └─ container_apps_uninstall.yml   # └─ uninstall flow (reads install manifest)
+  ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
+  └─ apparmor.yml         # └─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
 group_vars/
@@ -40,7 +41,9 @@ roles/
   ├─ packages/            # [ROLE] frequently used packages from distro repos
   ├─ podman/              # [ROLE] configure podman OCI runtime (e.g. libkrun on openSUSE)
   ├─ container_templates/ # [ROLE] render Makefile/Dockerfile/dotfiles trees per container variant
-  └─ container_apps/      # [ROLE] consume container_templates output + install ~/.local/bin/c-<name> launchers
+  ├─ container_apps/      # [ROLE] consume container_templates output + install ~/.local/bin/c-<name> launchers
+  └─ apparmor/            # [ROLE] AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / ...)
+scripts/                  # standalone helper scripts (apparmor profile gen / sandbox dry-run)
 ```
 
 ## Installation

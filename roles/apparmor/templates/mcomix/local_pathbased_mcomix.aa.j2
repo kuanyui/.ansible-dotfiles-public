@@ -1,0 +1,45 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# MComix AppArmor profile - /etc/apparmor.d/local_pathbased_mcomix
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_mcomix
+
+profile local_pathbased_mcomix /usr/bin/mcomix {
+    #include <abstractions/base>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_xdg_dir_downloads>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # network access intentionally denied
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+{% if apparmor_allow_x11 %}
+    /tmp/.X11-unix/ r,
+    /tmp/.X11-unix/X* rw,
+    owner /run/user/*/xauth_* r,
+{% endif %}
+
+    # D-Bus (desktop notifications)
+    owner /run/user/*/bus rw,
+
+    # External archive extractors for reading comic archives; ix keeps them confined under this profile
+    /usr/bin/7z ix,
+    /usr/bin/unrar ix,
+
+    # User config and cache
+    owner @{HOME}/.config/mcomix/ rw,
+    owner @{HOME}/.config/mcomix/** rwk,
+    owner @{HOME}/.cache/mcomix/ rw,
+    owner @{HOME}/.cache/mcomix/** rwk,
+
+}

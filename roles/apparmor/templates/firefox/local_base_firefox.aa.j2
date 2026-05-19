@@ -1,0 +1,86 @@
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+    #include <abstractions/fonts>
+    #include <abstractions/dbus-session-strict>
+
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_gpu>
+    #include <abstractions/local_mixin_audio>
+    #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_xdg_dir_pictures_screenshots>
+    #include <abstractions/local_mixin_xdg_dir_downloads>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # Allow Firefox to execute itself, crash reporter, and shell utilities used during startup
+    # ix (inherit execute) - child processes inherit this profile instead of transitioning to a new one
+    # Px (profile execute, scrub env) - transition to a named profile with environment scrubbed
+    /usr/lib*/firefox/* ix,
+    /usr/bin/basename ix,
+    /usr/bin/expr ix,
+    /dev/tty rw,
+
+    # Glycin image loading - gly-hdl-loader runs under this profile (ix), then execs bwrap
+    # which transitions to local_attachmentless_glycin (Px, non-stacked). Security boundary
+    # is bwrap's mount namespace: only what bwrap bind-mounts into the sandbox is visible to
+    # the decoder, regardless of what local_attachmentless_glycin permits.
+    #include <abstractions/local_mixin_glycin>
+    /usr/bin/bwrap Px -> local_attachmentless_glycin,
+
+    # User/group namespace ID mapping - needed by bwrap for user namespace setup
+    /proc/sys/kernel/overflowuid r,
+    /proc/sys/kernel/overflowgid r,
+
+    # Process self-inspection (also used by crashreporter)
+    # owner restricts reads to processes owned by the same user
+    owner @{PROC}/@{pid}/ r,
+    owner @{PROC}/@{pid}/** r,
+    owner @{PROC}/@{pid}/oom_score_adj w,
+    owner @{PROC}/@{pid}/uid_map w,      # Firefox content process sandbox: write UID mapping for user namespace
+    owner @{PROC}/@{pid}/gid_map w,      # Firefox content process sandbox: write GID mapping for user namespace
+    owner @{PROC}/@{pid}/setgroups w,    # Firefox content process sandbox: must be written before gid_map
+    deny @{PROC}/@{pid}/mem rwklx,       # direct process memory access
+    deny @{PROC}/@{pid}/environ r,       # process environment variables (may contain secrets)
+    deny @{PROC}/@{pid}/pagemap r,       # virtual-to-physical memory mapping (exploit aid)
+
+    # Capabilities
+    capability sys_admin,    # Firefox content process sandbox uses mount operations inside user namespace
+    capability sys_chroot,   # Firefox Chroot Helper sets up chroot sandbox for content processes
+    capability sys_ptrace,   # Firefox content process sandbox inspects child processes
+
+    /etc/sysconfig/proxy r,                  # openSUSE system-wide proxy settings
+    /usr/share/mozilla/extensions/{,**} r,   # system-wide Firefox extensions
+    /usr/share/myspell/{,**} r,              # spell check dictionaries
+
+    # Wayland proxy socket
+    owner /run/user/*/wayland-proxy-* rw,
+
+    # ICE (Inter-Client Exchange) auth for X11 - Firefox probes for this even under Wayland
+    owner /run/user/*/iceauth_* r,
+
+{% if apparmor_allow_x11 %}
+    # X11 auth
+    owner /run/user/*/xauth_* r,
+{% endif %}
+
+    # Allow read-only access to shared Firefox files
+    owner @{HOME}/.mozilla/firefox/profiles.ini r,
+    owner @{HOME}/.mozilla/firefox/installs.ini r,
+    owner "@{HOME}/.mozilla/firefox/Pending Pings{/,/**}" rw,
+
+    # Deny Firefox's cross-profile group database (introduced in Firefox 138) - intentional,
+    # as it is a shared store across profiles and undermines per-profile isolation
+    deny "@{HOME}/.mozilla/firefox/Profile Groups/" mrwklx,
+    deny "@{HOME}/.mozilla/firefox/Profile Groups/**" mrwklx,
+
+    # Crash reports - shared path across all profiles
+    owner "@{HOME}/.mozilla/firefox/Crash Reports/" rw,
+    owner "@{HOME}/.mozilla/firefox/Crash Reports/**" rwk,
+
+    # MPRIS media control integration - shared directory across all profiles
+    owner @{HOME}/.mozilla/firefox/firefox-mpris/ rw,
+    owner @{HOME}/.mozilla/firefox/firefox-mpris/** rwk,
+

@@ -1,0 +1,111 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# Chromium AppArmor profile - /etc/apparmor.d/local_pathbased_chromium
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_chromium
+
+profile local_pathbased_chromium /usr{/bin/chromium,/lib*/chromium/{chrome,chromium}} {
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+    #include <abstractions/fonts>
+    #include <abstractions/dbus-session-strict>
+
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_gpu>
+    #include <abstractions/local_mixin_gpu_chromium_based>
+    #include <abstractions/local_mixin_audio>
+    #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_kde>
+    #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_xdg_dir_pictures_screenshots>
+    #include <abstractions/local_mixin_xdg_dir_downloads>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # Chromium executable and resources
+    # TODO: verify remaining paths via complain mode log
+    /usr/bin/chromium ix,
+    /usr{,/lib64}/lib*/chromium/ r,
+    /usr{,/lib64}/lib*/chromium/** r,
+    /usr{,/lib64}/lib*/chromium/chrome ix,                  # main binary (named 'chrome' on some distros/packages)
+    /usr{,/lib64}/lib*/chromium/chromium ix,               # main binary (named 'chromium' on some distros/packages)
+    /usr{,/lib64}/lib*/chromium/chrome-sandbox ix,         # sandbox helper (may not be needed if user namespaces are used)
+    /usr{,/lib64}/lib*/chromium/chrome_crashpad_handler ix, # out-of-process crash reporter
+
+    # System Chromium policies and extensions
+    /etc/chromium/{,**} r,
+    /usr/share/chromium/{,**} r,
+    deny /usr{,/lib64}/lib*/chromium/extensions/ w,  # Chromium probes this; install path is root-owned so mkdir would fail anyway
+
+    # Capabilities - Chromium uses user namespaces for renderer/GPU/utility process isolation
+    capability sys_admin,    # user namespace setup for sandboxed child processes
+    capability sys_chroot,   # chroot-based content process sandbox
+    capability sys_ptrace,   # inspect sandboxed child processes
+
+    # User/group namespace ID mapping - needed for user namespace setup
+    /proc/sys/kernel/overflowuid r,
+    /proc/sys/kernel/overflowgid r,
+
+    # Process self-inspection
+    /proc/ r,                                        # sandbox setup: enumerate /proc entries
+    /proc/*/stat r,                                  # monitor child process status (sandboxed children may run as root)
+    /proc/*/task/*/status r,                         # sandbox monitor: read thread status of child processes
+    /proc/sys/kernel/yama/ptrace_scope r,            # crashpad: check yama ptrace restrictions
+    /proc/sys/kernel/core_pattern r,                 # crashpad: locate core dump handler
+    /proc/sys/fs/inotify/max_user_watches r,         # inotify limit check for file watching
+    owner @{PROC}/@{pid}/ r,
+    owner @{PROC}/@{pid}/** r,
+    owner @{PROC}/@{pid}/oom_score_adj w,
+    owner @{PROC}/@{pid}/clear_refs w,               # MemoryInfra: reset page reference bits for working set measurement
+    owner @{PROC}/@{pid}/uid_map w,      # renderer sandbox: write UID mapping for user namespace
+    owner @{PROC}/@{pid}/gid_map w,      # renderer sandbox: write GID mapping for user namespace
+    owner @{PROC}/@{pid}/setgroups w,    # renderer sandbox: must be written before gid_map
+    deny @{PROC}/@{pid}/mem rwklx,       # direct process memory access
+    deny @{PROC}/@{pid}/environ r,       # process environment variables (may contain secrets)
+    deny @{PROC}/@{pid}/pagemap r,       # virtual-to-physical memory mapping (exploit aid)
+
+    # Chromium multi-process: main/renderer/GPU/utility processes all run under this profile
+    ptrace (trace) peer=local_pathbased_chromium,
+
+    /dev/tty rw,                                     # terminal access (startup and crash reporter)
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+    # X11 and ICE auth - Chromium probes for both even under Wayland
+    owner /run/user/*/xauth_* r,
+    owner /run/user/*/iceauth_* r,
+
+    # Shared memory - Chromium renderer/GPU process IPC
+    owner /dev/shm/org.chromium.* rwk,
+    owner /dev/shm/.org.chromium.* rwk,   # dot-prefixed shm files created via mknod (w covers create in AppArmor 2)
+
+    # File picker: list top-level home directories
+    /home/ r,
+
+    # sysfs device enumeration - Chromium hardware discovery scans top-level bus/class dirs
+    /sys/bus/ r,
+    /sys/bus/usb/{,**} r,                            # USB device enumeration (WebUSB, gamepad, HID APIs)
+    /sys/class/ r,
+
+    # Camera access (WebRTC)
+    /dev/video* rw,
+
+    # User data - no per-profile isolation
+    owner @{HOME}/.config/ r,                        # top-level .config listing (config discovery)
+    owner @{HOME}/.config/chromium/ rw,
+    owner @{HOME}/.config/chromium/** rwkm,          # m: Widevine CDM (.so) requires executable mmap
+    owner @{HOME}/.cache/chromium/ rw,
+    owner @{HOME}/.cache/chromium/** rwk,
+
+    # NSS/PKCS11 certificate database (TLS client certificates)
+    owner @{HOME}/.pki/ r,
+    owner @{HOME}/.pki/nssdb/ r,
+    owner @{HOME}/.pki/nssdb/** rwk,
+
+}

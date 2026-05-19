@@ -1,0 +1,49 @@
+# Managed by Ansible - do not edit manually
+# mpv shared profile base - /etc/apparmor.d/abstractions/local_base_mpv
+#
+# Included by local_pathbased_mpv and local_attachmentless_mpv_gpu.
+# Contains all common rules. GPU access is intentionally excluded;
+# only local_attachmentless_mpv_gpu adds local_mixin_gpu on top.
+
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+    #include <abstractions/fonts>
+    #include <abstractions/dbus-session-strict>
+
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_audio>
+    #include <abstractions/local_mixin_kde>
+    #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_xdg_dir_pictures_screenshots>
+    #include <abstractions/local_mixin_deny_browser_config>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # mpv system resources
+    /usr/share/mpv/{,**} r,
+    /etc/mpv/{,**} r,
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+    # X11 auth
+    owner /run/user/*/xauth_* r,
+    owner /run/user/*/iceauth_* r,
+
+    # Process self-inspection
+    owner @{PROC}/@{pid}/ r,
+    owner @{PROC}/@{pid}/** r,
+
+    # Media file access - read anywhere in home; write for watch-later, config, cache
+    owner @{HOME}/ r,
+    owner @{HOME}/** r,
+    owner @{HOME}/.config/mpv/{,**} rw,
+    owner @{HOME}/.cache/mpv/{,**} rw,
+
+    # Removable media
+    /media/ r,
+    /media/** r,
+    /mnt/ r,
+    /mnt/** r,

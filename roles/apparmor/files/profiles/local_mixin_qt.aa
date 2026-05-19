@@ -1,0 +1,13 @@
+# Managed by Ansible - do not edit manually
+# Qt framework integration rules - /etc/apparmor.d/abstractions/local_mixin_qt
+#
+# Include this in any profile that uses Qt for rendering or UI.
+# Covers Qt translations. For KDE-specific config (kdeglobals, kwinrc etc.),
+# also include local_mixin_kde.
+# XDG base resources (MIME, icons, applications, user-dirs) are pulled in via local_mixin_xdg.
+
+#include <abstractions/local_mixin_xdg>
+
+# System share
+/usr/share/qt5/translations/{,**} r,          # Qt5 UI translation catalogs
+/usr/share/qt6/translations/{,**} r,          # Qt6 UI translation catalogs

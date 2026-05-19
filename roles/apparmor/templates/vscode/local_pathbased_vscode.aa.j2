@@ -1,0 +1,140 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# Visual Studio Code AppArmor profile - /etc/apparmor.d/local_pathbased_vscode
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Attaches to the Electron binary. /usr/bin/code and /usr/share/code/bin/code are shell
+# scripts (CLI wrappers) that eventually exec this binary - confinement begins at that point.
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_vscode
+
+profile local_pathbased_vscode /usr/share/code/code {
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+    #include <abstractions/fonts>
+    #include <abstractions/dbus-session-strict>
+
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_gpu>
+    #include <abstractions/local_mixin_gpu_chromium_based>
+    #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_kde>
+    #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_deny_browser_config>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # VS Code executable and resources
+    /usr/share/code/ r,
+    /usr/share/code/** rm,                          # m: Electron/V8 snapshot blobs and bundled .so files require executable mmap
+    /usr/share/code/code ix,
+    /usr/share/code/code-sandbox ix,                # setuid sandbox helper
+    /usr/share/code/chrome_crashpad_handler ix,     # out-of-process crash reporter
+    /usr/share/code/resources/app/node_modules/@vscode/ripgrep/bin/rg ix,  # bundled ripgrep for workspace search
+    /usr/share/code/resources/app/node_modules/@vscode/vsce-sign/bin/vsce-sign ix,  # bundled VSIX signature verifier (extension marketplace installs)
+
+    deny /usr/share/code/resources/app/extensions/ w,  # VS Code probes this; root-owned so mkdir fails anyway
+
+    # Capabilities - Electron uses the same Chromium multi-process sandbox model
+    capability sys_admin,    # user namespace setup for sandboxed renderer/extension-host processes
+    capability sys_chroot,   # chroot-based content process sandbox
+    capability sys_ptrace,   # inspect sandboxed child processes
+
+    # User/group namespace ID mapping - needed for user namespace setup
+    /proc/sys/kernel/overflowuid r,
+    /proc/sys/kernel/overflowgid r,
+
+    # Process self-inspection
+    /proc/ r,
+    /proc/*/stat r,                                 # monitor child process status (sandboxed children may run as root)
+    /proc/*/task/*/status r,                        # sandbox monitor: read thread status of child processes
+    /proc/sys/kernel/yama/ptrace_scope r,           # crashpad: check yama ptrace restrictions
+    /proc/sys/kernel/core_pattern r,                # crashpad: locate core dump handler
+    /proc/version r,                                # kernel version string (Node.js runtime detection)
+    /proc/loadavg r,                                # system load (VS Code performance monitoring)
+    /proc/sys/fs/inotify/max_user_watches r,        # file watcher limit (VS Code watches workspace files for hot-reload)
+    owner @{PROC}/@{pid}/ r,
+    owner @{PROC}/@{pid}/** r,
+    owner @{PROC}/@{pid}/oom_score_adj w,
+    owner @{PROC}/@{pid}/clear_refs w,              # MemoryInfra: reset page reference bits for working set measurement
+    owner @{PROC}/@{pid}/uid_map w,                 # renderer sandbox: write UID mapping for user namespace
+    owner @{PROC}/@{pid}/gid_map w,                 # renderer sandbox: write GID mapping for user namespace
+    owner @{PROC}/@{pid}/setgroups w,               # renderer sandbox: must be written before gid_map
+    deny @{PROC}/@{pid}/mem rwklx,                  # direct process memory access
+    deny @{PROC}/@{pid}/environ r,                  # process environment variables (may contain secrets)
+    deny @{PROC}/@{pid}/pagemap r,                  # virtual-to-physical memory mapping (exploit aid)
+
+    # Electron multi-process: main/renderer/GPU/extension-host processes all run under this profile
+    ptrace (trace) peer=local_pathbased_vscode,
+
+    /dev/tty rw,
+    /dev/ptmx rw,                                   # pty master - required to open integrated terminal sessions
+    owner /dev/pts/[0-9]* rw,                       # pty slave - the shell side of each terminal session
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+    # X11 and ICE auth
+    owner /run/user/*/xauth_* r,
+    owner /run/user/*/iceauth_* r,
+
+    # Shared memory - Electron renderer/GPU process IPC
+    owner /dev/shm/org.chromium.* rwk,
+    owner /dev/shm/.org.chromium.* rwk,
+
+    # File picker: list top-level home directories
+    /home/ r,
+
+    # sysfs device enumeration
+    /sys/bus/ r,
+    /sys/class/ r,
+    /sys/kernel/mm/transparent_hugepage/enabled r,  # jemalloc (ripgrep): THP availability probe at allocator init
+
+    # VS Code IPC sockets (main process <-> extension host and language server communication)
+    owner /run/user/*/vscode-* rwk,
+    owner /run/user/*/ssh-askpass-*.sock rw,        # SSH askpass socket created by VS Code for credential prompts
+
+    # Deny podman runtime directory - chmod here would let a malicious extension make the
+    # podman API socket world-writable, granting arbitrary container control to other processes.
+    # VSCode is not a container management tool; use a dedicated terminal for podman.
+    deny /run/user/*/libpod/{,**} w,
+
+    # System-wide git configuration - read by git child processes inheriting this profile
+    /etc/gitconfig r,
+    /etc/shells r,                                  # libuv: enumerate available shells for integrated terminal
+    /usr/share/libalternatives/{,**} r,             # openSUSE libalternatives: npm child resolves binary alternatives at startup
+
+    # Workspace file access - VS Code is a code editor; arbitrary read/write across home is expected
+    owner @{HOME}/ r,
+    owner @{HOME}/** rw,
+    deny @{HOME}/.nvm/** x,                           # nvm-managed node binaries must not run under this profile
+
+    # VS Code user data - explicit k and m on top of the broad rw above
+    owner @{HOME}/.config/Code/ rw,
+    owner @{HOME}/.config/Code/** rwkm,             # m: V8 bytecode cache files require executable mmap
+    owner @{HOME}/.vscode/ rw,
+    owner @{HOME}/.vscode/** rwkm,                  # m: native extension modules (.node files) require executable mmap
+
+    # NSS certificate database - Electron uses this for TLS; SQLite requires file locking
+    owner @{HOME}/.pki/ rw,
+    owner @{HOME}/.pki/** rwk,
+
+    # Integrated terminal - zsh runtime support
+    /usr/share/zsh/{,**} r,
+    /usr/share/terminfo/{,**} r,
+
+    # zsh probes selinuxenabled at startup; this system uses AppArmor, not SELinux - deny silently
+    deny /usr/sbin/selinuxenabled x,
+
+    # ix: child processes inherit this profile so deny_keyrings and deny_persistent_attack
+    # remain effective even when extensions spawn external tools via child_process APIs.
+    /bin/{,*} rix,
+    /usr/bin/{,*} rix,
+    deny /usr/bin/ps x,                               # VSCode auto-spawns ps to enumerate all processes; deny full process list visibility
+    /usr/libexec/** rix,
+    /usr/local/bin/{,*} rix,
+}

@@ -1,0 +1,19 @@
+# Managed by Ansible - do not edit manually
+# Chromium-based GPU access rules - /etc/apparmor.d/abstractions/local_mixin_gpu_chromium_based
+#
+# Include this in profiles for Chromium-based apps (Chromium, Electron) that bypass the
+# Mesa/DRI abstraction and access the NVIDIA proprietary stack directly. Firefox and other
+# Mesa-based apps do not need this - they use /dev/dri/renderD* via local_mixin_gpu instead.
+#
+# Why direct access is needed: Chromium's GPU process inherits the parent profile (ix) and
+# has no bwrap intermediary, so it must be explicitly allowed to open NVIDIA device nodes,
+# exec nvidia-modprobe to ensure those nodes exist, and use udmabuf for zero-copy IPC.
+
+/proc/driver/nvidia/params r,            # NVIDIA driver parameters (GPU init, read before opening device)
+/dev/nvidia[0-9]* rw,                    # NVIDIA GPU device nodes; w covers chmod (AppArmor maps chmod to w)
+/dev/nvidia-modeset rw,                  # NVIDIA modeset device; w covers chmod
+/dev/char/195:* w,                       # nvidia-modprobe (ix) unlinks /dev/char/ symlinks when recreating device nodes; 195 = NVIDIA major; w covers unlink (d in audit log is kernel-internal only)
+/dev/udmabuf rw,                         # userspace DMA buffer (zero-copy GPU/display memory sharing between processes)
+/usr/bin/nvidia-modprobe ix,             # NVIDIA modprobe helper - Chromium execs to ensure device nodes exist at startup
+owner @{HOME}/.cache/nvidia/ rw,
+owner @{HOME}/.cache/nvidia/** rwk,      # NVIDIA proprietary GL shader cache

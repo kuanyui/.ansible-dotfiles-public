@@ -1,0 +1,10 @@
+# Managed by Ansible - do not edit manually
+# Deny SSH and GPG credential directories - /etc/apparmor.d/abstractions/local_mixin_deny_keyrings
+#
+# Include this in any profile that should not access private keys or signing credentials.
+# audit deny ensures access attempts are logged.
+
+audit deny @{HOME}/.ssh/{,**} mrwklx,
+audit deny @{HOME}/.gnupg/{,**} mrwklx,
+audit deny @{HOME}/.config/syncthingtray.ini mrwklx,
+audit deny @{HOME}/.local/state/syncthing/{,**} mrwklx,

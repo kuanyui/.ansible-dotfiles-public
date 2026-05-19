@@ -1,0 +1,44 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# Okular AppArmor profile - /etc/apparmor.d/local_pathbased_okular
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_okular
+
+profile local_pathbased_okular /usr/bin/okular {
+    #include <abstractions/base>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_kde>
+    #include <abstractions/local_mixin_xdg_dir_downloads>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # network access intentionally denied
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+{% if apparmor_allow_x11 %}
+    /tmp/.X11-unix/ r,
+    /tmp/.X11-unix/X* rw,
+    owner /run/user/*/xauth_* r,
+{% endif %}
+
+    # D-Bus (print dialog, desktop notifications, portal access)
+    owner /run/user/*/bus rw,
+
+    # User config, annotations, and cache
+    owner @{HOME}/.config/okularrc rw,
+    owner @{HOME}/.config/okular/ rw,
+    owner @{HOME}/.config/okular/** rwk,
+    owner @{HOME}/.local/share/okular/ rw,
+    owner @{HOME}/.local/share/okular/** rwk,
+    owner @{HOME}/.cache/okular/ rw,
+    owner @{HOME}/.cache/okular/** rwk,
+
+}

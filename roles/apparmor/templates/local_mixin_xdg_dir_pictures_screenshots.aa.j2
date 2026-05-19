@@ -1,0 +1,11 @@
+# Managed by Ansible - do not edit manually
+# XDG Pictures/Screenshots directory rules - /etc/apparmor.d/abstractions/local_mixin_xdg_dir_pictures_screenshots
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Read-only access to the Screenshots subdirectory under XDG_PICTURES_DIR.
+# Only included if the directory exists at Ansible run time.
+# Path is derived from XDG user-dirs at Ansible run time.
+
+{% if apparmor_xdg_screenshots_exists %}
+owner @{HOME}/{{ apparmor_xdg_pictures_subdir }}/Screenshots/{,**} r,
+{% endif %}

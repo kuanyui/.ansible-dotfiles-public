@@ -1,0 +1,14 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# mpv media player AppArmor profile - /etc/apparmor.d/local_pathbased_mpv
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# No GPU access by default; use ansible-mpv-gpu.desktop for hardware acceleration.
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_mpv
+
+profile local_pathbased_mpv /usr/bin/mpv {
+    #include <abstractions/local_base_mpv>
+}

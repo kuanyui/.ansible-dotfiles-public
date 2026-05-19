@@ -1,0 +1,11 @@
+# Managed by Ansible - do not edit manually
+# Glycin image loader client rules - /etc/apparmor.d/abstractions/local_mixin_glycin
+#
+# Include this in any profile that needs to launch the Glycin image loader.
+# The calling profile is responsible for the bwrap Px transition:
+#   /usr/bin/bwrap Px -> local_attachmentless_glycin,
+
+# gly-hdl-loader (Glycin dispatcher) runs under the calling profile via ix,
+# then execs bwrap which transitions to local_attachmentless_glycin
+/usr/libexec/glycin-loaders/{,**} ix,
+/usr/share/glycin-loaders/{,**} r,

@@ -1,0 +1,47 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# VLC AppArmor profile - /etc/apparmor.d/local_pathbased_vlc
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_vlc
+
+profile local_pathbased_vlc /usr/bin/vlc {
+    #include <abstractions/base>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_audio>
+    #include <abstractions/local_mixin_gpu>
+    #include <abstractions/local_mixin_qt>
+    #include <abstractions/local_mixin_xdg_dir_downloads>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # network access intentionally denied
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+{% if apparmor_allow_x11 %}
+    /tmp/.X11-unix/ r,
+    /tmp/.X11-unix/X* rw,
+    owner /run/user/*/xauth_* r,
+{% endif %}
+
+    # D-Bus (desktop notifications, media keys via MPRIS)
+    owner /run/user/*/bus rw,
+
+    # VLC plugins and data
+    /usr/lib{,64}/vlc/{,**} rm,
+    /usr/share/vlc/{,**} r,
+
+    # User config and cache
+    owner @{HOME}/.config/vlc/ rw,
+    owner @{HOME}/.config/vlc/** rwk,
+    owner @{HOME}/.cache/vlc/ rw,
+    owner @{HOME}/.cache/vlc/** rwk,
+
+}

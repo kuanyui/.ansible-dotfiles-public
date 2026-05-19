@@ -1,0 +1,74 @@
+---
+# =============================================
+# Deploy AppArmor profile
+# =============================================
+
+- name: Write MuseScore AppArmor profile to /etc/apparmor.d/local_pathbased_mscore
+  ansible.builtin.template:
+    src: mscore/local_pathbased_mscore.aa.j2
+    dest: /etc/apparmor.d/local_pathbased_mscore
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Reload apparmor
+  tags: mscore
+
+# =============================================
+# Neutralize conflicting system MuseScore profiles
+# =============================================
+
+- name: Ensure /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/ directory exists
+  ansible.builtin.file:
+    path: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  tags: mscore
+
+- name: Stat system MuseScore profiles in /etc/apparmor.d/
+  ansible.builtin.stat:
+    path: /etc/apparmor.d/{{ item }}
+  loop:
+    - mscore
+  register: apparmor__sys_mscore_stat
+  tags: mscore
+
+- name: Back up system MuseScore profiles to _backup_of_default_profiles_from_package_manager/
+  ansible.builtin.copy:
+    remote_src: true
+    src: /etc/apparmor.d/{{ item.item }}
+    dest: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item.item }}
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ apparmor__sys_mscore_stat.results }}"
+  when: item.stat.exists
+  become: true
+  tags: mscore
+
+- name: Remove system MuseScore profiles from /etc/apparmor.d/
+  ansible.builtin.file:
+    path: /etc/apparmor.d/{{ item.item }}
+    state: absent
+  loop: "{{ apparmor__sys_mscore_stat.results }}"
+  when: item.stat.exists
+  become: true
+  notify: Reload apparmor
+  tags: mscore
+
+- name: Flush handlers to trigger AppArmor reload
+  ansible.builtin.meta: flush_handlers
+  tags: mscore
+
+- name: Remove system MuseScore profiles from kernel using backup files
+  ansible.builtin.command:
+    cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item }}
+  loop:
+    - mscore
+  become: true
+  failed_when: false
+  changed_when: false
+  tags: mscore

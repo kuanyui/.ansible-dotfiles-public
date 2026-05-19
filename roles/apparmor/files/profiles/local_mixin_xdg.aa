@@ -1,0 +1,21 @@
+# Managed by Ansible - do not edit manually
+# XDG desktop integration rules - /etc/apparmor.d/abstractions/local_mixin_xdg
+#
+# Common XDG resources needed by any desktop application regardless of toolkit.
+# Included by local_mixin_gtk and local_mixin_qt; do not include both.
+
+# System MIME types
+/etc/mime.types r,
+
+# System share - icons, MIME database, application entries, pixmaps
+/{usr,usr/local,var/lib/flatpak/exports}/share/icons/{,**} r,
+/{usr,usr/local,var/lib/flatpak/exports}/share/mime/{,**} r,
+/{usr,usr/local,var/lib/flatpak/exports}/share/applications/{,**} r,  # MIME handler lookup (mimeinfo.cache, mimeapps.list)
+/usr/share/pixmaps/{,**} r,              # system application icons
+
+# User home - icons, MIME database, application entries
+@{HOME}/.local/share{,/flatpak/exports/share}/icons/{,**} r,     # icon-theme.cache under user flatpak is owned by root (written by gtk-update-icon-cache)
+@{HOME}/.local/share{,/flatpak/exports/share}/applications/{,**} r,  # MIME handler lookup; cache file under flatpak is owned by root
+owner @{HOME}/.local/share/mime/{,**} r,
+owner @{HOME}/.config/mimeapps.list r,
+owner @{HOME}/.config/user-dirs.dirs r,  # XDG user directory paths (Downloads etc.)

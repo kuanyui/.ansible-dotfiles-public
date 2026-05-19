@@ -1,0 +1,54 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# Firefox AppArmor profiles - /etc/apparmor.d/local_attachmentless_firefox
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Per-profile: local_attachmentless_firefox_isolated_<aa_label> - launched via:
+#   aa-exec -p local_attachmentless_firefox_isolated_<aa_label> -- firefox -P "<label_name>"
+# All profiles: local_attachmentless_firefox_all_profiles - full access to all Firefox profiles, no isolation
+#
+# Common rules are in /etc/apparmor.d/abstractions/local_base_firefox.
+# aa_label: label_name lowercased, spaces replaced with underscores
+
+{% for ff_profile in apparmor_firefox_profiles %}
+{% set aa_label = ff_profile.label_name | lower | replace(' ', '_') %}
+profile local_attachmentless_firefox_isolated_{{ aa_label }} {
+    #include <abstractions/local_base_firefox>
+
+    # Firefox multi-process sandbox requires ptrace between its own processes
+    # ix (inherit execute) - child processes inherit this profile instead of transitioning to a new one
+    ptrace (trace) peer=local_attachmentless_firefox_isolated_{{ aa_label }},
+
+    # Firefox sends KILL to glycin/bwrap child processes on shutdown
+    signal (send) set=(kill) peer=local_attachmentless_glycin,
+
+    # Full access to this profile's own data and cache directories
+    owner @{HOME}/.mozilla/firefox/{{ ff_profile.dir_name }}/ rw,
+    owner @{HOME}/.mozilla/firefox/{{ ff_profile.dir_name }}/** rwk,
+    owner @{HOME}/.cache/mozilla/firefox/{{ ff_profile.dir_name }}/ rw,
+    owner @{HOME}/.cache/mozilla/firefox/{{ ff_profile.dir_name }}/** rwk,
+
+    # Deny access to every other profile's directory
+{% for other in apparmor_firefox_profiles %}
+{% if other.dir_name != ff_profile.dir_name %}
+    deny @{HOME}/.mozilla/firefox/{{ other.dir_name }}/ mrwklx,
+    deny @{HOME}/.mozilla/firefox/{{ other.dir_name }}/** mrwklx,
+{% endif %}
+{% endfor %}
+}
+
+{% endfor %}
+
+# Full access to all Firefox profiles, no per-profile isolation.
+# Use for multi-profile workflows or when per-profile isolation is not needed.
+# Launched via: aa-exec -p local_attachmentless_firefox_all_profiles -- firefox
+profile local_attachmentless_firefox_all_profiles {
+    #include <abstractions/local_base_firefox>
+
+    ptrace (trace) peer=local_attachmentless_firefox_all_profiles,
+    signal (send) set=(kill) peer=local_attachmentless_glycin,
+
+    owner @{HOME}/.mozilla/firefox/{,**} rwk,
+    owner @{HOME}/.cache/mozilla/firefox/{,**} rwk,
+}

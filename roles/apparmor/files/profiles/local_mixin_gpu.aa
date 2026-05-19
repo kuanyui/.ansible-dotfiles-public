@@ -1,0 +1,28 @@
+# Managed by Ansible - do not edit manually
+# GPU hardware access rules - /etc/apparmor.d/abstractions/local_mixin_gpu
+#
+# Include this in any profile that needs hardware-accelerated GPU rendering.
+# Covers: PCI enumeration, DRI render nodes, EGL/GLVND vendor selection,
+# Mesa shader cache, NVIDIA application profiles, Intel iHD/igfx VA-API.
+
+# Common
+/sys/bus/pci/devices/{,**} r,            # PCI device list (GPU detection)
+/sys/devices/pci*/{,**} r,               # PCI device attributes (GPU vendor/device ID)
+/sys/devices/virtual/tty/tty0/active r,  # active VT detection (display initialization)
+/dev/dri/ r,                             # DRI device listing
+/dev/dri/renderD* rw,                    # GPU render nodes (hardware acceleration); card* excluded - allows display modesetting
+/usr/share/glvnd/egl_vendor.d/{,**} r,   # EGL vendor driver selection (GLVND)
+/usr/share/egl/egl_external_platform.d/{,**} r,  # EGL external platform configs (e.g. Wayland EGL stream)
+/usr/share/drirc.d/{,**} r,              # Mesa DRI driver runtime config (per-app GPU workarounds)
+/usr/share/vulkan/icd.d/{,**} r,         # Vulkan ICD (Installable Client Driver) configs
+/usr/share/vulkan/implicit_layer.d/{,**} r,  # Vulkan implicit layer configs (e.g. validation, overlays)
+owner @{HOME}/.cache/mesa_shader_cache/{,**} rwk, # Mesa GPU shader cache
+
+# NVIDIA
+/dev/nvidiactl rw,                       # NVIDIA control device (GPU command submission, used by sandboxed content processes via FSBroker)
+/usr/share/nvidia/{,**} r,               # NVIDIA application profiles
+
+# Intel
+/proc/sys/dev/i915/perf_stream_paranoid r,        # Intel i915 GPU perf paranoid setting (read-only probe)
+deny /etc/igfx_user_feature.txt w,        # igfx = Intel Graphics (iHD VA-API driver) telemetry; VA-API works without this file
+deny /etc/igfx_user_feature_report.txt w, # igfx = Intel Graphics (iHD VA-API driver) telemetry; VA-API works without this file

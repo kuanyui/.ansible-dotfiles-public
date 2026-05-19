@@ -1,0 +1,12 @@
+---
+- name: Provision AppArmor profiles via `roles/apparmor`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  # `become: false` at play level per `roles/apparmor/CLAUDE.md` (role mixes
+  # privileged and unprivileged tasks; `become` is set per-task).
+  become: false
+  vars:
+    setup_apparmor: true  # dedicated entry point - bypass the host-level opt-in gate
+  roles:
+    - apparmor

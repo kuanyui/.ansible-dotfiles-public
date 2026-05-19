@@ -1,0 +1,5 @@
+#!/bin/bash
+# Sandbox stub for AppArmor userspace tools (aa-enforce, aa-status, etc.).
+# These require a running AppArmor kernel module; silently return 0.
+echo "[sandbox stub] $(basename "$0") $*"
+exit 0

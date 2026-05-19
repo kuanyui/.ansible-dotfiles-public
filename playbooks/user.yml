@@ -13,3 +13,4 @@
     - emacs
     - dotfiles
     - container_apps   # gated by `setup_container_apps` (default false in group_vars/all.yml)
+    - apparmor         # gated by `setup_apparmor` (default false in group_vars/all.yml)

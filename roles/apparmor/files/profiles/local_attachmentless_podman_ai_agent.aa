@@ -1,0 +1,28 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# AI agent container AppArmor profile - /etc/apparmor.d/local_attachmentless_podman_ai_agent
+#
+# For rootless podman containers running AI coding agents (e.g. Codex, Claude Code).
+# Apply via: podman run --security-opt apparmor=local_attachmentless_podman_ai_agent ...
+#
+# The container namespace (overlayfs + bind mounts) is the primary isolation boundary.
+# This profile's role is to audit-deny sensitive host paths that could be exposed via
+# bind mounts. It does not whitelist specific paths because the agent's working set
+# is not known at profile-write time.
+#
+# flags=(attach_disconnected): paths inside the container mount namespace appear
+# disconnected to AppArmor's host-side path resolver; without this flag AppArmor
+# cannot evaluate the profile for processes inside the namespace.
+
+profile local_attachmentless_podman_ai_agent flags=(attach_disconnected) {
+    #include <abstractions/base>
+    #include <abstractions/local_mixin_container_base>
+
+    # Broad filesystem access - namespace isolation limits what paths are reachable;
+    # deny rules from included mixins protect sensitive host paths from bind-mount exposure.
+    file,
+
+    # Network for API calls and package downloads
+    network,
+}

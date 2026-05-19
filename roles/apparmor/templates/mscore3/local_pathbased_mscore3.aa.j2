@@ -1,0 +1,47 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# MuseScore 3 AppArmor profile - /etc/apparmor.d/local_pathbased_mscore3
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_mscore3
+
+profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 {
+    #include <abstractions/base>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_audio>
+    #include <abstractions/local_mixin_qt>
+    #include <abstractions/local_mixin_xdg_dir_downloads>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # network access intentionally denied
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+{% if apparmor_allow_x11 %}
+    /tmp/.X11-unix/ r,
+    /tmp/.X11-unix/X* rw,
+    owner /run/user/*/xauth_* r,
+{% endif %}
+
+    # D-Bus (desktop notifications)
+    owner /run/user/*/bus rw,
+
+    # MuseScore 3 system data (soundfonts, templates, instruments) - self-installed under /usr/local
+    /usr/local/share/mscore3*/{,**} r,
+
+    # User config and scores
+    owner @{HOME}/.config/MuseScore/ rw,
+    owner @{HOME}/.config/MuseScore/** rwk,
+    owner @{HOME}/.local/share/MuseScore/ rw,
+    owner @{HOME}/.local/share/MuseScore/** rwk,
+    owner @{HOME}/.cache/MuseScore/ rw,
+    owner @{HOME}/.cache/MuseScore/** rwk,
+
+}

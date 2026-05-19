@@ -1,0 +1,108 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# Telegram Desktop AppArmor profile - /etc/apparmor.d/local_pathbased_telegram
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Auto-attaches to /usr/bin/Telegram when bwrap exec's it inside the sandbox.
+# No aa-exec needed in the launcher script - the profile kicks in at that exec point.
+#
+# flags=(attach_disconnected): required because Telegram runs inside bwrap's mount namespace;
+# /proc and /dev inside bwrap are new mounts (not bind-mounts) and appear disconnected from host root.
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_telegram
+
+profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected) {
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_audio>
+    #include <abstractions/local_mixin_kde>
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_xdg_dir_pictures_screenshots>
+    #include <abstractions/local_mixin_xdg_dir_downloads>
+    #include <abstractions/local_mixin_deny_browser_config>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # Open clicked links/files in the default application; ix keeps xdg-open confined
+    /usr/bin/xdg-open rix,
+
+    # Telegram may re-exec itself (crash recovery, updater)
+    /usr/bin/Telegram ix,
+
+    # Used to detect VM/container environment at startup
+    /usr/bin/systemd-detect-virt ix,
+
+    # SSL certificate verification (bind-mounted read-only by launcher)
+    /etc/ssl/{,**} r,
+
+    # Network - Telegram uses TCP, UDP, and QUIC across many endpoints
+    network,
+
+    # Wayland display socket (bind-mounted by launcher)
+    owner /run/user/*/wayland-[0-9]* rw,
+
+{% if apparmor_allow_x11 %}
+    # X11 (bind-mounted by launcher when $DISPLAY is set)
+    /tmp/.X11-unix/ r,
+    /tmp/.X11-unix/X* rw,
+    owner /run/user/*/xauth_* r,
+{% endif %}
+
+    # D-Bus socket (bind-mounted by launcher; used for desktop notifications and portal access)
+    owner /run/user/*/bus rw,
+
+    # Telegram webview creates socket/lock files with unpredictable names in XDG_RUNTIME_DIR.
+    # bwrap mounts --tmpfs /run/user/<uid> so this only affects the isolated tmpfs,
+    # not the host's real runtime directory.
+    owner /run/user/*/* rwk,
+
+    # Shared memory
+    owner /dev/shm/** rwk,
+
+    # Camera (video calls)
+    /dev/video* rw,
+
+    # GPU (/dev/dri) intentionally excluded - launcher does not bind /dev/dri and forces
+    # LIBGL_ALWAYS_SOFTWARE=1. The actual attack surface is the device node, not config files.
+    # Qt EGL loader scans /usr/share/glvnd/egl_vendor.d/ unconditionally at startup regardless
+    # of LIBGL_ALWAYS_SOFTWARE, so the directory must be readable even though GPU is unused.
+    /usr/share/glvnd/egl_vendor.d/{,**} r,
+
+    # Qt reads /dev/tty to detect whether stdout is a terminal
+    /dev/tty r,
+
+    # Process self-inspection
+    owner @{PROC}/@{pid}/ r,
+    owner @{PROC}/@{pid}/** r,
+    @{PROC}/sys/kernel/core_pattern r,
+
+    # PipeWire audio client configuration (main file + drop-in directory)
+    # /usr/share/pipewire/client.conf r,
+    # /usr/share/pipewire/client.conf.d/{,*} r,
+
+    # libheif plugins for HEIF/HEIC image support; m required to mmap the .so files
+    /usr/libexec/libheif/{,*} rm,
+
+    # Keyboard layout rules (Qt input handling); openSUSE installs to xkeyboard-config-2/
+    /usr/share/xkeyboard-config{,-2}/{,**} r,
+
+    # bwrap uses --tmpfs / so ~/.config and ~/.cache do not exist in the namespace.
+    # Telegram needs to mkdir them on startup; w here allows only the directory entry
+    # itself (mkdir), not any files inside. Contents are controlled by explicit sub-path rules.
+    owner @{HOME}/.config/ rw,
+    owner @{HOME}/.cache/ rw,
+
+    # Telegram user data and cache (bind-mounted by launcher)
+    owner @{HOME}/.local/share/TelegramDesktop/ rw,
+    owner @{HOME}/.local/share/TelegramDesktop/** rwkl,
+    owner @{HOME}/.cache/TelegramDesktop/ rw,
+    owner @{HOME}/.cache/TelegramDesktop/** rwk,
+
+}

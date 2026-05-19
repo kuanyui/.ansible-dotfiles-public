@@ -1,0 +1,23 @@
+# Managed by Ansible - do not edit manually
+# GTK desktop integration rules - /etc/apparmor.d/abstractions/local_mixin_gtk
+#
+# Include this in any profile that needs GTK theming and the dconf settings backend.
+# XDG base resources (MIME, icons, applications, user-dirs) are pulled in via local_mixin_xdg.
+
+#include <abstractions/local_mixin_xdg>
+
+# System config
+/etc/gtk-3.0/settings.ini r,
+
+# System share
+/usr/share/glib-2.0/schemas/{,**} r,     # GSettings schema definitions
+/usr/share/themes/{,**} r,               # GTK themes
+/usr/share/xkeyboard-config*/{,**} r,    # keyboard layout definitions
+
+# User home
+owner @{HOME}/.cache/gtk-{2,3,4,5}.0/{,**} rw,
+owner @{HOME}/.config/gtk-{2,3,4,5}.0/{,**} r,
+owner @{HOME}/.local/share/gvfs-metadata/{,**} r, # file metadata (recent files etc.)
+# dconf (GNOME settings backend)
+owner @{HOME}/.config/dconf/user r,
+owner /run/user/*/dconf/user rw,

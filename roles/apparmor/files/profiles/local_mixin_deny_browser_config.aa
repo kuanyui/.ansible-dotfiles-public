@@ -1,0 +1,17 @@
+# Managed by Ansible - do not edit manually
+# Deny browser config/data directories - /etc/apparmor.d/abstractions/local_mixin_deny_browser_config
+#
+# Include this in non-browser profiles to prevent access to browser data directories
+# that contain sessions, cookies, saved passwords, and browsing history.
+# Browser profiles themselves should NOT include this.
+
+audit deny @{HOME}/.mozilla/{,**} mrwklx,
+audit deny @{HOME}/.cache/mozilla/{,**} mrwklx,
+audit deny @{HOME}/.config/chromium/{,**} mrwklx,
+audit deny @{HOME}/.cache/chromium/{,**} mrwklx,
+audit deny @{HOME}/.config/microsoft-edge/{,**} mrwklx,
+audit deny @{HOME}/.cache/microsoft-edge/{,**} mrwklx,
+audit deny @{HOME}/.cache/Microsoft/Edge/{,**} mrwklx,
+audit deny @{HOME}/.config/google-chrome/{,**} mrwklx,
+audit deny @{HOME}/.cache/google-chrome/{,**} mrwklx,
+audit deny @{HOME}/.config/BraveSoftware/{,**} mrwklx,

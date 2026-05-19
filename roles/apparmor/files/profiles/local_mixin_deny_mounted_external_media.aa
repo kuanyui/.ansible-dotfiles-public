@@ -1,0 +1,15 @@
+# Managed by Ansible - do not edit manually
+# Deny mounted external media - /etc/apparmor.d/abstractions/local_mixin_deny_mounted_external_media
+#
+# Blocks all access to removable/external storage mount points.
+# Include this in any profile that has no legitimate reason to access USB drives,
+# SD cards, optical discs, or other externally-mounted filesystems.
+#
+# Covers all three standard Linux automount locations:
+#   /media/       - legacy automount (Debian/Ubuntu-style)
+#   /run/media/   - systemd/udisks2 automount (openSUSE, Arch, Fedora)
+#   /mnt/         - traditional manual mount point
+
+audit deny /media/{,**} mrwklx,
+audit deny /run/media/{,**} mrwklx,
+audit deny /mnt/{,**} mrwklx,

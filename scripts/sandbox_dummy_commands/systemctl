@@ -1,0 +1,22 @@
+#!/bin/bash
+# Sandbox stub for systemctl.
+# Returns plausible output for the queries ansible's systemd module makes
+# so the module considers systemd available and does not abort.
+# Kernel-level service management is a no-op.
+case "$1" in
+    --version)
+        echo "systemd 257 (257)" ;;
+    is-active)
+        echo "active" ;;
+    is-system-running)
+        echo "running" ;;
+    show)
+        case "$*" in
+            *--value*ActiveState*)  echo "active" ;;
+            *--value*SubState*)     echo "exited" ;;
+            *--value*LoadState*)    echo "loaded" ;;
+            *--value*)              echo "enabled" ;;
+            *)  printf "ActiveState=active\nSubState=exited\nLoadState=loaded\n" ;;
+        esac ;;
+esac
+exit 0

@@ -1,0 +1,157 @@
+---
+# =============================================
+# Pre-flight checks
+# =============================================
+
+- name: Assert that neither the runner nor target_user is root
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['user_id'] != 'root'
+      - apparmor_target_user != 'root'
+    fail_msg: "Do not run as root. Set apparmor_target_user in host_vars if your login user differs."
+  tags: firefox
+
+- name: Stat Firefox profile base directory
+  ansible.builtin.stat:
+    path: "{{ apparmor_firefox_base_path }}"
+  register: apparmor__ff_dir
+  tags: firefox
+
+- name: Abort if Firefox profile base directory not found
+  ansible.builtin.fail:
+    msg: "Firefox profile directory not found: {{ apparmor_firefox_base_path }}"
+  when: not apparmor__ff_dir.stat.exists
+  tags: firefox
+
+# =============================================
+# Read profiles.ini
+# =============================================
+# Two-step parse: grep finds which [ProfileN] sections actually exist (handles gaps in
+# numbering), then ansible.builtin.ini reads Name/Path from each confirmed section.
+# ansible.builtin.ini raises an error for missing sections, so we must not query sections
+# blindly -- only those grep confirmed. Sections without Name or Path are skipped by when.
+# configparser lowercases option names, so 'Name=' is read as 'name', 'Path=' as 'path'.
+
+- name: Initialize apparmor_firefox_profiles to empty list
+  ansible.builtin.set_fact:
+    apparmor_firefox_profiles: []
+  tags: firefox
+
+- name: Find all [ProfileN] section headers in profiles.ini
+  ansible.builtin.command:
+    cmd: grep -E '^\[Profile[0-9]+\]' {{ apparmor_firefox_base_path }}/profiles.ini
+  register: apparmor__raw_sections
+  changed_when: false
+  check_mode: false
+  tags: firefox
+
+- name: Build apparmor_firefox_profiles list from profiles.ini
+  ansible.builtin.set_fact:
+    apparmor_firefox_profiles: "{{ apparmor_firefox_profiles | default([]) + [{'label_name': _label, 'dir_name': _dir}] }}"
+  vars:
+    _section: "{{ item | regex_replace('^\\[(.+)\\]$', '\\1') }}"
+    _label: "{{ lookup('ansible.builtin.ini', 'name', section=_section, file=apparmor_firefox_base_path ~ '/profiles.ini', default='') }}"
+    _dir: "{{ lookup('ansible.builtin.ini', 'path', section=_section, file=apparmor_firefox_base_path ~ '/profiles.ini', default='') }}"
+  loop: "{{ apparmor__raw_sections.stdout_lines }}"
+  when: _label != '' and _dir != ''
+  tags: firefox
+
+- name: Sort apparmor_firefox_profiles by dir_name for stable template output
+  ansible.builtin.set_fact:
+    apparmor_firefox_profiles: "{{ apparmor_firefox_profiles | sort(attribute='dir_name') | list }}"
+  tags: firefox
+
+# =============================================
+# Deploy AppArmor profile
+# =============================================
+
+- name: Write shared Firefox AppArmor rules to /etc/apparmor.d/abstractions/local_base_firefox
+  ansible.builtin.template:
+    src: firefox/local_base_firefox.aa.j2
+    dest: /etc/apparmor.d/abstractions/local_base_firefox
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Reload apparmor
+  tags: firefox
+
+- name: Write all per-profile Firefox AppArmor rules to /etc/apparmor.d/local_attachmentless_firefox
+  ansible.builtin.template:
+    src: firefox/local_attachmentless_firefox.aa.j2
+    dest: /etc/apparmor.d/local_attachmentless_firefox
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Reload apparmor
+  tags: firefox
+
+
+# =============================================
+# Deploy .desktop launchers
+# =============================================
+
+- name: Create directory ~/.local/share/applications for {{ apparmor_target_user }}
+  ansible.builtin.file:
+    path: "/home/{{ apparmor_target_user }}/.local/share/applications"
+    state: directory
+    owner: "{{ apparmor_target_user }}"
+    mode: '0755'
+  become: true
+  tags: firefox
+
+- name: Remove stale desktop launchers superseded by ansible_aa_firefox_* rename
+  ansible.builtin.find:
+    paths: "/home/{{ apparmor_target_user }}/.local/share/applications"
+    patterns:
+      - "aa-firefox-*.desktop"
+      - "ansible_firefox_*.desktop"
+  register: apparmor__stale_desktops
+  tags: firefox
+
+- name: Delete stale desktop launchers
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ apparmor__stale_desktops.files }}"
+  tags: firefox
+
+- name: Write ansible_aa_firefox_isolated_*.desktop launcher for each Firefox profile
+  ansible.builtin.template:
+    src: firefox/ansible_aa_firefox_isolated_profile.desktop.j2
+    dest: "/home/{{ apparmor_target_user }}/.local/share/applications/ansible_aa_firefox_isolated_{{ ff_profile.label_name | lower | replace(' ', '_') }}.desktop"
+    owner: "{{ apparmor_target_user }}"
+    mode: '0644'
+  become: true
+  loop: "{{ apparmor_firefox_profiles }}"
+  loop_control:
+    loop_var: ff_profile
+  tags: firefox
+
+- name: Write ansible_aa_firefox_all_profiles.desktop launcher
+  ansible.builtin.template:
+    src: firefox/ansible_aa_firefox_all_profiles.desktop.j2
+    dest: "/home/{{ apparmor_target_user }}/.local/share/applications/ansible_aa_firefox_all_profiles.desktop"
+    owner: "{{ apparmor_target_user }}"
+    mode: '0644'
+  become: true
+  tags: firefox
+
+- name: Enumerate installed ansible_aa_firefox_*.desktop launchers for stale-file cleanup
+  ansible.builtin.find:
+    paths: "/home/{{ apparmor_target_user }}/.local/share/applications"
+    patterns: "ansible_aa_firefox_*.desktop"
+  register: apparmor__existing_desktops
+  tags: firefox
+
+- name: Delete ansible_aa_firefox_*.desktop launchers with no matching Firefox profile
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  become: true
+  loop: "{{ apparmor__existing_desktops.files }}"
+  vars:
+    _expected: "{{ (apparmor_firefox_profiles | map(attribute='label_name') | map('lower') | map('replace', ' ', '_') | map('regex_replace', '^(.*)$', 'ansible_aa_firefox_isolated_\\1.desktop') | list) + ['ansible_aa_firefox_all_profiles.desktop'] }}"
+  when: item.path | basename not in _expected
+  tags: firefox

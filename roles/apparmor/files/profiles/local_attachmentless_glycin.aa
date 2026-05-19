@@ -1,0 +1,73 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# Glycin image loader AppArmor profile - /etc/apparmor.d/local_attachmentless_glycin
+#
+# Attachment-less: no executable path attached. Must be invoked via explicit Px transition:
+#   /usr/bin/bwrap Px -> local_attachmentless_glycin,
+#
+# Security model: bwrap's mount namespace is the isolation boundary. bwrap only
+# bind-mounts what the decoder needs (image data / socket) into the sandbox, so the
+# decoder cannot reach the calling app's data regardless of what this profile allows.
+# AppArmor here enforces capability and syscall constraints on bwrap and the decoder.
+#
+# flags=(attach_disconnected): bwrap creates a new mount namespace; paths inside
+# appear disconnected (empty) to AppArmor's path resolver. Without this flag,
+# AppArmor cannot evaluate the profile for processes inside the namespace at all.
+# The file, rule below then covers all file access for those processes.
+#
+# The calling profile must allow sending KILL to this profile on shutdown:
+#
+#   signal (send) set=(kill) peer=local_attachmentless_glycin,
+#
+# This profile allows receiving KILL from any peer - glycin is a short-lived
+# decoder with no value in restricting who can terminate it.
+#
+# Minimal calling profile example:
+#
+#   profile local_attachmentless_myapp {
+#       /usr/bin/bwrap Px -> local_attachmentless_glycin,
+#       signal (send) set=(kill) peer=local_attachmentless_glycin,
+#       # ... app-specific rules (no glycin rules needed here) ...
+#   }
+
+profile local_attachmentless_glycin flags=(attach_disconnected) {
+    #include <abstractions/base>
+
+    # Capabilities needed for bwrap namespace setup - these are scoped to the
+    # unprivileged user namespace bwrap creates, not the host
+    capability sys_admin,   # mount operations inside user namespace
+    capability sys_ptrace,  # process inspection inside sandbox
+    capability setpcap,     # drop capabilities after sandbox setup (security hardening)
+    capability net_admin,   # configure loopback interface inside network namespace
+
+    # Mount namespace setup
+    mount,
+    umount,
+    pivot_root,
+
+    # bwrap binary itself (dynamic linker needs to mmap it on startup)
+    /usr/bin/bwrap mr,
+
+    #include <abstractions/local_mixin_glycin>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # User/group namespace ID mapping
+    /proc/sys/kernel/overflowuid r,
+    /proc/sys/kernel/overflowgid r,
+    owner @{PROC}/@{pid}/fd/ r,       # list own file descriptors before exec'ing child
+    owner @{PROC}/@{pid}/uid_map w,   # write UID mapping for user namespace
+    owner @{PROC}/@{pid}/gid_map w,   # write GID mapping for user namespace
+    owner @{PROC}/@{pid}/setgroups w, # must be written before gid_map
+    owner @{PROC}/@{pid}/mountinfo r, # read mount namespace entries
+
+    # Allow any process to send KILL - glycin is a short-lived decoder with no value in restricting who can terminate it
+    signal (receive) set=(kill),
+
+    # File access inside bwrap's mount namespace - all paths inside the sandbox
+    # appear disconnected (empty pathname) to AppArmor because bwrap creates a
+    # new mount namespace. attach_disconnected causes this profile to be evaluated
+    # for those processes; file, grants access to all such paths. What is actually
+    # accessible is determined by what bwrap bind-mounts into the namespace.
+    file,
+}

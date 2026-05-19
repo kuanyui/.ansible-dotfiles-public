@@ -1,0 +1,72 @@
+---
+# =============================================
+# Deploy AppArmor profile
+# =============================================
+
+- name: Write Edge AppArmor profile to /etc/apparmor.d/local_pathbased_msedge
+  ansible.builtin.template:
+    src: msedge/local_pathbased_msedge.aa.j2
+    dest: /etc/apparmor.d/local_pathbased_msedge
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Reload apparmor
+  tags: msedge
+
+# =============================================
+# Neutralize conflicting system Edge profile
+# =============================================
+# The system profile 'msedge' auto-attaches to the Edge binary and takes priority
+# over our profile. Move it to _backup_of_default_profiles_from_package_manager/
+# so AppArmor does not scan it, while keeping it available for reference or restoration:
+#   sudo cp /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/msedge /etc/apparmor.d/
+
+- name: Ensure /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/ directory exists
+  ansible.builtin.file:
+    path: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  tags: msedge
+
+- name: Stat system Edge profile in /etc/apparmor.d/
+  ansible.builtin.stat:
+    path: /etc/apparmor.d/msedge
+  register: apparmor__sys_msedge_stat
+  tags: msedge
+
+- name: Back up system Edge profile to _backup_of_default_profiles_from_package_manager/
+  ansible.builtin.copy:
+    remote_src: true
+    src: /etc/apparmor.d/msedge
+    dest: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/msedge
+    owner: root
+    group: root
+    mode: '0644'
+  when: apparmor__sys_msedge_stat.stat.exists
+  become: true
+  tags: msedge
+
+- name: Remove system Edge profile from /etc/apparmor.d/
+  ansible.builtin.file:
+    path: /etc/apparmor.d/msedge
+    state: absent
+  when: apparmor__sys_msedge_stat.stat.exists
+  become: true
+  notify: Reload apparmor
+  tags: msedge
+
+- name: Flush handlers to trigger AppArmor reload
+  ansible.builtin.meta: flush_handlers
+  tags: msedge
+
+- name: Remove system Edge profile from kernel using backup file
+  ansible.builtin.command:
+    cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/msedge
+  become: true
+  failed_when: false
+  changed_when: false
+  tags: msedge

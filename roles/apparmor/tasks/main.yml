@@ -1,0 +1,8 @@
+---
+- name: Skip `apparmor` role unless `setup_apparmor` is true
+  ansible.builtin.debug:
+    msg: "Skipping apparmor (setup_apparmor={{ setup_apparmor | default(false) }})."
+  when: not setup_apparmor | default(false) | bool
+
+- ansible.builtin.include_tasks: _install.yml
+  when: setup_apparmor | default(false) | bool

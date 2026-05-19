@@ -1,0 +1,190 @@
+# Managed by Ansible - do not edit manually
+# Deny writes to persistence locations - /etc/apparmor.d/abstractions/local_mixin_deny_persistent_attack
+#
+# Include this in any profile that should not be able to establish persistence.
+# Covers shell init files, SSH, editor configs, session managers, window managers,
+# XDG autostart, package managers, cron/at jobs, other execution-triggering paths,
+# system-level vectors (boot, EFI variables), and dangerous kernel interfaces.
+# Home-level paths deny write only - read is left unrestricted to avoid breaking shell-adjacent tooling.
+# System-level paths (boot, EFI, firmware, kernel interfaces) deny mrwklx - no user-space profile has a legitimate reason to access these.
+# audit deny ensures access attempts are logged.
+#
+# ~/.dotfiles/** is denied because shell init files are typically symlinks into this directory;
+# AppArmor resolves symlinks to the final path, so denying ~/.bashrc w alone does not protect
+# the real file at ~/.dotfiles/bash/bashrc (or similar layout).
+audit deny @{HOME}/.dotfiles*/{,**} w,
+
+# If use Ansible and git to manage dotfiles (ex: `~/.ansible-dotfiles`),
+# or Ansible itself's work directory (`~/.ansible/`) and config file (`~/.ansible.cfg`)
+audit deny @{HOME}/.ansible*/{,**} w,
+audit deny /etc/ansible/{,**} w,
+
+# Shell init files - bash
+audit deny @{HOME}/.bashrc w,
+audit deny @{HOME}/.bash_profile w,
+audit deny @{HOME}/.bash_login w,
+audit deny @{HOME}/.bash_logout w,
+audit deny @{HOME}/.profile w,
+
+# Shell init files - zsh
+audit deny @{HOME}/.zshrc w,
+audit deny @{HOME}/.zprofile w,
+audit deny @{HOME}/.zshenv w,
+audit deny @{HOME}/.zlogin w,
+audit deny @{HOME}/.zlogout w,
+
+# Shell init files - fish
+audit deny @{HOME}/.config/fish/{,**} w,
+
+# Shell init files - csh/tcsh
+audit deny @{HOME}/.cshrc w,
+audit deny @{HOME}/.tcshrc w,
+audit deny @{HOME}/.login w,
+audit deny @{HOME}/.logout w,
+
+# Shell init files - ksh
+audit deny @{HOME}/.kshrc w,
+
+# Shell fragment directories
+audit deny @{HOME}/.bashrc.d/{,**} w,
+audit deny @{HOME}/.bash_completion.d/{,**} w,
+audit deny @{HOME}/.profile.d/{,**} w,
+audit deny @{HOME}/.zsh.d/{,**} w,
+audit deny @{HOME}/.local/share/bash-completion/completions/{,**} w,
+
+# SSH persistence
+# authorized_keys2 is the legacy alternate authorized keys file
+audit deny @{HOME}/.ssh/authorized_keys w,
+audit deny @{HOME}/.ssh/authorized_keys2 w,
+# rc is executed by sshd after successful authentication, before the user shell
+audit deny @{HOME}/.ssh/rc w,
+# config can set ProxyCommand to hijack connections
+audit deny @{HOME}/.ssh/config w,
+
+# PAM environment
+audit deny @{HOME}/.pam_environment w,
+
+# X11 session hooks
+audit deny @{HOME}/.xinitrc w,
+audit deny @{HOME}/.xprofile w,
+audit deny @{HOME}/.xsession w,
+audit deny @{HOME}/.Xsession w,
+# Xmodmap key remapping is sourced at X session start
+audit deny @{HOME}/.Xmodmap w,
+
+# systemd user units and environment overrides
+audit deny @{HOME}/.config/systemd/{,**} w,
+audit deny @{HOME}/.config/environment.d/{,**} w,
+
+# XDG autostart
+audit deny @{HOME}/.config/autostart/{,**} w,
+
+# Desktop application entries (.desktop files can specify Exec= to run arbitrary commands)
+audit deny @{HOME}/.local/share/applications/{,**} w,
+
+# D-Bus user-session activation (service files auto-start processes when methods are called)
+audit deny @{HOME}/.local/share/dbus-1/services/{,**} w,
+
+# Wayland and X11 session definitions
+audit deny @{HOME}/.local/share/wayland-sessions/{,**} w,
+audit deny @{HOME}/.local/share/xsessions/{,**} w,
+
+# KDE session hooks
+audit deny @{HOME}/.config/plasma-workspace/env/{,**} w,
+audit deny @{HOME}/.config/plasma-workspace/shutdown/{,**} w,
+audit deny @{HOME}/.config/plasma-workspace/scripts/{,**} w,
+# autostart-scripts are shell scripts executed at KDE session startup (distinct from XDG autostart)
+audit deny @{HOME}/.config/autostart-scripts/{,**} w,
+
+# GNOME session hooks
+audit deny @{HOME}/.config/gnome-session/{,**} w,
+audit deny @{HOME}/.local/share/gnome-session/{,**} w,
+
+# Window manager startup configs (all support exec directives evaluated at session start)
+audit deny @{HOME}/.config/sway/{,**} w,
+audit deny @{HOME}/.config/hypr/{,**} w,
+audit deny @{HOME}/.config/i3/{,**} w,
+audit deny @{HOME}/.config/openbox/{,**} w,
+audit deny @{HOME}/.config/awesome/{,**} w,
+audit deny @{HOME}/.fluxbox/{,**} w,
+
+# Editor init files - vim/neovim (vimscript and Lua configs execute on editor load)
+audit deny @{HOME}/.vimrc w,
+audit deny @{HOME}/.vim/{,**} w,
+audit deny @{HOME}/.config/nvim/{,**} w,
+audit deny @{HOME}/.local/share/nvim/{,**} w,
+
+# Editor init files - emacs (init files execute arbitrary Emacs Lisp on load)
+audit deny @{HOME}/.emacs w,
+audit deny @{HOME}/.emacs.d/{,**} w,
+audit deny @{HOME}/.config/emacs/{,**} w,
+
+# Editor init files - helix
+audit deny @{HOME}/.config/helix/{,**} w,
+
+# Terminal multiplexers (run-shell and exec directives run commands on attach)
+audit deny @{HOME}/.tmux.conf w,
+audit deny @{HOME}/.config/tmux/{,**} w,
+audit deny @{HOME}/.screenrc w,
+
+# Python package management
+# pip config can redirect installs; .pth files in site-packages execute code at import time
+audit deny @{HOME}/.config/pip/{,**} w,
+audit deny @{HOME}/.pip/{,**} w,
+audit deny @{HOME}/.pydistutils.cfg w,
+audit deny @{HOME}/.local/lib/python*/site-packages/{,**} w,
+
+# Node.js package management (npmrc can set lifecycle script hooks and install prefix)
+audit deny @{HOME}/.npmrc w,
+audit deny @{HOME}/.yarnrc w,
+audit deny @{HOME}/.yarnrc.yml w,
+audit deny @{HOME}/.config/npm/{,**} w,
+audit deny @{HOME}/.config/yarn/{,**} w,
+
+# Git global configuration and hooks
+# git config sets core.hooksPath to redirect hook execution to an arbitrary directory
+audit deny @{HOME}/.gitconfig w,
+audit deny @{HOME}/.config/git/config w,
+audit deny @{HOME}/.config/git/hooks/{,**} w,
+
+# Cron and at jobs
+audit deny /var/spool/cron/crontabs/{,**} w,
+audit deny /var/spool/at/{,**} w,
+
+# User-local executables on PATH (dropping executables here persists across sessions)
+audit deny @{HOME}/.local/bin/{,*} w,
+
+# XDG MIME handlers (custom entries map file types to Exec= commands)
+audit deny @{HOME}/.local/share/mime/{,**} w,
+
+# XDG thumbnailers (Exec= is invoked by file managers to generate thumbnails)
+audit deny @{HOME}/.local/share/thumbnailers/{,**} w,
+
+# Polkit local authorization rules
+audit deny @{HOME}/.local/share/polkit-1/{,**} w,
+
+# Boot, firmware, and bootloader config - mrwklx (not just w) because no normal user-space
+# program has any legitimate reason to read these paths either. The only programs that
+# access them are root-level system tools (grub-mkconfig, grub-install, dracut, mkinitcpio,
+# fwupd, efibootmgr, bootctl) which would never be confined by this mixin.
+# /efi/ covers distros that mount the ESP there instead of /boot/efi/ (e.g. Arch).
+# grub.d and /etc/default/grub are indirect persistence: fragments are compiled into the
+# bootloader config when grub-mkconfig / update-grub is run.
+audit deny /boot/{,**} mrwklx,
+audit deny /efi/{,**} mrwklx,
+audit deny /sys/firmware/{,**} mrwklx,
+audit deny /etc/grub.d/{,**} mrwklx,
+audit deny /etc/default/grub mrwklx,
+
+# Dangerous kernel interfaces
+audit deny /proc/sysrq-trigger mrwklx,       # triggers immediate reboot, crash, or kill-all
+audit deny /proc/kcore mrwklx,               # raw physical memory as ELF core image
+audit deny /proc/mem mrwklx,                 # raw physical memory read/write
+audit deny /proc/kmem mrwklx,                # raw kernel virtual memory
+audit deny /proc/irq/{,**} mrwklx,           # hardware interrupt routing control
+audit deny /proc/bus/{,**} mrwklx,           # hardware bus device access
+audit deny /proc/sys/** w,                   # kernel parameter writes; read left unrestricted
+audit deny /sys/kernel/security/{,**} mrwklx, # LSM policy - writes could alter AppArmor state
+
+# Apparmor itself
+audit deny /etc/apparmor*/{,**} mrwklx,

@@ -1,0 +1,151 @@
+---
+- ansible.builtin.import_tasks: static.yml
+- ansible.builtin.import_tasks: common.yml
+- ansible.builtin.import_tasks: firefox.yml
+- ansible.builtin.import_tasks: chromium.yml
+- ansible.builtin.import_tasks: msedge.yml
+- ansible.builtin.import_tasks: telegram.yml
+- ansible.builtin.import_tasks: vscode.yml
+- ansible.builtin.import_tasks: mpv.yml
+- ansible.builtin.import_tasks: stardict.yml
+- ansible.builtin.import_tasks: gwenview.yml
+- ansible.builtin.import_tasks: mcomix.yml
+- ansible.builtin.import_tasks: okular.yml
+- ansible.builtin.import_tasks: vlc.yml
+- ansible.builtin.import_tasks: mscore3.yml
+- ansible.builtin.import_tasks: mscore.yml
+- ansible.builtin.import_tasks: anydesk.yml
+
+# =============================================
+# Idempotent stale file cleanup
+# =============================================
+# Runs after all deploy tasks so _managed reflects the complete set of files
+# owned by this role. Running cleanup mid-deploy risks removing a file that
+# another task has not yet re-deployed under its new name.
+# Scoped to local_* so system-provided profiles and abstractions are never touched.
+
+- name: Find deployed local_* files in /etc/apparmor.d/ and abstractions/
+  ansible.builtin.find:
+    paths:
+      - /etc/apparmor.d/
+      - /etc/apparmor.d/abstractions/
+    patterns: "local_*"
+  register: apparmor__deployed_local
+  become: true
+  tags: apparmor
+
+- name: Remove local_* files not managed by this role
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ apparmor__deployed_local.files }}"
+  vars:
+    _managed: >-
+      {{ (apparmor_static_profiles | map(attribute='dest') | map('basename') | list)
+       + apparmor_template_profile_names
+       + (apparmor_static_abstractions | map(attribute='dest') | map('basename') | list)
+       + apparmor_template_abstraction_names
+       }}
+  when: item.path | basename not in _managed
+  become: true
+  notify: Reload apparmor
+  tags: apparmor
+
+# =============================================
+# Enforce all managed profiles
+# =============================================
+# Run after all deploy tasks so apparmor_parser sees a consistent set of files.
+# Enforcing mid-deploy risks parse failures when one profile references another
+# that has not yet been updated (e.g. an include syntax change in a template).
+
+- name: Enforce each static AppArmor profile via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/{{ item.dest }}
+  loop: "{{ apparmor_static_profiles }}"
+  become: true
+  changed_when: false
+  tags: apparmor
+
+- name: Enforce /etc/apparmor.d/local_attachmentless_firefox via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_attachmentless_firefox
+  become: true
+  changed_when: false
+  tags: firefox
+
+- name: Enforce /etc/apparmor.d/local_pathbased_chromium via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_chromium
+  become: true
+  changed_when: false
+  tags: chromium
+
+- name: Enforce /etc/apparmor.d/local_pathbased_vscode via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_vscode
+  become: true
+  changed_when: false
+  tags: vscode
+
+- name: Enforce /etc/apparmor.d/local_pathbased_mpv via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_mpv
+  become: true
+  changed_when: false
+  tags: mpv
+
+- name: Enforce /etc/apparmor.d/local_pathbased_stardict via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_stardict
+  become: true
+  changed_when: false
+  tags: stardict
+
+- name: Enforce /etc/apparmor.d/local_pathbased_gwenview via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_gwenview
+  become: true
+  changed_when: false
+  tags: gwenview
+
+- name: Enforce /etc/apparmor.d/local_pathbased_mcomix via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_mcomix
+  become: true
+  changed_when: false
+  tags: mcomix
+
+- name: Enforce /etc/apparmor.d/local_pathbased_okular via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_okular
+  become: true
+  changed_when: false
+  tags: okular
+
+- name: Enforce /etc/apparmor.d/local_pathbased_vlc via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_vlc
+  become: true
+  changed_when: false
+  tags: vlc
+
+- name: Enforce /etc/apparmor.d/local_pathbased_mscore3 via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_mscore3
+  become: true
+  changed_when: false
+  tags: mscore3
+
+- name: Enforce /etc/apparmor.d/local_pathbased_mscore via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_mscore
+  become: true
+  changed_when: false
+  tags: mscore
+
+- name: Enforce /etc/apparmor.d/local_pathbased_anydesk via aa-enforce
+  ansible.builtin.command:
+    cmd: aa-enforce /etc/apparmor.d/local_pathbased_anydesk
+  become: true
+  changed_when: false
+  tags: anydesk

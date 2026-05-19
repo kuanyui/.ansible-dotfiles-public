@@ -1,0 +1,22 @@
+# Managed by Ansible - do not edit manually
+# Audio access rules - /etc/apparmor.d/abstractions/local_mixin_audio
+#
+# Include this in any profile that needs PulseAudio/PipeWire audio output.
+# Covers: PulseAudio client config, ALSA config, socket access, and auto-spawn.
+
+# PulseAudio
+/etc/pulse/client.conf r,
+owner @{HOME}/.pulse/client.conf r,
+owner @{HOME}/.config/pulse/ rw,           # PulseAudio may rmdir and recreate this directory
+owner @{HOME}/.config/pulse/** rwk,        # includes cookie file used for daemon authentication
+owner /run/user/*/pulse/ rw,               # PulseAudio socket directory
+/dev/shm/ r,                               # shared memory directory listing (PulseAudio client)
+/usr/bin/pulseaudio ix,                    # PulseAudio auto-spawn (also covers pipewire-pulse shim)
+
+# ALSA
+/etc/alsa/conf.d/{,**} r,                  # ALSA config directory (audio IPC process probe)
+/usr/share/alsa/{,**} r,
+owner @{HOME}/.asoundrc r,                 # user ALSA config (audio IPC process probe)
+
+# XDG sound themes
+/usr/share/sounds/{,**} r,

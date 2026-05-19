@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps unstow check-user check-root check-all-users check-podman-runtime check-container-apps unapply-podman-runtime unapply-container-apps pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-apparmor unapply-podman-runtime unapply-container-apps aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-diff-watch sandbox-diff-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -62,6 +62,20 @@ apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local
 unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/container-templates/.ansible-manifest.yml, removes everything it recorded)
 	$(PLAYBOOK) $(PLAYBOOKS)/container_apps_uninstall.yml
 
+apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.); requires `roles/apparmor/local_vars/deny_personal_dirs.aa` (see scripts/gen_deny_personal_dirs.py); bypasses `setup_apparmor` gate
+	@test -f roles/apparmor/local_vars/deny_personal_dirs.aa || { \
+		echo "ERROR: roles/apparmor/local_vars/deny_personal_dirs.aa not found."; \
+		echo "Run: python3 scripts/gen_deny_personal_dirs.py <path> [<path> ...]"; \
+		exit 1; \
+	}
+	python3 scripts/check_deny_personal_dirs.py
+	@printf 'Proceed with apply? [y/N] '; read answer; \
+	case "$$answer" in \
+		[Yy]) ;; \
+		*) echo "Aborted."; exit 1 ;; \
+	esac
+	$(PLAYBOOK) --ask-become-pass --diff $(PLAYBOOKS)/apparmor.yml
+
 ### -------------------------------------------------------------------------
 ### Dry-run (--check --diff)
 ### -------------------------------------------------------------------------
@@ -80,6 +94,59 @@ check-podman-runtime:  ## Dry-run diff for podman OCI runtime config
 
 check-container-apps:  ## Dry-run diff for container_apps install
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/container_apps.yml
+
+check-apparmor:  ## Dry-run diff for AppArmor profile deployment
+	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/apparmor.yml
+
+### -------------------------------------------------------------------------
+### AppArmor runtime helpers (live denial inspection)
+### -------------------------------------------------------------------------
+
+aa-notify-snapshot:  ## Snapshot of recent AppArmor denials via `aa-notify -s 1 -v`
+	sudo aa-notify -s 1 -v
+
+aa-notify-watch:  ## Tail AppArmor denials live via `aa-notify -p -w 5`
+	sudo aa-notify -p -w 5
+
+aa-log-watch:  ## Tail kernel AppArmor messages (auditd if present, else journalctl -k)
+	@if systemctl is-active --quiet auditd; then \
+		sudo tail -f /var/log/audit/audit.log; \
+	else \
+		sudo journalctl -k -f | grep --line-buffered -i apparmor; \
+	fi
+
+LOG_SINCE_SECS ?= 60
+aa-log-recent:  ## Print recent AppArmor messages within `LOG_SINCE_SECS` (default 60) seconds
+	@if systemctl is-active --quiet auditd; then \
+		sudo ausearch -m AVC -ts $(shell date -d '$(LOG_SINCE_SECS) seconds ago' '+%m/%d/%Y') $(shell date -d '$(LOG_SINCE_SECS) seconds ago' '+%H:%M:%S') -i | grep -i apparmor || true; \
+	else \
+		sudo journalctl -k --since="$(LOG_SINCE_SECS) seconds ago" | grep -i apparmor || true; \
+	fi
+
+### -------------------------------------------------------------------------
+### AppArmor sandbox dry-run (rootless podman dry-run of `apply-apparmor`)
+### -------------------------------------------------------------------------
+
+SANDBOX_DISTRO ?= debian
+_SANDBOX_IMAGE_debian   := debian:trixie
+_SANDBOX_IMAGE_fedora   := fedora:latest
+_SANDBOX_IMAGE_opensuse := opensuse/tumbleweed
+_SANDBOX_IMAGE          := $(_SANDBOX_IMAGE_$(SANDBOX_DISTRO))
+
+sandbox-diff-watch:  ## Dry-run `apply-apparmor` inside a throwaway podman container; stream a before/after unified diff
+	@test -f roles/apparmor/local_vars/deny_personal_dirs.aa || { \
+		echo "ERROR: roles/apparmor/local_vars/deny_personal_dirs.aa not found."; \
+		echo "Run: python3 scripts/gen_deny_personal_dirs.py <path> [<path> ...]"; \
+		exit 1; \
+	}
+	@[ -n "$(_SANDBOX_IMAGE)" ] || { \
+		echo "ERROR: unknown SANDBOX_DISTRO='$(SANDBOX_DISTRO)'. Valid: debian, fedora, opensuse"; \
+		exit 1; \
+	}
+	@bash scripts/sandbox_diff.sh $(_SANDBOX_IMAGE)
+
+sandbox-diff-clean:  ## Remove cached sandbox base image to free disk (running container is auto-removed after each run)
+	podman rmi $(_SANDBOX_IMAGE) 2>/dev/null || true
 
 ### -------------------------------------------------------------------------
 ### Update this repo

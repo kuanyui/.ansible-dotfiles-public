@@ -1,0 +1,12 @@
+#!/bin/bash
+# Sandbox wrapper for apparmor_parser.
+# --parse / -p / --preprocess / -Q: pure userspace syntax check - pass through
+# to the real binary so deployed profiles are actually validated.
+# All other flags (-r load, -R unload, etc.) require kernel access and are stubbed.
+case "$1" in
+    --parse|-p|--preprocess|-Q)
+        exec /usr/sbin/apparmor_parser "$@" ;;
+    *)
+        echo "[sandbox stub] apparmor_parser $*"
+        exit 0 ;;
+esac

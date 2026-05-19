@@ -1,0 +1,51 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# StarDict AppArmor profile - /etc/apparmor.d/local_pathbased_stardict
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_stardict
+
+profile local_pathbased_stardict /usr/bin/stardict {
+    #include <abstractions/base>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_glycin>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # Glycin image loader - bwrap exec transitions to local_attachmentless_glycin
+    /usr/bin/bwrap Px -> local_attachmentless_glycin,
+    signal (send) set=(kill) peer=local_attachmentless_glycin,
+
+    # network access intentionally denied
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+{% if apparmor_allow_x11 %}
+    /tmp/.X11-unix/ r,
+    /tmp/.X11-unix/X* rw,
+    owner /run/user/*/xauth_* r,
+{% endif %}
+
+    # D-Bus (desktop notifications, portal access)
+    owner /run/user/*/bus rw,
+
+    # System dictionary data
+    /usr/share/stardict/{,**} r,
+
+    # User config and dictionaries
+    owner @{HOME}/.config/stardict/ rw,
+    owner @{HOME}/.config/stardict/** rwk,
+    owner @{HOME}/.stardict/ rw,
+    owner @{HOME}/.stardict/** rwk,
+    owner @{HOME}/dic.txt r,
+    owner @{HOME}/.local/share/stardict/ rw,
+    owner @{HOME}/.local/share/stardict/** rwk,
+
+}

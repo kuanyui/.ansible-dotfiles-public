@@ -1,0 +1,67 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# AnyDesk AppArmor profile - /etc/apparmor.d/local_pathbased_anydesk
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Attaches to any binary named "anydesk" at any path - covers portable (non-installed) usage.
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_anydesk
+
+profile local_pathbased_anydesk /**/anydesk {
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_audio>
+    #include <abstractions/local_mixin_gpu>
+    #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+
+    # Remote desktop protocol over TCP
+    network,
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+    # X11 - AnyDesk depends on libxtest (input injection) and libxdamage (screen capture)
+    # even in Wayland sessions; XWayland typically provides /tmp/.X11-unix/X0.
+    /tmp/.X11-unix/ r,
+    /tmp/.X11-unix/X* rw,
+    owner /run/user/*/xauth_* r,
+
+{% if apparmor_allow_x11 %}
+    # MIT-SHM extension (fast pixmap transfer over shared memory)
+    owner /tmp/.X11-unix-lock rw,
+{% endif %}
+
+    # D-Bus (desktop notifications)
+    owner /run/user/*/bus rw,
+
+    # Input devices - needed to inject keyboard/mouse when being remotely controlled
+    /dev/input/ r,
+    /dev/input/event* rw,
+    /dev/uinput rw,
+
+    # Shared memory
+    owner /dev/shm/** rwk,
+
+    # Process self-inspection
+    owner @{PROC}/@{pid}/ r,
+    owner @{PROC}/@{pid}/** r,
+
+    # SSL certificate verification
+    /etc/ssl/{,**} r,
+
+    # AnyDesk config and runtime data (portable run: stored in ~/.anydesk/)
+    owner @{HOME}/.anydesk/ rw,
+    owner @{HOME}/.anydesk/** rwkl,
+
+    # Polkit action file (read-only; needed even without the system service)
+    /usr/share/polkit-1/actions/com.anydesk.anydesk.policy r,
+
+}

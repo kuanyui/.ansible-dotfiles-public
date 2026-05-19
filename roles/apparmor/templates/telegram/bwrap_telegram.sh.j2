@@ -1,0 +1,82 @@
+#!/bin/bash
+# =============================================================================
+# MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY
+# =============================================================================
+
+# XDG_RUNTIME_DIR                is usually /run/user/1000, mainly for input methods
+# /lib64/ld-linux-x86-64.so.2    for execvp
+# --new-session                  Ctrl+C will not kill the program (but stdout/stderr is still piped)
+
+# --- Environment cleanup ---
+unset LD_LIBRARY_PATH
+unset PYTHONPATH
+
+# --- Path preparation ---
+DL_DIR="$(xdg-user-dir DOWNLOAD)"
+SCREENSHOTS_DIR="$(xdg-user-dir PICTURES)/Screenshots"
+TG_CFG_DIR="${HOME}/.local/share/TelegramDesktop"
+mkdir -p "$TG_CFG_DIR"
+
+# --- Core argument array ---
+ARGS=(
+    --unshare-all
+    --share-net
+    --die-with-parent
+
+    # Create a fully isolated filesystem root
+    --tmpfs /
+    --proc /proc
+    --dev /dev
+
+    # Mount only required system resources
+    --ro-bind /usr /usr
+    --ro-bind /bin /bin
+    --ro-bind /lib64 /lib64
+    --ro-bind /etc/resolv.conf /etc/resolv.conf
+    --ro-bind /etc/ssl /etc/ssl
+    --ro-bind /etc/fonts /etc/fonts
+    --ro-bind /usr/share /usr/share
+
+    # GPU intentionally excluded to reduce driver attack surface
+    --bind /dev/shm /dev/shm
+
+    # Isolate the runtime directory, then selectively bind back what is needed
+    --tmpfs /run/user/$(id -u)
+    --bind-try "$XDG_RUNTIME_DIR/bus" "/run/user/$(id -u)/bus"
+    --bind-try "$XDG_RUNTIME_DIR/wayland-0" "/run/user/$(id -u)/wayland-0"
+
+    # Data isolation - only Telegram config and downloads are writable
+    --bind "$TG_CFG_DIR" "$TG_CFG_DIR"
+    --bind "$DL_DIR" "$DL_DIR"
+)
+
+# --- Dynamic section ---
+
+# 1. Display protocol detection
+if [ -n "$WAYLAND_DISPLAY" ] && [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
+    ARGS+=(--ro-bind "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+           --setenv WAYLAND_DISPLAY "$WAYLAND_DISPLAY")
+fi
+
+if [ -n "$DISPLAY" ]; then
+    ARGS+=(--ro-bind /tmp/.X11-unix /tmp/.X11-unix
+           --ro-bind-try "$XAUTHORITY" "$XAUTHORITY"
+           --setenv DISPLAY "$DISPLAY"
+           --setenv XAUTHORITY "$XAUTHORITY")
+fi
+
+# 2. Audio - D-Bus is also required for many Telegram features (notifications, portals)
+if [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+    ARGS+=(--bind "$XDG_RUNTIME_DIR/bus" "$XDG_RUNTIME_DIR/bus")
+fi
+
+# 3. Screenshots directory - read-only, matches AppArmor local_mixin_xdg_dir_pictures_screenshots
+if [ -d "$SCREENSHOTS_DIR" ]; then
+    ARGS+=(--ro-bind "$SCREENSHOTS_DIR" "$SCREENSHOTS_DIR")
+fi
+
+# 4. Force software rendering - avoids exposing GPU driver attack surface
+ARGS+=(--setenv LIBGL_ALWAYS_SOFTWARE 1)
+
+# --- Execute ---
+exec bwrap "${ARGS[@]}" /usr/bin/Telegram "$@"

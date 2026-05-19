@@ -1,0 +1,23 @@
+# Managed by Ansible - do not edit manually
+# KDE desktop integration rules - /etc/apparmor.d/abstractions/local_mixin_kde
+#
+# Include this in any profile that reads KDE configuration:
+# theming, input settings, window manager hints.
+# Pulls in local_mixin_qt automatically (KDE always requires Qt).
+# Typical users: Chromium, VSCode, and other KDE-integrated GUI apps.
+
+#include <abstractions/local_mixin_qt>
+
+# System config
+/etc/xdg/kdeglobals r,                        # KDE system-wide global settings (theme, fonts)
+/etc/xdg/kwinrc r,                            # KDE system-wide window manager settings
+
+# System share
+/usr/share/color-schemes/{,**} r,             # KDE color scheme files (e.g. BreezeLight.colors)
+
+# User config
+owner @{HOME}/.config/kdeglobals r,           # KDE user global settings (theme, fonts, colors)
+owner @{HOME}/.config/kdedefaults/{,**} r,    # KDE distribution-level overrides
+owner @{HOME}/.config/kcminputrc r,           # KDE input device settings (cursor, mouse speed)
+owner @{HOME}/.config/kwinrc r,               # KDE window manager user settings
+owner @{HOME}/.config/klanguageoverridesrc r, # KDE per-app language overrides

@@ -1,0 +1,11 @@
+# Managed by Ansible - do not edit manually
+# Temporary directory access rules - /etc/apparmor.d/abstractions/local_mixin_tmpdir
+#
+# Include this in any profile that needs read/write access to /tmp, /var/tmp, and ~/tmp.
+
+/tmp/ r,
+/var/tmp/ r,
+owner /tmp/** rwk,
+owner /var/tmp/** rwk,
+owner @{HOME}/tmp/ rw,
+owner @{HOME}/tmp/** rwk,

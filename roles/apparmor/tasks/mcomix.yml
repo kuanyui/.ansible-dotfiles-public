@@ -1,0 +1,74 @@
+---
+# =============================================
+# Deploy AppArmor profile
+# =============================================
+
+- name: Write MComix AppArmor profile to /etc/apparmor.d/local_pathbased_mcomix
+  ansible.builtin.template:
+    src: mcomix/local_pathbased_mcomix.aa.j2
+    dest: /etc/apparmor.d/local_pathbased_mcomix
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Reload apparmor
+  tags: mcomix
+
+# =============================================
+# Neutralize conflicting system MComix profiles
+# =============================================
+
+- name: Ensure /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/ directory exists
+  ansible.builtin.file:
+    path: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  tags: mcomix
+
+- name: Stat system MComix profiles in /etc/apparmor.d/
+  ansible.builtin.stat:
+    path: /etc/apparmor.d/{{ item }}
+  loop:
+    - mcomix
+  register: apparmor__sys_mcomix_stat
+  tags: mcomix
+
+- name: Back up system MComix profiles to _backup_of_default_profiles_from_package_manager/
+  ansible.builtin.copy:
+    remote_src: true
+    src: /etc/apparmor.d/{{ item.item }}
+    dest: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item.item }}
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ apparmor__sys_mcomix_stat.results }}"
+  when: item.stat.exists
+  become: true
+  tags: mcomix
+
+- name: Remove system MComix profiles from /etc/apparmor.d/
+  ansible.builtin.file:
+    path: /etc/apparmor.d/{{ item.item }}
+    state: absent
+  loop: "{{ apparmor__sys_mcomix_stat.results }}"
+  when: item.stat.exists
+  become: true
+  notify: Reload apparmor
+  tags: mcomix
+
+- name: Flush handlers to trigger AppArmor reload
+  ansible.builtin.meta: flush_handlers
+  tags: mcomix
+
+- name: Remove system MComix profiles from kernel using backup files
+  ansible.builtin.command:
+    cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item }}
+  loop:
+    - mcomix
+  become: true
+  failed_when: false
+  changed_when: false
+  tags: mcomix

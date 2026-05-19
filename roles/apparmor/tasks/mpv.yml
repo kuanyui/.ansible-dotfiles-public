@@ -1,0 +1,96 @@
+---
+# =============================================
+# Deploy AppArmor profile
+# =============================================
+
+- name: Ensure /usr/local/share/applications/ exists
+  ansible.builtin.file:
+    path: /usr/local/share/applications
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  tags: mpv
+
+- name: Deploy ansible-mpv-gpu.desktop to /usr/local/share/applications/
+  ansible.builtin.copy:
+    src: desktops/ansible-mpv-gpu.desktop
+    dest: /usr/local/share/applications/ansible-mpv-gpu.desktop
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: mpv
+
+# =============================================
+# Deploy AppArmor profile
+# =============================================
+
+- name: Write mpv AppArmor profile to /etc/apparmor.d/local_pathbased_mpv
+  ansible.builtin.template:
+    src: mpv/local_pathbased_mpv.aa.j2
+    dest: /etc/apparmor.d/local_pathbased_mpv
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Reload apparmor
+  tags: mpv
+
+# =============================================
+# Neutralize conflicting system mpv profile
+# =============================================
+# The system profile 'mpv' auto-attaches to the mpv binary and takes priority over our profile.
+# Move it into _backup_of_default_profiles_from_package_manager/ so AppArmor does not scan it,
+# while keeping it available for reference or restoration:
+#   sudo cp /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/mpv /etc/apparmor.d/
+
+- name: Ensure /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/ directory exists
+  ansible.builtin.file:
+    path: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  tags: mpv
+
+- name: Stat system mpv profile in /etc/apparmor.d/
+  ansible.builtin.stat:
+    path: /etc/apparmor.d/mpv
+  register: apparmor__sys_mpv_stat
+  tags: mpv
+
+- name: Back up system mpv profile to _backup_of_default_profiles_from_package_manager/
+  ansible.builtin.copy:
+    remote_src: true
+    src: /etc/apparmor.d/mpv
+    dest: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/mpv
+    owner: root
+    group: root
+    mode: '0644'
+  when: apparmor__sys_mpv_stat.stat.exists
+  become: true
+  tags: mpv
+
+- name: Remove system mpv profile from /etc/apparmor.d/
+  ansible.builtin.file:
+    path: /etc/apparmor.d/mpv
+    state: absent
+  when: apparmor__sys_mpv_stat.stat.exists
+  become: true
+  notify: Reload apparmor
+  tags: mpv
+
+- name: Flush handlers to trigger AppArmor reload
+  ansible.builtin.meta: flush_handlers
+  tags: mpv
+
+- name: Remove system mpv profile from kernel using backup file
+  ansible.builtin.command:
+    cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/mpv
+  become: true
+  failed_when: false
+  changed_when: false
+  tags: mpv

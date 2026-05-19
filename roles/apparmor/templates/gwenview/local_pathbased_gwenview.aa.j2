@@ -1,0 +1,45 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# Gwenview AppArmor profile - /etc/apparmor.d/local_pathbased_gwenview
+# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_gwenview
+
+profile local_pathbased_gwenview /usr/bin/gwenview {
+    #include <abstractions/base>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_kde>
+    #include <abstractions/local_mixin_xdg_dir_pictures_screenshots>
+    #include <abstractions/local_mixin_xdg_dir_downloads>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+
+    # network access intentionally denied
+
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
+{% if apparmor_allow_x11 %}
+    /tmp/.X11-unix/ r,
+    /tmp/.X11-unix/X* rw,
+    owner /run/user/*/xauth_* r,
+{% endif %}
+
+    # D-Bus (desktop notifications, portal access)
+    owner /run/user/*/bus rw,
+
+    # User config and cache
+    owner @{HOME}/.config/gwenviewrc rw,
+    owner @{HOME}/.config/gwenview/ rw,
+    owner @{HOME}/.config/gwenview/** rwk,
+    owner @{HOME}/.cache/gwenview/ rw,
+    owner @{HOME}/.cache/gwenview/** rwk,
+    owner @{HOME}/.local/share/gwenview/ rw,
+    owner @{HOME}/.local/share/gwenview/** rwk,
+
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=mpv Media Player (GPU)
+Comment=Play movies with hardware GPU acceleration
+Icon=mpv
+Exec=aa-exec -p local_attachmentless_mpv_gpu -- mpv --player-operation-mode=pseudo-gui -- %U
+Terminal=false
+Categories=AudioVideo;Audio;Video;Player;
+StartupWMClass=mpv
+Keywords=mpv;media;player;video;audio;gpu;

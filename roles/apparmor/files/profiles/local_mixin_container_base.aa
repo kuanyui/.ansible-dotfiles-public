@@ -1,0 +1,33 @@
+# Managed by Ansible - do not edit manually
+# Container base deny mixin - /etc/apparmor.d/abstractions/local_mixin_container_base
+#
+# Include in every per-container attachmentless profile to apply a standard deny
+# baseline. Covers persistence, credentials, container socket escape vectors,
+# and container storage.
+#
+# Usage:
+#   #include <abstractions/local_mixin_container_base>
+
+# Standard deny baselines
+#include <abstractions/local_mixin_deny_persistent_attack>
+#include <abstractions/local_mixin_deny_keyrings>
+#include <abstractions/local_mixin_deny_browser_config>
+#include <abstractions/local_mixin_deny_mounted_external_media>
+#include <abstractions/local_mixin_deny_personal_dirs>
+
+# Container sockets - a process that can reach these can spawn new containers
+# with arbitrary bind mounts, bypassing all namespace and AppArmor isolation.
+audit deny /run/user/*/podman/podman.sock rw,
+audit deny /run/podman/podman.sock rw,
+audit deny /run/docker.sock rw,
+audit deny /var/run/docker.sock rw,
+
+# Container storage - prevent reading or corrupting other containers' layer data
+audit deny /var/lib/containers/{,**} mrwklx,
+audit deny /var/lib/docker/{,**} mrwklx,
+audit deny @{HOME}/.local/share/containers/{,**} mrwklx,
+
+# Container registry credentials (auth.json stores plaintext registry passwords)
+audit deny @{HOME}/.config/containers/{,**} mrwklx,
+audit deny /run/containers/{,**} mrwklx,
+

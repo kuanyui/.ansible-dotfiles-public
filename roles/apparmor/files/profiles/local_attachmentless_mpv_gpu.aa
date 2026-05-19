@@ -1,0 +1,14 @@
+#include <tunables/global>
+
+# Managed by Ansible - do not edit manually
+# mpv media player GPU-enabled profile - /etc/apparmor.d/local_attachmentless_mpv_gpu
+#
+# Attachmentless: no executable attachment, must be invoked explicitly:
+#   aa-exec -p local_attachmentless_mpv_gpu -- mpv [args]
+# or via the ansible-mpv-gpu.desktop launcher.
+
+profile local_attachmentless_mpv_gpu {
+    #include <abstractions/local_mixin_gpu>
+    #include <abstractions/local_mixin_gpu_chromium_based>
+    #include <abstractions/local_base_mpv>
+}

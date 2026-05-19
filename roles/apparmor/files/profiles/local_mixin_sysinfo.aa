@@ -1,0 +1,15 @@
+# Managed by Ansible - do not edit manually
+# System hardware/kernel information rules - /etc/apparmor.d/abstractions/local_mixin_sysinfo
+#
+# Include this in any profile that needs to read CPU topology, memory topology,
+# cgroup limits, and enumerate /dev. Suitable for browsers, Electron apps, and
+# other resource-aware GUI applications.
+
+# Hardware and kernel interfaces
+/ r,                                     # root directory listing (mount point enumeration)
+/sys/devices/system/cpu/{,**} r,         # CPU topology and frequency
+/sys/devices/system/node/{,**} r,        # NUMA memory topology
+/sys/devices/system/memory/block_size_bytes r,  # memory block size (heap sizing)
+/sys/fs/cgroup/{,**} r,                  # cgroup CPU/memory limits (thread pool sizing)
+deny /sys/devices/virtual/dmi/id/** r,   # hardware fingerprinting - intentionally denied
+/dev/ r,                                 # device directory listing
