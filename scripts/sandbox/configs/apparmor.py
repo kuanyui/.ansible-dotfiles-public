@@ -7,7 +7,6 @@ before they hit the real host.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
@@ -67,11 +66,14 @@ CONFIG = SandboxConfig(
     extra_packages_apt=["apparmor"],
     dummy_commands=[
         DUMMY_COMMANDS_DIR / cmd
-        for cmd in ("apparmor_parser", "aa-enforce", "aa-status", "aa-disable", "aa-complain")
-        # NOTE: not stubbing systemctl - the sandbox image runs real systemd as PID 1,
-        # so `systemctl reload apparmor` etc. work for real (apparmor service may not
-        # actually load profiles into kernel without LSM, but the systemd-side
-        # bookkeeping completes normally).
+        for cmd in (
+            "apparmor_parser",
+            "aa-enforce", "aa-status", "aa-disable", "aa-complain",
+            # systemctl too: sandbox image has tini+sshd as PID 1, no systemd
+            # (libkrun rejects systemd-as-system-manager). The role calls
+            # `systemctl reload apparmor` etc. via handler; stub returns 0.
+            "systemctl",
+        )
     ],
     extra_files={
         # The Firefox profile-discovery task expects this. Skipped silently

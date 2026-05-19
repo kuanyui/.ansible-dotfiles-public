@@ -1,15 +1,22 @@
-# Sandbox base image: Debian + systemd + sshd + ansible-core.
+# Sandbox base image: Debian + tini + sshd + ansible-core.
 #
-# Built by scripts/sandbox/sandbox.py before each run with:
+# Why no systemd: libkrun's microVM design runs the container's CMD as a
+# non-root user. systemd (when invoked as system manager) requires PID 1 +
+# UID 0 and exits with "Explicit --user argument required to run as user
+# manager." otherwise. crun/runc don't have this constraint but we want the
+# sandbox image to work uniformly across `--runtime krun | crun | runc |
+# system`, so we sidestep systemd entirely.
+#
+# What replaces it:
+#   - `tini` is PID 1 (proper signal forwarding + zombie reaping)
+#   - `sshd -D -e` is the workload (foreground, log to stderr)
+#   - any in-container task that would `systemctl ...` gets a dummy stub from
+#     the per-config `dummy_commands` list (apparmor config already stubs this).
+#
+# Built by scripts/sandbox/sandbox.py with:
 #   podman build --build-arg SSH_AUTHORIZED_KEY="$(cat ~/.cache/.../ssh_key.pub)" ...
 # then run with:
-#   podman run --runtime krun --systemd=always --publish 0:22 ...
-# so sandbox.py reaches the container via ssh -p <random_host_port> sandboxuser@127.0.0.1.
-#
-# We keep this image deliberately minimal - any playbook-specific packages
-# (apparmor, libkrun1, etc) are installed inside the running container by the
-# SandboxConfig's `extra_packages_apt` field, not baked here. That way one
-# image is reusable across all sandbox configs.
+#   podman run --runtime krun --publish 127.0.0.1::22 ...
 
 FROM --platform=linux/amd64 debian:trixie
 
@@ -17,19 +24,22 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install --yes --no-install-recommends \
-        systemd systemd-sysv \
         openssh-server \
+        tini \
         sudo \
         python3 python3-apt ansible-core \
         ca-certificates \
         tar gzip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN systemctl enable ssh
+# Generate sshd host keys at build time. (The Debian postinst would normally
+# do this on service start via the systemd unit; we don't have systemd, so
+# do it explicitly here.) Also ensure /run/sshd exists - sshd refuses to
+# start without it.
+RUN ssh-keygen -A && mkdir -p /run/sshd
 
-# Sandbox user with passwordless sudo. The playbook runs as this user (matching
-# the typical real-host workflow: a regular user invoking ansible-playbook
-# --ask-become-pass against localhost).
+# Sandbox user with passwordless sudo. The playbook runs as this user
+# (matching the typical real-host workflow).
 RUN useradd --create-home --shell /bin/bash sandboxuser && \
     echo 'sandboxuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/sandboxuser && \
     chmod 440 /etc/sudoers.d/sandboxuser
@@ -44,5 +54,5 @@ RUN mkdir -p /home/sandboxuser/.ssh && \
     chmod 700 /home/sandboxuser/.ssh && \
     chmod 600 /home/sandboxuser/.ssh/authorized_keys
 
-STOPSIGNAL SIGRTMIN+3
-CMD ["/usr/lib/systemd/systemd"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/sbin/sshd", "-D", "-e"]

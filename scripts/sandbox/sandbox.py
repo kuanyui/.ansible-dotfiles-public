@@ -33,7 +33,6 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path
-from typing import Iterable
 
 # Allow `from config import SandboxConfig` when run as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -55,11 +54,18 @@ IMAGE_TAG = "localhost/ansible-dotfiles-sandbox:latest"
 class Container:
     """RAII wrapper for the podman lifecycle: build image, run, ssh, cleanup."""
 
-    def __init__(self, runtime: str | None) -> None:
-        # runtime: "krun" | "crun" | None (None = don't pass --runtime to podman)
+    def __init__(
+        self,
+        runtime: str | None,
+        ssh_ready_timeout: int = 90,
+        keep_container_on_exit: bool = False,
+    ) -> None:
+        # runtime: "krun" | "crun" | "runc" | None (None = don't pass --runtime)
         self.runtime = runtime
         self.name = f"ansible-sandbox-{os.getpid()}"
         self._ssh_port: int | None = None
+        self._ssh_ready_timeout = ssh_ready_timeout
+        self._leave_running = keep_container_on_exit  # honored by __exit__
 
     # ---------- lifecycle ----------
 
@@ -67,10 +73,12 @@ class Container:
         _ensure_ssh_key()
         self._build_image()
         self._run()
-        self._wait_ssh_ready(timeout=60)
+        self._wait_ssh_ready(timeout=self._ssh_ready_timeout)
         return self
 
     def __exit__(self, *exc: object) -> None:
+        if getattr(self, "_leave_running", False):
+            return
         self._remove()
 
     def _build_image(self) -> None:
@@ -92,8 +100,17 @@ class Container:
             "podman", "run",
             "--name", self.name,
             "--detach",
-            "--systemd=always",
-            "--publish", "0:22",
+            # No `--systemd=always`: the sandbox image uses tini+sshd as PID 1,
+            # not systemd, because libkrun rejects systemd-as-system-manager
+            # (runs CMD as non-root user). See scripts/sandbox/Dockerfile.
+            #
+            # `127.0.0.1::22` = "publish container's port 22 to a random host
+            # port bound only to localhost". Just `0:22` would seem natural but
+            # podman rejects it ("port numbers must be between 1 and 65535");
+            # the documented "random host port" syntax is `[ip]::containerPort`
+            # or bare `containerPort`. 127.0.0.1 binding keeps the sandbox sshd
+            # off the LAN.
+            "--publish", "127.0.0.1::22",
         ]
         if self.runtime:
             cmd += ["--runtime", self.runtime]
@@ -102,14 +119,33 @@ class Container:
 
     def _wait_ssh_ready(self, timeout: int) -> None:
         deadline = time.monotonic() + timeout
+        last_stderr = ""
         while time.monotonic() < deadline:
             try:
                 self.ssh("true", check=True, capture_output=True, _retry=False)
                 print("==> sshd ready.")
                 return
-            except subprocess.CalledProcessError:
-                time.sleep(1)
-        raise SystemExit(f"sshd inside `{self.name}` not reachable within {timeout}s")
+            except subprocess.CalledProcessError as e:
+                last_stderr = (e.stderr or "").strip()
+                time.sleep(2)
+        # Diagnostics on timeout: print podman state, leave container running.
+        print(
+            f"\n!!! sshd inside `{self.name}` not reachable within {timeout}s.",
+            file=sys.stderr,
+        )
+        if last_stderr:
+            print(f"Last ssh stderr: {last_stderr}", file=sys.stderr)
+        print("\n--- `podman port <name> 22` (host port mapping) ---", file=sys.stderr)
+        subprocess.run(["podman", "port", self.name, "22"], check=False)
+        print("\n--- `podman logs --tail 100 <name>` (systemd boot output) ---", file=sys.stderr)
+        subprocess.run(["podman", "logs", "--tail", "100", self.name], check=False)
+        print(
+            f"\nContainer left running for inspection. To clean up:\n"
+            f"  podman rm -f {self.name}\n",
+            file=sys.stderr,
+        )
+        self._leave_running = True
+        raise SystemExit(1)
 
     def _remove(self) -> None:
         subprocess.run(
@@ -342,10 +378,19 @@ def _discover_configs() -> dict[str, SandboxConfig]:
 # Orchestrator
 # =============================================================================
 
-def run_sandbox(cfg: SandboxConfig, runtime: str | None) -> int:
+def run_sandbox(
+    cfg: SandboxConfig,
+    runtime: str | None,
+    ssh_ready_timeout: int = 90,
+    keep_container_on_exit: bool = False,
+) -> int:
     cfg.pre_flight(PROJECT_DIR)
     rc_total = 0
-    with Container(runtime=runtime) as c:
+    with Container(
+        runtime=runtime,
+        ssh_ready_timeout=ssh_ready_timeout,
+        keep_container_on_exit=keep_container_on_exit,
+    ) as c:
         # 1. extra packages
         if cfg.extra_packages_apt:
             print(f"==> Installing extra packages: {' '.join(cfg.extra_packages_apt)}")
@@ -464,9 +509,25 @@ def main() -> int:
             "(default: krun)"
         ),
     )
+    ap.add_argument(
+        "--ssh-ready-timeout",
+        type=int,
+        default=90,
+        help="Seconds to wait for systemd+sshd to come up inside the container before giving up. (default: 90)",
+    )
+    ap.add_argument(
+        "--keep-container-on-exit",
+        action="store_true",
+        help="Leave the sandbox container running after sandbox.py exits (manual `podman rm -f` afterwards). For debugging.",
+    )
     args = ap.parse_args()
     runtime = None if args.runtime == "system" else args.runtime
-    return run_sandbox(configs[args.config], runtime=runtime)
+    return run_sandbox(
+        configs[args.config],
+        runtime=runtime,
+        ssh_ready_timeout=args.ssh_ready_timeout,
+        keep_container_on_exit=args.keep_container_on_exit,
+    )
 
 
 if __name__ == "__main__":
