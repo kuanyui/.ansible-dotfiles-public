@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -136,7 +137,15 @@ class Container:
         capture_output: bool = False,
         _retry: bool = True,
     ) -> subprocess.CompletedProcess[str]:
-        """Run a remote command via ssh. Pass cmd as separate args (no shell)."""
+        """Run a remote command via ssh, shlex-quoting each arg so no caller
+        can accidentally inject shell metacharacters via a config value.
+
+        Pass cmd as separate args; `c.ssh('tar', '-czf', archive, *paths)` is
+        always safe regardless of what `paths` contains. If you need shell
+        features (cd && ..., $(...)), pass them inside an explicit `bash -c`
+        argument and shlex.join the inner command yourself.
+        """
+        remote_cmd = shlex.join(cmd)
         ssh_cmd = [
             "ssh",
             "-p", str(self.ssh_port),
@@ -146,7 +155,7 @@ class Container:
             "-o", "LogLevel=ERROR",
             "-o", "ConnectTimeout=5",
             f"{user}@127.0.0.1",
-            *cmd,
+            remote_cmd,
         ]
         return subprocess.run(ssh_cmd, check=check, capture_output=capture_output, text=True)
 
@@ -186,9 +195,10 @@ def _snapshot(c: Container, paths: list[str], dst_host_file: Path) -> None:
         dst_host_file.write_bytes(b"")
         return
     remote_tar = f"/tmp/snap-{os.getpid()}.tgz"
-    # tar exits non-zero if a listed path doesn't exist; suppress so a path that
-    # the playbook will create still works for "before" snapshot.
-    c.ssh("sudo", "bash", "-c", f"tar -czf {remote_tar} {' '.join(paths)} 2>/dev/null || true")
+    # `--ignore-failed-read` lets tar warn-then-continue on paths that don't
+    # exist yet (typical for "before" snapshot of dirs the playbook will create)
+    # and still exit 0. No shell needed; safe regardless of what `paths` contains.
+    c.ssh("sudo", "tar", "--ignore-failed-read", "-czf", remote_tar, *paths)
     c.cp_from(remote_tar, dst_host_file)
     c.ssh("sudo", "rm", "-f", remote_tar)
 
@@ -241,18 +251,31 @@ def _print_diff(before: Path, after: Path) -> None:
         print(f"  {p}")
 
 
-def _run_playbook(c: Container, cfg: SandboxConfig) -> int:
-    """Run the playbook once, return exit code."""
+def _playbook_command(cfg: SandboxConfig) -> str:
+    """Build the shell-safe `cd && ansible-playbook ...` string.
+
+    Each ansible-playbook arg is shlex-quoted via `shlex.join` so any
+    `extra_ansible_vars` value with shell metachars is safely passed through.
+    `cd /playbook && ...` is the only intentional shell feature we use.
+    """
     extra_var_args: list[str] = []
     for k, v in cfg.extra_ansible_vars.items():
         extra_var_args += ["-e", f"{k}={v}"]
-    cmd = [
-        "cd", "/playbook", "&&",
-        "ansible-playbook", "-i", "localhost,", "-c", "local",
+    ansible_argv = [
+        "ansible-playbook",
+        "-i", "localhost,",
+        "-c", "local",
         *extra_var_args,
         f"/playbook/{cfg.playbook}",
     ]
-    result = c.ssh("bash", "-c", " ".join(cmd), check=False)
+    # /playbook is a hardcoded constant path (no metachars). shlex.join makes
+    # ansible_argv shell-safe.
+    return f"cd /playbook && {shlex.join(ansible_argv)}"
+
+
+def _run_playbook(c: Container, cfg: SandboxConfig) -> int:
+    """Run the playbook once, return exit code."""
+    result = c.ssh("bash", "-c", _playbook_command(cfg), check=False)
     return result.returncode
 
 
@@ -262,16 +285,7 @@ def _check_idempotence(c: Container, cfg: SandboxConfig) -> int:
     print("=" * 60)
     print(" IDEMPOTENCE CHECK  (second run)")
     print("=" * 60)
-    extra_var_args: list[str] = []
-    for k, v in cfg.extra_ansible_vars.items():
-        extra_var_args += ["-e", f"{k}={v}"]
-    cmd = [
-        "cd", "/playbook", "&&",
-        "ansible-playbook", "-i", "localhost,", "-c", "local",
-        *extra_var_args,
-        f"/playbook/{cfg.playbook}",
-    ]
-    result = c.ssh("bash", "-c", " ".join(cmd), check=False, capture_output=True)
+    result = c.ssh("bash", "-c", _playbook_command(cfg), check=False, capture_output=True)
     rc = result.returncode
     out = (result.stdout or "") + (result.stderr or "")
     if rc != 0:
