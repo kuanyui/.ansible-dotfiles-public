@@ -12,7 +12,8 @@ Usage:
     python3 scripts/sandbox/sandbox.py <config>
     python3 scripts/sandbox/sandbox.py apparmor
     python3 scripts/sandbox/sandbox.py user --runtime crun
-    python3 scripts/sandbox/sandbox.py root --runtime default
+    python3 scripts/sandbox/sandbox.py user --runtime runc
+    python3 scripts/sandbox/sandbox.py root --runtime system
 
 Configs live in scripts/sandbox/configs/<name>.py with a module-level
 `CONFIG = SandboxConfig(...)`. Private overlays can add configs via the
@@ -455,12 +456,16 @@ def main() -> int:
     ap.add_argument("config", choices=sorted(configs), help="config name (see below)")
     ap.add_argument(
         "--runtime",
-        choices=["krun", "crun", "default"],
+        choices=["krun", "crun", "runc", "system"],
         default="krun",
-        help="OCI runtime for podman run. 'default' = no --runtime flag (system default). (default: krun)",
+        help=(
+            "OCI runtime for `podman run --runtime <X>`. "
+            "'system' = omit the flag entirely (use whatever podman has configured as default). "
+            "(default: krun)"
+        ),
     )
     args = ap.parse_args()
-    runtime = None if args.runtime == "default" else args.runtime
+    runtime = None if args.runtime == "system" else args.runtime
     return run_sandbox(configs[args.config], runtime=runtime)
 
 

@@ -129,7 +129,8 @@ aa-log-recent:  ## Print recent AppArmor messages within `LOG_SINCE_SECS` (defau
 
 # Default runtime is `krun` (microVM isolation). Override per invocation:
 #   make sandbox-apparmor SANDBOX_RUNTIME=crun
-#   make sandbox-apparmor SANDBOX_RUNTIME=default
+#   make sandbox-apparmor SANDBOX_RUNTIME=runc
+#   make sandbox-apparmor SANDBOX_RUNTIME=system  # use podman's configured default
 SANDBOX_RUNTIME ?= krun
 
 sandbox-apparmor:  ## Dry-run `apply-apparmor` in a throwaway podman+systemd+sshd sandbox; streams diff + runs `apparmor_parser --skip-kernel-load` post-check
