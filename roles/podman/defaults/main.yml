@@ -2,6 +2,14 @@
 setup_podman: false
 podman_runtime: "default"  # "default" (remove managed config, let distro decide) | "libkrun"
 podman_runtime_scope: "user"  # "user" or "system"
+
+# `podman_set_default_runtime`: should the role write managed containers.conf
+# to make `podman_runtime` the default for every `podman run`? Default false
+# (conservative: only install/verify runtime packages, don't touch podman's
+# distro default). Per-invocation `podman run --runtime <name> ...` works in
+# either mode - this flag only governs the role-managed default.
+podman_set_default_runtime: false
+
 podman_libkrun_packages_suse:
   # libkrunfw is bundled into libkrun1 on openSUSE Tumbleweed (no separate package, unlike Fedora)
   - libkrun1
