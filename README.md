@@ -79,7 +79,7 @@ sudo pacman -S --noconfirm git make ansible
 ```bash
 git clone https://github.com/kuanyui/.ansible-dotfiles.git
 cd .ansible-dotfiles
-make apply-all
+make apply-all-users
 ```
 
 This deploys dotfiles for both the current user and root. To deploy separately:

@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all unstow check-user check-root check-all unapply-podman pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman apply-container-apps unstow check-user check-root check-all-users check-podman check-container-apps unapply-podman unapply-container-apps pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -41,13 +41,13 @@ unstow:  ## [Legacy] Remove existing stow symlinks from ~/ and /root
 ### -------------------------------------------------------------------------
 
 
-apply-user:  ## Deploy dotfiles to current user home (no sudo)
+apply-user:  ## Provision current user (zsh + emacs + dotfiles)
 	$(PLAYBOOK) $(PLAYBOOKS)/user.yml
 
-apply-root:  ## Deploy dotfiles to /root (needs sudo)
+apply-root:  ## Provision root (packages + zsh + emacs + dotfiles; needs sudo)
 	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/root.yml
 
-apply-all:  ## Deploy dotfiles for both current user and root
+apply-all-users:  ## Provision both current user and root (i.e. `apply-user` + `apply-root`)
 	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/all.yml
 
 apply-podman:  ## Configure podman runtime (needs sudo for package install)
@@ -56,21 +56,30 @@ apply-podman:  ## Configure podman runtime (needs sudo for package install)
 unapply-podman:  ## Revert podman to distro default runtime (removes managed containers.conf; leaves libkrun packages installed)
 	$(PLAYBOOK) --ask-become-pass -e podman_runtime=default $(PLAYBOOKS)/podman.yml
 
+apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local/bin/ (bypasses `setup_container_apps` gate)
+	$(PLAYBOOK) $(PLAYBOOKS)/container_apps.yml
+
+unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/container-templates/.ansible-manifest.yml, removes everything it recorded)
+	$(PLAYBOOK) $(PLAYBOOKS)/container_apps_uninstall.yml
+
 ### -------------------------------------------------------------------------
 ### Dry-run (--check --diff)
 ### -------------------------------------------------------------------------
 
-check-user:  ## Dry-run diff for user dotfiles
+check-user:  ## Dry-run diff for current user provisioning
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/user.yml
 
-check-root:  ## Dry-run diff for root dotfiles
+check-root:  ## Dry-run diff for root provisioning
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/root.yml
 
-check-all:  ## Dry-run diff for both user and root
+check-all-users:  ## Dry-run diff for both user and root (i.e. `check-user` + `check-root`)
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/all.yml
 
 check-podman:  ## Dry-run diff for podman runtime config
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/podman.yml
+
+check-container-apps:  ## Dry-run diff for container_apps install
+	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/container_apps.yml
 
 ### -------------------------------------------------------------------------
 ### Update this repo

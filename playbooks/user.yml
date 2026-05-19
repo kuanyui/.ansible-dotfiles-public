@@ -1,5 +1,5 @@
 ---
-- name: Deploy user dotfiles
+- name: Provision current user
   hosts: localhost
   connection: local
   gather_facts: true
@@ -9,7 +9,7 @@
     target_group: "{{ ansible_user_id }}"
     is_root: false
   roles:
-    - dotfiles
-    - emacs
     - zsh
+    - emacs
+    - dotfiles
     - container_apps   # gated by `setup_container_apps` (default false in group_vars/all.yml)
