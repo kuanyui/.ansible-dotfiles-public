@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-apparmor unapply-podman-runtime unapply-container-apps aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-diff-watch sandbox-diff-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-apparmor unapply-podman-runtime unapply-container-apps aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -124,29 +124,19 @@ aa-log-recent:  ## Print recent AppArmor messages within `LOG_SINCE_SECS` (defau
 	fi
 
 ### -------------------------------------------------------------------------
-### AppArmor sandbox dry-run (rootless podman dry-run of `apply-apparmor`)
+### Sandbox dry-run (rootless podman + systemd + sshd; default --runtime krun)
 ### -------------------------------------------------------------------------
 
-SANDBOX_DISTRO ?= debian
-_SANDBOX_IMAGE_debian   := debian:trixie
-_SANDBOX_IMAGE_fedora   := fedora:latest
-_SANDBOX_IMAGE_opensuse := opensuse/tumbleweed
-_SANDBOX_IMAGE          := $(_SANDBOX_IMAGE_$(SANDBOX_DISTRO))
+# Default runtime is `krun` (microVM isolation). Override per invocation:
+#   make sandbox-apparmor SANDBOX_RUNTIME=crun
+#   make sandbox-apparmor SANDBOX_RUNTIME=default
+SANDBOX_RUNTIME ?= krun
 
-sandbox-diff-watch:  ## Dry-run `apply-apparmor` inside a throwaway podman container; stream a before/after unified diff
-	@test -f roles/apparmor/local_vars/deny_personal_dirs.aa || { \
-		echo "ERROR: roles/apparmor/local_vars/deny_personal_dirs.aa not found."; \
-		echo "Run: python3 scripts/gen_deny_personal_dirs.py <path> [<path> ...]"; \
-		exit 1; \
-	}
-	@[ -n "$(_SANDBOX_IMAGE)" ] || { \
-		echo "ERROR: unknown SANDBOX_DISTRO='$(SANDBOX_DISTRO)'. Valid: debian, fedora, opensuse"; \
-		exit 1; \
-	}
-	@bash scripts/sandbox_diff.sh $(_SANDBOX_IMAGE)
+sandbox-apparmor:  ## Dry-run `apply-apparmor` in a throwaway podman+systemd+sshd sandbox; streams diff + runs `apparmor_parser --skip-kernel-load` post-check
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) apparmor
 
-sandbox-diff-clean:  ## Remove cached sandbox base image to free disk (running container is auto-removed after each run)
-	podman rmi $(_SANDBOX_IMAGE) 2>/dev/null || true
+sandbox-clean:  ## Remove the cached sandbox base image to free disk (running sandbox containers are auto-removed after each run)
+	podman rmi localhost/ansible-dotfiles-sandbox:latest 2>/dev/null || true
 
 ### -------------------------------------------------------------------------
 ### Update this repo
