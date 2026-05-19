@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman apply-container-apps unstow check-user check-root check-all-users check-podman check-container-apps unapply-podman unapply-container-apps pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps unstow check-user check-root check-all-users check-podman-runtime check-container-apps unapply-podman-runtime unapply-container-apps pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -50,10 +50,10 @@ apply-root:  ## Provision root (packages + zsh + emacs + dotfiles; needs sudo)
 apply-all-users:  ## Provision both current user and root (i.e. `apply-user` + `apply-root`)
 	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/all.yml
 
-apply-podman:  ## Configure podman runtime (needs sudo for package install)
+apply-podman-runtime:  ## Provision crun + libkrun ,assert crun has `+LIBKRUN`, write `containers.conf` (optional), assert `podman info` shows krun active
 	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/podman.yml
 
-unapply-podman:  ## Revert podman to distro default runtime (removes managed containers.conf; leaves libkrun packages installed)
+unapply-podman-runtime:  ## Revert podman to distro default runtime (deletes the managed containers.conf; leaves installed libkrun packages alone)
 	$(PLAYBOOK) --ask-become-pass -e podman_runtime=default $(PLAYBOOKS)/podman.yml
 
 apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local/bin/ (bypasses `setup_container_apps` gate)
@@ -75,7 +75,7 @@ check-root:  ## Dry-run diff for root provisioning
 check-all-users:  ## Dry-run diff for both user and root (i.e. `check-user` + `check-root`)
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/all.yml
 
-check-podman:  ## Dry-run diff for podman runtime config
+check-podman-runtime:  ## Dry-run diff for podman OCI runtime config
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/podman.yml
 
 check-container-apps:  ## Dry-run diff for container_apps install

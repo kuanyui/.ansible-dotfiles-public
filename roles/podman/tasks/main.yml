@@ -37,6 +37,7 @@
   when:
     - setup_podman
     - podman_runtime == 'libkrun'
+    - not ansible_check_mode
 
 - name: Set `_podman_containers_conf_path` to `~/.config/containers/containers.conf` when `podman_runtime_scope` is `user`
   ansible.builtin.set_fact:
@@ -87,6 +88,7 @@
   when:
     - setup_podman
     - podman_runtime == 'libkrun'
+    - not ansible_check_mode
 
 - name: Remove `{{ _podman_containers_conf_path }}` to revert to distro default runtime when `setup_podman` is true and `podman_runtime` is `default`
   ansible.builtin.file:
