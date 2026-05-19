@@ -8,6 +8,16 @@
 # a template without touching the user's install.
 container_templates_output_dir: "{{ ansible_env.HOME }}/.local/share/container-templates"
 
+# `container_templates_with_systemd`: when rendering `Dockerfile.j2`, include
+# the systemd + sshd installation tail block. Used internally by `tasks/main.yml`
+# to render two flavors of Dockerfile per container template:
+#   - false -> assets/Dockerfile         (lightweight, for `--runtime crun`)
+#   - true  -> assets/Dockerfile.systemd (PID 1 = systemd, sshd as service, for `--runtime krun`)
+# Default `false` mirrors "this var is the OFF case unless task overrides it",
+# but in practice tasks always set this via task-level `vars:` to render both
+# flavors regardless. Set externally only if you want to globally force one.
+container_templates_with_systemd: false
+
 # `container_templates` enumerates every container variant this role renders.
 # Each entry mirrors the dataclass `ContainerConfig` in the legacy
 # `render_j2.py`; adding a new container only requires appending here.

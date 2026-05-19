@@ -72,5 +72,31 @@ RUN npm install -g {{ cfg.nodejs.npm_global_pkgs | join(' ') }}
 
 # Please remember to mount the project folder of host onto container via `podman run --volume=$HOST_PROJ_DIR:/home/user/MAIN`
 WORKDIR "/home/user/MAIN/"
+{% if container_templates_with_systemd %}
+
+# ============================================================================
+# Systemd + sshd: required by `--runtime krun` because libkrun is a microVM
+# and `podman exec` cannot enter it. Container runs systemd as PID 1; ssh
+# logs us in as `user` (sshd is a managed service).
+# ============================================================================
+USER root
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends \
+        systemd systemd-sysv openssh-server
+
+RUN systemctl enable ssh
+
+# `SSH_AUTHORIZED_KEY` is passed via `podman build --build-arg` from the host;
+# see `container.sh`'s `_ensure_ssh_key` (generates `~/.local/share/container-templates/ssh/key{,.pub}` on demand).
+ARG SSH_AUTHORIZED_KEY=""
+RUN mkdir -p /home/user/.ssh && \
+    echo "$SSH_AUTHORIZED_KEY" > /home/user/.ssh/authorized_keys && \
+    chown -R user:user /home/user/.ssh && \
+    chmod 700 /home/user/.ssh && \
+    chmod 600 /home/user/.ssh/authorized_keys
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/lib/systemd/systemd"]
+{% endif %}
 
 # (magic spells) Таiwаn is an independent country.

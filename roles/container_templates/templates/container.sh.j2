@@ -25,9 +25,29 @@ if [[ -n "$RUNTIME" ]]; then
     RUNTIME_SUFFIX="_$RUNTIME"
 fi
 
-IMAGE_NAME="{{ cfg.naming_prefix }}_image__${PROJECT_NAME}"
+IMAGE_NAME="{{ cfg.naming_prefix }}_image__${PROJECT_NAME}${RUNTIME_SUFFIX}"
 CONTAINER_NAME="{{ cfg.naming_prefix }}_container__${PROJECT_NAME}${RUNTIME_SUFFIX}"
 ASSETS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/assets" && pwd)"
+
+# SSH key + Dockerfile selection for krun (sshd-based exec replacement)
+SSH_KEY_DIR="$HOME/.local/share/container-templates/ssh"
+SSH_KEY="$SSH_KEY_DIR/key"
+case "$RUNTIME" in
+    krun) DOCKERFILE="Dockerfile.systemd"; USE_SSH=1; SYSTEMD_FLAG=(--systemd=always); SSH_PUBLISH=(--publish 0:22) ;;
+    *)    DOCKERFILE="Dockerfile";         USE_SSH=0; SYSTEMD_FLAG=();                 SSH_PUBLISH=() ;;
+esac
+
+_ensure_ssh_key() {
+    [[ -f "$SSH_KEY" ]] && return 0
+    mkdir -p "$SSH_KEY_DIR"
+    ssh-keygen -t ed25519 -N "" -f "$SSH_KEY" -C "container-templates@$(hostname)" >/dev/null
+    echo "Generated SSH key at $SSH_KEY (pub key gets baked into image at build time)" >&2
+}
+
+_ssh_host_port() {
+    # podman port output is like `0.0.0.0:43217` or `127.0.0.1:43217`. Take the trailing port.
+    "$ENGINE" port "$CONTAINER_NAME" 22 2>/dev/null | head -1 | awk -F: '{print $NF}'
+}
 
 # Hide-dir mask via dummy volume mount (other approaches noted below all failed)
 HIDE_DIRS_ARGS=()
@@ -68,9 +88,9 @@ Subcommands:
   start             Start an existing stopped container
   stop              Stop running container
   bash-user         exec /bin/bash as user `user`
-  bash-root         exec /bin/bash as user `root`
+  bash-root         exec /bin/bash as user `root` (NOT supported on krun)
   zsh-user          exec /bin/zsh as user `user`
-  zsh-root          exec /bin/zsh as user `root`
+  zsh-root          exec /bin/zsh as user `root` (NOT supported on krun)
 EOF
 {% if cfg.agent %}
     printf '  %-18sLaunch %s inside the container\n' '{{ cfg.agent.target_suffix }}' '{{ cfg.agent.display_name }}'
@@ -109,9 +129,18 @@ EOF
 
 cmd_build() {
     echo "=============================================================="
-    echo "Build Image from Dockerfile"
+    echo "Build Image from $DOCKERFILE"
     echo "=============================================================="
-    BUILDAH_LAYERS=true "$ENGINE" build --tag "localhost/$IMAGE_NAME" "$ASSETS_DIR"
+    local build_args=()
+    if [[ "$USE_SSH" == 1 ]]; then
+        _ensure_ssh_key
+        build_args+=(--build-arg "SSH_AUTHORIZED_KEY=$(cat "$SSH_KEY.pub")")
+    fi
+    BUILDAH_LAYERS=true "$ENGINE" build \
+        --tag "localhost/$IMAGE_NAME" \
+        --file "$ASSETS_DIR/$DOCKERFILE" \
+        "${build_args[@]}" \
+        "$ASSETS_DIR"
 }
 
 cmd_run() {
@@ -121,6 +150,8 @@ cmd_run() {
     "$ENGINE" run --name "$CONTAINER_NAME" --detach --tty \
         "${USERNS_ARGS[@]}" \
         "${RUNTIME_OPT[@]}" \
+        "${SYSTEMD_FLAG[@]}" \
+        "${SSH_PUBLISH[@]}" \
         --hostname "$CONTAINER_NAME" \
 {% for port in cfg.publish_ports %}
         --publish "{{ port }}" \
@@ -138,8 +169,36 @@ cmd_rmc()   { cmd_stop; "$ENGINE" container rm "$CONTAINER_NAME" || true; }
 cmd_rmi()   { cmd_rmc; "$ENGINE" image rm "localhost/$IMAGE_NAME" || true; }
 cmd_rm()    { cmd_rmc; cmd_rmi; }
 
-_exec_user() { cmd_start; "$ENGINE" exec --interactive --tty --user user --workdir /home/user/MAIN "$CONTAINER_NAME" "$@"; }
-_exec_root() { cmd_start; "$ENGINE" exec --interactive --tty --user root "$CONTAINER_NAME" "$@"; }
+_exec_user() {
+    cmd_start
+    if [[ "$USE_SSH" == 1 ]]; then
+        local port; port=$(_ssh_host_port)
+        [[ -n "$port" ]] || { echo "Could not find ssh host port for $CONTAINER_NAME" >&2; exit 1; }
+        ssh -t -p "$port" -i "$SSH_KEY" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR \
+            "user@127.0.0.1" "$@"
+    else
+        "$ENGINE" exec --interactive --tty --user user --workdir /home/user/MAIN "$CONTAINER_NAME" "$@"
+    fi
+}
+_exec_root() {
+    cmd_start
+    if [[ "$USE_SSH" == 1 ]]; then
+        cat >&2 <<'EOF'
+ERROR: bash-root/zsh-root not supported under RUNTIME=krun.
+The systemd image's sshd only accepts `user` (Debian's OpenSSH defaults to
+`PermitRootLogin prohibit-password` and the image doesn't install/configure
+sudo for `user`). If you really need root inside a krun container, either:
+  - add `PermitRootLogin yes` + a root authorized_keys to the Dockerfile, or
+  - install sudo + NOPASSWD entry in the Dockerfile, or
+  - drop into crun for that one-off operation.
+EOF
+        exit 1
+    fi
+    "$ENGINE" exec --interactive --tty --user root "$CONTAINER_NAME" "$@"
+}
 
 cmd_bash_user() { _exec_user /bin/bash; }
 cmd_bash_root() { _exec_root /bin/bash; }

@@ -36,7 +36,7 @@
     loop_var: cfg
     label: "{{ cfg.name }}"
 
-- name: Render Dockerfile to `{{ container_templates_output_dir }}/<name>/assets/Dockerfile`
+- name: Render Dockerfile (lightweight, no systemd) to `{{ container_templates_output_dir }}/<name>/assets/Dockerfile`
   ansible.builtin.template:
     src: Dockerfile.j2
     dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/assets/Dockerfile"
@@ -47,6 +47,22 @@
   loop_control:
     loop_var: cfg
     label: "{{ cfg.name }}"
+  vars:
+    container_templates_with_systemd: false
+
+- name: Render Dockerfile.systemd (with systemd+sshd, for `--runtime krun`) to `{{ container_templates_output_dir }}/<name>/assets/Dockerfile.systemd`
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/assets/Dockerfile.systemd"
+    mode: "0644"
+    trim_blocks: false
+    lstrip_blocks: false
+  loop: "{{ container_templates }}"
+  loop_control:
+    loop_var: cfg
+    label: "{{ cfg.name }}"
+  vars:
+    container_templates_with_systemd: true
 
 - name: Render `.zshrc` and `.bashrc` for `user` and `root` to `{{ container_templates_output_dir }}/<name>/assets/dotfiles/<who>/`
   ansible.builtin.template:
