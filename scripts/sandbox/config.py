@@ -51,6 +51,13 @@ class SandboxConfig:
     # (`setup_apparmor=true`, `setup_container_apps=true` etc.) for the dry-run.
     extra_ansible_vars: dict[str, Any] = field(default_factory=dict)
 
+    # Commands run as `root` inside the container AFTER apt installs +
+    # dummy_commands + extra_files copy, BUT BEFORE the project tree is copied
+    # in. Used to patch up service files etc. that need to be overridden after
+    # the packages installed by `extra_packages_apt` write them. Each entry is
+    # an argv list (no shell). For shell features use `["bash", "-c", "..."]`.
+    post_setup_commands: list[list[str]] = field(default_factory=list)
+
     # Called with project_dir on the host before any container action. Should
     # raise SystemExit (or any exception) to abort. Default: no-op.
     pre_flight: Callable[[Path], None] = field(default=lambda _: None)

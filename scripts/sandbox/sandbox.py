@@ -405,12 +405,20 @@ def run_sandbox(
                 user="root",
             )
 
-        # 4. copy project
+        # 4. post-setup commands (as root). Used to patch up service files etc.
+        # that the packages installed in step 1 wrote out. Runs before the
+        # project copy so that any systemctl daemon-reload here happens before
+        # the playbook's handlers fire.
+        for cmd in cfg.post_setup_commands:
+            print(f"==> Post-setup: {' '.join(cmd)}")
+            c.exec(*cmd, user="root")
+
+        # 5. copy project
         print("==> Copying project into container...")
         c.cp_to(PROJECT_DIR, "/playbook")
         c.exec("chown", "-R", f"{SANDBOX_USER}:{SANDBOX_USER}", "/playbook", user="root")
 
-        # 5. snapshot before
+        # 6. snapshot before
         with tempfile.TemporaryDirectory() as td:
             td_p = Path(td)
             before_tar = td_p / "before.tgz"
@@ -421,7 +429,7 @@ def run_sandbox(
             print("==> Snapshotting before-state...")
             _snapshot(c, cfg.snapshot_paths, before_tar)
 
-            # 6. run playbook
+            # 7. run playbook
             print()
             print(f"==> Running playbook `{cfg.playbook}` as `{SANDBOX_USER}` (full output follows)...")
             print("-" * 60)
@@ -431,19 +439,19 @@ def run_sandbox(
                 print(f"WARNING: playbook exited with code {playbook_rc}")
                 rc_total += 1
 
-            # 7. snapshot after
+            # 8. snapshot after
             print("==> Snapshotting after-state...")
             _snapshot(c, cfg.snapshot_paths, after_tar)
 
-            # 8. diff
+            # 9. diff
             _extract(before_tar, before_dir)
             _extract(after_tar, after_dir)
             _print_diff(before_dir, after_dir)
 
-            # 9. idempotence
+            # 10. idempotence
             rc_total += _check_idempotence(c, cfg)
 
-            # 10. post_check
+            # 11. post_check
             if cfg.post_check is not None:
                 print()
                 print("=" * 60)
