@@ -87,7 +87,7 @@ RUN apt-get update && \
 RUN systemctl enable ssh
 
 # `SSH_AUTHORIZED_KEY` is passed via `podman build --build-arg` from the host;
-# see `container.sh`'s `_ensure_ssh_key` (generates `~/.local/share/container-templates/ssh/key{,.pub}` on demand).
+# see `container.sh`'s `_ensure_ssh_key` (generates `~/.local/share/container-templates/host_ssh_key{,.pub}` on demand).
 ARG SSH_AUTHORIZED_KEY=""
 RUN mkdir -p /home/user/.ssh && \
     echo "$SSH_AUTHORIZED_KEY" > /home/user/.ssh/authorized_keys && \
