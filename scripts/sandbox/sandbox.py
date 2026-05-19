@@ -7,18 +7,26 @@ paths the playbook touches, runs the playbook again to check idempotence, and
 invokes any config-specific post-check (e.g. apparmor_parser --skip-kernel-load
 for apparmor profile syntax).
 
-Layer 2 hardening defaults (host kernel attack-surface reduction since crun
-shares the host kernel - microVM isolation would require Kata Containers, not
-libkrun, which is incompatible with systemd-as-PID-1):
-    --cap-drop=NET_RAW            no raw sockets inside sandbox
-    --security-opt apparmor=<X>   optional; pass via --apparmor-profile
+Layer 2 hardening (host kernel attack-surface reduction - crun shares the host
+kernel; microVM isolation would require Kata Containers, since libkrun is
+incompatible with systemd-as-PID-1):
+    user namespace                    rootless podman default (container's UID 0
+                                      maps to host's unprivileged UID)
+    default seccomp profile           rootless podman default (~50 dangerous
+                                      syscalls blocked: kexec_load, create_module,
+                                      ptrace into other namespaces, etc.)
+    --cap-drop=NET_RAW                no raw-socket capability
+
+These three are unconditional. We do NOT use `--security-opt apparmor=<X>` or
+SELinux labels because the kernel LSM hooks require CAP_MAC_ADMIN, which
+rootless podman doesn't have. For stronger isolation, switch the runtime to
+Kata Containers (real microVM with its own kernel).
 
 Usage:
     python3 scripts/sandbox/sandbox.py --help
     python3 scripts/sandbox/sandbox.py <config>
     python3 scripts/sandbox/sandbox.py apparmor
     python3 scripts/sandbox/sandbox.py user --runtime runc
-    python3 scripts/sandbox/sandbox.py apparmor --apparmor-profile local_attachmentless_podman_ai_agent
 
 Configs live in scripts/sandbox/configs/<name>.py with a module-level
 `CONFIG = SandboxConfig(...)`. Private overlays can add configs via the
@@ -62,7 +70,6 @@ class Container:
         runtime: str | None,
         startup_timeout: int = 90,
         keep_container_on_exit: bool = False,
-        apparmor_profile: str = "",
     ) -> None:
         # runtime: "crun" | "runc" | None (None = don't pass --runtime)
         # (krun is unsupported here: see Dockerfile rationale.)
@@ -70,7 +77,6 @@ class Container:
         self.name = f"ansible-sandbox-{os.getpid()}"
         self._startup_timeout = startup_timeout
         self._leave_running = keep_container_on_exit
-        self._apparmor_profile = apparmor_profile
 
     # ---------- lifecycle ----------
 
@@ -95,8 +101,7 @@ class Container:
     def _run(self) -> None:
         print(
             f"==> Starting container `{self.name}` "
-            f"(runtime={self.runtime or 'system-default'}, "
-            f"apparmor={self._apparmor_profile or 'podman-default'})..."
+            f"(runtime={self.runtime or 'system-default'})..."
         )
         cmd = [
             "podman", "run",
@@ -104,13 +109,14 @@ class Container:
             "--detach",
             # Required for systemd-as-PID-1 to find /sys/fs/cgroup wired up.
             "--systemd=always",
-            # Layer 2 hardening - drop caps the sandbox doesn't need. NET_RAW
-            # specifically because no raw sockets are used; default podman
-            # rootless gives it.
+            # Layer 2 hardening - drop NET_RAW (no raw sockets needed inside
+            # sandbox). Rootless podman default still includes NET_RAW; this
+            # removes it. AppArmor/SELinux profile switching is intentionally
+            # NOT used: rootless podman can't (CAP_MAC_ADMIN required). The
+            # remaining defenses - user namespace + default seccomp - are on
+            # by podman default and we don't disable them.
             "--cap-drop", "NET_RAW",
         ]
-        if self._apparmor_profile:
-            cmd += ["--security-opt", f"apparmor={self._apparmor_profile}"]
         if self.runtime:
             cmd += ["--runtime", self.runtime]
         cmd.append(IMAGE_TAG)
@@ -357,7 +363,6 @@ def run_sandbox(
     runtime: str | None,
     startup_timeout: int = 90,
     keep_container_on_exit: bool = False,
-    apparmor_profile: str = "",
 ) -> int:
     cfg.pre_flight(PROJECT_DIR)
     rc_total = 0
@@ -365,7 +370,6 @@ def run_sandbox(
         runtime=runtime,
         startup_timeout=startup_timeout,
         keep_container_on_exit=keep_container_on_exit,
-        apparmor_profile=apparmor_profile,
     ) as c:
         # 1. extra packages
         if cfg.extra_packages_apt:
@@ -489,16 +493,6 @@ def main() -> int:
         ),
     )
     ap.add_argument(
-        "--apparmor-profile",
-        default="",
-        help=(
-            "AppArmor profile to apply to the sandbox container (passed to "
-            "`--security-opt apparmor=<name>`). The named profile must already "
-            "be loaded on the host (`aa-status` to check). Default: empty - "
-            "podman uses its built-in `containers-default` if available."
-        ),
-    )
-    ap.add_argument(
         "--startup-timeout",
         type=int,
         default=90,
@@ -516,7 +510,6 @@ def main() -> int:
         runtime=runtime,
         startup_timeout=args.startup_timeout,
         keep_container_on_exit=args.keep_container_on_exit,
-        apparmor_profile=args.apparmor_profile,
     )
 
 
