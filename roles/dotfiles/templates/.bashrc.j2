@@ -61,15 +61,26 @@ bind 'TAB:menu-complete'
 bind '"\e[Z":menu-complete-backward'
 bind 'set show-all-if-ambiguous on'
 
-# Source bash-completion if available; its dynamic loader will then auto-load
-# completion files from `~/.local/share/bash-completion/completions/<cmd>` on
-# first tab-completion of `<cmd>` (used by ansible-managed launchers).
+# Source bash-completion if available - this is what enables system / package
+# tab completions (git, ssh, systemctl, ...). Note: ansible-managed completions
+# live elsewhere (sourced below); this block is only for distro / 3rd-party.
 if ! shopt -oq posix; then
     if [ -f /usr/share/bash-completion/bash_completion ]; then
         . /usr/share/bash-completion/bash_completion
     elif [ -f /etc/bash_completion ]; then
         . /etc/bash_completion
     fi
+fi
+
+# Eager-source ansible-managed bash completions. We don't reuse the XDG
+# bash-completion dynamic-loader path (`~/.local/share/bash-completion/
+# completions/<cmd>`) because it requires the bash-completion package and a
+# loader handshake; eager-source here is unconditional and cross-distro.
+if [ -d "${HOME}/.local/share/ansible-managed/bash-completions" ]; then
+    for _comp in "${HOME}/.local/share/ansible-managed/bash-completions"/*; do
+        [ -r "$_comp" ] && . "$_comp"
+    done
+    unset _comp
 fi
 
 # completion for Makefile target

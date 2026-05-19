@@ -1,33 +1,46 @@
 ---
 # `present` installs (render templates + drop launchers/completions/manifest).
-# `absent` reads the manifest at `install_root/.ansible-manifest.yml` and
-# removes everything it recorded (launchers, completions, the install_root
-# itself). Run as `ansible-playbook playbooks/container_apps_uninstall.yml`,
+# `absent` reads the manifest at `<container_apps_root>/container-apps.manifest.yml`
+# and removes everything it recorded (launchers, completions, the container
+# templates tree). Run as `ansible-playbook playbooks/container_apps_uninstall.yml`,
 # or pass `-e container_apps_state=absent` to the install playbook.
 container_apps_state: present
+
+# Shared root for everything this project's roles drop under the user's home.
+# We don't use the distro/XDG-standard sub-paths (e.g. `~/.local/share/zsh/
+# site-functions/`, `~/.local/share/bash-completion/completions/`) so that:
+#   1. behavior is identical across distros - no reliance on a distro shipping
+#      the `bash-completion` package nor on per-distro zsh fpath defaults;
+#   2. ansible-managed files are obviously namespaced and trivially auditable
+#      (`ls ~/.local/share/ansible-managed/`);
+#   3. uninstall = wipe this dir + clean launchers in ~/.local/bin/, no
+#      hunting through multiple XDG locations.
+container_apps_root: "{{ ansible_env.HOME }}/.local/share/ansible-managed"
 
 # Where the rendered Makefile + Dockerfile + dotfiles trees live. Shared with
 # `roles/container_templates` via `include_role` (this role injects this path
 # as `container_templates_output_dir`).
-container_apps_install_root: "{{ ansible_env.HOME }}/.local/share/container-templates"
+container_apps_install_root: "{{ container_apps_root }}/container-templates"
 
-# Where to drop launcher scripts. Must be on the user's PATH for the launcher
-# names (e.g. `claude-crun`) to be invocable.
+# Where to drop launcher scripts. KEPT at `~/.local/bin/` (not moved into
+# `container_apps_root`) because that's THE standard PATH location - moving
+# launchers anywhere else would require adding that to PATH in shell rc.
 container_apps_bin_dir: "{{ ansible_env.HOME }}/.local/bin"
 
 # Where to drop zsh completion files. `roles/zsh`'s rendered `.zshrc` adds
 # this dir to fpath BEFORE compinit so completions are picked up automatically.
-container_apps_zsh_completion_dir: "{{ ansible_env.HOME }}/.local/share/zsh/site-functions"
+container_apps_zsh_completion_dir: "{{ container_apps_root }}/zsh-completions"
 
-# Where to drop bash completion files. bash-completion's dynamic loader auto-
-# sources `<dir>/<cmd>` on first tab-completion of `<cmd>`. The user's
-# `~/.bashrc` (via `roles/dotfiles`) sources bash-completion which enables this.
-container_apps_bash_completion_dir: "{{ ansible_env.HOME }}/.local/share/bash-completion/completions"
+# Where to drop bash completion files. `roles/dotfiles`'s rendered `.bashrc`
+# eagerly sources every file here. (We don't reuse the XDG bash-completion
+# dynamic-loader path because that would couple us to bash-completion's
+# package availability on every target distro.)
+container_apps_bash_completion_dir: "{{ container_apps_root }}/bash-completions"
 
 # `container_apps` enumerates which `container_templates` entries to install
 # as launcher-driven apps, and which runtime variants to expose for each.
 # Each `(template, runtime)` pair produces one launcher at
-# `<bin_dir>/<template>-<runtime>` (e.g. `claude-crun`, `claude-krun`).
+# `<bin_dir>/c-<template>-<runtime>` (e.g. `c-claude-crun`, `c-claude-krun`).
 #
 # `template` MUST match a `name` in `container_templates` (defined in
 # `roles/container_templates/defaults/main.yml`).

@@ -30,7 +30,7 @@ CONTAINER_NAME="{{ cfg.naming_prefix }}_container__${PROJECT_NAME}${RUNTIME_SUFF
 ASSETS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/assets" && pwd)"
 
 # SSH key + Dockerfile selection for krun (sshd-based exec replacement)
-SSH_KEY="$HOME/.local/share/container-templates/host_ssh_key"
+SSH_KEY="$HOME/.local/share/ansible-managed/container-templates/host_ssh_key"
 case "$RUNTIME" in
     krun) DOCKERFILE="Dockerfile.systemd"; USE_SSH=1; SYSTEMD_FLAG=(--systemd=always); SSH_PUBLISH=(--publish 0:22) ;;
     *)    DOCKERFILE="Dockerfile";         USE_SSH=0; SYSTEMD_FLAG=();                 SSH_PUBLISH=() ;;

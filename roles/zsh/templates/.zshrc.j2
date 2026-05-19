@@ -17,10 +17,11 @@ select-word-style bash
 ### ============================================
 ### Completions
 ### ============================================
-# Pick up user-installed completion functions (e.g. ansible-managed launchers
-# under `~/.local/share/container-templates/` shipping per-launcher `_*` files).
-# Must run BEFORE `compinit` for new fpath entries to be scanned.
-fpath=(${HOME}/.local/share/zsh/site-functions $fpath)
+# Pick up ansible-managed completion functions (`_<cmd>` files dropped here by
+# `roles/container_apps` etc). Must run BEFORE `compinit` for new fpath entries
+# to be scanned. Note: we use a project-private path (not the distro-standard
+# `~/.local/share/zsh/site-functions/`) so cross-distro behavior is identical.
+fpath=(${HOME}/.local/share/ansible-managed/zsh-completions $fpath)
 
 {{ shared_zsh_compinit_and_zstyles }}
 ### ============================================

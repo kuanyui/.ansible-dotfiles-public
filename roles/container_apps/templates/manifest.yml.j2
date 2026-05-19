@@ -1,11 +1,13 @@
 # {{ ansible_managed }}
 #
 # Manifest of files installed by `roles/container_apps`. The uninstall flow
-# (`container_apps_state: absent`) reads this to know exactly which paths
-# outside `install_root` to remove. Hand-editing is pointless: the next
-# `ansible-playbook playbooks/container_apps.yml` run overwrites it.
+# (`container_apps_state: absent`) reads this to know which launcher paths
+# to remove from `~/.local/bin/` (outside the ansible-managed namespace
+# root, so the namespace-wipe doesn't cover them). Everything else under
+# `container_apps_root` is wiped as a single tree.
 managed_by: ansible
 source_role: container_apps
+container_apps_root: {{ container_apps_root }}
 install_root: {{ container_apps_install_root }}
 bin_dir: {{ container_apps_bin_dir }}
 zsh_completion_dir: {{ container_apps_zsh_completion_dir }}

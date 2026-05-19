@@ -53,8 +53,8 @@
     runtime: "{{ item.1 }}"
     launcher_name: "c-{{ item.0.template }}-{{ item.1 }}"
 
-- name: Write install manifest `{{ container_apps_install_root }}/.ansible-manifest.yml`
+- name: Write install manifest `{{ container_apps_root }}/container-apps.manifest.yml`
   ansible.builtin.template:
     src: manifest.yml.j2
-    dest: "{{ container_apps_install_root }}/.ansible-manifest.yml"
+    dest: "{{ container_apps_root }}/container-apps.manifest.yml"
     mode: "0644"
