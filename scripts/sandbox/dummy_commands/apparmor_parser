@@ -1,10 +1,12 @@
 #!/bin/bash
 # Sandbox wrapper for apparmor_parser.
-# --parse / -p / --preprocess / -Q: pure userspace syntax check - pass through
-# to the real binary so deployed profiles are actually validated.
-# All other flags (-r load, -R unload, etc.) require kernel access and are stubbed.
+# Pure-userspace flags pass through to the real binary so deployed profiles are
+# syntactically validated. Kernel-touching flags (-r load, -R unload, etc.) are
+# stubbed because the sandbox shares the host kernel and rootless podman lacks
+# CAP_MAC_ADMIN; a real call would either error or pollute the host's loaded
+# AppArmor state.
 case "$1" in
-    --parse|-p|--preprocess|-Q)
+    --parse|-p|--preprocess|-Q|--skip-kernel-load|-K)
         exec /usr/sbin/apparmor_parser "$@" ;;
     *)
         echo "[sandbox stub] apparmor_parser $*"

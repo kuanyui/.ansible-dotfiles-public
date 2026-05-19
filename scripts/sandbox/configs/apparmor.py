@@ -67,17 +67,24 @@ CONFIG = SandboxConfig(
     dummy_commands=[
         DUMMY_COMMANDS_DIR / cmd
         for cmd in (
-            # Real systemd runs as PID 1 in the sandbox image (because we
-            # default --runtime to crun, not libkrun), so `systemctl` is NOT
-            # stubbed - the role's `notify: Reload apparmor` handler exercises
-            # real systemd plumbing.
+            # `systemctl` is NOT stubbed - real systemd runs as PID 1 in the
+            # sandbox image (--runtime crun, not libkrun), so the role's
+            # `notify: Reload apparmor` handler exercises real systemd plumbing.
             #
-            # apparmor_parser and friends still ARE stubbed: the sandbox kernel
-            # is the host kernel but the role calls `aa-enforce` against
-            # profiles that reference includes (e.g. abstractions/local_*) and
-            # we want syntax-validation (--skip-kernel-load) to be the only
-            # actual check, not a real kernel load that could conflict with
-            # whatever profiles the host already has loaded.
+            # apparmor_parser / aa-* still ARE stubbed for two reasons that
+            # both stand even with real systemd:
+            #   1. They modify host kernel AppArmor LSM state, which requires
+            #      `CAP_MAC_ADMIN` - rootless podman doesn't have this, so
+            #      every real `aa-enforce` invocation would just error.
+            #   2. The sandbox shares the host kernel (crun, not microVM), so
+            #      even if it had the cap, real profile loads would clobber
+            #      whatever profiles the host already has loaded.
+            # The apparmor_parser stub passes USERSPACE flags (--parse, -p, -Q,
+            # --preprocess) through to /usr/sbin/apparmor_parser so syntax
+            # validation still happens for real; only kernel-load modes are
+            # short-circuited. The post_check below also bypasses the stub via
+            # absolute path to run --skip-kernel-load against every deployed
+            # profile.
             "apparmor_parser",
             "aa-enforce", "aa-status", "aa-disable", "aa-complain",
         )
