@@ -24,6 +24,8 @@ playbooks/                # entry playbooks
   ├─ podman.yml           # ├─ dedicated entry: configure podman OCI runtime
   ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
   ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
+  ├─ incus.yml            # ├─ dedicated entry: install v-<agent> Incus VM launchers
+  ├─ incus_uninstall.yml  # ├─ uninstall flow (reads install manifest)
   └─ apparmor.yml         # └─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
@@ -42,6 +44,7 @@ roles/
   ├─ podman/              # [ROLE] configure podman OCI runtime (e.g. libkrun on openSUSE)
   ├─ container_templates/ # [ROLE] render Makefile/Dockerfile/dotfiles trees per container variant
   ├─ container_apps/      # [ROLE] consume container_templates output + install ~/.local/bin/c-<name> launchers
+  ├─ incus/               # [ROLE] install ~/.local/bin/v-<name> launchers; one Incus KVM VM per (agent, project)
   └─ apparmor/            # [ROLE] AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / ...)
 scripts/                  # standalone helper scripts (apparmor profile gen / sandbox dry-run)
 ```
@@ -153,6 +156,44 @@ c-claude-crun <TAB><TAB>                       # should list: help env init buil
 which _c-claude-crun                           # should resolve to the completion file
 c-claude-crun <TAB>                            # should list subcommands with descriptions
 ```
+
+## VM-isolated agent launchers via `roles/incus`
+
+For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/incus` provides parallel `v-<agent>` launchers that spin up a full Incus KVM VM per `(agent, project)`. Each VM is a Debian minimal install with the agent native-installed inside, and the project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, giving a stronger isolation boundary than libkrun's in-process virtio-fs).
+
+### Install
+
+```bash
+make apply-incus
+```
+
+The role auto-installs the `incus` package, starts + enables `incus.service`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus-admin` group. Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password.
+
+If your user was just added to `incus-admin`, **log out + back in** (or `newgrp incus-admin` in this shell) before running `v-<agent>` — group membership only refreshes on new login.
+
+For storage layout (where image cache / VM disks land, how the base image is reused across N VMs, how to relocate stuff off `/`), see [`roles/incus/README.md`](roles/incus/README.md).
+
+Produces `~/.local/bin/v-claude`, `~/.local/bin/v-codex` (plus completions). Subcommands mirror the `c-<tpl>-<runtime>` family:
+
+```bash
+cd ~/projects/foo
+v-claude init        # launch VM, share $PWD into /workspaces/foo, install claude
+v-claude claude      # run claude inside the VM
+v-claude shell       # bash into the VM
+v-claude stop        # shut down the VM (state preserved)
+v-claude rma         # rm all: delete the VM and its disk
+```
+
+VM names are derived from `cwd` exactly like `c-claude-crun` derives container names, so `~/work/foo` and `~/sandbox/foo` get separate VMs. Resource defaults (4 CPU / 4 GiB RAM / 10 GiB disk per VM) are in `roles/incus/defaults/main.yml`. Cold boot is ~10-15 s; subsequent `v-claude claude` reuses the running VM.
+
+### Threat model: where `v-*` is stronger than `c-*-crun` / `c-*-krun`
+
+| Boundary | `c-*-crun` | `c-*-krun` | `v-*` |
+|---|---|---|---|
+| Host kernel CVE protection | ❌ shared | ✅ libkrun guest kernel | ✅ KVM guest kernel |
+| virtio-fs server sandbox | n/a | ⚠️ in-process (relies on outer podman ns) | ✅ standalone virtiofsd (pivot_root + seccomp) |
+| Credentials in `~/.ssh`, `~/.gitconfig` exposure if agent breaks out | ⚠️ visible via mount ns escape | ⚠️ visible via VM escape + ns escape | ✅ not in VM at all; agent never sees them |
+| Workflow for committing changes | host or container | host or container | **host only** - VM has no git creds, you `git diff` + `commit` + `push` from the host shell |
 
 # Acknowledgment & Security Declarations
 

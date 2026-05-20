@@ -1,0 +1,72 @@
+---
+# `incus_storage_pool_source`: filesystem path where the `default` storage pool
+# lives (the dir backend's `source` config). Empty -> incus's own default,
+# which is `/var/lib/incus/storage-pools/default/` on `/`. Set to an absolute
+# path elsewhere if `/` is small or on a filesystem you don't want VM disks
+# on (e.g. btrfs - VM qcow2 + CoW is a known bad combo: huge space waste +
+# slow random writes; if you're stuck on btrfs use `chattr +C` on the source
+# dir, or point this at an ext4/xfs filesystem instead).
+#
+# Typical per-host setup via `host_vars/<hostname>.yml`:
+#   incus_storage_pool_source: /data/vm/incus       # if machine has /data/vm
+#   incus_storage_pool_source: /home/{{user}}/incus-storage  # /home is ext4
+#
+# Effective ONLY at first-time init (preseed step). Already-initialized
+# incus won't be re-pointed by this var; to migrate after the fact, see
+# `incus storage create` + manual VM moves, or wipe + re-init.
+incus_storage_pool_source: ""
+
+# `incus_skip_host_setup`: skip the apt-install + service-enable + group-add +
+# `incus admin init` chain in `host_setup.yml`. Only the user-space launcher
+# render in `install.yml` runs. Used by the sandbox (which can't satisfy
+# incus's KVM/network requirements inside a rootless container) and as an
+# escape hatch for users who want to manage host-level incus setup
+# themselves. Off by default - normal `make apply-incus` does the host setup.
+incus_skip_host_setup: false
+
+# `incus_apps_state` mirrors `container_apps_state`:
+#   - `present` (default): render launchers, completions, install manifest.
+#   - `absent`: read manifest, remove everything it recorded. Used by
+#     `playbooks/incus_uninstall.yml`.
+incus_apps_state: present
+
+# Output roots (mirror container_apps so artifacts live side-by-side, but in
+# their own subtree to keep the manifests / unapply paths separate).
+incus_root: "{{ ansible_env.HOME }}/.local/share/ansible-managed"
+incus_bin_dir: "{{ ansible_env.HOME }}/.local/bin"
+incus_zsh_completion_dir: "{{ incus_root }}/zsh-completions"
+incus_bash_completion_dir: "{{ incus_root }}/bash-completions"
+incus_manifest_path: "{{ incus_root }}/incus-apps.manifest.yml"
+
+# Default resource allocation when an `incus_apps` entry doesn't override.
+# Tight enough for a single agent under Debian-minimal; user bumps per app
+# if they hit OOM.
+incus_vm_defaults:
+  base_image: images:debian/13
+  cpu: 4
+  memory: 4GiB
+  disk: 10GiB
+
+# Each entry produces one `~/.local/bin/v-<name>` launcher. The `agent.*`
+# block intentionally duplicates fields from `roles/container_templates/
+# defaults/main.yml` for now (see Task #27 - merging the schemas is a
+# separate refactor).
+#
+# `install_script_url`: agent installed via `curl -fsSL <url> | bash` inside
+# the VM as `user`. Native binary, no node needed.
+# `install_via_npm`: agent installed via `npm install -g <pkg>`. Requires
+# nodejs/npm to be apt-installed by the VM provisioning step.
+# Exactly one of the two must be set.
+incus_apps:
+  - name: claude
+    agent:
+      command: claude
+      display_name: claude-code
+      install_script_url: https://claude.ai/install.sh
+    # vm: {}   # optional override of incus_vm_defaults
+
+  - name: codex
+    agent:
+      command: npx codex
+      display_name: codex
+      install_via_npm: "@openai/codex"

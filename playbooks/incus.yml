@@ -1,0 +1,9 @@
+---
+- name: Install v-<agent> Incus VM launchers via `roles/incus`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    setup_incus: true  # dedicated entry point: bypass the host-level opt-in gate
+  roles:
+    - incus

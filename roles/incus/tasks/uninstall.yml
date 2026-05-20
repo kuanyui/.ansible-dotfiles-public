@@ -1,0 +1,36 @@
+---
+- name: Check whether install manifest `{{ incus_manifest_path }}` exists
+  ansible.builtin.stat:
+    path: "{{ incus_manifest_path }}"
+  register: _incus_manifest_stat
+
+- name: Bail out early if manifest is missing
+  ansible.builtin.meta: end_play
+  when: not _incus_manifest_stat.stat.exists
+
+- name: Slurp install manifest
+  ansible.builtin.slurp:
+    src: "{{ incus_manifest_path }}"
+  register: _incus_manifest_raw
+
+- name: Parse install manifest
+  ansible.builtin.set_fact:
+    _incus_manifest: "{{ _incus_manifest_raw.content | b64decode | from_yaml }}"
+
+- name: Show recorded paths before removal
+  ansible.builtin.debug:
+    var: _incus_manifest
+
+# Note: we do NOT touch the actual Incus VMs created by these launchers.
+# That's the user's responsibility per-VM (`v-claude rma` etc.), because:
+#   1. We don't have a stable registry of which VMs have been created.
+#   2. Bulk-deleting all `v-*-*` VMs could clobber unrelated user work.
+# If you want to wipe everything, list with `incus list ^v-` and delete by hand.
+- name: Remove launchers, completions, manifest
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ (_incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='launcher_path') | list)
+          + (_incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='completion_zsh') | list)
+          + (_incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='completion_bash') | list)
+          + [_incus_manifest_path] }}"

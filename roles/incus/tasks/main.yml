@@ -1,0 +1,40 @@
+---
+- name: Skip `incus` role unless `setup_incus` is true
+  ansible.builtin.debug:
+    msg: "Skipping incus (setup_incus={{ setup_incus | default(false) }})."
+  when: not setup_incus | default(false) | bool
+
+- when: setup_incus | default(false) | bool
+  block:
+    - name: Validate `incus_apps_state` is `present` or `absent`
+      ansible.builtin.assert:
+        that: incus_apps_state in ['present', 'absent']
+        fail_msg: "incus_apps_state must be `present` or `absent`, got `{{ incus_apps_state }}`."
+
+    - name: Validate each `incus_apps` entry has exactly one install method
+      ansible.builtin.assert:
+        that:
+          # Exactly one of `install_script_url` / `install_via_npm` must be set.
+          - (item.agent.install_script_url is defined) != (item.agent.install_via_npm is defined)
+          - item.agent.command is defined
+          - item.agent.display_name is defined
+          - item.name is defined
+        fail_msg: |
+          incus_apps entry `{{ item.name | default('<unnamed>') }}` is malformed.
+          Required fields: name, agent.command, agent.display_name, AND exactly
+          one of agent.install_script_url / agent.install_via_npm.
+          Got: {{ item }}
+      loop: "{{ incus_apps }}"
+      loop_control:
+        label: "{{ item.name | default('<unnamed>') }}"
+
+    - ansible.builtin.include_tasks: host_setup.yml
+      when:
+        - incus_apps_state == 'present'
+        - not (incus_skip_host_setup | default(false) | bool)
+
+    - ansible.builtin.include_tasks: install.yml
+      when: incus_apps_state == 'present'
+
+    - ansible.builtin.include_tasks: uninstall.yml
+      when: incus_apps_state == 'absent'

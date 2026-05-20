@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-apparmor unapply-podman-runtime unapply-container-apps aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -62,6 +62,12 @@ apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local
 unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/container-templates/.ansible-manifest.yml, removes everything it recorded)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps_uninstall.yml
 
+apply-incus:  ## Install v-<agent> Incus VM launchers (bypasses `setup_incus` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus.yml
+
+unapply-incus:  ## Uninstall incus launchers (reads ~/.local/share/ansible-managed/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_uninstall.yml
+
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.); requires `roles/apparmor/local_vars/deny_personal_dirs.aa` (see scripts/gen_deny_personal_dirs.py); bypasses `setup_apparmor` gate
 	@test -f roles/apparmor/local_vars/deny_personal_dirs.aa || { \
 		echo "ERROR: roles/apparmor/local_vars/deny_personal_dirs.aa not found."; \
@@ -94,6 +100,9 @@ check-podman-runtime:  ## Dry-run diff for podman OCI runtime config
 
 check-container-apps:  ## Dry-run diff for container_apps install
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/container_apps.yml
+
+check-incus:  ## Dry-run diff for incus launcher install
+	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus.yml
 
 check-apparmor:  ## Dry-run diff for AppArmor profile deployment
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/apparmor.yml
@@ -153,6 +162,9 @@ sandbox-root:  ## Dry-run `apply-root` (packages + zsh + emacs + dotfiles, is_ro
 
 sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtime> launcher install) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) container_apps
+
+sandbox-incus:  ## Dry-run `apply-incus` (v-<agent> launcher install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus
 
 sandbox-podman-runtime:  ## Dry-run `apply-podman-runtime` (containers.conf write; `crun` and `podman` are stubbed) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) podman_runtime

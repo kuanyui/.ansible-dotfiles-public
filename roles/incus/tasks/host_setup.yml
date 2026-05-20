@@ -1,0 +1,115 @@
+---
+# Host-side prep for `roles/incus`. Each step is gated on a no-`become` probe,
+# so on a fully-set-up host this whole file becomes a no-op that doesn't even
+# prompt for sudo. Only the steps that actually need elevation invoke `become`.
+
+# ---------- Probe phase (no become) ----------
+
+- name: Probe whether `incus` binary is on PATH
+  ansible.builtin.command: command -v incus
+  register: _incus_binary_check
+  changed_when: false
+  failed_when: false
+
+- name: Probe whether `incus.service` is active
+  ansible.builtin.command: systemctl is-active incus.service
+  register: _incus_svc_check
+  changed_when: false
+  failed_when: false
+
+- name: Probe whether `{{ ansible_user_id }}` is already in the `incus-admin` group
+  ansible.builtin.command: id -nG {{ ansible_user_id }}
+  register: _incus_groups_check
+  changed_when: false
+
+# ---------- Mutation phase (become only when probe says so) ----------
+
+- name: Install `incus` package via distro repo (only if binary is missing)
+  ansible.builtin.package:
+    name: incus
+    state: present
+  become: true
+  when: _incus_binary_check.rc != 0
+
+- name: Ensure `incus.service` is started + enabled (only if not already active)
+  ansible.builtin.systemd:
+    name: incus.service
+    state: started
+    enabled: true
+  become: true
+  when: _incus_svc_check.stdout | trim != 'active'
+
+- name: Add `{{ ansible_user_id }}` to `incus-admin` group (only if not already a member)
+  ansible.builtin.user:
+    name: "{{ ansible_user_id }}"
+    groups: incus-admin
+    append: true
+  become: true
+  when: "'incus-admin' not in (_incus_groups_check.stdout.split())"
+  register: _incus_group_add
+
+- name: Print re-login warning if the group was just added (group membership only takes effect in NEW shells)
+  ansible.builtin.debug:
+    msg: |
+      `{{ ansible_user_id }}` was just added to the `incus-admin` group.
+      You MUST log out + back in (or `newgrp incus-admin` in this shell)
+      before `v-<agent>` launchers can talk to the incus daemon. The
+      preseed step below runs via `become: true` so this playbook is
+      unaffected; only your interactive shell needs the re-login.
+  when: _incus_group_add.changed
+
+# ---------- Filesystem-level warning ----------
+# Warn (don't fail) when defaulting incus storage to /var/lib/incus and /
+# is btrfs. qcow2 VM images + btrfs CoW = bad combo: every write triggers
+# block-level CoW, leading to space waste and write amplification. User
+# is better off pointing `incus_storage_pool_source` at an ext4/xfs path
+# OR `chattr +C` on /var/lib/incus/storage-pools/ to disable CoW for that
+# subtree.
+
+- name: Probe `/` filesystem type (CoW warning)
+  ansible.builtin.command: stat -fc '%T' /
+  register: _root_fs_type
+  changed_when: false
+  when: not incus_storage_pool_source
+
+- name: Warn about btrfs CoW + qcow2 if defaulting to /var/lib/incus on btrfs
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  `incus_storage_pool_source` is empty AND `/` is btrfs.
+      VM disks would land at /var/lib/incus/storage-pools/default/ on a CoW
+      filesystem, which is a known bad combo for qcow2 (random writes amplify,
+      space accounting balloons).
+      Either:
+        (a) Set `incus_storage_pool_source` to an ext4/xfs path
+            (e.g. `/data/vm/incus` or `/home/{{ ansible_user_id }}/incus-storage`)
+            via host_vars/<hostname>.yml, or
+        (b) After this playbook finishes, disable CoW for the storage dir:
+              sudo chattr -R +C /var/lib/incus/storage-pools/
+            (only affects newly-written files; existing ones need re-cp to
+            inherit the flag)
+  when:
+    - not incus_storage_pool_source
+    - _root_fs_type is defined
+    - (_root_fs_type.stdout | trim) == 'btrfs'
+
+# ---------- Initialize incus (idempotent: skipped if `default` storage pool already exists) ----------
+# Run as root because the user we just added to `incus-admin` doesn't have
+# that group active in this shell yet (group membership only refreshes on
+# new login).
+
+- name: Probe whether incus is already initialized (default storage pool present)
+  ansible.builtin.command:
+    cmd: incus storage list --format csv
+  register: _incus_storage_list
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Initialize incus via `incus admin init --preseed` (only if `default` storage pool not present)
+  ansible.builtin.command:
+    cmd: incus admin init --preseed
+    stdin: "{{ lookup('template', 'incus_preseed.yml.j2') }}"
+  when: "'default,' not in _incus_storage_list.stdout"
+  become: true
+  register: _incus_init
+  changed_when: _incus_init.rc == 0

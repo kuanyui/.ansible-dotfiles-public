@@ -1,0 +1,21 @@
+#compdef {{ launcher_name }}
+# {{ ansible_managed }}
+#
+# zsh completion for `{{ launcher_name }}`. Subcommands parsed from the
+# dispatch case statement in the launcher itself, so any new subcommand
+# picks up automatically.
+
+local script="{{ incus_bin_dir }}/{{ launcher_name }}"
+local -a subs
+subs=(${(s.|.)"$(perl -ne 'if (/^\s*([a-zA-Z_][\w-]*(\|[a-zA-Z_][\w-]*)+)\)/) { print $1; exit }' "$script" 2>/dev/null)"})
+
+_arguments -C \
+    '(-n --project-name)'{-n,--project-name}'[project name (default: cwd-derived)]:name:' \
+    '(-p --project-path)'{-p,--project-path}'[single-mount alias for --mount]:path:_files -/' \
+    '--mount[bind-mount <host>[:<name>] into /workspaces/<name>; repeatable]:mount:_files -/' \
+    '1:subcommand:->subcmd' \
+    '*::arg:->args'
+
+case "$state" in
+    subcmd) _describe 'subcommand' subs ;;
+esac

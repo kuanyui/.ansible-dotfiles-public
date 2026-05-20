@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Per-agent VM launcher for `{{ incus_app.name }}` ({{ incus_app.agent.display_name }}).
+# Provisions one Incus KVM VM per (agent, project), virtio-fs shares the
+# host project dir into /workspaces/<name>, and execs the agent inside.
+#
+# ===========================================================================
+# Architecture: one VM per (agent, project), vs `roles/container_apps`'s one
+# podman container per (agent, project).
+#
+#   roles/container_apps/      ~/.local/bin/c-<agent>-<runtime>
+#                              -> rootless podman container; shared host kernel
+#                                 (crun) or libkrun microVM (krun).
+#
+#   roles/incus/  (this file)  ~/.local/bin/v-<agent>
+#                              -> full KVM VM via Incus; full hardware isolation,
+#                                 separate guest kernel, virtio-fs share by
+#                                 QEMU's standalone virtiofsd (pivot_root +
+#                                 seccomp).
+#
+# Tradeoff: c-* boots in seconds, v-* takes ~10-15s to boot but has a stronger
+# isolation boundary suitable for less-trusted workloads.
+# ===========================================================================
+
+set -euo pipefail
+
+AGENT_NAME="{{ incus_app.name }}"
+AGENT_DISPLAY="{{ incus_app.agent.display_name }}"
+AGENT_COMMAND="{{ incus_app.agent.command }}"
+{% if incus_app.agent.install_script_url is defined %}
+AGENT_INSTALL_KIND="curl"
+AGENT_INSTALL_URL="{{ incus_app.agent.install_script_url }}"
+{% else %}
+AGENT_INSTALL_KIND="npm"
+AGENT_INSTALL_NPM_PKG="{{ incus_app.agent.install_via_npm }}"
+{% endif %}
+
+VM_BASE_IMAGE="{{ vm_cfg.base_image }}"
+VM_CPU="{{ vm_cfg.cpu }}"
+VM_MEMORY="{{ vm_cfg.memory }}"
+VM_DISK="{{ vm_cfg.disk }}"
+
+# Default project name from cwd (same logic as c-claude-crun launcher: strip
+# $HOME/ prefix or leading /, then replace / with _). For Incus VM names we
+# additionally need to swap underscore to hyphen because Incus rejects
+# underscores in names (must match `[a-zA-Z][a-zA-Z0-9-]*`, max 63 chars).
+_proj="${PWD#"$HOME"/}"
+_proj="${_proj#/}"
+PROJECT_NAME="${PROJECT_NAME:-${_proj//\//_}}"
+unset _proj
+
+# Sanitize for Incus name requirements.
+VM_NAME_SUFFIX="${PROJECT_NAME//_/-}"
+VM_NAME="v-${AGENT_NAME}-${VM_NAME_SUFFIX}"
+
+# Mount accumulator (same shape as host-cli.sh in container_apps). Default
+# to $PWD when neither --mount nor -p is given.
+MOUNT_HOSTS=()
+MOUNT_NAMES=()
+_n_mounts=0     # scalar; avoids the bash array-length form that collides
+                # with Jinja2's {# ... #} comment delimiter at render time.
+_used_p=0
+_used_mount=0
+
+_add_mount() {
+    local arg="$1" host_part name_part host_abs existing
+    if [[ "$arg" == *:* ]]; then
+        host_part="${arg%%:*}"
+        name_part="${arg#*:}"
+    else
+        host_part="$arg"
+        name_part=""
+    fi
+    host_abs="$(realpath -- "$host_part" 2>/dev/null)" \
+        || { echo "Mount source not found: $host_part" >&2; exit 1; }
+    [[ -d "$host_abs" ]] \
+        || { echo "Mount source is not a directory: $host_part" >&2; exit 1; }
+    [[ -n "$name_part" ]] || name_part="$(basename "$host_abs")"
+    [[ "$name_part" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] \
+        || { echo "Mount name must match [A-Za-z0-9_][A-Za-z0-9._-]*, got: '$name_part'" >&2; exit 1; }
+    for existing in "${MOUNT_NAMES[@]:-}"; do
+        [[ "$existing" == "$name_part" ]] \
+            && { echo "Mount name '$name_part' already used" >&2; exit 1; }
+    done
+    MOUNT_HOSTS+=("$host_abs")
+    MOUNT_NAMES+=("$name_part")
+    _n_mounts=$((_n_mounts + 1))
+}
+
+# ---------- Flag parsing ----------
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -n|--project-name)
+            PROJECT_NAME="$2"
+            VM_NAME_SUFFIX="${PROJECT_NAME//_/-}"
+            VM_NAME="v-${AGENT_NAME}-${VM_NAME_SUFFIX}"
+            shift 2 ;;
+        -p|--project-path)
+            [[ "$_used_mount" == 1 ]] && { echo "-p cannot be combined with --mount" >&2; exit 1; }
+            _used_p=1; _add_mount "$2"; shift 2 ;;
+        --mount)
+            [[ "$_used_p" == 1 ]] && { echo "--mount cannot be combined with -p" >&2; exit 1; }
+            _used_mount=1; _add_mount "$2"; shift 2 ;;
+        --) shift; break ;;
+        -*) echo "Unknown flag: $1 (try 'help')" >&2; exit 1 ;;
+        *)  break ;;
+    esac
+done
+
+# Default to $PWD if no mount given AND we're not just asking for help.
+if [[ "${1:-help}" != "help" ]] && [[ $_n_mounts -eq 0 ]]; then
+    _add_mount "$PWD"
+fi
+
+# Workspace cwd inside VM (same convention as host-cli.sh).
+if [[ $_n_mounts -eq 1 ]]; then
+    WORKSPACE_WORKDIR="/workspaces/${MOUNT_NAMES[0]}"
+else
+    WORKSPACE_WORKDIR="/workspaces"
+fi
+
+# ---------- Subcommands ----------
+
+cmd_help() {
+    cat <<EOF
+$VM_NAME — Incus KVM VM launcher for $AGENT_DISPLAY (agent: $AGENT_NAME)
+
+Usage: v-$AGENT_NAME [flags] <subcommand> [args]
+
+Flags (override env vars; both override the launcher's cwd-based defaults):
+  -n, --project-name <name>              Project name; baked into the VM name
+                                         as `v-<agent>-<name>`. (default: \$PWD
+                                         with \$HOME stripped, slashes -> hyphens)
+      --mount <host>[:<name>]            virtio-fs share <host> dir into the VM
+                                         at /workspaces/<name>. <name> defaults
+                                         to basename(<host>). Repeatable.
+                                         If omitted, defaults to \$PWD.
+  -p, --project-path <path>              Single-mount alias for --mount.
+
+Subcommands:
+  help              Show this message
+  env               Print resolved configuration
+  init              Create VM if missing, share workspace, provision the agent.
+                    Idempotent: re-running on an existing VM is a no-op start.
+  start             Start an existing stopped VM
+  stop              Stop the VM
+  shell             ssh into the VM as 'user', cwd = $WORKSPACE_WORKDIR
+  $AGENT_NAME           Run $AGENT_DISPLAY ('$AGENT_COMMAND') inside the VM,
+                    cwd = $WORKSPACE_WORKDIR
+  rma               rm all: stop + delete the VM entirely (config + disk).
+                    Spelled rma not rm to stay far from the system 'rm'.
+
+VM lifecycle is managed per-project. Different projects get different VMs
+(named by cwd). To force a specific VM (e.g. share one across projects),
+override with --project-name.
+
+Resource config (compiled in by this launcher at render time):
+  base image: $VM_BASE_IMAGE
+  cpu:        $VM_CPU
+  memory:     $VM_MEMORY
+  disk:       $VM_DISK
+
+Prereq: incus must be installed and initialized on the host:
+  sudo apt install incus && sudo incus admin init
+  sudo usermod -aG incus-admin \$USER  # then re-login
+EOF
+}
+
+cmd_env() {
+    cat <<EOF
+========================================
+Agent:             $AGENT_NAME ($AGENT_DISPLAY)
+Agent command:     $AGENT_COMMAND
+Agent install:     $AGENT_INSTALL_KIND
+========================================
+PROJECT_NAME:      $PROJECT_NAME
+VM_NAME:           $VM_NAME
+WORKSPACE_WORKDIR: $WORKSPACE_WORKDIR
+Mounts:
+EOF
+    for _i in "${!MOUNT_HOSTS[@]}"; do
+        printf '  %s  ->  /workspaces/%s\n' "${MOUNT_HOSTS[_i]}" "${MOUNT_NAMES[_i]}"
+    done
+    unset _i
+    cat <<EOF
+========================================
+VM config:
+  base image: $VM_BASE_IMAGE
+  cpu:        $VM_CPU
+  memory:     $VM_MEMORY
+  disk:       $VM_DISK
+========================================
+EOF
+}
+
+_vm_exists() { incus info "$VM_NAME" >/dev/null 2>&1; }
+_vm_running() { [[ "$(incus list "$VM_NAME" --format csv --columns s 2>/dev/null)" == "RUNNING" ]]; }
+
+_wait_vm_ready() {
+    # Block until `incus exec` succeeds (i.e. lxd-agent is up inside the VM).
+    # Cold boot is usually 10-15s; give a generous timeout.
+    local deadline=$((SECONDS + 90))
+    while (( SECONDS < deadline )); do
+        if incus exec "$VM_NAME" -- true 2>/dev/null; then return 0; fi
+        sleep 1
+    done
+    echo "VM '$VM_NAME' did not become ready within 90s" >&2
+    exit 1
+}
+
+_provision_vm() {
+    # First-time setup inside a freshly-launched VM. Idempotent: re-running on
+    # an already-provisioned VM is safe (apt/useradd/curl are all idempotent).
+    echo "==> Provisioning $VM_NAME (apt update, install agent + sshd)..."
+    incus exec "$VM_NAME" -- bash -ec '
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install --yes --no-install-recommends \
+            openssh-server curl git ca-certificates sudo
+        # Create unprivileged `user` if not present. UID 1000 matches host shift.
+        if ! id user >/dev/null 2>&1; then
+            useradd --create-home --shell /bin/bash --uid 1000 user
+            echo "user ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/user
+        fi
+    '
+{% if incus_app.agent.install_script_url is defined %}
+    # Curl-based install (e.g. claude). Runs as `user` so the binary lands in
+    # ~/.local/bin/ inside the VM.
+    incus exec --user 1000 --group 1000 --cwd /home/user "$VM_NAME" -- \
+        bash -c "curl -fsSL $AGENT_INSTALL_URL | bash"
+{% else %}
+    # npm-based install (e.g. codex). Install nodejs/npm at the system level,
+    # then npm-install the package as `user` into ~/.local/npm_global.
+    incus exec "$VM_NAME" -- bash -ec '
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get install --yes --no-install-recommends nodejs npm
+    '
+    incus exec --user 1000 --group 1000 --cwd /home/user "$VM_NAME" -- \
+        bash -ec "
+            mkdir -p ~/.local/npm_global
+            npm config set prefix ~/.local/npm_global
+            npm install -g $AGENT_INSTALL_NPM_PKG
+        "
+{% endif %}
+}
+
+cmd_init() {
+    if _vm_exists; then
+        echo "==> VM $VM_NAME already exists; starting if stopped..."
+        _vm_running || incus start "$VM_NAME"
+        _wait_vm_ready
+        return 0
+    fi
+    echo "==> Launching $VM_NAME from $VM_BASE_IMAGE..."
+    incus launch "$VM_BASE_IMAGE" "$VM_NAME" \
+        --vm \
+        --config "limits.cpu=$VM_CPU" \
+        --config "limits.memory=$VM_MEMORY" \
+        --device "root,size=$VM_DISK"
+    _wait_vm_ready
+
+    echo "==> Attaching virtio-fs shares..."
+    for _i in "${!MOUNT_HOSTS[@]}"; do
+        local host="${MOUNT_HOSTS[_i]}"
+        local name="${MOUNT_NAMES[_i]}"
+        # shift=true uses idmap shifting so host UID ↔ VM UID is auto-mapped;
+        # without it, bind-mounted files appear as nobody:nogroup in the VM.
+        incus config device add "$VM_NAME" "workspace_${name//-/_}" disk \
+            "source=$host" \
+            "path=/workspaces/$name" \
+            shift=true
+    done
+    unset _i
+
+    _provision_vm
+    echo "==> $VM_NAME ready. Try: v-$AGENT_NAME $AGENT_NAME"
+}
+
+cmd_start() { _vm_exists || { echo "VM $VM_NAME does not exist; run 'init' first" >&2; exit 1; }; incus start "$VM_NAME"; _wait_vm_ready; }
+cmd_stop()  { _vm_exists && incus stop "$VM_NAME" 2>/dev/null || true; }
+cmd_rma()   { _vm_exists && incus delete -f "$VM_NAME" 2>/dev/null || true; }
+
+cmd_shell() {
+    cmd_init   # idempotent: init if missing, start if stopped
+    incus exec --user 1000 --group 1000 --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- bash
+}
+
+cmd_agent() {
+    cmd_init
+    # Need a login shell so ~/.local/bin (where curl installer drops the binary)
+    # is on PATH. `bash -lc` sources the user's bash login files.
+    incus exec --user 1000 --group 1000 --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- \
+        bash -lc "$AGENT_COMMAND"
+}
+
+# ---------- Dispatch ----------
+sub="${1:-help}"; shift || true
+case "$sub" in
+    help|env|init|start|stop|shell|rma|{{ incus_app.name }})
+        # User-facing names keep hyphens; bash function names use underscores.
+        # The agent subcommand is renamed to a fixed `cmd_agent` (vs per-agent
+        # function name) so the dispatch line above doesn't have to be edited
+        # when the agent name changes.
+        if [[ "$sub" == "{{ incus_app.name }}" ]]; then
+            cmd_agent "$@"
+        else
+            "cmd_${sub//-/_}" "$@"
+        fi
+        ;;
+    *)
+        echo "Unknown subcommand: $sub" >&2
+        cmd_help >&2
+        exit 1
+        ;;
+esac

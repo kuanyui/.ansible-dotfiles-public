@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+#
+# Install manifest for `roles/incus`. Read by `incus_uninstall.yml` to remove
+# launcher scripts + completion files this role created.
+#
+# This file does NOT record per-app VMs created by the launchers themselves.
+# Each `v-<agent>` launcher creates VMs on demand named `v-<agent>-<project>`;
+# their lifecycle is managed via the launcher's own subcommands (init / stop /
+# rma). Uninstalling this role removes the launchers but leaves any
+# previously-created VMs intact - delete those manually with `incus delete`.
+managed_by: ansible
+source_role: incus
+incus_root: {{ incus_root }}
+bin_dir: {{ incus_bin_dir }}
+zsh_completion_dir: {{ incus_zsh_completion_dir }}
+bash_completion_dir: {{ incus_bash_completion_dir }}
+apps:
+{% for incus_app in incus_apps %}
+  - name: {{ incus_app.name }}
+    variants:
+      - launcher_name: v-{{ incus_app.name }}
+        launcher_path: {{ incus_bin_dir }}/v-{{ incus_app.name }}
+        completion_zsh: {{ incus_zsh_completion_dir }}/_v-{{ incus_app.name }}
+        completion_bash: {{ incus_bash_completion_dir }}/v-{{ incus_app.name }}
+{% endfor %}

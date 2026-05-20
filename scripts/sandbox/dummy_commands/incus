@@ -1,0 +1,17 @@
+#!/bin/bash
+# Sandbox stub for `incus`. The `roles/incus` install task only invokes
+# `incus --version` to gate "is this binary present?"; we don't actually
+# spin up VMs inside the sandbox container (nested KVM via libkrun/crun
+# isn't worth the complexity for what this sandbox is meant to verify).
+# Other invocations (the ones the v-launcher would use at runtime) are
+# stubbed to no-op success so the rendered launcher is at least syntactically
+# checkable end-to-end if a future config decides to dry-run it.
+case "$1" in
+    --version)
+        echo "Incus 6.0.0 (sandbox stub)"
+        ;;
+    *)
+        echo "[sandbox stub] incus $*"
+        exit 0
+        ;;
+esac
