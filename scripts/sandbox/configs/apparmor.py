@@ -90,7 +90,7 @@ CONFIG = SandboxConfig(
         Path.home() / ".mozilla/firefox/profiles.ini":
             "/home/sandboxuser/.mozilla/firefox/profiles.ini",
     },
-    extra_ansible_vars={"setup_apparmor": "true"},
+    extra_ansible_vars={"setup_apparmor": True},
     # Full unit override for `apparmor.service` inside the sandbox. Reason: the
     # stock Debian unit has `AssertSecurity=apparmor` (and/or `ConditionSecurity=`),
     # which checks the kernel-level LSM state. In a rootless container

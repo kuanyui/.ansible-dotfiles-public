@@ -62,8 +62,8 @@ CONFIG = SandboxConfig(
         "elpa-jinja2-mode", "elpa-projectile",
     ],
     extra_ansible_vars={
-        "packages_install_sys_tools": "false",
-        "packages_install_net_tools": "false",
-        "packages_install_wayland_tools": "false",
+        "packages_install_sys_tools": False,
+        "packages_install_net_tools": False,
+        "packages_install_wayland_tools": False,
     },
 )

@@ -40,7 +40,7 @@ CONFIG = SandboxConfig(
     ],
     extra_ansible_vars={
         "podman_runtime": "libkrun",
-        "podman_set_default_runtime": "true",
+        "podman_set_default_runtime": True,
         # `podman_runtime_scope: user` is the default and writes to
         # `~/.config/containers/containers.conf`, which the sandboxuser can
         # touch without needing sudo. `system` scope would need
