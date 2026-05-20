@@ -70,8 +70,10 @@ RUN npm install -g {{ cfg.nodejs.npm_global_pkgs | join(' ') }}
 {% endif -%}
 # ------------------------------
 
-# Please remember to mount the project folder of host onto container via `podman run --volume=$HOST_PROJ_DIR:/home/user/MAIN`
-WORKDIR "/home/user/MAIN/"
+# Fallback WORKDIR. The launcher always passes `--workdir /workspaces/<name>`
+# (single mount) or `/workspaces` (multi mount), so this only kicks in for
+# ad-hoc `podman run` invocations without the wrapper.
+WORKDIR "/workspaces"
 {% if container_templates_with_systemd | default(false) %}
 
 # ============================================================================

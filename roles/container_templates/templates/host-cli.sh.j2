@@ -44,7 +44,7 @@ HIDE_VSCODE_DIR="${HIDE_VSCODE_DIR:-true}"
 
 # ---------- CLI flag parsing ----------
 # Flags must come BEFORE the subcommand:
-#   c-claude-crun --project-name foo --no-hide-git-dir init
+#   c-claude-crun --project-name foo --hide-git-dir false init
 # Precedence: CLI flag > env var > default. Use `--` to terminate flag
 # parsing explicitly (e.g. when a subcommand arg starts with `-`).
 # `--hide-*` flags take an explicit `true`/`false` value (symmetric with the
@@ -57,10 +57,54 @@ _require_bool() {
         echo "$1 requires 'true' or 'false', got: $2" >&2; exit 1
     }
 }
+
+# Mount accumulator. Each entry pairs `MOUNT_HOSTS[i]` -> `MOUNT_NAMES[i]`,
+# resulting in a `--volume <host>:/workspaces/<name>` at run time. Parallel
+# arrays (not "host:name" strings) so paths containing `:` don't break parsing.
+MOUNT_HOSTS=()
+MOUNT_NAMES=()
+_n_mounts=0    # scalar parallel to array length; avoids bash's array-length
+               # syntax `$ {  # ARR[@]}` (spaces inserted in this comment so
+               # Jinja2 doesn't read it as the start of a {# ... #} comment
+               # at render time and choke).
+_used_p=0      # 1 once -p / --project-path is seen (legacy single-mount alias)
+_used_mount=0  # 1 once --mount is seen
+_add_mount() {
+    # Parse `<host>[:<name>]`, resolve realpath, validate, dedupe-by-name.
+    local arg="$1" host_part name_part host_abs existing
+    if [[ "$arg" == *:* ]]; then
+        host_part="${arg%%:*}"
+        name_part="${arg#*:}"
+    else
+        host_part="$arg"
+        name_part=""
+    fi
+    host_abs="$(realpath -- "$host_part" 2>/dev/null)" \
+        || { echo "Mount source not found: $host_part" >&2; exit 1; }
+    [[ -d "$host_abs" ]] \
+        || { echo "Mount source is not a directory: $host_part" >&2; exit 1; }
+    [[ -n "$name_part" ]] || name_part="$(basename "$host_abs")"
+    # Single-segment name only - no slashes, no leading dash, no leading dot.
+    [[ "$name_part" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] \
+        || { echo "Mount name must match [A-Za-z0-9_][A-Za-z0-9._-]*, got: '$name_part'" >&2; exit 1; }
+    for existing in "${MOUNT_NAMES[@]:-}"; do
+        [[ "$existing" == "$name_part" ]] \
+            && { echo "Mount name '$name_part' already used by an earlier --mount / -p" >&2; exit 1; }
+    done
+    MOUNT_HOSTS+=("$host_abs")
+    MOUNT_NAMES+=("$name_part")
+    _n_mounts=$((_n_mounts + 1))
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -n|--project-name)   PROJECT_NAME="$2"; shift 2 ;;
-        -p|--project-path)   PROJECT_PATH="$2"; shift 2 ;;
+        -p|--project-path)
+            [[ "$_used_mount" == 1 ]] && { echo "-p / --project-path cannot be combined with --mount; use one style." >&2; exit 1; }
+            _used_p=1; _add_mount "$2"; shift 2 ;;
+        --mount)
+            [[ "$_used_p" == 1 ]] && { echo "--mount cannot be combined with -p / --project-path; use one style." >&2; exit 1; }
+            _used_mount=1; _add_mount "$2"; shift 2 ;;
         --hide-git-dir)      _require_bool "$1" "${2:-}"; HIDE_GIT_DIR="$2";    shift 2 ;;
         --hide-vscode-dir)   _require_bool "$1" "${2:-}"; HIDE_VSCODE_DIR="$2"; shift 2 ;;
         --) shift; break ;;
@@ -74,18 +118,19 @@ done
 # no subcommand was given, in which case dispatch below defaults to help too).
 if [[ "${1:-help}" != "help" ]]; then
     [[ -n "$PROJECT_NAME" ]] || { echo "PROJECT_NAME must be set (--project-name or env)" >&2; exit 1; }
-    [[ -n "$PROJECT_PATH" ]] || { echo "PROJECT_PATH must be set (--project-path or env)" >&2; exit 1; }
+    # No mount given on the CLI -> single mount of cwd (or legacy PROJECT_PATH env).
+    if [[ $_n_mounts -eq 0 ]]; then
+        _add_mount "${PROJECT_PATH:-$PWD}"
+    fi
 fi
 
-# ---------- Derived ----------
-# Skip the realpath / directory-existence check when PROJECT_PATH is empty
-# (only legitimate for `help`, which bypassed the required check above).
-# Downstream variables (IMAGE_NAME, CONTAINER_NAME, FAKE_MASK_DIR...) will
-# end up partly empty, but `help` doesn't use them.
-PROJECT_PATH_ABS=""
-if [[ -n "$PROJECT_PATH" ]]; then
-    PROJECT_PATH_ABS="$(realpath -- "$PROJECT_PATH")"
-    [[ -d "$PROJECT_PATH_ABS" ]] || { echo "PROJECT_PATH '$PROJECT_PATH' ('$PROJECT_PATH_ABS') is not a directory" >&2; exit 1; }
+# Container-side workdir: single mount -> that workspace dir; multi-mount ->
+# the /workspaces parent (the shell rc inside the container auto-cds for
+# interactive sessions; for `exec`-style entry the user lands at this WORKDIR).
+if [[ $_n_mounts -eq 1 ]]; then
+    WORKSPACE_WORKDIR="/workspaces/${MOUNT_NAMES[0]}"
+else
+    WORKSPACE_WORKDIR="/workspaces"
 fi
 
 RUNTIME_OPT=()
@@ -130,16 +175,27 @@ _ssh_host_port() {
     "$ENGINE" port "$CONTAINER_NAME" 22 2>/dev/null | head -1 | awk -F: '{print $NF}'
 }
 
-# Hide-dir mask via dummy volume mount (other approaches noted below all failed)
+# Hide-dir mask via empty bind volume. One mask per mount, but ONLY when the
+# corresponding `.git/` or `.vscode/` actually exists as a directory on the
+# host. If it doesn't, podman would auto-create the bind target on the host
+# side with whatever subuid the container process is running as (often a
+# weird 5-digit UID once you map back through userns) -> mysterious leftover
+# dirs in $HOME after the container exits.
 HIDE_DIRS_ARGS=()
 FAKE_MASK_DIR="/tmp/podman-mask-dir/$CONTAINER_NAME"
-if [[ "$HIDE_GIT_DIR" == "true" ]]; then
+if [[ $_n_mounts -gt 0 ]]; then
     mkdir -p "$FAKE_MASK_DIR"
-    HIDE_DIRS_ARGS+=(--volume "$FAKE_MASK_DIR:/home/user/MAIN/.git:ro,Z")
-fi
-if [[ "$HIDE_VSCODE_DIR" == "true" ]]; then
-    mkdir -p "$FAKE_MASK_DIR"
-    HIDE_DIRS_ARGS+=(--volume "$FAKE_MASK_DIR:/home/user/MAIN/.vscode:ro,Z")
+    for _i in "${!MOUNT_HOSTS[@]}"; do
+        _host="${MOUNT_HOSTS[_i]}"
+        _name="${MOUNT_NAMES[_i]}"
+        if [[ "$HIDE_GIT_DIR" == "true" && -d "$_host/.git" ]]; then
+            HIDE_DIRS_ARGS+=(--volume "$FAKE_MASK_DIR:/workspaces/$_name/.git:ro,Z")
+        fi
+        if [[ "$HIDE_VSCODE_DIR" == "true" && -d "$_host/.vscode" ]]; then
+            HIDE_DIRS_ARGS+=(--volume "$FAKE_MASK_DIR:/workspaces/$_name/.vscode:ro,Z")
+        fi
+    done
+    unset _i _host _name
 fi
 
 # Engine detection (prefer podman)
@@ -159,10 +215,18 @@ Usage: <launcher> [flags] <subcommand> [args]
        (or `host-cli.sh [flags] <subcommand> [args]` for direct invocation)
 
 Flags (override env vars; both override the launcher's cwd-based defaults):
-  -n, --project-name <name>              Project name (default: basename of cwd)
-  -p, --project-path <path>              Project path (default: cwd; mounted at /home/user/MAIN)
-      --hide-git-dir true|false          Mask host's .git/ inside container (default: true)
-      --hide-vscode-dir true|false       Mask host's .vscode/ inside container (default: true)
+  -n, --project-name <name>              Container/image disambiguator on the host
+                                         (default: PWD with $HOME stripped and `/` -> `_`)
+      --mount <host>[:<name>]            Bind-mount <host> dir at /workspaces/<name>.
+                                         <name> defaults to basename(<host>). Repeat
+                                         for multiple workspaces. If no --mount /
+                                         --project-path given, defaults to $PWD.
+  -p, --project-path <path>              Single-mount alias for --mount; can't be
+                                         combined with --mount.
+      --hide-git-dir true|false          Mask host's .git/ inside container, per mount
+                                         (default: true; skipped per-mount if that
+                                         workspace doesn't have a .git/ to mask).
+      --hide-vscode-dir true|false       Same, for .vscode/ (default: true).
   --                                     End of flag parsing (use before a subcommand
                                          arg that itself starts with `-`)
 
@@ -189,9 +253,9 @@ EOF
 
 Environment variable equivalents (alternative to flags; flags win when both set):
   PROJECT_NAME      same as `--project-name`
-  PROJECT_PATH      same as `--project-path`
-  HIDE_GIT_DIR      `true` / `false`; same as `--[no-]hide-git-dir`
-  HIDE_VSCODE_DIR   `true` / `false`; same as `--[no-]hide-vscode-dir`
+  PROJECT_PATH      same as `--project-path` (single-mount). Ignored if --mount used.
+  HIDE_GIT_DIR      `true` / `false`; same as `--hide-git-dir`
+  HIDE_VSCODE_DIR   `true` / `false`; same as `--hide-vscode-dir`
   RUNTIME           OCI runtime (`crun`, `krun`, ...). Empty = podman default.
                     Has no `--flag` form: it's effectively pinned by which
                     launcher you ran (`c-<tpl>-crun` vs `c-<tpl>-krun`).
@@ -209,9 +273,17 @@ UID:               $(id -u)
 GID:               $(id -g)
 ========================================
 PROJECT_NAME:      $PROJECT_NAME
-PROJECT_PATH:      $PROJECT_PATH ($PROJECT_PATH_ABS)
 RUNTIME:           $RUNTIME
 HIDE_GIT_DIR:      $HIDE_GIT_DIR
+HIDE_VSCODE_DIR:   $HIDE_VSCODE_DIR
+WORKSPACE_WORKDIR: $WORKSPACE_WORKDIR
+Mounts:
+EOF
+    for _i in "${!MOUNT_HOSTS[@]}"; do
+        printf '  %s  ->  /workspaces/%s\n' "${MOUNT_HOSTS[_i]}" "${MOUNT_NAMES[_i]}"
+    done
+    unset _i
+    cat <<EOF
 ========================================
 IMAGE_NAME:        $IMAGE_NAME
 CONTAINER_NAME:    $CONTAINER_NAME
@@ -239,16 +311,21 @@ cmd_run() {
     echo "=============================================================="
     echo "Initialize the built Image into a running Container"
     echo "=============================================================="
+    local _mount_args=()
+    for _i in "${!MOUNT_HOSTS[@]}"; do
+        _mount_args+=(--volume "${MOUNT_HOSTS[_i]}:/workspaces/${MOUNT_NAMES[_i]}")
+    done
     "$ENGINE" run --name "$CONTAINER_NAME" --detach --tty \
         "${USERNS_ARGS[@]}" \
         "${RUNTIME_OPT[@]}" \
         "${SYSTEMD_FLAG[@]}" \
         "${SSH_PUBLISH[@]}" \
         --hostname "$CONTAINER_NAME" \
+        --workdir "$WORKSPACE_WORKDIR" \
 {% for port in cfg.publish_ports %}
         --publish "{{ port }}" \
 {% endfor %}
-        --volume "$PROJECT_PATH_ABS:/home/user/MAIN" \
+        "${_mount_args[@]}" \
         "${HIDE_DIRS_ARGS[@]}" \
         "localhost/$IMAGE_NAME"
 }
@@ -272,7 +349,7 @@ _exec_user() {
             -o LogLevel=ERROR \
             "user@127.0.0.1" "$@"
     else
-        "$ENGINE" exec --interactive --tty --user user --workdir /home/user/MAIN "$CONTAINER_NAME" "$@"
+        "$ENGINE" exec --interactive --tty --user user --workdir "$WORKSPACE_WORKDIR" "$CONTAINER_NAME" "$@"
     fi
 }
 _exec_root() {

@@ -10,6 +10,26 @@
 
 {{ shared_bash_ps1_line }}
 
+# Auto-cd into the workspace on interactive login. Single-mount containers
+# land in the workspace dir directly; multi-mount stays at /workspaces/ so the
+# user can `ls` and pick. Counter loop (not bash array-length) avoids the
+# Jinja2-comment collision that bash array-length syntax would trigger.
+if [ -n "$PS1" ] && [ -d /workspaces ]; then
+    _count=0
+    _first=""
+    for _d in /workspaces/*/; do
+        [ -d "$_d" ] || continue
+        _count=$((_count + 1))
+        [ -z "$_first" ] && _first="$_d"
+    done
+    if [ "$_count" = 1 ]; then
+        cd "$_first"
+    elif [ "$_count" -gt 1 ]; then
+        cd /workspaces
+    fi
+    unset _count _first _d
+fi
+
 # Prevent Emacs TRAMP from failed to match the shell prompt.
 if [ "$TERM" = "dumb" ]; then
     PS1='$ '

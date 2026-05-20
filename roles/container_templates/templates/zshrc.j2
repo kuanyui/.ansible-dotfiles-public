@@ -4,6 +4,27 @@
 ### Prompts
 ### ============================================
 {{ shared_zsh_ps1_lines }}
+
+# Auto-cd into the workspace on interactive login. Single-mount containers
+# land in the workspace dir directly; multi-mount stays at /workspaces/ so the
+# user can `ls` and pick. Counter loop (not zsh array-length) avoids the
+# Jinja2-comment collision that zsh array-length syntax would trigger.
+if [[ -o interactive && -d /workspaces ]]; then
+    _count=0
+    _first=""
+    for _d in /workspaces/*/(N); do
+        [[ -d "$_d" ]] || continue
+        _count=$((_count + 1))
+        [[ -z "$_first" ]] && _first="$_d"
+    done
+    if (( _count == 1 )); then
+        cd "$_first"
+    elif (( _count > 1 )); then
+        cd /workspaces
+    fi
+    unset _count _first _d
+fi
+
 # Prevent Emacs TRAMP from failed to match the shell prompt.
 if [ "$TERM" = "dumb" ]; then
     PS1='$ '

@@ -3,7 +3,7 @@
 # {{ cfg.agent.target_suffix | capitalize }}
 Use `{{ cfg.agent.display_name }}` in Podman or Docker container, to avoid potential dangerous actions.
 
-- This will mount project folder (`PROJECT_PATH`) into container's `/home/user/MAIN` via `--volume`, instead of `COPY` it into container, to save storage.
+- This bind-mounts project folder(s) into the container at `/workspaces/<name>/` (devcontainer-spec layout) via `--volume`, instead of `COPY`-ing into the image, to save storage. With one mount the container lands you there directly; with multiple `--mount` flags you land at `/workspaces/` and pick.
 - `git` is not configured on purpose, to prevent `{{ cfg.agent.display_name }}` from doing someting dangerous.
 
 > [!NOTE]
