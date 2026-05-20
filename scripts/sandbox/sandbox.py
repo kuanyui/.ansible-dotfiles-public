@@ -255,19 +255,40 @@ def _print_diff(before: Path, after: Path) -> None:
             ["grep", "--color=always", "-E", r"^(\+.*|-.*|@@.*)$|$"],
             input=diff_out, text=True,
         )
-    # Summary of changed files
+    # Summary of changed files. Classify each path as added (+, green),
+    # removed (-, red), or modified (=, yellow) based on whether the file is
+    # present in the before/after snapshot dirs. Container-absolute paths
+    # restored with leading `/` (the tar extract strips it).
     print()
     print("-" * 60)
     print(" CHANGED FILES")
     print("-" * 60)
-    changed: set[str] = set()
-    for line in diff_out.splitlines():
-        if line.startswith("--- a/") or line.startswith("+++ b/"):
-            p = line.split("\t", 1)[0].split(" ", 1)[1][2:]
-            if p and p != "/dev/null":
-                changed.add(p)
-    for p in sorted(changed):
-        print(f"  {p}")
+    GREEN, RED, YELLOW, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
+    classified: dict[str, str] = {}  # rel path -> "+" / "-" / "="
+    lines = diff_out.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
+            old_tok = line.split("\t", 1)[0].split(" ", 1)[1]
+            new_tok = lines[i + 1].split("\t", 1)[0].split(" ", 1)[1]
+            old_rel = old_tok[2:] if old_tok.startswith(("a/", "b/")) else old_tok
+            new_rel = new_tok[2:] if new_tok.startswith(("a/", "b/")) else new_tok
+            in_before = old_tok != "/dev/null" and old_rel and (before / old_rel).exists()
+            in_after = new_tok != "/dev/null" and new_rel and (after / new_rel).exists()
+            if not in_before and in_after:
+                classified[new_rel] = "+"
+            elif in_before and not in_after:
+                classified[old_rel] = "-"
+            elif in_before and in_after:
+                classified[new_rel] = "="
+            i += 2
+        else:
+            i += 1
+    color_map = {"+": GREEN, "-": RED, "=": YELLOW}
+    for rel in sorted(classified):
+        sym = classified[rel]
+        print(f"  {color_map[sym]}{sym} /{rel}{RESET}")
 
 
 def _ansible_playbook_argv(cfg: SandboxConfig) -> list[str]:
