@@ -11,4 +11,21 @@
 
 profile local_pathbased_mpv /usr/bin/mpv {
     #include <abstractions/local_base_mpv>
+
+    # Hardware boundary for the no-GPU variant. These explicit `deny` rules
+    # must live in the leaf profile, NOT in `local_base_mpv`, because base
+    # is also included by `local_attachmentless_mpv_gpu` (which DOES grant
+    # `/dev/dri/renderD*` and `/dev/nvidiactl` via `local_mixin_gpu`).
+    # In AppArmor, `deny` is absolute and overrides any allow rule regardless
+    # of include order - so placing these in base would silently break the
+    # GPU variant.
+    #
+    # Explicit (not implicit) deny: silences audit log spam from mpv's
+    # graceful fallback probes while keeping the hardware closed. If GPU
+    # acceleration is required, switch to the GPU launcher
+    # (`aa-exec -p local_attachmentless_mpv_gpu -- mpv ...` or the
+    # `ansible-mpv-gpu.desktop` entry).
+    deny /dev/dri/renderD* wr,
+    deny /dev/nvidiactl wr,
+    deny /dev/udmabuf wr,
 }

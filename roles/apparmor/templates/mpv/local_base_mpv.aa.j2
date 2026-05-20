@@ -28,16 +28,43 @@
     # mpv writes terminal status line / OSD CLI output
     /dev/tty rw,
 
-    # GPU backend probing on startup, even without hardware access. These are inert
-    # config files / directory listings; the actual GPU boundary stays at
-    # `/dev/dri/renderD*` and `/dev/nvidiactl`, which are only granted via
+    # GPU/render API probe metadata, even without hardware access. These are inert
+    # config files / sysfs IDs / directory listings; the actual GPU hardware boundary
+    # stays at `/dev/dri/renderD*` and `/dev/nvidiactl`, which are only granted via
     # `local_mixin_gpu` (used by `local_attachmentless_mpv_gpu`).
     # Allow the reads so the no-GPU profile (`local_pathbased_mpv`) does not spam
-    # the audit log with denials for every Vulkan/EGL probe.
+    # the audit log every time mesa/vulkan/egl scan their config dirs and PCI bus.
     /dev/dri/ r,
     /usr/share/vulkan/icd.d/{,**} r,
     /usr/share/vulkan/implicit_layer.d/{,**} r,
     /usr/share/glvnd/egl_vendor.d/{,**} r,
+    /usr/share/drirc.d/{,**} r,
+    /sys/bus/pci/devices/{,**} r,
+    /sys/devices/pci*/{,**} r,
+    /proc/sys/dev/i915/perf_stream_paranoid r,
+
+    # Mesa shader cache - used by llvmpipe (software rasterizer) too, not only by
+    # hardware GPU drivers. Without this write rule, llvmpipe falls back to no-cache
+    # mode and re-compiles shaders on every startup. Per-user cache, no security
+    # boundary.
+    owner @{HOME}/.cache/mesa_shader_cache/{,**} rwk,
+
+    # mpv's lua subsystem calls `pthread_setname_np` on worker threads, which
+    # writes the thread name via `/proc/self/task/<tid>/comm`. The base profile
+    # already permits read on `@{PROC}/@{pid}/**`; this rule adds the matching
+    # write capability scoped to thread comm files.
+    owner @{PROC}/@{pid}/task/*/comm rw,
+
+    # Audio gaps not yet covered by `local_mixin_audio` (which currently only
+    # handles PulseAudio + ALSA config, not native PipeWire client or ALSA
+    # device nodes). Kept inline here rather than extended into the shared mixin
+    # because telegram intentionally comments out the equivalent PipeWire lines;
+    # if a second audio-playing profile hits the same denials, promote to the
+    # mixin.
+    /usr/share/pipewire/client.conf r,
+    /usr/share/pipewire/client.conf.d/{,**} r,
+    /etc/pulse/client.conf.d/{,**} r,
+    /dev/snd/controlC[0-9]* rw,
 
     # Wayland display socket
     owner /run/user/*/wayland-[0-9]* rw,
