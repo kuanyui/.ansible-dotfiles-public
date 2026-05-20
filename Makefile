@@ -141,6 +141,7 @@ aa-log-recent:  ## Print recent AppArmor messages within `LOG_SINCE_SECS` (defau
 # see scripts/sandbox/Dockerfile rationale). Override per invocation:
 #   make sandbox-apparmor SANDBOX_RUNTIME=runc
 #   make sandbox-apparmor SANDBOX_RUNTIME=system  # use podman's configured default
+## available: system, crun, runc (default: `crun`)
 SANDBOX_RUNTIME ?= crun
 
 # Note on AppArmor: rootless podman cannot set `--security-opt apparmor=<X>`
