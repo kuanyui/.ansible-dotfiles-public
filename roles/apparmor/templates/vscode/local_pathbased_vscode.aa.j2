@@ -2,7 +2,7 @@
 
 # Managed by Ansible - do not edit manually
 # Visual Studio Code AppArmor profile - /etc/apparmor.d/local_pathbased_vscode
-# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
 #
 # Attaches to the Electron binary. /usr/bin/code and /usr/share/code/bin/code are shell
 # scripts (CLI wrappers) that eventually exec this binary - confinement begins at that point.

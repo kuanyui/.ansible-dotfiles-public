@@ -2,7 +2,7 @@
 
 # Managed by Ansible - do not edit manually
 # mpv media player AppArmor profile - /etc/apparmor.d/local_pathbased_mpv
-# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
 #
 # No GPU access by default; use ansible-mpv-gpu.desktop for hardware acceleration.
 #

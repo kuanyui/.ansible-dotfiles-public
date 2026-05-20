@@ -2,7 +2,7 @@
 
 # Managed by Ansible - do not edit manually
 # Firefox AppArmor profiles - /etc/apparmor.d/local_attachmentless_firefox
-# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
 #
 # Per-profile: local_attachmentless_firefox_isolated_<aa_label> - launched via:
 #   aa-exec -p local_attachmentless_firefox_isolated_<aa_label> -- firefox -P "<label_name>"

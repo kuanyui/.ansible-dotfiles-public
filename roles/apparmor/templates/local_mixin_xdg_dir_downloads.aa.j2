@@ -1,6 +1,6 @@
 # Managed by Ansible - do not edit manually
 # XDG downloads directory rules - /etc/apparmor.d/abstractions/local_mixin_xdg_dir_downloads
-# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
 # XDG_DOWNLOAD_DIR: $HOME/{{ apparmor_xdg_download_subdir }}
 
 owner @{HOME}/{{ apparmor_xdg_download_subdir }}/ rw,

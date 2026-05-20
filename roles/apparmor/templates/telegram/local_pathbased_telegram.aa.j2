@@ -2,7 +2,7 @@
 
 # Managed by Ansible - do not edit manually
 # Telegram Desktop AppArmor profile - /etc/apparmor.d/local_pathbased_telegram
-# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
 #
 # Auto-attaches to /usr/bin/Telegram when bwrap exec's it inside the sandbox.
 # No aa-exec needed in the launcher script - the profile kicks in at that exec point.

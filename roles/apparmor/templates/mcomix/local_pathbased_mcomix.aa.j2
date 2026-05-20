@@ -2,7 +2,7 @@
 
 # Managed by Ansible - do not edit manually
 # MComix AppArmor profile - /etc/apparmor.d/local_pathbased_mcomix
-# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
 #
 # Draft - put in complain mode first to capture missing paths:
 #   sudo aa-complain /etc/apparmor.d/local_pathbased_mcomix

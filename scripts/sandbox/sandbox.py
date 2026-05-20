@@ -318,6 +318,20 @@ def _check_idempotence(c: Container, cfg: SandboxConfig) -> int:
         print("  FAIL - tasks still report changes on second run:")
         for line in bad:
             print(f"  {line}")
+        # List task names that flipped to `changed` on this run. Ansible
+        # prints `TASK [name]` then `changed: [host]` for each non-idempotent
+        # task; we pair them up so the user can grep the role and fix.
+        print()
+        print("  --- non-idempotent tasks (changed on 2nd run) ---")
+        current_task: str | None = None
+        seen: set[str] = set()
+        for line in out.splitlines():
+            s = line.strip()
+            if s.startswith("TASK ["):
+                current_task = s
+            elif s.startswith("changed:") and current_task and current_task not in seen:
+                seen.add(current_task)
+                print(f"  {current_task}")
         return 1
     print("  OK")
     return 0

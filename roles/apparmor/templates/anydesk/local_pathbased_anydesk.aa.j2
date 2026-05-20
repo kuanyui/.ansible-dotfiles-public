@@ -2,7 +2,7 @@
 
 # Managed by Ansible - do not edit manually
 # AnyDesk AppArmor profile - /etc/apparmor.d/local_pathbased_anydesk
-# Generated: {{ ansible_facts['date_time']['iso8601'] }}
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
 #
 # Attaches to any binary named "anydesk" at any path - covers portable (non-installed) usage.
 #
