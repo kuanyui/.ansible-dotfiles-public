@@ -325,7 +325,31 @@ def _extract(tar_path: Path, out_dir: Path) -> None:
         t.extractall(out_dir)
 
 
-def _print_diff(before: Path, after: Path) -> None:
+def _is_empty_tree(p: Path) -> bool:
+    """True iff `p` is a directory containing no files or symlinks anywhere
+    in its subtree (empty subdirs at most). Used to ignore benign 'Only in'
+    leftovers during round-trip: standard XDG dirs (`~/.local/`) and ansible's
+    own cache (`~/.ansible/`, content excluded from the snapshot via
+    SNAPSHOT_EXCLUDES but the dir itself remains) bottom out as file-less
+    subtrees - they're not the role's responsibility to clean up."""
+    if not p.is_dir():
+        return False
+    for child in p.rglob("*"):
+        if child.is_file() or child.is_symlink():
+            return False
+    return True
+
+
+def _is_benign_only_in(line: str) -> bool:
+    """True for `diff -rq` / `diff -ruN` 'Only in <parent>: <name>' lines
+    whose target is a file-less subtree (see `_is_empty_tree`)."""
+    if not (line.startswith("Only in ") and ": " in line):
+        return False
+    parent_dir, name = line[len("Only in "):].rsplit(": ", 1)
+    return _is_empty_tree(Path(f"{parent_dir}/{name}"))
+
+
+def _print_diff(before: Path, after: Path, ignore_empty_dir_leftovers: bool = False) -> None:
     print()
     print("=" * 60)
     print(" SANDBOX DIFF  (before -> after)")
@@ -334,6 +358,13 @@ def _print_diff(before: Path, after: Path) -> None:
         ["diff", "-ruN", str(before), str(after)],
         capture_output=True, text=True,
     ).stdout
+    # Round-trip caller asks us to suppress 'Only in' entries that point at
+    # file-less subtrees (~/.local, ~/.ansible). Pre-filter so neither the
+    # raw diff body nor the CHANGED FILES classification below picks them up.
+    if ignore_empty_dir_leftovers:
+        diff_out = "\n".join(
+            ln for ln in diff_out.splitlines() if not _is_benign_only_in(ln)
+        )
     # Strip the temp-dir prefixes so paths read as a/etc/... b/etc/...
     diff_out = (
         diff_out
@@ -372,6 +403,7 @@ def _print_diff(before: Path, after: Path) -> None:
     GREEN, RED, YELLOW, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
     classified: dict[str, str] = {}  # rel path -> "+" / "-" / "="
     lines = diff_out.splitlines()
+    before_str, after_str = str(before), str(after)
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -389,6 +421,21 @@ def _print_diff(before: Path, after: Path) -> None:
             elif in_before and in_after:
                 classified[new_rel] = "="
             i += 2
+        elif line.startswith("Only in ") and ": " in line:
+            # `diff -ruN` falls back to `Only in <parent>: <name>` for paths
+            # that exist on one side and aren't a comparable file (most often
+            # empty directories - the unified-diff branch above doesn't fire
+            # because there's no file content to render). Translate to the
+            # same +/- classification so empty-dir leftovers from a partial
+            # unapply still show up in CHANGED FILES.
+            rest = line[len("Only in "):]
+            parent_dir, name = rest.rsplit(": ", 1)
+            full = f"{parent_dir}/{name}"
+            if full.startswith(before_str + "/"):
+                classified[full[len(before_str) + 1:]] = "-"
+            elif full.startswith(after_str + "/"):
+                classified[full[len(after_str) + 1:]] = "+"
+            i += 1
         else:
             i += 1
     color_map = {"+": GREEN, "-": RED, "=": YELLOW}
@@ -673,18 +720,30 @@ def _run_round_trip(
     print("=" * 60)
     print(" ROUND-TRIP DIFF  (pre-apply baseline vs post-unapply)")
     print(" Any entry below = unapply path left something behind.")
+    print(" (Empty XDG / framework dirs like ~/.local, ~/.ansible are")
+    print("  filtered - the role isn't expected to clean those up.)")
     print("=" * 60)
-    _print_diff(before_dir, post_unapply_dir)
+    _print_diff(before_dir, post_unapply_dir, ignore_empty_dir_leftovers=True)
 
     # `diff -rq` returns 0 iff trees are identical (no stdout). Use it as
     # the verdict source because _print_diff's job is display, not pass/fail.
+    # Filter the same benign empty-dir leftovers as the display path.
     diff_check = subprocess.run(
         ["diff", "-rq", str(before_dir), str(post_unapply_dir)],
         capture_output=True, text=True, check=False,
     )
-    if diff_check.stdout.strip() or diff_check.returncode not in (0, 1):
-        leftover_count = len(diff_check.stdout.strip().splitlines())
-        print(f"  ROUND-TRIP FAIL - {leftover_count} file(s) not restored to baseline.")
+    real_leftover = [
+        ln for ln in diff_check.stdout.strip().splitlines()
+        if not _is_benign_only_in(ln)
+    ]
+    if real_leftover or diff_check.returncode not in (0, 1):
+        print(f"  ROUND-TRIP FAIL - {len(real_leftover)} entry/entries not restored to baseline:")
+        # Show raw `diff -rq` lines verbatim (`Only in ...: name` and
+        # `Files X and Y differ`). Strip the tmpdir prefix so the path reads
+        # as the container-absolute path the user actually cares about.
+        for ln in real_leftover:
+            cleaned = ln.replace(str(before_dir), "<baseline>").replace(str(post_unapply_dir), "<post-unapply>")
+            print(f"    {cleaned}")
         rc += 1
     else:
         print("  ROUND-TRIP OK - filesystem matches pre-apply baseline.")
