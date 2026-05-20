@@ -92,6 +92,68 @@ make apply-user   # current user only
 make apply-root   # root only (requires sudo)
 ```
 
+## Using the `c-<template>-<runtime>` launchers without applying `roles/dotfiles` / `roles/zsh`
+
+If you already have your own `.bashrc` / `.zshrc` and only want the container app launchers (`c-claude-crun`, `c-claude-krun`, ...) from `make apply-container-apps`, three things need to be wired up in your shell rc manually. The dotfiles role does these for you automatically; this section is for users who maintain their own shell config.
+
+### 1. `~/.local/bin` in `PATH`
+
+Most modern distros do this for you (systemd's `user-environment.d/`, or `~/.profile` on Debian). Verify with `echo $PATH | tr : '\n' | grep '\.local/bin'`. If missing, add to **`~/.bashrc`** AND **`~/.zshrc`**:
+
+```sh
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+```
+
+### 2. bash tab-completion for the launchers
+
+Add to **`~/.bashrc`**:
+
+```bash
+# Ansible-managed bash completions (deployed by `.ansible-dotfiles-public/roles/container_apps`).
+# We do NOT use the XDG bash-completion dynamic-loader path because that
+# requires the `bash-completion` package on every target distro. Eager-source
+# is unconditional and cross-distro.
+if [ -d "${HOME}/.local/share/ansible-managed/bash-completions" ]; then
+    for _comp in "${HOME}/.local/share/ansible-managed/bash-completions"/*; do
+        [ -r "$_comp" ] && . "$_comp"
+    done
+    unset _comp
+fi
+```
+
+### 3. zsh tab-completion for the launchers
+
+Add to **`~/.zshrc`**, **before** any `compinit` call (the `fpath` change is only honored by the next `compinit`):
+
+```zsh
+# Ansible-managed zsh completions (deployed by `.ansible-dotfiles-public/roles/container_apps`).
+fpath=(${HOME}/.local/share/ansible-managed/zsh-completions $fpath)
+
+# If your .zshrc doesn't already initialize completions, add these two lines
+# AFTER the fpath assignment above. If you already call `compinit` somewhere,
+# just put the fpath assignment before it - don't call compinit twice.
+autoload -Uz compinit
+compinit
+```
+
+### Verifying it works
+
+After opening a fresh shell:
+
+```sh
+# bash
+type _c_claude_crun                            # should say "is a function"
+complete -p c-claude-crun                      # should print the registered completion
+c-claude-crun <TAB><TAB>                       # should list: help env init build run rm ...
+
+# zsh
+which _c-claude-crun                           # should resolve to the completion file
+c-claude-crun <TAB>                            # should list subcommands with descriptions
+```
+
 # Acknowledgment & Security Declarations
 
 Initially, 2024/07/25, this project was completely written manually, via GNU Stow.

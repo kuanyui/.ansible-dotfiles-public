@@ -6,7 +6,30 @@
 
 _{{ launcher_name | replace('-', '_') }}() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
+    local prev="${COMP_WORDS[COMP_CWORD-1]}"
     local script="{{ container_apps_install_root }}/{{ app.template }}/host-cli.sh"
+
+    # Argument completion for flags that take a value.
+    case "$prev" in
+        -n|--project-name)
+            return ;;  # free-form name, nothing meaningful to suggest
+        -p|--project-path)
+            mapfile -t COMPREPLY < <(compgen -d -- "$cur")  # directories only
+            return ;;
+        --hide-git-dir|--hide-vscode-dir)
+            mapfile -t COMPREPLY < <(compgen -W "true false" -- "$cur")
+            return ;;
+    esac
+
+    # If the user is typing a flag, complete flag names.
+    if [[ "$cur" == -* ]]; then
+        local flags="-n --project-name -p --project-path --hide-git-dir --hide-vscode-dir --"
+        mapfile -t COMPREPLY < <(compgen -W "$flags" -- "$cur")
+        return
+    fi
+
+    # Otherwise complete the subcommand. Parsed from the dispatch case
+    # statement in host-cli.sh so any new subcommand picks up automatically.
     local subs
     subs="$(perl -ne 'if (/^\s*([a-zA-Z_][\w-]*(\|[a-zA-Z_][\w-]*)+)\)/) { print $1; exit }' "$script" 2>/dev/null | tr '|' ' ')"
     mapfile -t COMPREPLY < <(compgen -W "$subs" -- "$cur")

@@ -31,16 +31,62 @@
 
 set -euo pipefail
 
-# ---------- Required vars (with smart defaults from launcher) ----------
-: "${PROJECT_NAME:?must be set (launcher sets it from cwd)}"
-: "${PROJECT_PATH:?must be set (launcher sets it from cwd)}"
+# ---------- Initial values (env wins over default; flag parser below wins over env) ----------
+# RUNTIME is deliberately NOT exposed as a flag - it's effectively pinned by
+# which launcher you ran (`c-<tpl>-crun` vs `c-<tpl>-krun`), and changing it
+# mid-invocation would only confuse the manifest / container naming. Keep it
+# as an env var for power users who invoke host-cli.sh directly.
+PROJECT_NAME="${PROJECT_NAME:-}"
+PROJECT_PATH="${PROJECT_PATH:-}"
 RUNTIME="${RUNTIME:-}"
 HIDE_GIT_DIR="${HIDE_GIT_DIR:-true}"
 HIDE_VSCODE_DIR="${HIDE_VSCODE_DIR:-true}"
 
+# ---------- CLI flag parsing ----------
+# Flags must come BEFORE the subcommand:
+#   c-claude-crun --project-name foo --no-hide-git-dir init
+# Precedence: CLI flag > env var > default. Use `--` to terminate flag
+# parsing explicitly (e.g. when a subcommand arg starts with `-`).
+# `--hide-*` flags take an explicit `true`/`false` value (symmetric with the
+# `HIDE_*` env vars). Any other value is rejected outright - downstream code
+# only checks for the literal string "true", so a typo like `yes` or `1`
+# would silently behave as `false`, which is a worse footgun than just
+# erroring out here.
+_require_bool() {
+    [[ "$2" == "true" || "$2" == "false" ]] || {
+        echo "$1 requires 'true' or 'false', got: $2" >&2; exit 1
+    }
+}
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -n|--project-name)   PROJECT_NAME="$2"; shift 2 ;;
+        -p|--project-path)   PROJECT_PATH="$2"; shift 2 ;;
+        --hide-git-dir)      _require_bool "$1" "${2:-}"; HIDE_GIT_DIR="$2";    shift 2 ;;
+        --hide-vscode-dir)   _require_bool "$1" "${2:-}"; HIDE_VSCODE_DIR="$2"; shift 2 ;;
+        --) shift; break ;;
+        -*) echo "Unknown flag: $1 (try 'help')" >&2; exit 1 ;;
+        *)  break ;;
+    esac
+done
+
+# Required check. `help` doesn't need a project context (it just prints text);
+# every other subcommand does. Skip when the user is asking for help (or when
+# no subcommand was given, in which case dispatch below defaults to help too).
+if [[ "${1:-help}" != "help" ]]; then
+    [[ -n "$PROJECT_NAME" ]] || { echo "PROJECT_NAME must be set (--project-name or env)" >&2; exit 1; }
+    [[ -n "$PROJECT_PATH" ]] || { echo "PROJECT_PATH must be set (--project-path or env)" >&2; exit 1; }
+fi
+
 # ---------- Derived ----------
-PROJECT_PATH_ABS="$(realpath -- "$PROJECT_PATH")"
-[[ -d "$PROJECT_PATH_ABS" ]] || { echo "PROJECT_PATH '$PROJECT_PATH' ('$PROJECT_PATH_ABS') is not a directory" >&2; exit 1; }
+# Skip the realpath / directory-existence check when PROJECT_PATH is empty
+# (only legitimate for `help`, which bypassed the required check above).
+# Downstream variables (IMAGE_NAME, CONTAINER_NAME, FAKE_MASK_DIR...) will
+# end up partly empty, but `help` doesn't use them.
+PROJECT_PATH_ABS=""
+if [[ -n "$PROJECT_PATH" ]]; then
+    PROJECT_PATH_ABS="$(realpath -- "$PROJECT_PATH")"
+    [[ -d "$PROJECT_PATH_ABS" ]] || { echo "PROJECT_PATH '$PROJECT_PATH' ('$PROJECT_PATH_ABS') is not a directory" >&2; exit 1; }
+fi
 
 RUNTIME_OPT=()
 RUNTIME_SUFFIX=""
@@ -51,7 +97,11 @@ fi
 
 IMAGE_NAME="{{ cfg.naming_prefix }}_image__${PROJECT_NAME}${RUNTIME_SUFFIX}"
 CONTAINER_NAME="{{ cfg.naming_prefix }}_container__${PROJECT_NAME}${RUNTIME_SUFFIX}"
-ASSETS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/assets" && pwd)"
+# Silent fail: `help` doesn't need this; the build / run subcommands that DO
+# need it will error naturally when they try to use an empty ASSETS_DIR.
+# The `|| ASSETS_DIR=""` is required because `set -e` + a failing `&&` chain
+# inside `$(...)` propagates failure to the whole assignment.
+ASSETS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/assets" 2>/dev/null && pwd)" || ASSETS_DIR=""
 
 # SSH key + Dockerfile selection for krun (sshd-based exec replacement).
 # libkrun keeps `init.krun` as PID 1, so systemd refuses to start - we use
@@ -105,7 +155,16 @@ fi
 
 cmd_help() {
     cat <<'EOF'
-Usage: <launcher> <subcommand>   (or `host-cli.sh <subcommand>` for direct invocation)
+Usage: <launcher> [flags] <subcommand> [args]
+       (or `host-cli.sh [flags] <subcommand> [args]` for direct invocation)
+
+Flags (override env vars; both override the launcher's cwd-based defaults):
+  -n, --project-name <name>              Project name (default: basename of cwd)
+  -p, --project-path <path>              Project path (default: cwd; mounted at /home/user/MAIN)
+      --hide-git-dir true|false          Mask host's .git/ inside container (default: true)
+      --hide-vscode-dir true|false       Mask host's .vscode/ inside container (default: true)
+  --                                     End of flag parsing (use before a subcommand
+                                         arg that itself starts with `-`)
 
 Subcommands:
   help              Show this message
@@ -128,12 +187,14 @@ EOF
 {% endif %}
     cat <<'EOF'
 
-Environment variables (override via `VAR=val <launcher> <subcommand>`):
-  PROJECT_NAME      (required, defaulted by launcher to basename of cwd)
-  PROJECT_PATH      (required, defaulted by launcher to cwd; mounted at /home/user/MAIN)
-  RUNTIME           OCI runtime for podman run (e.g. crun, krun). Empty = podman default.
-  HIDE_GIT_DIR      Default: true. Mask host's .git/ inside container.
-  HIDE_VSCODE_DIR   Default: true. Mask host's .vscode/ inside container.
+Environment variable equivalents (alternative to flags; flags win when both set):
+  PROJECT_NAME      same as `--project-name`
+  PROJECT_PATH      same as `--project-path`
+  HIDE_GIT_DIR      `true` / `false`; same as `--[no-]hide-git-dir`
+  HIDE_VSCODE_DIR   `true` / `false`; same as `--[no-]hide-vscode-dir`
+  RUNTIME           OCI runtime (`crun`, `krun`, ...). Empty = podman default.
+                    Has no `--flag` form: it's effectively pinned by which
+                    launcher you ran (`c-<tpl>-crun` vs `c-<tpl>-krun`).
 EOF
 }
 

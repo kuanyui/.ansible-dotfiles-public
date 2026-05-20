@@ -1,14 +1,25 @@
 #compdef {{ launcher_name }}
 # {{ ansible_managed }}
 #
-# zsh completion for `{{ launcher_name }}`. Parses subcommands from the case
-# statement in host-cli.sh - any change to the dispatch arm picks up
-# automatically on next shell start.
+# zsh completion for `{{ launcher_name }}`. Subcommands are parsed from the
+# dispatch case statement in host-cli.sh (any new subcommand picks up
+# automatically on next shell start); flags are hardcoded to mirror
+# `host-cli.sh`'s flag parser.
 
 local script="{{ container_apps_install_root }}/{{ app.template }}/host-cli.sh"
 local -a subs
-# The dispatch line looks like:
-#   help|env|init|build|run|rm|...|zsh-root)
-# Pull the first such alternation list out of the script.
 subs=(${(s.|.)"$(perl -ne 'if (/^\s*([a-zA-Z_][\w-]*(\|[a-zA-Z_][\w-]*)+)\)/) { print $1; exit }' "$script" 2>/dev/null)"})
-_describe 'subcommand' subs
+
+# Mutually-exclusive groups via the (a b)'flag'... form so e.g. proposing
+# `--project-name` removes `-n` from the next round of suggestions.
+_arguments -C \
+    '(-n --project-name)'{-n,--project-name}'[project name (default: basename of cwd)]:name:' \
+    '(-p --project-path)'{-p,--project-path}'[project path (default: cwd, mounted at /home/user/MAIN)]:path:_files -/' \
+    '--hide-git-dir[mask host .git/ inside container (default: true)]:bool:(true false)' \
+    '--hide-vscode-dir[mask host .vscode/ inside container (default: true)]:bool:(true false)' \
+    '1:subcommand:->subcmd' \
+    '*::arg:->args'
+
+case "$state" in
+    subcmd) _describe 'subcommand' subs ;;
+esac
