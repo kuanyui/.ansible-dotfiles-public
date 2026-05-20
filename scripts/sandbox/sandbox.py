@@ -324,7 +324,12 @@ def _print_diff(before: Path, after: Path) -> None:
 
 
 def _ansible_playbook_argv(cfg: SandboxConfig) -> list[str]:
-    extra_var_args: list[str] = []
+    # Sandbox is a headless throwaway container - no display server, no point
+    # pulling in GTK/Qt deps. Set `has_gui_support=false` globally so roles
+    # that branch on it pick the lighter variant (e.g. `emacs-nox` instead of
+    # `emacs-gtk` saves ~400 MB of apt install). Listed first so a config's
+    # `extra_ansible_vars` can still override it (later `-e` wins in ansible).
+    extra_var_args: list[str] = ["-e", "has_gui_support=false"]
     for k, v in cfg.extra_ansible_vars.items():
         extra_var_args += ["-e", f"{k}={v}"]
     return [

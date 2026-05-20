@@ -1,0 +1,22 @@
+#!/bin/bash
+# Sandbox stub for `crun`. The podman role only calls `crun --version` and
+# greps for `+LIBKRUN` in the output to assert the runtime was built with
+# libkrun support. We can't actually have a real libkrun-capable crun inside
+# a rootless container (and even if we did, the assertion would tell us
+# nothing useful about the playbook's YAML correctness), so we just print
+# something that satisfies the grep. Other invocations are no-ops.
+case "$1" in
+    --version)
+        cat <<'EOF'
+crun version 1.14
+commit: sandbox-stub
+rundir: /run/sandbox
+spec: 1.0.0
++SYSTEMD +SELINUX +APPARMOR +CAP +SECCOMP +EBPF +CRIU +LIBKRUN +YAJL
+EOF
+        ;;
+    *)
+        echo "[sandbox stub] crun $*"
+        exit 0
+        ;;
+esac

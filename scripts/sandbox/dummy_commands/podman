@@ -1,0 +1,20 @@
+#!/bin/bash
+# Sandbox stub for `podman`. The podman role only calls `podman info --format
+# json` and asserts the effective OCI runtime is `krun`. Rootless podman
+# inside a container can technically run, but actually exercising `podman run`
+# from inside another (rootless) container is brittle - we only care that the
+# YAML correctly writes `containers.conf` and the assertion passes, so we
+# return a minimal canned JSON that claims krun is active. Other invocations
+# are no-ops.
+case "$1" in
+    info)
+        # Skip the rest of the args (e.g. `--format json`) and dump fixed JSON.
+        cat <<'EOF'
+{"host": {"ociRuntime": {"name": "krun", "path": "/usr/bin/crun"}}}
+EOF
+        ;;
+    *)
+        echo "[sandbox stub] podman $*"
+        exit 0
+        ;;
+esac

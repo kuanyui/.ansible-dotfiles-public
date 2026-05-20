@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-apparmor unapply-podman-runtime unapply-container-apps aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-apparmor unapply-podman-runtime unapply-container-apps aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -137,6 +137,18 @@ SANDBOX_RUNTIME ?= crun
 # (CAP_MAC_ADMIN required). The sandbox container relies on user-namespace +
 # default-seccomp + cap-drop NET_RAW for Layer 2 hardening. For stronger
 # isolation (own kernel), switch the sandbox runtime to Kata Containers.
+
+sandbox-user:  ## Dry-run `apply-user` (zsh + emacs + dotfiles deploy) in a throwaway podman+systemd sandbox
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) user
+
+sandbox-root:  ## Dry-run `apply-root` (packages + zsh + emacs + dotfiles, is_root=true) in a throwaway podman+systemd sandbox
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) root
+
+sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtime> launcher install) in a throwaway podman+systemd sandbox
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) container_apps
+
+sandbox-podman-runtime:  ## Dry-run `apply-podman-runtime` (containers.conf write; `crun` and `podman` are stubbed) in a throwaway podman+systemd sandbox
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) podman_runtime
 
 sandbox-apparmor:  ## Dry-run `apply-apparmor` in a throwaway podman+systemd sandbox; streams diff + runs `apparmor_parser --skip-kernel-load` post-check
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) apparmor
