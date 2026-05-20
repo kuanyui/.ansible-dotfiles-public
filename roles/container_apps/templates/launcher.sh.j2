@@ -2,8 +2,32 @@
 # {{ ansible_managed }}
 #
 # Launcher for container app `{{ app.template }}` under OCI runtime `{{ runtime }}`.
-# Forwards subcommand + args to the rendered container.sh, with PROJECT_NAME /
-# PROJECT_PATH defaulted from the current working directory.
+# Sets RUNTIME / PROJECT_NAME / PROJECT_PATH and forwards to the rendered
+# `host-cli.sh`.
+#
+# ===========================================================================
+# Two-role layout (the key to not getting lost between container_apps and
+# container_templates):
+#
+#   roles/container_apps/       thin launchers at `~/.local/bin/c-<tpl>-<rt>`
+#                               + zsh/bash completions. Each launcher sets
+#                               RUNTIME / PROJECT_NAME / PROJECT_PATH env
+#                               vars then `exec`s into the script below.
+#                               (This is the name the user types.) <-- YOU ARE HERE
+#                                                |
+#                                                v
+#   roles/container_templates/  per-template assets under
+#                               `~/.local/share/ansible-managed/container-templates/<tpl>/`,
+#                               including Dockerfile{,.krun,.systemd}, the
+#                               rendered dotfiles, and host-cli.sh.
+#                               (Per-template means: one host-cli.sh per
+#                               template name; one launcher per
+#                               (template, runtime) pair.)
+#
+# Concrete example for `c-claude-crun init`:
+#   1. shell runs `~/.local/bin/c-claude-crun`                                          (launcher; container_apps)
+#   2. launcher `exec`s `~/.local/share/ansible-managed/container-templates/claude/host-cli.sh init`   (host-cli.sh; container_templates)
+# ===========================================================================
 #
 # Examples:
 #   c-{{ app.template }}-{{ runtime }} init                       # from your project dir
@@ -14,4 +38,4 @@ export RUNTIME="{{ runtime }}"
 export PROJECT_NAME="${PROJECT_NAME:-$(basename "$PWD")}"
 export PROJECT_PATH="${PROJECT_PATH:-$PWD}"
 
-exec "{{ container_apps_install_root }}/{{ app.template }}/container.sh" "$@"
+exec "{{ container_apps_install_root }}/{{ app.template }}/host-cli.sh" "$@"

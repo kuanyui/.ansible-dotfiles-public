@@ -6,7 +6,7 @@
 
 _{{ launcher_name | replace('-', '_') }}() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
-    local script="{{ container_apps_install_root }}/{{ app.template }}/container.sh"
+    local script="{{ container_apps_install_root }}/{{ app.template }}/host-cli.sh"
     local subs
     subs="$(perl -ne 'if (/^\s*([a-zA-Z_][\w-]*(\|[a-zA-Z_][\w-]*)+)\)/) { print $1; exit }' "$script" 2>/dev/null | tr '|' ' ')"
     mapfile -t COMPREPLY < <(compgen -W "$subs" -- "$cur")

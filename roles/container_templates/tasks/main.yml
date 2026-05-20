@@ -24,10 +24,10 @@
     loop_var: cfg
     label: "{{ cfg.name }}"
 
-- name: Render container.sh to `{{ container_templates_output_dir }}/<name>/container.sh`
+- name: Render host-cli.sh to `{{ container_templates_output_dir }}/<name>/host-cli.sh`
   ansible.builtin.template:
-    src: container.sh.j2
-    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/container.sh"
+    src: host-cli.sh.j2
+    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/host-cli.sh"
     mode: "0755"
     trim_blocks: true
     lstrip_blocks: false

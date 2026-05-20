@@ -2,10 +2,10 @@
 # {{ ansible_managed }}
 #
 # zsh completion for `{{ launcher_name }}`. Parses subcommands from the case
-# statement in container.sh - any change to the dispatch arm picks up
+# statement in host-cli.sh - any change to the dispatch arm picks up
 # automatically on next shell start.
 
-local script="{{ container_apps_install_root }}/{{ app.template }}/container.sh"
+local script="{{ container_apps_install_root }}/{{ app.template }}/host-cli.sh"
 local -a subs
 # The dispatch line looks like:
 #   help|env|init|build|run|rm|...|zsh-root)
