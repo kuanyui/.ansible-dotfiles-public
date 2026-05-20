@@ -30,8 +30,8 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
 # Some libraries are for rendering text in `magick`.
 RUN apt-get update && \
     apt-get install --yes --no-install-recommends ca-certificates gpg \
-    nodejs npm \
-    less curl wget make git mg procps{% for pkg in cfg.distro_pkgs %} {{ pkg }}{% endfor %} \
+    {% if cfg.nodejs is defined and cfg.nodejs.install_via == 'distro' %}nodejs npm \
+    {% endif %}less curl wget make git mg procps{% for pkg in cfg.distro_pkgs %} {{ pkg }}{% endfor %} \
     zsh zsh-syntax-highlighting zsh-autosuggestions
 {% if 'qemacs' in cfg.feature_presets and (cfg.image_name | distro) in ['debian', 'ubuntu'] %}
 # Install qemacs
@@ -67,7 +67,7 @@ RUN mkdir -p \
     ~/.local/share \
     ~/.local/lib \
     ~/.local/include
-{% if cfg.nodejs %}
+{% if cfg.nodejs is defined and cfg.nodejs.install_via == 'distro' %}
 RUN mkdir -p ~/.local/npm_global; \
     npm config set prefix ~/.local/npm_global
 {% if cfg.nodejs.npm_global_pkgs %}

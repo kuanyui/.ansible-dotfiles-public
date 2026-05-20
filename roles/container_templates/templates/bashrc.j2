@@ -39,7 +39,7 @@ fi
 
 {% if who == 'user' %}
 
-PATH={% if cfg.nodejs %}${HOME}/.local/npm_global/bin:{% endif %}${HOME}/.local/bin:${PATH}
+PATH={% if cfg.nodejs is defined and cfg.nodejs.install_via == 'distro' %}${HOME}/.local/npm_global/bin:{% endif %}${HOME}/.local/bin:${PATH}
 
 {% endif %}
 alias sz="source ~/.bashrc"

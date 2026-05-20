@@ -42,7 +42,7 @@ fi
 # - This is not existed in Debian's Docker Image by default, so should be
 #   created in Dockfile manually.
 # - See https://unix.stackexchange.com/questions/316765
-PATH={% if cfg.nodejs %}${HOME}/.local/npm_global/bin:{% endif %}${HOME}/.local/bin:${PATH}
+PATH={% if cfg.nodejs is defined and cfg.nodejs.install_via == 'distro' %}${HOME}/.local/npm_global/bin:{% endif %}${HOME}/.local/bin:${PATH}
 
 {% endif %}
 ### ============================================

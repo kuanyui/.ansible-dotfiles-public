@@ -31,12 +31,13 @@ container_templates:
     feature_presets:
       - zsh
       - qemacs
-    # nodejs block kept (npm + nodejs still installed in the image) for future
-    # ad-hoc npm use, but no globally-installed package - claude itself is now
-    # pulled via Anthropic's official curl installer (`install_script_url`
-    # below), which drops a native binary at `~/.local/bin/claude` and avoids
-    # the npm bootstrapping overhead.
+    # claude itself is pulled via Anthropic's official curl installer
+    # (`install_script_url` below), which drops a native binary at
+    # `~/.local/bin/claude` and avoids the npm bootstrapping overhead.
+    # The `nodejs` block is kept here as a schema placeholder; flip
+    # `install_via` to `distro` and add packages if you ever want npm.
     nodejs:
+      install_via: none
       npm_global_pkgs: []
     install_script_url: https://claude.ai/install.sh
     agent:
@@ -56,6 +57,7 @@ container_templates:
       - zsh
       - qemacs
     nodejs:
+      install_via: distro
       npm_global_pkgs:
         - "@openai/codex"
     agent:
