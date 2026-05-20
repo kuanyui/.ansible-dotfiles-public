@@ -42,25 +42,25 @@ unstow:  ## [Legacy] Remove existing stow symlinks from ~/ and /root
 
 
 apply-user:  ## Provision current user (zsh + emacs + dotfiles)
-	$(PLAYBOOK) $(PLAYBOOKS)/user.yml
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/user.yml
 
 apply-root:  ## Provision root (packages + zsh + emacs + dotfiles; needs sudo)
-	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/root.yml
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/root.yml
 
 apply-all-users:  ## Provision both current user and root (i.e. `apply-user` + `apply-root`)
-	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/all.yml
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/all.yml
 
 apply-podman-runtime:  ## Provision crun + libkrun ,assert crun has `+LIBKRUN`, write `containers.conf` (optional), assert `podman info` shows krun active
-	$(PLAYBOOK) --ask-become-pass $(PLAYBOOKS)/podman.yml
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/podman.yml
 
 unapply-podman-runtime:  ## Revert podman to distro default runtime (deletes the managed containers.conf; leaves installed libkrun packages alone)
-	$(PLAYBOOK) --ask-become-pass -e podman_runtime=default $(PLAYBOOKS)/podman.yml
+	$(PLAYBOOK) --diff --ask-become-pass -e podman_runtime=default $(PLAYBOOKS)/podman.yml
 
 apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local/bin/ (bypasses `setup_container_apps` gate)
-	$(PLAYBOOK) $(PLAYBOOKS)/container_apps.yml
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps.yml
 
 unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/container-templates/.ansible-manifest.yml, removes everything it recorded)
-	$(PLAYBOOK) $(PLAYBOOKS)/container_apps_uninstall.yml
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps_uninstall.yml
 
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.); requires `roles/apparmor/local_vars/deny_personal_dirs.aa` (see scripts/gen_deny_personal_dirs.py); bypasses `setup_apparmor` gate
 	@test -f roles/apparmor/local_vars/deny_personal_dirs.aa || { \
