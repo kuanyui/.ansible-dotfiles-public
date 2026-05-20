@@ -34,10 +34,6 @@ CONFIG = SandboxConfig(
     name="podman_runtime",
     description="`containers.conf` write under user scope when libkrun is selected (assertions stubbed).",
     playbook=Path("playbooks/podman.yml"),
-    snapshot_paths=[
-        "/home/sandboxuser/.config/containers",
-        "/etc/containers",
-    ],
     dummy_commands=[
         DUMMY_COMMANDS_DIR / "crun",
         DUMMY_COMMANDS_DIR / "podman",

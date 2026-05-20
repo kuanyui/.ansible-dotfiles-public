@@ -27,11 +27,6 @@ CONFIG = SandboxConfig(
     name="root",
     description="packages + zsh + emacs + dotfiles for root (is_root=true path).",
     playbook=Path("playbooks/root.yml"),
-    snapshot_paths=[
-        "/root",
-        # `user: shell: /bin/zsh` rewrites /etc/passwd for the chsh.
-        "/etc/passwd",
-    ],
     extra_ansible_vars={
         "packages_install_sys_tools": "false",
         "packages_install_net_tools": "false",

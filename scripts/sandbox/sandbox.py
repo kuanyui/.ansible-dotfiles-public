@@ -58,6 +58,61 @@ DEFAULT_IMAGE = "debian:trixie"
 SANDBOX_USER = "sandboxuser"
 IMAGE_TAG = "localhost/ansible-dotfiles-sandbox:latest"
 
+# Top-level dirs the before/after snapshot covers. Wide on purpose: roles can
+# legitimately write to any of these, and a role accidentally writing to an
+# unexpected path (typo in `dest:`, miscomputed `target_home`, etc.) MUST show
+# up in the diff so we catch it. Anything outside this list is treated as
+# "OS / apt / kernel" territory and not the role's responsibility.
+SNAPSHOT_INCLUDES = ["/etc", "/home", "/root", "/usr/local", "/opt", "/srv", "/var"]
+
+# Within those includes, skip noise that changes every run because of external
+# machinery (apt, dpkg, systemd, ansible's caches, log timestamps). These would
+# drown actual role-managed writes in the diff. The list is exhaustive on
+# purpose - it's cheaper to add one entry here than to chase a phantom diff
+# across N sandbox runs.
+SNAPSHOT_EXCLUDES = [
+    # apt / dpkg state (we don't care about installed-packages bookkeeping)
+    "/var/cache/apt/*",
+    "/var/lib/apt/*",
+    "/var/lib/dpkg/*",
+    # man-db cache (auto-rebuilt by apt triggers)
+    "/var/lib/man-db/*",
+    # systemd runtime state + dbus + nscd + udev
+    "/var/lib/systemd/*",
+    "/var/lib/dbus/*",
+    "/var/lib/nscd/*",
+    "/var/lib/udev/*",
+    # log files (timestamps change every run)
+    "/var/log/*",
+    # /var/{tmp,run,lock} are runtime, not config
+    "/var/tmp/*",
+    "/var/run",
+    "/var/lock",
+    # dpkg's pwd/group backup files + lock + auto-rebuilt ld cache
+    "/etc/passwd-",
+    "/etc/group-",
+    "/etc/shadow-",
+    "/etc/gshadow-",
+    "/etc/.pwd.lock",
+    "/etc/ld.so.cache",
+    # update-alternatives state
+    "/etc/alternatives/*",
+    # dpkg's own config
+    "/etc/dpkg/*",
+    # systemd service-enable symlinks created by apt install triggers
+    "/etc/systemd/system/multi-user.target.wants/*",
+    "/etc/systemd/system/sysinit.target.wants/*",
+    "/etc/systemd/system/timers.target.wants/*",
+    "/etc/systemd/system/getty.target.wants/*",
+    "/etc/systemd/system/sockets.target.wants/*",
+    "/etc/systemd/system/network-online.target.wants/*",
+    # Ansible's own caches inside the container
+    "/home/sandboxuser/.ansible/*",
+    "/home/sandboxuser/.ansible_async/*",
+    "/root/.ansible/*",
+    "/root/.ansible_async/*",
+]
+
 
 # =============================================================================
 # Container handle
@@ -226,19 +281,20 @@ class Container:
 # Helpers
 # =============================================================================
 
-def _snapshot(c: Container, paths: list[str], dst_host_file: Path) -> None:
-    """Tar listed container paths into a file on the host."""
-    if not paths:
-        dst_host_file.write_bytes(b"")
-        return
+def _snapshot(c: Container, dst_host_file: Path) -> None:
+    """Tar the role-relevant subset of the container's rootfs into a file on
+    the host. The include / exclude lists are module-level (SNAPSHOT_INCLUDES,
+    SNAPSHOT_EXCLUDES) so the audit scope is identical across every config -
+    no per-config snapshot_paths to forget to update when a role changes."""
     remote_tar = f"/tmp/snap-{os.getpid()}.tgz"
-    # `--ignore-failed-read` lets tar warn-then-continue on paths that don't
-    # exist yet (typical for "before" snapshot of dirs the playbook will create)
-    # and still exit 0. No shell needed; safe regardless of what `paths` contains.
-    c.exec(
-        "tar", "--ignore-failed-read", "-czf", remote_tar, *paths,
-        user="root",
-    )
+    cmd = ["tar", "--ignore-failed-read"]
+    for pat in SNAPSHOT_EXCLUDES:
+        cmd.extend(["--exclude", pat])
+    # `--ignore-failed-read` lets tar warn-then-continue on include paths that
+    # don't exist yet (typical for the "before" snapshot when a role hasn't
+    # run) and still exit 0.
+    cmd.extend(["-czf", remote_tar, *SNAPSHOT_INCLUDES])
+    c.exec(*cmd, user="root")
     c.cp_from(remote_tar, dst_host_file)
     c.exec("rm", "-f", remote_tar, user="root")
 
@@ -499,7 +555,7 @@ def run_sandbox(
             after_dir = td_p / "after"
 
             print("==> Snapshotting before-state...")
-            _snapshot(c, cfg.snapshot_paths, before_tar)
+            _snapshot(c, before_tar)
 
             # 7. run playbook
             print()
@@ -513,7 +569,7 @@ def run_sandbox(
 
             # 8. snapshot after
             print("==> Snapshotting after-state...")
-            _snapshot(c, cfg.snapshot_paths, after_tar)
+            _snapshot(c, after_tar)
 
             # 9. diff
             _extract(before_tar, before_dir)

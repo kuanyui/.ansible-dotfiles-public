@@ -30,10 +30,6 @@ class SandboxConfig:
     # Playbook to run, relative to project root.
     playbook: Path
 
-    # Container-absolute paths to tar before & after the playbook for diff.
-    # Empty list = no snapshot diff (still runs playbook + post_check).
-    snapshot_paths: list[str]
-
     # Extra apt packages installed on top of the base sandbox image. Image
     # already has python3 + ansible-core + sudo + openssh-server + systemd.
     extra_packages_apt: list[str] = field(default_factory=list)

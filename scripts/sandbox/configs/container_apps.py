@@ -23,8 +23,4 @@ CONFIG = SandboxConfig(
     name="container_apps",
     description="c-<template>-<runtime> launcher + completion + manifest deployment.",
     playbook=Path("playbooks/container_apps.yml"),
-    snapshot_paths=[
-        "/home/sandboxuser/.local/bin",
-        "/home/sandboxuser/.local/share/ansible-managed",
-    ],
 )

@@ -24,8 +24,4 @@ CONFIG = SandboxConfig(
     name="user",
     description="zsh + emacs + dotfiles deployment for the current user (is_root=false path).",
     playbook=Path("playbooks/user.yml"),
-    snapshot_paths=[
-        # Catch every file the deploy tasks touch under $HOME.
-        "/home/sandboxuser",
-    ],
 )

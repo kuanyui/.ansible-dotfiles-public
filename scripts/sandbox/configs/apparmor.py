@@ -58,11 +58,6 @@ CONFIG = SandboxConfig(
     name="apparmor",
     description="AppArmor profile deployment + apparmor_parser --skip-kernel-load syntax validation.",
     playbook=Path("playbooks/apparmor.yml"),
-    snapshot_paths=[
-        "/etc/apparmor.d",
-        "/home/sandboxuser/.local",
-        "/usr/local/share/applications",
-    ],
     extra_packages_apt=["apparmor"],
     dummy_commands=[
         DUMMY_COMMANDS_DIR / cmd
