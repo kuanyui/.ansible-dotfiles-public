@@ -25,6 +25,20 @@
     /usr/share/mpv/{,**} r,
     /etc/mpv/{,**} r,
 
+    # mpv writes terminal status line / OSD CLI output
+    /dev/tty rw,
+
+    # GPU backend probing on startup, even without hardware access. These are inert
+    # config files / directory listings; the actual GPU boundary stays at
+    # `/dev/dri/renderD*` and `/dev/nvidiactl`, which are only granted via
+    # `local_mixin_gpu` (used by `local_attachmentless_mpv_gpu`).
+    # Allow the reads so the no-GPU profile (`local_pathbased_mpv`) does not spam
+    # the audit log with denials for every Vulkan/EGL probe.
+    /dev/dri/ r,
+    /usr/share/vulkan/icd.d/{,**} r,
+    /usr/share/vulkan/implicit_layer.d/{,**} r,
+    /usr/share/glvnd/egl_vendor.d/{,**} r,
+
     # Wayland display socket
     owner /run/user/*/wayland-[0-9]* rw,
 
