@@ -124,7 +124,8 @@ aa-log-recent:  ## Print recent AppArmor messages within `LOG_SINCE_SECS` (defau
 	fi
 
 ### -------------------------------------------------------------------------
-### Sandbox dry-run (rootless podman + systemd + sshd; default --runtime krun)
+### Sandbox dry-run (rootless podman + real systemd via crun; podman exec for
+### tasks; image + container overlay both stored in tmpfs to avoid SSD wear)
 ### -------------------------------------------------------------------------
 
 # Default runtime is `crun` so systemd can run as PID 1 (libkrun rejects this -
@@ -137,6 +138,12 @@ SANDBOX_RUNTIME ?= crun
 # (CAP_MAC_ADMIN required). The sandbox container relies on user-namespace +
 # default-seccomp + cap-drop NET_RAW for Layer 2 hardening. For stronger
 # isolation (own kernel), switch the sandbox runtime to Kata Containers.
+
+# Note on storage: sandbox.py passes `--root /tmp/...` and `--runroot /tmp/...`
+# to every podman call, so image cache + container overlay live in tmpfs (RAM)
+# instead of `~/.local/share/containers/` (SSD). First run after reboot has to
+# rebuild the image (~1-2 min on warm apt cache); subsequent runs reuse the
+# tmpfs cache. `make sandbox-clean` wipes the tmpfs dirs.
 
 sandbox-user:  ## Dry-run `apply-user` (zsh + emacs + dotfiles deploy) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) user
@@ -153,8 +160,8 @@ sandbox-podman-runtime:  ## Dry-run `apply-podman-runtime` (containers.conf writ
 sandbox-apparmor:  ## Dry-run `apply-apparmor` in a throwaway podman+systemd sandbox; streams diff + runs `apparmor_parser --skip-kernel-load` post-check
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) apparmor
 
-sandbox-clean:  ## Remove the cached sandbox base image to free disk (running sandbox containers are auto-removed after each run)
-	podman rmi localhost/ansible-dotfiles-sandbox:latest 2>/dev/null || true
+sandbox-clean:  ## Wipe the sandbox's tmpfs storage (cached image + any leaked state). Reboot does this automatically.
+	rm -rf /tmp/ansible-dotfiles-sandbox-storage /tmp/ansible-dotfiles-sandbox-run
 
 ### -------------------------------------------------------------------------
 ### Update this repo

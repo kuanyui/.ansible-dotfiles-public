@@ -58,6 +58,23 @@ DEFAULT_IMAGE = "debian:trixie"
 SANDBOX_USER = "sandboxuser"
 IMAGE_TAG = "localhost/ansible-dotfiles-sandbox:latest"
 
+# Redirect podman's storage root to /tmp so image cache AND every container's
+# overlay (where apt install writes deb extracts) live in tmpfs (RAM), not on
+# SSD. Repeated sandbox runs no longer pile writes onto disk. Trade-off:
+# tmpfs is wiped on reboot, so first sandbox run after each boot rebuilds the
+# base image (~1-2 min on a warm apt cache). Acceptable for a dev / test
+# tool. Caveat: if your distro bind-mounts /tmp to disk instead of tmpfs
+# (uncommon - systemd's default `tmp.mount` is tmpfs), this still works but
+# gives no SSD savings; check with `findmnt /tmp`.
+PODMAN_STORAGE_ROOT = "/tmp/ansible-dotfiles-sandbox-storage"
+PODMAN_STORAGE_RUN = "/tmp/ansible-dotfiles-sandbox-run"
+
+
+def _podman(*args: str) -> list[str]:
+    """Build a `podman ...` argv with `--root` / `--runroot` pinned to tmpfs
+    so every podman invocation in this script sees the same storage view."""
+    return ["podman", "--root", PODMAN_STORAGE_ROOT, "--runroot", PODMAN_STORAGE_RUN, *args]
+
 # Top-level dirs the before/after snapshot covers. Wide on purpose: roles can
 # legitimately write to any of these, and a role accidentally writing to an
 # unexpected path (typo in `dest:`, miscomputed `target_home`, etc.) MUST show
@@ -170,7 +187,7 @@ class Container:
     def _build_image(self) -> None:
         print(f"==> Building sandbox image `{IMAGE_TAG}`...")
         subprocess.run(
-            ["podman", "build", "--tag", IMAGE_TAG, str(SANDBOX_DIR)],
+            _podman("build", "--tag", IMAGE_TAG, str(SANDBOX_DIR)),
             check=True,
         )
 
@@ -179,8 +196,8 @@ class Container:
             f"==> Starting container `{self.name}` "
             f"(runtime={self.runtime or 'system-default'})..."
         )
-        cmd = [
-            "podman", "run",
+        cmd = _podman(
+            "run",
             "--name", self.name,
             "--detach",
             # Required for systemd-as-PID-1 to find /sys/fs/cgroup wired up.
@@ -192,7 +209,7 @@ class Container:
             # remaining defenses - user namespace + default seccomp - are on
             # by podman default and we don't disable them.
             "--cap-drop", "NET_RAW",
-        ]
+        )
         if self.runtime:
             cmd += ["--runtime", self.runtime]
         cmd.append(IMAGE_TAG)
@@ -228,7 +245,7 @@ class Container:
             file=sys.stderr,
         )
         print("\n--- `podman logs --tail 100 <name>` ---", file=sys.stderr)
-        subprocess.run(["podman", "logs", "--tail", "100", self.name], check=False)
+        subprocess.run(_podman("logs", "--tail", "100", self.name), check=False)
         print(
             f"\nContainer left running for inspection. To clean up:\n"
             f"  podman rm -f {self.name}\n",
@@ -239,7 +256,7 @@ class Container:
 
     def _remove(self) -> None:
         subprocess.run(
-            ["podman", "rm", "-f", self.name],
+            _podman("rm", "-f", self.name),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
 
@@ -255,7 +272,7 @@ class Container:
     ) -> subprocess.CompletedProcess[str]:
         """Run a remote command via `podman exec`. Args are passed directly to
         execvp inside the container - no shell, no injection risk."""
-        podman_cmd = ["podman", "exec", "--user", user]
+        podman_cmd = _podman("exec", "--user", user)
         if workdir:
             podman_cmd += ["--workdir", workdir]
         podman_cmd.append(self.name)
@@ -266,13 +283,13 @@ class Container:
 
     def cp_to(self, src: Path, container_dst: str) -> None:
         subprocess.run(
-            ["podman", "cp", str(src), f"{self.name}:{container_dst}"],
+            _podman("cp", str(src), f"{self.name}:{container_dst}"),
             check=True,
         )
 
     def cp_from(self, container_src: str, dst: Path) -> None:
         subprocess.run(
-            ["podman", "cp", f"{self.name}:{container_src}", str(dst)],
+            _podman("cp", f"{self.name}:{container_src}", str(dst)),
             check=True,
         )
 
