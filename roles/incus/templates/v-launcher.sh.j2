@@ -47,6 +47,14 @@ VM_DISK="{{ vm_cfg.disk }}"
 # underscores in names (must match `[a-zA-Z][a-zA-Z0-9-]*`, max 63 chars).
 _proj="${PWD#"$HOME"/}"
 _proj="${_proj#/}"
+# Sanitize `.` at the start of any path segment to `_`, BEFORE the `/`->`_`
+# pass. Two downstream consumers reject `.`-prefixed segments:
+#   - Docker image references in image tags (regex forbids `_.` and leading `.`)
+#   - Incus VM names below (regex `[a-zA-Z][a-zA-Z0-9-]*`)
+# Without this, any dotdir on the path explodes. We preserve position with `_`
+# instead of stripping, so `~/foo` and `~/.foo` map to distinct VM names.
+_proj="${_proj//\/./\/_}"
+_proj="${_proj/#./_}"
 PROJECT_NAME="${PROJECT_NAME:-${_proj//\//_}}"
 unset _proj
 
@@ -76,7 +84,13 @@ _add_mount() {
         || { echo "Mount source not found: $host_part" >&2; exit 1; }
     [[ -d "$host_abs" ]] \
         || { echo "Mount source is not a directory: $host_part" >&2; exit 1; }
-    [[ -n "$name_part" ]] || name_part="$(basename "$host_abs")"
+    if [[ -z "$name_part" ]]; then
+        name_part="$(basename "$host_abs")"
+        # Leading `.` -> `_` so dotdirs (`~/.config/foo`, `~/projects/.bar`)
+        # pass the regex below. We only rewrite the auto-derived basename;
+        # an explicit `--mount X:name` still has to be regex-clean as given.
+        name_part="${name_part/#./_}"
+    fi
     [[ "$name_part" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] \
         || { echo "Mount name must match [A-Za-z0-9_][A-Za-z0-9._-]*, got: '$name_part'" >&2; exit 1; }
     for existing in "${MOUNT_NAMES[@]:-}"; do

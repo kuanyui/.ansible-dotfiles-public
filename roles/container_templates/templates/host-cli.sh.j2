@@ -83,7 +83,13 @@ _add_mount() {
         || { echo "Mount source not found: $host_part" >&2; exit 1; }
     [[ -d "$host_abs" ]] \
         || { echo "Mount source is not a directory: $host_part" >&2; exit 1; }
-    [[ -n "$name_part" ]] || name_part="$(basename "$host_abs")"
+    if [[ -z "$name_part" ]]; then
+        name_part="$(basename "$host_abs")"
+        # Leading `.` -> `_` so dotdirs (`~/.config/foo`, `~/projects/.bar`)
+        # pass the regex below. We only rewrite the auto-derived basename;
+        # an explicit `--mount X:name` still has to be regex-clean as given.
+        name_part="${name_part/#./_}"
+    fi
     # Single-segment name only - no slashes, no leading dash, no leading dot.
     [[ "$name_part" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] \
         || { echo "Mount name must match [A-Za-z0-9_][A-Za-z0-9._-]*, got: '$name_part'" >&2; exit 1; }

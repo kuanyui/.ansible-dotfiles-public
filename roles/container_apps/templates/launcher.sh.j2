@@ -44,6 +44,14 @@ export RUNTIME="{{ runtime }}"
 # `~/sandbox/foo`) don't collide on the container name.
 _proj="${PWD#"$HOME"/}"
 _proj="${_proj#/}"
+# Sanitize `.` at the start of any path segment to `_`, BEFORE the `/`->`_`
+# pass. Docker image references reject `_.` and leading `.` in path components
+# (regex `[a-z0-9]+(?:(?:[._]|__|[-]*)[a-z0-9]+)*`), so without this, any
+# dotdir on the path (`~/.foo`, `~/projects/.bar`) explodes at build time
+# with `invalid reference format`. We preserve the dot's position with `_`
+# instead of stripping it, so `~/foo` and `~/.foo` map to distinct names.
+_proj="${_proj//\/./\/_}"
+_proj="${_proj/#./_}"
 export PROJECT_NAME="${PROJECT_NAME:-${_proj//\//_}}"
 unset _proj
 export PROJECT_PATH="${PROJECT_PATH:-$PWD}"
