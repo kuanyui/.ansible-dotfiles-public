@@ -25,7 +25,7 @@ container_templates:
   - name: claude
     naming_prefix: claude_code
     image_platform: linux/amd64
-    image_name: debian:12
+    image_name: debian:13
     tz: Asia/Taipei
     distro_pkgs: []
     feature_presets:
@@ -43,7 +43,7 @@ container_templates:
   - name: codex
     naming_prefix: codex
     image_platform: linux/amd64
-    image_name: debian:12
+    image_name: debian:13
     tz: Asia/Taipei
     distro_pkgs:
       - links2
