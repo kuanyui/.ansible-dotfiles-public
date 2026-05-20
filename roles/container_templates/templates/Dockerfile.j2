@@ -8,6 +8,12 @@ FROM --platform={{ cfg.image_platform }} {{ cfg.image_name }}
 # enable 256 color (seems unworkable)
 ENV TERM=xterm-256color
 
+# Prepend `~/.local/bin` to PATH at image level so `podman exec`-style entry
+# (which doesn't source `.bashrc` / `.zshrc`) still finds curl-installed
+# binaries like `claude`. The shell rc files prepend it again for interactive
+# sessions, which is a no-op (PATH is idempotent under `:` concat).
+ENV PATH="/home/user/.local/bin:${PATH}"
+
 # - Actually has no effect unless use `--publish-all (or `-P`) are used on `podman run`, which forwards to all exposed ports from random host ports.
 # - To forward specific ports from the host into the container, use `podman run --publish 58000:8000/tcp` instead.
 EXPOSE 8000/tcp
@@ -67,6 +73,11 @@ RUN mkdir -p ~/.local/npm_global; \
 {% if cfg.nodejs.npm_global_pkgs %}
 RUN npm install -g {{ cfg.nodejs.npm_global_pkgs | join(' ') }}
 {% endif -%}
+{% endif -%}
+{% if cfg.install_script_url is defined %}
+# Run the upstream installer (as `user`, so the binary lands in user's home
+# and PATH already includes ~/.local/bin via the image-level ENV above).
+RUN curl -fsSL {{ cfg.install_script_url }} | bash
 {% endif -%}
 # ------------------------------
 
