@@ -154,8 +154,17 @@ ASSETS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/assets" 2>/dev/null && pw
 # NOT set here because there is no systemd inside the krun image; the flag's
 # job (mount /sys/fs/cgroup etc.) is irrelevant to a non-systemd workload.
 SSH_KEY="$HOME/.local/share/ansible-managed/container-templates/host_ssh_key"
+# `--publish 127.0.0.1::22` decoded:
+#   - `127.0.0.1`    bind host side to loopback only (not 0.0.0.0)
+#   - empty middle   (between the two `:`) -> let podman pick a random ephemeral
+#                    host port; avoids fixed-port collisions across containers
+#   - `22`           the container's listening port (sshd)
+# DO NOT use `--publish 0:22` thinking 0 means "any port" - podman parses the
+# first segment as an explicit host port and rejects 0 (`port numbers must be
+# between 1 and 65535`). The double-colon form is the documented way to ask
+# for a random port.
 case "$RUNTIME" in
-    krun) DOCKERFILE="Dockerfile.krun"; USE_SSH=1; SYSTEMD_FLAG=(); SSH_PUBLISH=(--publish 0:22) ;;
+    krun) DOCKERFILE="Dockerfile.krun"; USE_SSH=1; SYSTEMD_FLAG=(); SSH_PUBLISH=(--publish 127.0.0.1::22) ;;
     *)    DOCKERFILE="Dockerfile";      USE_SSH=0; SYSTEMD_FLAG=(); SSH_PUBLISH=() ;;
 esac
 

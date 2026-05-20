@@ -149,7 +149,7 @@ RUN mkdir -p /root/.ssh && \
     chmod 600 /root/.ssh/authorized_keys
 
 # `prohibit-password` allows key-based root login but not password. Combined
-# with `--publish 0:22` (host 127.0.0.1 only) in host-cli.sh, the surface
+# with `--publish 127.0.0.1::22` (random host port bound to loopback only) in host-cli.sh, the surface
 # is local-only.
 RUN echo "PermitRootLogin prohibit-password" >> /etc/ssh/sshd_config
 
