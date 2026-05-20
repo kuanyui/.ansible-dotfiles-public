@@ -29,11 +29,15 @@ IMAGE_NAME="{{ cfg.naming_prefix }}_image__${PROJECT_NAME}${RUNTIME_SUFFIX}"
 CONTAINER_NAME="{{ cfg.naming_prefix }}_container__${PROJECT_NAME}${RUNTIME_SUFFIX}"
 ASSETS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/assets" && pwd)"
 
-# SSH key + Dockerfile selection for krun (sshd-based exec replacement)
+# SSH key + Dockerfile selection for krun (sshd-based exec replacement).
+# libkrun keeps `init.krun` as PID 1, so systemd refuses to start - we use
+# the sshd-only `Dockerfile.krun` instead. `--systemd=always` is intentionally
+# NOT set here because there is no systemd inside the krun image; the flag's
+# job (mount /sys/fs/cgroup etc.) is irrelevant to a non-systemd workload.
 SSH_KEY="$HOME/.local/share/ansible-managed/container-templates/host_ssh_key"
 case "$RUNTIME" in
-    krun) DOCKERFILE="Dockerfile.systemd"; USE_SSH=1; SYSTEMD_FLAG=(--systemd=always); SSH_PUBLISH=(--publish 0:22) ;;
-    *)    DOCKERFILE="Dockerfile";         USE_SSH=0; SYSTEMD_FLAG=();                 SSH_PUBLISH=() ;;
+    krun) DOCKERFILE="Dockerfile.krun"; USE_SSH=1; SYSTEMD_FLAG=(); SSH_PUBLISH=(--publish 0:22) ;;
+    *)    DOCKERFILE="Dockerfile";      USE_SSH=0; SYSTEMD_FLAG=(); SSH_PUBLISH=() ;;
 esac
 
 _ensure_ssh_key() {
@@ -91,9 +95,9 @@ Subcommands:
   start             Start an existing stopped container
   stop              Stop running container
   bash-user         exec /bin/bash as user `user`
-  bash-root         exec /bin/bash as user `root` (NOT supported on krun)
+  bash-root         exec /bin/bash as user `root`
   zsh-user          exec /bin/zsh as user `user`
-  zsh-root          exec /bin/zsh as user `root` (NOT supported on krun)
+  zsh-root          exec /bin/zsh as user `root`
 EOF
 {% if cfg.agent %}
     printf '  %-18sLaunch %s inside the container\n' '{{ cfg.agent.target_suffix }}' '{{ cfg.agent.display_name }}'
@@ -189,18 +193,16 @@ _exec_user() {
 _exec_root() {
     cmd_start
     if [[ "$USE_SSH" == 1 ]]; then
-        cat >&2 <<'EOF'
-ERROR: bash-root/zsh-root not supported under RUNTIME=krun.
-The systemd image's sshd only accepts `user` (Debian's OpenSSH defaults to
-`PermitRootLogin prohibit-password` and the image doesn't install/configure
-sudo for `user`). If you really need root inside a krun container, either:
-  - add `PermitRootLogin yes` + a root authorized_keys to the Dockerfile, or
-  - install sudo + NOPASSWD entry in the Dockerfile, or
-  - drop into crun for that one-off operation.
-EOF
-        exit 1
+        local port; port=$(_ssh_host_port)
+        [[ -n "$port" ]] || { echo "Could not find ssh host port for $CONTAINER_NAME" >&2; exit 1; }
+        ssh -t -p "$port" -i "$SSH_KEY" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR \
+            "root@127.0.0.1" "$@"
+    else
+        "$ENGINE" exec --interactive --tty --user root "$CONTAINER_NAME" "$@"
     fi
-    "$ENGINE" exec --interactive --tty --user root "$CONTAINER_NAME" "$@"
 }
 
 cmd_bash_user() { _exec_user /bin/bash; }

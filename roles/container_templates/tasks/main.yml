@@ -50,7 +50,7 @@
   vars:
     container_templates_with_systemd: false
 
-- name: Render Dockerfile.systemd (with systemd+sshd, for `--runtime krun`) to `{{ container_templates_output_dir }}/<name>/assets/Dockerfile.systemd`
+- name: Render Dockerfile.systemd (full systemd+sshd; does NOT boot under `--runtime krun`, kept for reference) to `{{ container_templates_output_dir }}/<name>/assets/Dockerfile.systemd`
   ansible.builtin.template:
     src: Dockerfile.j2
     dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/assets/Dockerfile.systemd"
@@ -63,6 +63,20 @@
     label: "{{ cfg.name }}"
   vars:
     container_templates_with_systemd: true
+
+- name: Render Dockerfile.krun (sshd-only, for `--runtime krun`; libkrun keeps init.krun as PID 1 so systemd can't boot - sshd as PID 2 is the workaround) to `{{ container_templates_output_dir }}/<name>/assets/Dockerfile.krun`
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ container_templates_output_dir }}/{{ cfg.name }}/assets/Dockerfile.krun"
+    mode: "0644"
+    trim_blocks: false
+    lstrip_blocks: false
+  loop: "{{ container_templates }}"
+  loop_control:
+    loop_var: cfg
+    label: "{{ cfg.name }}"
+  vars:
+    container_templates_with_krun_sshd: true
 
 - name: Render `.zshrc` and `.bashrc` for `user` and `root` to `{{ container_templates_output_dir }}/<name>/assets/dotfiles/<who>/`
   ansible.builtin.template:

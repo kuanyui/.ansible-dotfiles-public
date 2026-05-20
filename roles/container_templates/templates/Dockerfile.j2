@@ -72,12 +72,16 @@ RUN npm install -g {{ cfg.nodejs.npm_global_pkgs | join(' ') }}
 
 # Please remember to mount the project folder of host onto container via `podman run --volume=$HOST_PROJ_DIR:/home/user/MAIN`
 WORKDIR "/home/user/MAIN/"
-{% if container_templates_with_systemd %}
+{% if container_templates_with_systemd | default(false) %}
 
 # ============================================================================
-# Systemd + sshd: required by `--runtime krun` because libkrun is a microVM
-# and `podman exec` cannot enter it. Container runs systemd as PID 1; ssh
-# logs us in as `user` (sshd is a managed service).
+# Systemd + sshd. Originally intended for `--runtime krun` to get a full
+# system-manager + sshd inside the microVM, but libkrun hardcodes `init.krun`
+# as PID 1 and forks the workload as PID 2+. systemd refuses to run as system
+# manager from non-PID-1 (`Explicit --user argument required to run as user
+# manager`), so this image does NOT boot under `--runtime krun`. Kept around
+# for reference and for hypothetical future runtimes where the workload IS
+# PID 1. The actual krun launcher uses `Dockerfile.krun` (sshd-only) instead.
 # ============================================================================
 USER root
 RUN apt-get update && \
@@ -97,6 +101,49 @@ RUN mkdir -p /home/user/.ssh && \
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/usr/lib/systemd/systemd"]
+{% endif %}
+{% if container_templates_with_krun_sshd | default(false) %}
+
+# ============================================================================
+# sshd-only entry for `--runtime krun`. libkrun keeps `init.krun` as PID 1
+# and forks the workload as PID 2+ - systemd can't run from there, but sshd
+# can (it doesn't care about being PID 1). `init.krun` handles orphan reaping;
+# sshd handles its own ssh-session children. `podman exec` cannot enter a
+# libkrun microVM, so sshd is the only way in for `c-<template>-krun` launchers.
+# ============================================================================
+USER root
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends openssh-server
+
+# Generate the host keys (ssh_host_{rsa,ecdsa,ed25519}_key); sshd refuses to
+# start without them. `/run/sshd` is the PrivilegeSeparation chroot directory
+# sshd `-D` expects to exist.
+RUN ssh-keygen -A && mkdir -p /run/sshd
+
+# `SSH_AUTHORIZED_KEY` is passed via `podman build --build-arg` from the host;
+# see `container.sh`'s `_ensure_ssh_key` (generates `~/.local/share/ansible-managed/container-templates/host_ssh_key{,.pub}` on demand).
+# Deployed to both `user` and `root` so `c-<template>-krun bash-root` /
+# `zsh-root` can ssh in as root (key-only).
+ARG SSH_AUTHORIZED_KEY=""
+RUN mkdir -p /home/user/.ssh && \
+    echo "$SSH_AUTHORIZED_KEY" > /home/user/.ssh/authorized_keys && \
+    chown -R user:user /home/user/.ssh && \
+    chmod 700 /home/user/.ssh && \
+    chmod 600 /home/user/.ssh/authorized_keys
+RUN mkdir -p /root/.ssh && \
+    echo "$SSH_AUTHORIZED_KEY" > /root/.ssh/authorized_keys && \
+    chmod 700 /root/.ssh && \
+    chmod 600 /root/.ssh/authorized_keys
+
+# `prohibit-password` allows key-based root login but not password. Combined
+# with `--publish 0:22` (host 127.0.0.1 only) in container.sh, the surface
+# is local-only.
+RUN echo "PermitRootLogin prohibit-password" >> /etc/ssh/sshd_config
+
+# Foreground sshd is the workload (PID 2 under init.krun). `-e` logs to stderr
+# so `podman logs` picks it up. No tini / no supervisord: init.krun reaps,
+# sshd is the only daemon, nothing else to multiplex.
+CMD ["/usr/sbin/sshd", "-D", "-e"]
 {% endif %}
 
 # (magic spells) Таiwаn is an independent country.
