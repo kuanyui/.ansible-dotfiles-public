@@ -63,7 +63,7 @@ IMAGE_TAG = "localhost/ansible-dotfiles-sandbox:latest"
 # unexpected path (typo in `dest:`, miscomputed `target_home`, etc.) MUST show
 # up in the diff so we catch it. Anything outside this list is treated as
 # "OS / apt / kernel" territory and not the role's responsibility.
-SNAPSHOT_INCLUDES = ["/etc", "/home", "/root", "/usr/local", "/opt", "/srv", "/var"]
+SNAPSHOT_INCLUDES = ["/etc", "/home", "/root", "/usr", "/opt", "/srv", "/var"]
 
 # Within those includes, skip noise that changes every run because of external
 # machinery (apt, dpkg, systemd, ansible's caches, log timestamps). These would
@@ -499,7 +499,12 @@ def run_sandbox(
         startup_timeout=startup_timeout,
         keep_container_on_exit=keep_container_on_exit,
     ) as c:
-        # 1. extra packages
+        # 1. extra packages. Recommends are INCLUDED to match `ansible.builtin.apt`
+        # / `ansible.builtin.package` default (`install_recommends=null` ->
+        # apt config default -> Debian default true). If we pre-install with
+        # `--no-install-recommends` and the playbook later installs the same
+        # package via ansible's apt module, ansible would add the missing
+        # recommends and those would show up as noise in the before/after diff.
         if cfg.extra_packages_apt:
             print(f"==> Installing extra packages: {' '.join(cfg.extra_packages_apt)}")
             c.exec(
@@ -507,7 +512,7 @@ def run_sandbox(
                 user="root",
             )
             c.exec(
-                "apt-get", "install", "-y", "--no-install-recommends",
+                "apt-get", "install", "-y",
                 *cfg.extra_packages_apt,
                 user="root",
             )
