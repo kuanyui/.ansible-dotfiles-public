@@ -2,7 +2,7 @@
 # {{ ansible_managed }}
 #
 # Per-template host-side CLI for container template `{{ cfg.name }}` (build /
-# run / stop / shell-in / ssh-in / rm). All subcommands are HOST-side podman
+# run / stop / shell-in / ssh-in / rma). All subcommands are HOST-side podman
 # operations - this script is invoked ON the host, not inside the container.
 #
 # ===========================================================================
@@ -172,7 +172,7 @@ Subcommands:
   init              build + run (idempotent build, fails if container exists)
   build             Build image from Dockerfile in ./assets/
   run               Create and start the container from the built image
-  rm                rmc + rmi (remove container then image)
+  rma               rm all: rmc + rmi (container then image)
   rmc               Remove container (stops first)
   rmi               Remove image (stops + removes container first)
   start             Start an existing stopped container
@@ -259,7 +259,7 @@ cmd_start() { "$ENGINE" start "$CONTAINER_NAME"; }
 cmd_stop()  { "$ENGINE" stop "$CONTAINER_NAME" || true; }
 cmd_rmc()   { cmd_stop; "$ENGINE" container rm "$CONTAINER_NAME" || true; }
 cmd_rmi()   { cmd_rmc; "$ENGINE" image rm "localhost/$IMAGE_NAME" || true; }
-cmd_rm()    { cmd_rmc; cmd_rmi; }
+cmd_rma()   { cmd_rmc; cmd_rmi; }
 
 _exec_user() {
     cmd_start
@@ -302,7 +302,7 @@ cmd_{{ cfg.agent.target_suffix | replace('-', '_') }}() { _exec_user {{ cfg.agen
 # ---------- Dispatch ----------
 sub="${1:-help}"; shift || true
 case "$sub" in
-    help|env|init|build|run|rm|rmi|rmc|start|stop|bash-user|bash-root|zsh-user|zsh-root{% if cfg.agent %}|{{ cfg.agent.target_suffix }}{% endif %})
+    help|env|init|build|run|rma|rmi|rmc|start|stop|bash-user|bash-root|zsh-user|zsh-root{% if cfg.agent %}|{{ cfg.agent.target_suffix }}{% endif %})
         # User-facing names keep hyphens; bash function names use underscores.
         "cmd_${sub//-/_}" "$@"
         ;;

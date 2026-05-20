@@ -147,7 +147,7 @@ After opening a fresh shell:
 # bash
 type _c_claude_crun                            # should say "is a function"
 complete -p c-claude-crun                      # should print the registered completion
-c-claude-crun <TAB><TAB>                       # should list: help env init build run rm ...
+c-claude-crun <TAB><TAB>                       # should list: help env init build run rma rmi rmc ...
 
 # zsh
 which _c-claude-crun                           # should resolve to the completion file
