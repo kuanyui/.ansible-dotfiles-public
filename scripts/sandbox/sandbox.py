@@ -39,7 +39,6 @@ import argparse
 import importlib.util
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -247,14 +246,25 @@ def _print_diff(before: Path, after: Path) -> None:
         .replace(f"--- {before}", "--- a/")
         .replace(f"+++ {after}", "+++ b/")
     )
-    if shutil.which("delta"):
-        subprocess.run(["delta", "--paging=never"], input=diff_out, text=True)
-    else:
-        # color +/- lines via grep
-        subprocess.run(
-            ["grep", "--color=always", "-E", r"^(\+.*|-.*|@@.*)$|$"],
-            input=diff_out, text=True,
-        )
+    # Color the unified diff in pure Python so we don't depend on `delta` or
+    # `grep --color=always` (BSD grep doesn't accept --color=always identically;
+    # `delta` is also not always installed). Headers (--- / +++) checked before
+    # +/- so their leading dashes/pluses don't get misclassified as deletions/
+    # additions.
+    GREEN, RED, CYAN, BOLD, RESET = (
+        "\033[32m", "\033[31m", "\033[36m", "\033[1m", "\033[0m",
+    )
+    for line in diff_out.splitlines():
+        if line.startswith("--- ") or line.startswith("+++ "):
+            print(f"{BOLD}{line}{RESET}")
+        elif line.startswith("@@"):
+            print(f"{CYAN}{line}{RESET}")
+        elif line.startswith("+"):
+            print(f"{GREEN}{line}{RESET}")
+        elif line.startswith("-"):
+            print(f"{RED}{line}{RESET}")
+        else:
+            print(line)
     # Summary of changed files. Classify each path as added (+, green),
     # removed (-, red), or modified (=, yellow) based on whether the file is
     # present in the before/after snapshot dirs. Container-absolute paths
