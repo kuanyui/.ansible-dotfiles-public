@@ -96,32 +96,43 @@ CONFIG = SandboxConfig(
             "/home/sandboxuser/.mozilla/firefox/profiles.ini",
     },
     extra_ansible_vars={"setup_apparmor": "true"},
-    # Drop-in override for `apparmor.service` inside the sandbox. Reason: the
-    # stock Debian unit has `ConditionSecurity=apparmor`, which checks the
-    # kernel-level LSM state. In a rootless container `/sys/kernel/security/`
-    # is masked, the condition fails, the service stays `inactive`, and the
-    # role's `notify: Reload apparmor` handler (`state: reloaded`) fails with
-    # `Assertion failed on job for apparmor.service`. The override clears the
-    # condition AND replaces ExecStart/Reload/Stop with `/bin/true` - real
-    # profile loading is intentionally stubbed at the binary level (see
-    # `dummy_commands` above), so the service-level operations should be
-    # no-ops in the sandbox too. Trailing `daemon-reload` picks up the change.
+    # Full unit override for `apparmor.service` inside the sandbox. Reason: the
+    # stock Debian unit has `AssertSecurity=apparmor` (and/or `ConditionSecurity=`),
+    # which checks the kernel-level LSM state. In a rootless container
+    # `/sys/kernel/security/` is masked, the assert fails, the service can't be
+    # started, and the role's `notify: Reload apparmor` handler (`state:
+    # reloaded`) fails with `Assertion failed on job for apparmor.service`.
+    #
+    # We write a complete replacement to `/etc/systemd/system/apparmor.service`,
+    # which systemd loads in preference to `/lib/systemd/system/apparmor.service`
+    # (the apt-installed file). No conditions, no asserts, ExecStart/Reload/Stop
+    # are `/bin/true` - real profile loading is intentionally stubbed at the
+    # binary level (see `dummy_commands` above), so the service-level operations
+    # should be no-ops in the sandbox too. The smoke test (`systemctl start`)
+    # at the end verifies the override is good before we hand off to the
+    # playbook, so we fail fast here instead of inside the idempotence check.
     post_setup_commands=[
-        ["mkdir", "-p", "/etc/systemd/system/apparmor.service.d"],
         ["bash", "-c",
-         "cat > /etc/systemd/system/apparmor.service.d/sandbox-noop.conf <<'EOF'\n"
+         "cat > /etc/systemd/system/apparmor.service <<'EOF'\n"
          "[Unit]\n"
-         "ConditionSecurity=\n"
+         "Description=Sandbox no-op stub for AppArmor service\n"
          "\n"
          "[Service]\n"
-         "ExecStart=\n"
+         "Type=oneshot\n"
+         "RemainAfterExit=yes\n"
          "ExecStart=/bin/true\n"
-         "ExecReload=\n"
          "ExecReload=/bin/true\n"
-         "ExecStop=\n"
          "ExecStop=/bin/true\n"
+         "\n"
+         "[Install]\n"
+         "WantedBy=multi-user.target\n"
          "EOF"],
         ["systemctl", "daemon-reload"],
+        # Smoke test: prove the override works before the playbook runs. If
+        # this fails, the sandbox aborts here (clearer than a vague handler
+        # failure mid-playbook).
+        ["systemctl", "start", "apparmor.service"],
+        ["systemctl", "reload", "apparmor.service"],
     ],
     pre_flight=_pre_flight,
     post_check=_post_check_apparmor_syntax,
