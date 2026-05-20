@@ -35,7 +35,17 @@
 #   PROJECT_NAME=foo c-{{ app.template }}-{{ runtime }} init      # override one var
 
 export RUNTIME="{{ runtime }}"
-export PROJECT_NAME="${PROJECT_NAME:-$(basename "$PWD")}"
+# Default PROJECT_NAME = $PWD with $HOME prefix stripped (or leading `/` if
+# PWD is outside $HOME), then `/` replaced by `_`. So:
+#   ~/projects/foo/bar  -> `projects_foo_bar`
+#   ~/foo               -> `foo`
+#   /tmp/work           -> `tmp_work`
+# This way different projects sharing a basename (e.g. `~/work/foo` and
+# `~/sandbox/foo`) don't collide on the container name.
+_proj="${PWD#"$HOME"/}"
+_proj="${_proj#/}"
+export PROJECT_NAME="${PROJECT_NAME:-${_proj//\//_}}"
+unset _proj
 export PROJECT_PATH="${PROJECT_PATH:-$PWD}"
 
 exec "{{ container_apps_install_root }}/{{ app.template }}/host-cli.sh" "$@"
