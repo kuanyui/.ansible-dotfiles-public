@@ -36,9 +36,11 @@ Configs live in scripts/sandbox/configs/<name>.py with a module-level
 from __future__ import annotations
 
 import argparse
+import atexit
 import importlib.util
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import tarfile
@@ -80,14 +82,34 @@ class Container:
     # ---------- lifecycle ----------
 
     def __enter__(self) -> "Container":
+        self._cleaned_up = False
         self._build_image()
         self._run()
-        self._wait_systemd_ready(timeout=self._startup_timeout)
+        # Container exists from this point. `with` only calls __exit__ once
+        # __enter__ returns successfully, so cleanup during _wait_systemd_ready
+        # (or any abnormal interpreter exit afterwards) needs explicit hooks:
+        #   - atexit: runs on normal exit + KeyboardInterrupt that bubbles up
+        #     + sys.exit(). Does NOT run on uncaught signals like SIGTERM, so
+        #     main() installs a SIGTERM->sys.exit handler to route through it.
+        #   - try/except below: catches Ctrl+C / errors during the boot wait
+        #     while __enter__ hasn't returned yet (so __exit__ wouldn't fire).
+        # SIGKILL is unrecoverable by design; document, don't try to handle.
+        atexit.register(self._cleanup)
+        try:
+            self._wait_systemd_ready(timeout=self._startup_timeout)
+        except BaseException:
+            self._cleanup()
+            raise
         return self
 
     def __exit__(self, *exc: object) -> None:
-        if self._leave_running:
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        """Idempotent `podman rm -f`. Honors `_leave_running` for debugging."""
+        if self._cleaned_up or self._leave_running:
             return
+        self._cleaned_up = True
         self._remove()
 
     def _build_image(self) -> None:
@@ -526,6 +548,13 @@ def _build_help_epilog(configs: dict[str, SandboxConfig]) -> str:
 
 
 def main() -> int:
+    # SIGTERM by default kills Python without raising, so atexit-registered
+    # container cleanup would not run. Convert it to a sys.exit() so the same
+    # cleanup path as a clean exit applies. (SIGINT already raises
+    # KeyboardInterrupt by default - no conversion needed.) SIGKILL is
+    # unrecoverable: the container will leak. Manual cleanup:
+    #   podman ps -a --filter name=ansible-sandbox- --format '{{.ID}}' | xargs -r podman rm -f
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     configs = _discover_configs()
     ap = argparse.ArgumentParser(
         prog="sandbox.py",
