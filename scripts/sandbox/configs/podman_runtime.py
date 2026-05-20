@@ -47,4 +47,12 @@ CONFIG = SandboxConfig(
         # `/etc/containers/containers.conf` (root-owned) and is left for a
         # separate sandbox config if desired.
     },
+    # Round-trip: same playbook, just with `podman_runtime: default` to drive
+    # the "remove managed containers.conf" branch. Verifies the file is
+    # actually removed and that the role doesn't accidentally leave anything
+    # behind in `~/.config/containers/`.
+    unapply_playbook=Path("playbooks/podman.yml"),
+    unapply_ansible_vars={
+        "podman_runtime": "default",
+    },
 )

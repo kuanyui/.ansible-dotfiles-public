@@ -23,4 +23,9 @@ CONFIG = SandboxConfig(
     name="container_apps",
     description="c-<template>-<runtime> launcher + completion + manifest deployment.",
     playbook=Path("playbooks/container_apps.yml"),
+    # Round-trip: deploy via container_apps.yml, then uninstall via the
+    # dedicated uninstall playbook. The harness will diff the post-uninstall
+    # filesystem against the pre-deploy baseline; any leftover file means the
+    # manifest missed an entry or a `state: absent` task was forgotten.
+    unapply_playbook=Path("playbooks/container_apps_uninstall.yml"),
 )

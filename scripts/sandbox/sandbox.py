@@ -397,19 +397,19 @@ def _print_diff(before: Path, after: Path) -> None:
         print(f"  {color_map[sym]}{sym} /{rel}{RESET}")
 
 
-def _ansible_playbook_argv(cfg: SandboxConfig) -> list[str]:
+def _ansible_playbook_argv_for(playbook: Path, ansible_vars: dict[str, Any]) -> list[str]:
     # Sandbox is a headless throwaway container - no display server, no point
     # pulling in GTK/Qt deps. Set `has_gui_support=false` globally so roles
     # that branch on it pick the lighter variant (e.g. `emacs-nox` instead of
-    # `emacs-gtk` saves ~400 MB of apt install). Config-specified vars merged
-    # on top, so a config's `extra_ansible_vars` can still override it.
+    # `emacs-gtk` saves ~400 MB of apt install). Caller's vars merged on top,
+    # so a config's `extra_ansible_vars` / `unapply_ansible_vars` can override.
     #
     # We pass extra vars as a single `-e <JSON>` instead of repeated
     # `-e key=value` because ansible-core 2.19+ enforces strict types on
     # `when:` conditionals: `-e key=false` is parsed as the STRING `"false"`
     # (which is truthy! - and also rejected as a non-bool conditional in 2.19+),
     # while `-e '{"key": false}'` is parsed as the boolean `False`.
-    merged_vars = {"has_gui_support": False, **cfg.extra_ansible_vars}
+    merged_vars = {"has_gui_support": False, **ansible_vars}
     # Use the project's own `inventory.ini` (not `-i localhost,`) so ansible
     # discovers `group_vars/all.yml` via the inventory-dir lookup. An inline
     # `localhost,` inventory has no inventory-dir and no group_vars get loaded,
@@ -420,32 +420,28 @@ def _ansible_playbook_argv(cfg: SandboxConfig) -> list[str]:
         "ansible-playbook",
         "-i", "/playbook/inventory.ini",
         "-e", json.dumps(merged_vars),
-        f"/playbook/{cfg.playbook}",
+        f"/playbook/{playbook}",
     ]
 
 
-def _run_playbook(c: Container, cfg: SandboxConfig) -> int:
-    """Run the playbook once, return exit code."""
-    result = c.exec(
-        *_ansible_playbook_argv(cfg),
-        workdir="/playbook",
-        check=False,
-    )
+def _ansible_playbook_argv(cfg: SandboxConfig) -> list[str]:
+    """argv for the config's apply playbook."""
+    return _ansible_playbook_argv_for(cfg.playbook, cfg.extra_ansible_vars)
+
+
+def _run_playbook(c: Container, argv: list[str]) -> int:
+    """Run the given playbook argv once, return exit code."""
+    result = c.exec(*argv, workdir="/playbook", check=False)
     return result.returncode
 
 
-def _check_idempotence(c: Container, cfg: SandboxConfig) -> int:
-    """Re-run playbook; succeed iff `changed=0` on every host."""
+def _check_idempotence(c: Container, argv: list[str], label: str = "IDEMPOTENCE CHECK  (second run)") -> int:
+    """Re-run a playbook argv; succeed iff `changed=0` on every host."""
     print()
     print("=" * 60)
-    print(" IDEMPOTENCE CHECK  (second run)")
+    print(f" {label}")
     print("=" * 60)
-    result = c.exec(
-        *_ansible_playbook_argv(cfg),
-        workdir="/playbook",
-        check=False,
-        capture_output=True,
-    )
+    result = c.exec(*argv, workdir="/playbook", check=False, capture_output=True)
     rc = result.returncode
     out = (result.stdout or "") + (result.stderr or "")
     if rc != 0:
@@ -590,10 +586,11 @@ def run_sandbox(
             _snapshot(c, before_tar)
 
             # 7. run playbook
+            apply_argv = _ansible_playbook_argv(cfg)
             print()
             print(f"==> Running playbook `{cfg.playbook}` as `{SANDBOX_USER}` (full output follows)...")
             print("-" * 60)
-            playbook_rc = _run_playbook(c, cfg)
+            playbook_rc = _run_playbook(c, apply_argv)
             print("-" * 60)
             if playbook_rc != 0:
                 print(f"WARNING: playbook exited with code {playbook_rc}")
@@ -609,7 +606,7 @@ def run_sandbox(
             _print_diff(before_dir, after_dir)
 
             # 10. idempotence
-            rc_total += _check_idempotence(c, cfg)
+            rc_total += _check_idempotence(c, apply_argv)
 
             # 11. post_check
             if cfg.post_check is not None:
@@ -624,7 +621,81 @@ def run_sandbox(
                 else:
                     print("  OK")
 
+            # 12. (optional) round-trip: unapply -> compare against baseline.
+            # Strictly additive: rc_total accumulates separately, never folds
+            # back into the apply/idempotence/post-check verdicts above. If
+            # this section is skipped (cfg.unapply_playbook is None), the
+            # sandbox behaves identically to before this feature existed.
+            if cfg.unapply_playbook is not None:
+                rc_total += _run_round_trip(
+                    c, cfg, before_tar, before_dir, td_p,
+                )
+
     return rc_total
+
+
+def _run_round_trip(
+    c: Container,
+    cfg: SandboxConfig,
+    before_tar: Path,
+    before_dir: Path,
+    td_p: Path,
+) -> int:
+    """Run the unapply playbook, snapshot, diff vs the pre-apply baseline, and
+    re-run unapply to verify its idempotence. Returns count of errors found;
+    callers add to their own rc_total. Does NOT mutate or revisit any verdict
+    from earlier in the sandbox run."""
+    assert cfg.unapply_playbook is not None
+    rc = 0
+    unapply_argv = _ansible_playbook_argv_for(cfg.unapply_playbook, cfg.unapply_ansible_vars)
+
+    print()
+    print("=" * 60)
+    print(" ROUND-TRIP: UNAPPLY")
+    print("=" * 60)
+    print(f"==> Running unapply playbook `{cfg.unapply_playbook}` as `{SANDBOX_USER}`...")
+    print("-" * 60)
+    unapply_rc = _run_playbook(c, unapply_argv)
+    print("-" * 60)
+    if unapply_rc != 0:
+        print(f"WARNING: unapply playbook exited with code {unapply_rc}")
+        rc += 1
+
+    # Snapshot post-unapply and diff against the pre-apply baseline. A clean
+    # uninstall path means these two states match byte-for-byte.
+    print("==> Snapshotting post-unapply state...")
+    post_unapply_tar = td_p / "post_unapply.tgz"
+    post_unapply_dir = td_p / "post_unapply"
+    _snapshot(c, post_unapply_tar)
+    _extract(post_unapply_tar, post_unapply_dir)
+
+    print()
+    print("=" * 60)
+    print(" ROUND-TRIP DIFF  (pre-apply baseline vs post-unapply)")
+    print(" Any entry below = unapply path left something behind.")
+    print("=" * 60)
+    _print_diff(before_dir, post_unapply_dir)
+
+    # `diff -rq` returns 0 iff trees are identical (no stdout). Use it as
+    # the verdict source because _print_diff's job is display, not pass/fail.
+    diff_check = subprocess.run(
+        ["diff", "-rq", str(before_dir), str(post_unapply_dir)],
+        capture_output=True, text=True, check=False,
+    )
+    if diff_check.stdout.strip() or diff_check.returncode not in (0, 1):
+        leftover_count = len(diff_check.stdout.strip().splitlines())
+        print(f"  ROUND-TRIP FAIL - {leftover_count} file(s) not restored to baseline.")
+        rc += 1
+    else:
+        print("  ROUND-TRIP OK - filesystem matches pre-apply baseline.")
+
+    # Idempotence of unapply itself: re-running uninstall on already-uninstalled
+    # state should be a no-op.
+    rc += _check_idempotence(
+        c, unapply_argv,
+        label="UNAPPLY IDEMPOTENCE CHECK  (second unapply run)",
+    )
+    return rc
 
 
 # =============================================================================

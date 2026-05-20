@@ -61,3 +61,21 @@ class SandboxConfig:
     # Called with project_dir + Container handle after the playbook ran.
     # Return number of errors found. Default: no checks performed.
     post_check: Callable[[Path, "Container"], int] = field(default=lambda _, __: 0)
+
+    # Optional: playbook to run AFTER the apply + idempotence + post_check
+    # pipeline has finished, to verify the round-trip (apply -> unapply ->
+    # back to original baseline). The harness compares the snapshot taken
+    # immediately before the apply ran with the snapshot taken after this
+    # unapply playbook ran; any non-empty diff means the unapply path missed
+    # something (manifest entry forgotten, `state: absent` task missing, etc).
+    # The unapply playbook itself is also re-run a second time to verify its
+    # own idempotence. Failures here ONLY contribute to the round-trip exit
+    # code; they never affect the apply / idempotence / post_check verdicts
+    # reported earlier.
+    unapply_playbook: Path | None = None
+
+    # Vars passed to the unapply playbook (same JSON-merged style as
+    # `extra_ansible_vars`). Use this when the unapply path is gated by a var
+    # rather than being a separate playbook file (e.g. the podman role's
+    # `podman_runtime: default` removes the managed `containers.conf`).
+    unapply_ansible_vars: dict[str, Any] = field(default_factory=dict)
