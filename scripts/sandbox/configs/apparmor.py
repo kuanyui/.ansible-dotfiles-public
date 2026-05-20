@@ -7,6 +7,7 @@ before they hit the real host.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[3]
 SANDBOX_DIR = Path(__file__).resolve().parents[1]
 DUMMY_COMMANDS_DIR = SANDBOX_DIR / "dummy_commands"
 DENY_PERSONAL_DIRS = PROJECT_DIR / "roles" / "apparmor" / "local_vars" / "deny_personal_dirs.aa"
+CHECK_DENY_PERSONAL_DIRS = PROJECT_DIR / "scripts" / "check_deny_personal_dirs.py"
 
 
 def _pre_flight(project_dir: Path) -> None:
@@ -26,6 +28,17 @@ def _pre_flight(project_dir: Path) -> None:
             f"ERROR: {DENY_PERSONAL_DIRS} not found.\n"
             f"  Run: python3 scripts/gen_deny_personal_dirs.py <path> [<path> ...]"
         )
+    # Mirror the Makefile `apply-apparmor` pre-flight: validate the rendered
+    # `deny_personal_dirs.aa` before deployment. `apparmor_parser` only catches
+    # invalid policy modes (e.g. `d` copied from an audit-log mask) at kernel
+    # load time, which `--skip-kernel-load` in the post-check skips - so this
+    # lint is the only place the syntax issue can be caught inside the sandbox.
+    result = subprocess.run(
+        [sys.executable, str(CHECK_DENY_PERSONAL_DIRS)],
+        cwd=str(project_dir),
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
 
 
 def _post_check_apparmor_syntax(project_dir: Path, container) -> int:
