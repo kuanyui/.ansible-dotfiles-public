@@ -17,7 +17,7 @@ _{{ launcher_name | replace('-', '_') }}() {
             mapfile -t COMPREPLY < <(compgen -d -- "$cur")  # directories only
             return ;;
         --hide-git-dir|--hide-vscode-dir)
-            mapfile -t COMPREPLY < <(compgen -W "true false" -- "$cur")
+            mapfile -t COMPREPLY < <(compgen -W "true false readonly" -- "$cur")
             return ;;
     esac
 

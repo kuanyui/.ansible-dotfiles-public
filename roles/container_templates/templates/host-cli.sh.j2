@@ -47,15 +47,22 @@ HIDE_VSCODE_DIR="${HIDE_VSCODE_DIR:-true}"
 #   c-claude-crun --project-name foo --hide-git-dir false init
 # Precedence: CLI flag > env var > default. Use `--` to terminate flag
 # parsing explicitly (e.g. when a subcommand arg starts with `-`).
-# `--hide-*` flags take an explicit `true`/`false` value (symmetric with the
-# `HIDE_*` env vars). Any other value is rejected outright - downstream code
-# only checks for the literal string "true", so a typo like `yes` or `1`
-# would silently behave as `false`, which is a worse footgun than just
-# erroring out here.
-_require_bool() {
-    [[ "$2" == "true" || "$2" == "false" ]] || {
-        echo "$1 requires 'true' or 'false', got: $2" >&2; exit 1
-    }
+# `--hide-*` flags take `true` | `false` | `readonly`:
+#   true     - mask with empty dir (`:ro`). Hides host content from container
+#              AND blocks writes. Default.
+#   readonly - bind the real host dir into the container with `:ro`. Lets the
+#              agent READ history / config but BLOCKS writes (force-push,
+#              poisoned hooks, `.vscode/tasks.json` autorun etc. all caught).
+#   false    - no extra mount; the project bind-mount exposes the dir
+#              read+write. Use only when you actively need the agent to
+#              modify these files (rare).
+# Anything else is rejected up front - downstream code only checks for the
+# literal strings, so a typo would silently degrade to "no mask".
+_require_hide_mode() {
+    case "$2" in
+        true|false|readonly) ;;
+        *) echo "$1 requires 'true' | 'false' | 'readonly', got: $2" >&2; exit 1 ;;
+    esac
 }
 
 # Mount accumulator. Each entry pairs `MOUNT_HOSTS[i]` -> `MOUNT_NAMES[i]`,
@@ -111,8 +118,8 @@ while [[ $# -gt 0 ]]; do
         --mount)
             [[ "$_used_p" == 1 ]] && { echo "--mount cannot be combined with -p / --project-path; use one style." >&2; exit 1; }
             _used_mount=1; _add_mount "$2"; shift 2 ;;
-        --hide-git-dir)      _require_bool "$1" "${2:-}"; HIDE_GIT_DIR="$2";    shift 2 ;;
-        --hide-vscode-dir)   _require_bool "$1" "${2:-}"; HIDE_VSCODE_DIR="$2"; shift 2 ;;
+        --hide-git-dir)      _require_hide_mode "$1" "${2:-}"; HIDE_GIT_DIR="$2";    shift 2 ;;
+        --hide-vscode-dir)   _require_hide_mode "$1" "${2:-}"; HIDE_VSCODE_DIR="$2"; shift 2 ;;
         --) shift; break ;;
         -*) echo "Unknown flag: $1 (try 'help')" >&2; exit 1 ;;
         *)  break ;;
@@ -196,19 +203,38 @@ _ssh_host_port() {
 # side with whatever subuid the container process is running as (often a
 # weird 5-digit UID once you map back through userns) -> mysterious leftover
 # dirs in $HOME after the container exits.
+# Hide-dir overlay. Container's `/workspaces/<name>/<.git|.vscode>` is replaced
+# by either an empty dir (`true`) or the real host dir (`readonly`), both
+# bound `:ro`. We `mkdir -p` the host-side target ourselves so podman doesn't
+# auto-create with a userns-mapped UID; `cmd_rma` later `rmdir`s any of those
+# we created that ended up empty (real existing `.git` / `.vscode` are
+# untouched).
 HIDE_DIRS_ARGS=()
 FAKE_MASK_DIR="/tmp/podman-mask-dir/$CONTAINER_NAME"
+_add_hide_overlay() {
+    # $1 = mode (true|false|readonly), $2 = container path under /workspaces/<name>
+    # $3 = host path on $_host (e.g. `.git`, `.vscode`)
+    local mode="$1" container_sub="$2" host_sub="$3"
+    case "$mode" in
+        true)
+            mkdir -p "$_host/$host_sub"
+            HIDE_DIRS_ARGS+=(--volume "$FAKE_MASK_DIR:/workspaces/$_name/$container_sub:ro,Z")
+            ;;
+        readonly)
+            mkdir -p "$_host/$host_sub"
+            HIDE_DIRS_ARGS+=(--volume "$_host/$host_sub:/workspaces/$_name/$container_sub:ro,Z")
+            ;;
+        false)
+            ;;  # no extra mount; project bind-mount exposes real .git / .vscode rw
+    esac
+}
 if [[ $_n_mounts -gt 0 ]]; then
     mkdir -p "$FAKE_MASK_DIR"
     for _i in "${!MOUNT_HOSTS[@]}"; do
         _host="${MOUNT_HOSTS[_i]}"
         _name="${MOUNT_NAMES[_i]}"
-        if [[ "$HIDE_GIT_DIR" == "true" && -d "$_host/.git" ]]; then
-            HIDE_DIRS_ARGS+=(--volume "$FAKE_MASK_DIR:/workspaces/$_name/.git:ro,Z")
-        fi
-        if [[ "$HIDE_VSCODE_DIR" == "true" && -d "$_host/.vscode" ]]; then
-            HIDE_DIRS_ARGS+=(--volume "$FAKE_MASK_DIR:/workspaces/$_name/.vscode:ro,Z")
-        fi
+        _add_hide_overlay "$HIDE_GIT_DIR"    .git    .git
+        _add_hide_overlay "$HIDE_VSCODE_DIR" .vscode .vscode
     done
     unset _i _host _name
 fi
@@ -238,10 +264,20 @@ Flags (override env vars; both override the launcher's cwd-based defaults):
                                          --project-path given, defaults to $PWD.
   -p, --project-path <path>              Single-mount alias for --mount; can't be
                                          combined with --mount.
-      --hide-git-dir true|false          Mask host's .git/ inside container, per mount
-                                         (default: true; skipped per-mount if that
-                                         workspace doesn't have a .git/ to mask).
-      --hide-vscode-dir true|false       Same, for .vscode/ (default: true).
+      --hide-git-dir <mode>              How to overlay .git/ inside the container
+                                         per mount. <mode> = true|false|readonly:
+                                           true     - empty mask, :ro (default).
+                                                      Hides history + blocks writes.
+                                           readonly - real .git mounted :ro. Agent
+                                                      can read history but can't
+                                                      force-push / install hooks /
+                                                      modify config.
+                                           false    - no overlay, .git is rw.
+      --hide-vscode-dir <mode>           Same, for .vscode/ (default: true).
+                                         The `true` default is strongly recommended
+                                         here because VS Code auto-executes a lot
+                                         from tasks.json / launch.json / settings
+                                         on workspace open.
   --                                     End of flag parsing (use before a subcommand
                                          arg that itself starts with `-`)
 
@@ -269,8 +305,8 @@ EOF
 Environment variable equivalents (alternative to flags; flags win when both set):
   PROJECT_NAME      same as `--project-name`
   PROJECT_PATH      same as `--project-path` (single-mount). Ignored if --mount used.
-  HIDE_GIT_DIR      `true` / `false`; same as `--hide-git-dir`
-  HIDE_VSCODE_DIR   `true` / `false`; same as `--hide-vscode-dir`
+  HIDE_GIT_DIR      `true` / `false` / `readonly`; same as `--hide-git-dir`
+  HIDE_VSCODE_DIR   `true` / `false` / `readonly`; same as `--hide-vscode-dir`
   RUNTIME           OCI runtime (`crun`, `krun`, ...). Empty = podman default.
                     Has no `--flag` form: it's effectively pinned by which
                     launcher you ran (`c-<tpl>-crun` vs `c-<tpl>-krun`).
@@ -351,7 +387,19 @@ cmd_start() { "$ENGINE" start "$CONTAINER_NAME"; }
 cmd_stop()  { "$ENGINE" stop "$CONTAINER_NAME" || true; }
 cmd_rmc()   { cmd_stop; "$ENGINE" container rm "$CONTAINER_NAME" || true; }
 cmd_rmi()   { cmd_rmc; "$ENGINE" image rm "localhost/$IMAGE_NAME" || true; }
-cmd_rma()   { cmd_rmc; cmd_rmi; }
+cmd_rma() {
+    cmd_rmc
+    cmd_rmi
+    # Reclaim the empty `.git` / `.vscode` we pre-created on the host as
+    # mask targets. `rmdir` is the right tool here: it succeeds only on
+    # empty dirs, so a real `.git` (the user ran `git init` in the project,
+    # or it was a repo to begin with) is left intact.
+    for _i in "${!MOUNT_HOSTS[@]:-}"; do
+        rmdir "${MOUNT_HOSTS[_i]}/.git"    2>/dev/null || true
+        rmdir "${MOUNT_HOSTS[_i]}/.vscode" 2>/dev/null || true
+    done
+    unset _i
+}
 
 _exec_user() {
     cmd_start

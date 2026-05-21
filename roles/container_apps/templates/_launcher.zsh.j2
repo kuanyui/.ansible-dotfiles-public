@@ -16,8 +16,8 @@ _arguments -C \
     '(-n --project-name)'{-n,--project-name}'[project name (default: basename of cwd)]:name:' \
     '(-p --project-path)'{-p,--project-path}'[single-mount alias for --mount]:path:_files -/' \
     '*--mount[bind-mount <host>\[:<name>\] into /workspaces/<name>; repeatable]:mount:_files -/' \
-    '--hide-git-dir[mask host .git/ inside container (default: true)]:bool:(true false)' \
-    '--hide-vscode-dir[mask host .vscode/ inside container (default: true)]:bool:(true false)' \
+    '--hide-git-dir[mask host .git/ inside container (default: true)]:mode:(true false readonly)' \
+    '--hide-vscode-dir[mask host .vscode/ inside container (default: true)]:mode:(true false readonly)' \
     '1:subcommand:->subcmd' \
     '*::arg:->args'
 
