@@ -75,6 +75,42 @@ File extensions:
 - Static profiles: `.aa` suffix (e.g., `local_attachmentless_glycin.aa`)
 - Jinja2 templates that generate profiles: `.aa.j2` suffix (e.g., `local_attachmentless_firefox.aa.j2`)
 
+## Per-category personal_dirs abstractions
+
+Every pathbased profile must `#include` exactly one of the per-category
+abstractions generated at playbook run time:
+
+```
+#include <abstractions/local_mixin_personal_dirs__for__<category>>
+```
+
+where `<category>` is one of the names listed in
+`roles/apparmor/app_categories.yml`. Apps that do not fit any specific
+category use `others`.
+
+Source of truth:
+
+- `roles/apparmor/app_categories.yml` - the category list (single source).
+- `roles/apparmor/local_vars/personal_dirs.yml` - per-path access policy,
+  gitignored. Scaffolded by `scripts/gen_personal_dirs_definitions_yaml.py` and
+  then hand-edited.
+- `scripts/gen_personal_dirs_aa_mixins.py` - validates the YAML against
+  a JSON Schema (with the category enum injected from `app_categories.yml` at
+  run time) and emits one abstraction per category.
+
+Hard runtime dep: the builder requires the distro-provided
+`python3-jsonschema` package. See `roles/apparmor/TODO.md`.
+
+The companion JSON Schema is written next to the YAML on every scaffold and
+every playbook run (`roles/apparmor/local_vars/personal_dirs.schema.json`,
+gitignored). The scaffolded YAML's first line is a `yaml-language-server`
+directive pointing at it, so editors with the Red Hat YAML extension (or
+coc-yaml / lsp-mode) validate inline and autocomplete categories.
+
+The legacy `local_mixin_deny_personal_dirs` abstraction is DEPRECATED but
+still deployed during the gradual profile migration. Do not add new
+`#include` lines for it.
+
 ## AppArmor profile #include layout
 
 All `#include` directives must appear at the top of the profile body, before any rules.

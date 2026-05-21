@@ -18,21 +18,47 @@ from config import SandboxConfig  # noqa: E402
 PROJECT_DIR = Path(__file__).resolve().parents[3]
 SANDBOX_DIR = Path(__file__).resolve().parents[1]
 DUMMY_COMMANDS_DIR = SANDBOX_DIR / "dummy_commands"
+PERSONAL_DIRS_YML = PROJECT_DIR / "roles" / "apparmor" / "local_vars" / "personal_dirs.yml"
 DENY_PERSONAL_DIRS = PROJECT_DIR / "roles" / "apparmor" / "local_vars" / "deny_personal_dirs.aa"
 CHECK_DENY_PERSONAL_DIRS = PROJECT_DIR / "scripts" / "check_deny_personal_dirs.py"
 
 
+_SCAFFOLD_PERSONAL_DIRS_YML = PROJECT_DIR / "scripts" / "gen_personal_dirs_definitions_yaml.py"
+_SCAFFOLD_DENY_PERSONAL_DIRS = PROJECT_DIR / "scripts" / "gen_deny_personal_dirs.py"
+
+
+def _missing_input_file(missing: Path, scaffolder: Path, extra_note: str = "") -> "SystemExit":
+    """Print a copy-pasteable error then defer to the scaffolder's own --help."""
+    print(f"ERROR: {missing} not found.", file=sys.stderr)
+    if extra_note:
+        print(extra_note, file=sys.stderr)
+    print("", file=sys.stderr)
+    subprocess.run([sys.executable, str(scaffolder), "--help"])
+    return SystemExit(1)
+
+
 def _pre_flight(project_dir: Path) -> None:
+    # Mirror Makefile `apply-apparmor`: existence check for the new YAML
+    # pipeline, then the same existence + bare-x lint for the DEPRECATED `.aa`
+    # (still required while `local_mixin_container_base` depends on the old
+    # single-mixin abstraction).
+    #
+    # Schema validation of the YAML happens inside the playbook (gated by
+    # `python3-jsonschema` install via `ansible.builtin.package`), not here -
+    # this pre-flight only runs stdlib-safe checks.
+    if not PERSONAL_DIRS_YML.exists():
+        raise _missing_input_file(PERSONAL_DIRS_YML, _SCAFFOLD_PERSONAL_DIRS_YML)
+
     if not DENY_PERSONAL_DIRS.exists():
-        raise SystemExit(
-            f"ERROR: {DENY_PERSONAL_DIRS} not found.\n"
-            f"  Run: python3 scripts/gen_deny_personal_dirs.py <path> [<path> ...]"
+        raise _missing_input_file(
+            DENY_PERSONAL_DIRS,
+            _SCAFFOLD_DENY_PERSONAL_DIRS,
+            extra_note="(still required while container_base mixin uses it - DEPRECATED).",
         )
-    # Mirror the Makefile `apply-apparmor` pre-flight: validate the rendered
-    # `deny_personal_dirs.aa` before deployment. `apparmor_parser` only catches
-    # invalid policy modes (e.g. `d` copied from an audit-log mask) at kernel
-    # load time, which `--skip-kernel-load` in the post-check skips - so this
-    # lint is the only place the syntax issue can be caught inside the sandbox.
+    # `apparmor_parser` only catches invalid policy modes (e.g. `d` copied
+    # from an audit-log mask) at kernel load time, which `--skip-kernel-load`
+    # in the post-check skips - so this lint is the only place the bare-x
+    # syntax issue can be caught inside the sandbox.
     result = subprocess.run(
         [sys.executable, str(CHECK_DENY_PERSONAL_DIRS)],
         cwd=str(project_dir),
@@ -71,7 +97,13 @@ CONFIG = SandboxConfig(
     name="apparmor",
     description="AppArmor profile deployment + apparmor_parser --skip-kernel-load syntax validation.",
     playbook=Path("playbooks/apparmor.yml"),
-    extra_packages_apt=["apparmor"],
+    # `python3-jsonschema` is a hard runtime dep of the builder script
+    # (gen_personal_dirs_aa_mixins.py) that the playbook invokes; without
+    # it, the role's command task crashes with ModuleNotFoundError. The
+    # Makefile's `_ensure-python3-jsonschema` covers the host (where the
+    # pre_flight runs); this covers the sandbox image (where the playbook
+    # runs).
+    extra_packages_apt=["apparmor", "python3-jsonschema"],
     dummy_commands=[
         DUMMY_COMMANDS_DIR / cmd
         for cmd in (

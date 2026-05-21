@@ -75,7 +75,17 @@ apparmor_template_abstraction_names:
   - local_base_mpv
   - local_mixin_xdg_dir_pictures_screenshots
   - local_mixin_xdg_dir_downloads
-  - local_mixin_deny_personal_dirs
+  - local_mixin_deny_personal_dirs  # DEPRECATED, removed once every profile migrates
+  # Per-category personal_dirs abstractions, generated at playbook run time by
+  # scripts/gen_personal_dirs_aa_mixins.py. Names must match the categories
+  # listed in roles/apparmor/app_categories.yml.
+  - local_mixin_personal_dirs__for__web_browser
+  - local_mixin_personal_dirs__for__image_viewer
+  - local_mixin_personal_dirs__for__pdf_viewer
+  - local_mixin_personal_dirs__for__video_player
+  - local_mixin_personal_dirs__for__ide
+  - local_mixin_personal_dirs__for__music_score_editor
+  - local_mixin_personal_dirs__for__others
 
 # Profiles deployed under old names that do not match local_* and therefore
 # cannot be caught by the idempotent cleanup. Remove entries once all managed

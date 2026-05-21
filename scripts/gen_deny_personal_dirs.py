@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+# =============================================================================
+# DEPRECATED - kept for in-flight migration only, do not use for new work.
+# =============================================================================
+# Replaced by scripts/gen_personal_dirs_definitions_yaml.py, which writes a YAML
+# scaffold consumed by scripts/gen_personal_dirs_aa_mixins.py to produce
+# per-category abstractions (local_mixin_personal_dirs__for__<category>).
+#
+# This script and the abstraction it feeds (local_mixin_deny_personal_dirs)
+# will be removed once every pathbased profile has migrated to the per-
+# category includes.
+# =============================================================================
+
 """Generate an AppArmor deny-rule scaffold for personal directories.
 
 Usage examples:
@@ -42,10 +54,8 @@ def main() -> None:
         sys.exit(1)
 
     parser = argparse.ArgumentParser(
-        description=(
-            "Scaffold AppArmor audit-deny rules for personal directories. "
-            "Edit the output file to remove unwanted entries, then run the playbook."
-        ),
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "paths",
@@ -55,7 +65,7 @@ def main() -> None:
             "Directory path or shell glob. "
             "~ is expanded. "
             "Globs are resolved; only directories are kept. "
-            "Example: ~/secrets ~/projects/*"
+            "Example: ~/secrets ~/Personal/Projects/*"
         ),
     )
     parser.add_argument(

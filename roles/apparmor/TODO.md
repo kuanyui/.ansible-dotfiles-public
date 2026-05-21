@@ -1,5 +1,59 @@
 # TODO
 
+## `python3-jsonschema` install: handled by the role itself
+
+`scripts/gen_personal_dirs_aa_mixins.py` validates
+`roles/apparmor/local_vars/personal_dirs.yml` against a JSON Schema at playbook
+run time using the `jsonschema` Python package.
+
+Handled by:
+
+- `roles/apparmor/tasks/common.yml`: an `ansible.builtin.package` task installs
+  `python3-jsonschema` (same package name on Debian / openSUSE / Fedora) before
+  the builder is invoked. `ansible_pkg_mgr` dispatches to the right backend.
+- `scripts/sandbox/configs/apparmor.py`: `extra_packages_apt` also lists
+  `python3-jsonschema` so the sandbox image has it from build time, before
+  the playbook even runs.
+- `roles/apparmor/CLAUDE.md`: documents the hard dep.
+
+Rule: install the distro package, not via pip. This project uses ansible-core
+only and avoids pip-managed Python deps on the target.
+
+## `local_mixin_container_base` still includes deprecated personal_dirs mixin
+
+`files/profiles/local_mixin_container_base.aa` continues to `#include
+<abstractions/local_mixin_deny_personal_dirs>` (the deprecated all-or-nothing
+mixin). It is consumed by two attachmentless profiles:
+
+- `local_attachmentless_podman_ai_agent`
+
+Deferred because rootless podman does not honour `--security-opt apparmor=...`,
+so these container profiles are not actually applied in practice today. When
+that changes (rootful podman, a different runtime, or upstream lifting that
+restriction), decide between:
+
+(a) Add a new `container` category to `roles/apparmor/app_categories.yml` and
+    switch the include to `local_mixin_personal_dirs__for__container`. With no
+    paths in `personal_dirs.yml` listing `container` in their `allow`, every
+    rule becomes `audit deny`, matching today's behaviour but expressed in
+    the new framework.
+(b) Drop the include from `container_base` entirely, leaving container
+    profiles unaware of personal dirs. Cleaner if containers should never
+    even see those paths.
+
+Either way, the deprecated mixin can only be removed after this is resolved.
+
+## `local_pathbased_anydesk` does not include any personal_dirs abstraction
+
+Unlike every other pathbased profile, `templates/anydesk/local_pathbased_anydesk.aa.j2`
+does not include `local_mixin_deny_personal_dirs` (legacy) or any
+`local_mixin_personal_dirs__for__<category>` (new). Per the convention now
+documented in `roles/apparmor/CLAUDE.md` ("every pathbased profile must
+`#include` exactly one"), anydesk should be brought into compliance, most
+likely with `__for__others`. Defer until a deliberate review of what anydesk
+actually needs - remote-desktop access patterns differ enough that the safest
+default may not be the right one.
+
 ## Extract `local_mixin_gpu_probe` abstraction (deferred)
 
 Two profiles currently inline the same "allow userspace GPU/render API metadata

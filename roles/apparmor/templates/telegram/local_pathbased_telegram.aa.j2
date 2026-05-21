@@ -27,7 +27,7 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected) {
     #include <abstractions/local_mixin_deny_browser_config>
     #include <abstractions/local_mixin_deny_keyrings>
     #include <abstractions/local_mixin_deny_persistent_attack>
-    #include <abstractions/local_mixin_deny_personal_dirs>
+    #include <abstractions/local_mixin_personal_dirs__for__others>
     #include <abstractions/local_mixin_deny_mounted_external_media>
 
     # Open clicked links/files in the default application; ix keeps xdg-open confined

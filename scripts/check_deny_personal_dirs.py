@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+# =============================================================================
+# DEPRECATED - kept for in-flight migration only, do not use for new work.
+# =============================================================================
+# This validator existed to catch bare-x footguns in hand-edited deny rules.
+# The new pipeline (scripts/gen_personal_dirs_aa_mixins.py) emits modes
+# programmatically and validates the YAML input against a JSON Schema, so
+# this bare-x check is no longer needed.
+#
+# Will be removed once every pathbased profile has migrated to the per-
+# category includes (local_mixin_personal_dirs__for__<category>).
+# =============================================================================
+
 """Print and validate local_mixin_deny_personal_dirs.
 
 Prints the j2 template header followed by the rendered deny rules with line
