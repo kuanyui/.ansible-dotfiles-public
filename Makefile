@@ -72,12 +72,24 @@ apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chr
 	@test -f roles/apparmor/local_vars/personal_dirs.yml || { \
 		echo "ERROR: roles/apparmor/local_vars/personal_dirs.yml not found."; \
 		echo ""; \
+		echo "Run:"; \
+		echo ""; \
+		echo "python3 scripts/gen_personal_dirs_definitions_yaml.py"; \
+		echo ""; \
+		echo "-------- usage of the above script --------"; \
+		echo ""; \
 		python3 scripts/gen_personal_dirs_definitions_yaml.py --help; \
 		exit 1; \
 	}
 	@test -f roles/apparmor/local_vars/deny_personal_dirs.aa || { \
 		echo "ERROR: roles/apparmor/local_vars/deny_personal_dirs.aa not found"; \
 		echo "(still required while container_base mixin uses it - DEPRECATED)."; \
+		echo ""; \
+		echo "Run:"; \
+		echo ""; \
+		echo "python3 scripts/gen_deny_personal_dirs.py"; \
+		echo ""; \
+		echo "-------- usage of the above script --------"; \
 		echo ""; \
 		python3 scripts/gen_deny_personal_dirs.py --help; \
 		exit 1; \

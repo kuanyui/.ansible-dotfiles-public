@@ -28,10 +28,20 @@ _SCAFFOLD_DENY_PERSONAL_DIRS = PROJECT_DIR / "scripts" / "gen_deny_personal_dirs
 
 
 def _missing_input_file(missing: Path, scaffolder: Path, extra_note: str = "") -> "SystemExit":
-    """Print a copy-pasteable error then defer to the scaffolder's own --help."""
+    """Tell the user what to run. The `Run:` line is a clean starter command
+    (no `--help`) so it can be copy-pasted and then extended with arguments.
+    The scaffolder's `--help` output follows below under a divider as
+    reference documentation."""
     print(f"ERROR: {missing} not found.", file=sys.stderr)
     if extra_note:
         print(extra_note, file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Run:", file=sys.stderr)
+    print("", file=sys.stderr)
+    starter = f"python3 {scaffolder.relative_to(PROJECT_DIR)}"
+    print(starter, file=sys.stderr)
+    print("", file=sys.stderr)
+    print("-------- usage of the above script --------", file=sys.stderr)
     print("", file=sys.stderr)
     subprocess.run([sys.executable, str(scaffolder), "--help"])
     return SystemExit(1)

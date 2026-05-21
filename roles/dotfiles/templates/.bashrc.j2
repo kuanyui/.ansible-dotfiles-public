@@ -8,6 +8,13 @@
 # If not running interactively, don't do anything
 [ -z "$PS1" ] && return
 
+### ========================================
+### Env vars for ~/.local-pkgs/ (npm / pip / pipx / cargo / go)
+### ========================================
+# Deployed by `roles/local_pkgs/` when `setup_local_pkgs: true`. Harmless
+# no-op when the file is absent.
+[ -f "${HOME}/.local-pkgs/local-pkgs.env.sh" ] && . "${HOME}/.local-pkgs/local-pkgs.env.sh"
+
 ### =========================================
 ### Debian only
 ### =========================================

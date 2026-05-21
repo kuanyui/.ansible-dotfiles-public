@@ -12,6 +12,11 @@ shared_aliases_cd_shortcuts: "{{ lookup('template', playbook_dir + '/../roles/_s
 has_gui_support: true
 setup_emacs: true
 setup_zsh: true
+# `setup_local_pkgs`: redirect npm / pip / pipx / cargo / go global installs
+# from ~/.local/ into a dedicated ~/.local-pkgs/ tree, keeping ~/.local/
+# reserved for XDG and ansible-managed dotfiles. Off by default - it rewrites
+# PATH and pip behaviour, which is opt-in territory.
+setup_local_pkgs: false
 packages_install_basic_tools: true
 packages_install_sys_tools: true
 packages_install_net_tools: true
