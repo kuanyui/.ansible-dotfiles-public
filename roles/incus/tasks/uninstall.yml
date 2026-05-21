@@ -33,4 +33,4 @@
   loop: "{{ (_incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='launcher_path') | list)
           + (_incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='completion_zsh') | list)
           + (_incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='completion_bash') | list)
-          + [_incus_manifest_path] }}"
+          + [incus_manifest_path] }}"

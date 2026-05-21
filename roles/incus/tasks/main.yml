@@ -19,10 +19,17 @@
           - item.agent.command is defined
           - item.agent.display_name is defined
           - item.name is defined
+          # `item.name` becomes a subcommand token in the launcher's dispatch
+          # `case` (templates/v-launcher.sh.j2). Reserved tokens collide and
+          # silently shadow the built-in subcommand - e.g. `name: init` would
+          # route `v-init init` to `cmd_agent` instead of `cmd_init`.
+          - item.name not in ['help', 'env', 'init', 'start', 'stop', 'shell', 'rma']
         fail_msg: |
           incus_apps entry `{{ item.name | default('<unnamed>') }}` is malformed.
           Required fields: name, agent.command, agent.display_name, AND exactly
           one of agent.install_script_url / agent.install_via_npm.
+          `name` also must not be one of: help, env, init, start, stop, shell, rma
+          (those are reserved launcher subcommands and would be shadowed).
           Got: {{ item }}
       loop: "{{ incus_apps }}"
       loop_control:

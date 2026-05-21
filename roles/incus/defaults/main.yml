@@ -30,9 +30,14 @@ incus_skip_host_setup: false
 #     `playbooks/incus_uninstall.yml`.
 incus_apps_state: present
 
-# Output roots (mirror container_apps so artifacts live side-by-side, but in
-# their own subtree to keep the manifests / unapply paths separate).
-incus_root: "{{ ansible_env.HOME }}/.local/share/ansible-managed"
+# Output roots. Deliberately a sibling of `container_apps_root`
+# (`~/.local/share/ansible-managed`), NOT a child of it - `roles/container_apps`'s
+# uninstall step `rm -rf`s its own root, and if `incus_root` lived inside that
+# tree it would get nuked as collateral damage, stranding the `~/.local/bin/v-*`
+# launchers without a manifest. `incus_bin_dir` itself is the standard
+# `~/.local/bin` and is shared with container_apps (different filename prefix
+# `v-` vs `c-`, no collision).
+incus_root: "{{ ansible_env.HOME }}/.local/share/ansible-managed-incus"
 incus_bin_dir: "{{ ansible_env.HOME }}/.local/bin"
 incus_zsh_completion_dir: "{{ incus_root }}/zsh-completions"
 incus_bash_completion_dir: "{{ incus_root }}/bash-completions"

@@ -93,7 +93,11 @@ _add_mount() {
     fi
     [[ "$name_part" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] \
         || { echo "Mount name must match [A-Za-z0-9_][A-Za-z0-9._-]*, got: '$name_part'" >&2; exit 1; }
-    for existing in "${MOUNT_NAMES[@]:-}"; do
+    # MOUNT_NAMES is declared `=()` at top level, so under `set -u` the plain
+    # `"${MOUNT_NAMES[@]}"` form is safe and expands to nothing when empty.
+    # The previous `:-` default would have expanded to a single empty string,
+    # spinning the loop once with `existing=""` - harmless here but misleading.
+    for existing in "${MOUNT_NAMES[@]}"; do
         [[ "$existing" == "$name_part" ]] \
             && { echo "Mount name '$name_part' already used" >&2; exit 1; }
     done
@@ -209,7 +213,10 @@ EOF
 }
 
 _vm_exists() { incus info "$VM_NAME" >/dev/null 2>&1; }
-_vm_running() { [[ "$(incus list "$VM_NAME" --format csv --columns s 2>/dev/null)" == "RUNNING" ]]; }
+# `incus list <pattern>` is regex, not exact. Anchor with ^...$ so e.g.
+# `v-claude-foo` doesn't accidentally also match `v-claude-foo-bar` (which
+# would yield a multi-row CSV and a guaranteed-false `== "RUNNING"`).
+_vm_running() { [[ "$(incus list "^${VM_NAME}$" --format csv --columns s 2>/dev/null)" == "RUNNING" ]]; }
 
 _wait_vm_ready() {
     # Block until `incus exec` succeeds (i.e. lxd-agent is up inside the VM).
@@ -224,8 +231,12 @@ _wait_vm_ready() {
 }
 
 _provision_vm() {
-    # First-time setup inside a freshly-launched VM. Idempotent: re-running on
-    # an already-provisioned VM is safe (apt/useradd/curl are all idempotent).
+    # Called unconditionally from `cmd_init` (whether the VM is fresh or
+    # already existed). Every step here MUST be idempotent: apt-get
+    # install / useradd guarded by `id user` / curl-installer / npm install
+    # all already are, which means a half-provisioned VM (e.g. apt failed
+    # mid-way on first run) can be repaired just by re-running `init`,
+    # without `rma`-ing the whole VM and starting over.
     echo "==> Provisioning $VM_NAME (apt update, install agent + sshd)..."
     incus exec "$VM_NAME" -- bash -ec '
         export DEBIAN_FRONTEND=noninteractive
@@ -240,22 +251,25 @@ _provision_vm() {
     '
 {% if incus_app.agent.install_script_url is defined %}
     # Curl-based install (e.g. claude). Runs as `user` so the binary lands in
-    # ~/.local/bin/ inside the VM.
+    # ~/.local/bin/ inside the VM. The install URL is passed as a positional
+    # argument ($1) rather than interpolated into the script body, so any
+    # shell metachars in the YAML value don't get evaluated by bash.
     incus exec --user 1000 --group 1000 --cwd /home/user "$VM_NAME" -- \
-        bash -c "curl -fsSL $AGENT_INSTALL_URL | bash"
+        bash -c 'curl -fsSL "$1" | bash' _ "$AGENT_INSTALL_URL"
 {% else %}
     # npm-based install (e.g. codex). Install nodejs/npm at the system level,
-    # then npm-install the package as `user` into ~/.local/npm_global.
+    # then npm-install the package as `user` into ~/.local/npm_global. Same
+    # positional-arg quoting pattern as the curl branch above.
     incus exec "$VM_NAME" -- bash -ec '
         export DEBIAN_FRONTEND=noninteractive
         apt-get install --yes --no-install-recommends nodejs npm
     '
     incus exec --user 1000 --group 1000 --cwd /home/user "$VM_NAME" -- \
-        bash -ec "
+        bash -ec '
             mkdir -p ~/.local/npm_global
             npm config set prefix ~/.local/npm_global
-            npm install -g $AGENT_INSTALL_NPM_PKG
-        "
+            npm install -g "$1"
+        ' _ "$AGENT_INSTALL_NPM_PKG"
 {% endif %}
 }
 
@@ -264,29 +278,33 @@ cmd_init() {
         echo "==> VM $VM_NAME already exists; starting if stopped..."
         _vm_running || incus start "$VM_NAME"
         _wait_vm_ready
-        return 0
+    else
+        echo "==> Launching $VM_NAME from $VM_BASE_IMAGE..."
+        incus launch "$VM_BASE_IMAGE" "$VM_NAME" \
+            --vm \
+            --config "limits.cpu=$VM_CPU" \
+            --config "limits.memory=$VM_MEMORY" \
+            --device "root,size=$VM_DISK"
+        _wait_vm_ready
+
+        echo "==> Attaching virtio-fs shares..."
+        for _i in "${!MOUNT_HOSTS[@]}"; do
+            local host="${MOUNT_HOSTS[_i]}"
+            local name="${MOUNT_NAMES[_i]}"
+            # shift=true uses idmap shifting so host UID ↔ VM UID is auto-mapped;
+            # without it, bind-mounted files appear as nobody:nogroup in the VM.
+            incus config device add "$VM_NAME" "workspace_${name//-/_}" disk \
+                "source=$host" \
+                "path=/workspaces/$name" \
+                shift=true
+        done
+        unset _i
     fi
-    echo "==> Launching $VM_NAME from $VM_BASE_IMAGE..."
-    incus launch "$VM_BASE_IMAGE" "$VM_NAME" \
-        --vm \
-        --config "limits.cpu=$VM_CPU" \
-        --config "limits.memory=$VM_MEMORY" \
-        --device "root,size=$VM_DISK"
-    _wait_vm_ready
 
-    echo "==> Attaching virtio-fs shares..."
-    for _i in "${!MOUNT_HOSTS[@]}"; do
-        local host="${MOUNT_HOSTS[_i]}"
-        local name="${MOUNT_NAMES[_i]}"
-        # shift=true uses idmap shifting so host UID ↔ VM UID is auto-mapped;
-        # without it, bind-mounted files appear as nobody:nogroup in the VM.
-        incus config device add "$VM_NAME" "workspace_${name//-/_}" disk \
-            "source=$host" \
-            "path=/workspaces/$name" \
-            shift=true
-    done
-    unset _i
-
+    # Run unconditionally - lets `init` repair a half-provisioned VM (apt
+    # failure on first run, network blip during curl-install, etc.) without
+    # forcing the user to `rma` and rebuild. All steps inside _provision_vm
+    # are idempotent.
     _provision_vm
     echo "==> $VM_NAME ready. Try: v-$AGENT_NAME $AGENT_NAME"
 }
