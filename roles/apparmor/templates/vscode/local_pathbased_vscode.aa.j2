@@ -96,6 +96,7 @@ profile local_pathbased_vscode /usr/share/code/code {
 
     # VS Code IPC sockets (main process <-> extension host and language server communication)
     owner /run/user/*/vscode-* rwk,
+    owner /run/user/*/vscd-*.sock rwk,              # VS Code daemon sockets (session/installedLk lockfile)
     owner /run/user/*/ssh-askpass-*.sock rw,        # SSH askpass socket created by VS Code for credential prompts
 
     # Deny podman runtime directory - chmod here would let a malicious extension make the
