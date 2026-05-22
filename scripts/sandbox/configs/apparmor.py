@@ -7,6 +7,8 @@ before they hit the real host.
 
 from __future__ import annotations
 
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +21,44 @@ SANDBOX_DIR = Path(__file__).resolve().parents[1]
 DUMMY_COMMANDS_DIR = SANDBOX_DIR / "dummy_commands"
 
 
+def _ensure_jsonschema() -> None:
+    """Probe for `jsonschema` and install `python3-jsonschema` via sudo if
+    missing. Mirrors the probe+install pattern in
+    `roles/apparmor/tasks/main.yml`, which only fires once the playbook
+    itself starts - the sandbox's `_pre_flight` runs the validator BEFORE
+    the playbook, so we need our own probe here. The distro package name is
+    `python3-jsonschema` on Debian / openSUSE / Fedora alike."""
+    probe = subprocess.run(
+        [sys.executable, "-c", "import jsonschema"],
+        check=False,
+        capture_output=True,
+    )
+    if probe.returncode == 0:
+        return
+
+    if shutil.which("zypper"):
+        cmd = ["sudo", "zypper", "--non-interactive", "install", "python3-jsonschema"]
+    elif shutil.which("apt-get"):
+        cmd = ["sudo", "apt-get", "install", "--yes", "python3-jsonschema"]
+    elif shutil.which("dnf"):
+        cmd = ["sudo", "dnf", "install", "--assumeyes", "python3-jsonschema"]
+    else:
+        raise RuntimeError(
+            "No supported package manager found (need zypper, apt-get, or dnf). "
+            "Install python3-jsonschema manually and retry."
+        )
+    print(
+        "==> python3-jsonschema is required by gen_personal_dirs_aa_mixins.py but is not installed.\n"
+        "    Source: your distro's official package repository (NOT pip / PyPI).\n"
+        "    About to run the following command; sudo may prompt for your password:\n"
+        "\n"
+        f"        {shlex.join(cmd)}\n"
+        "\n"
+        "    Press Ctrl+C now to abort, or wait for sudo to prompt.\n"
+    )
+    subprocess.run(cmd, check=True)
+
+
 def _pre_flight(project_dir: Path) -> None:
     """Preview `personal_dirs.yml` + schema-validate it BEFORE any container
     work (image build, apt install, project copy - the ~1-2 min preamble).
@@ -27,6 +67,7 @@ def _pre_flight(project_dir: Path) -> None:
     playbook later. Mirrors the Makefile `apply-apparmor` target's preview
     step; the role itself no longer carries preview/confirm tasks since
     ansible's local connection can't produce clean stdout for them."""
+    _ensure_jsonschema()
     validator = project_dir / "roles" / "apparmor" / "scripts" / "gen_personal_dirs_aa_mixins.py"
     subprocess.run([sys.executable, str(validator), "--validate-only"], check=True)
 
@@ -64,7 +105,7 @@ CONFIG = SandboxConfig(
     # `python3-jsonschema` is a hard runtime dep of the builder script
     # (gen_personal_dirs_aa_mixins.py) that the playbook invokes; without
     # it, the role's command task crashes with ModuleNotFoundError. The
-    # Makefile's `_ensure-python3-jsonschema` covers the host (where the
+    # `_ensure_jsonschema()` helper above covers the host (where the
     # pre_flight runs); this covers the sandbox image (where the playbook
     # runs).
     extra_packages_apt=["apparmor", "python3-jsonschema"],
