@@ -68,38 +68,7 @@ apply-incus:  ## Install v-<agent> Incus VM launchers (bypasses `setup_incus` ga
 unapply-incus:  ## Uninstall incus launchers (reads ~/.local/share/ansible-managed/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_uninstall.yml
 
-apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.); requires `roles/apparmor/local_vars/personal_dirs.yml` (see scripts/gen_personal_dirs_definitions_yaml.py) and the DEPRECATED `roles/apparmor/local_vars/deny_personal_dirs.aa` (still consumed by the container_base mixin); bypasses `setup_apparmor` gate
-	@test -f roles/apparmor/local_vars/personal_dirs.yml || { \
-		echo "ERROR: roles/apparmor/local_vars/personal_dirs.yml not found."; \
-		echo ""; \
-		echo "Run:"; \
-		echo ""; \
-		echo "python3 scripts/gen_personal_dirs_definitions_yaml.py"; \
-		echo ""; \
-		echo "-------- usage of the above script --------"; \
-		echo ""; \
-		python3 scripts/gen_personal_dirs_definitions_yaml.py --help; \
-		exit 1; \
-	}
-	@test -f roles/apparmor/local_vars/deny_personal_dirs.aa || { \
-		echo "ERROR: roles/apparmor/local_vars/deny_personal_dirs.aa not found"; \
-		echo "(still required while container_base mixin uses it - DEPRECATED)."; \
-		echo ""; \
-		echo "Run:"; \
-		echo ""; \
-		echo "python3 scripts/gen_deny_personal_dirs.py"; \
-		echo ""; \
-		echo "-------- usage of the above script --------"; \
-		echo ""; \
-		python3 scripts/gen_deny_personal_dirs.py --help; \
-		exit 1; \
-	}
-	python3 scripts/check_deny_personal_dirs.py
-	@printf 'Proceed with apply? [y/N] '; read answer; \
-	case "$$answer" in \
-		[Yy]) ;; \
-		*) echo "Aborted."; exit 1 ;; \
-	esac
+apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). The role's own `tasks/common.yml` asserts `roles/apparmor/local_vars/{personal_dirs.yml,deny_personal_dirs.aa}` exist and prints scaffold hints if not; bypasses `setup_apparmor` gate
 	$(PLAYBOOK) --ask-become-pass --diff $(PLAYBOOKS)/apparmor.yml
 
 ### -------------------------------------------------------------------------
