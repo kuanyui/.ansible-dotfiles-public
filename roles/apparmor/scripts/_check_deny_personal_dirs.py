@@ -3,7 +3,7 @@
 # DEPRECATED - kept for in-flight migration only, do not use for new work.
 # =============================================================================
 # This validator existed to catch bare-x footguns in hand-edited deny rules.
-# The new pipeline (scripts/gen_personal_dirs_aa_mixins.py) emits modes
+# The new pipeline (roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py) emits modes
 # programmatically and validates the YAML input against a JSON Schema, so
 # this bare-x check is no longer needed.
 #
@@ -21,17 +21,18 @@ only valid inside a deny rule; in an allow rule it is a policy error.
 Exits non-zero if any errors are found, so it can gate make targets.
 
 Usage:
-  python3 scripts/check_deny_personal_dirs.py
-  python3 scripts/check_deny_personal_dirs.py roles/apparmor/local_vars/deny_personal_dirs.aa
+  python3 roles/apparmor/scripts/_check_deny_personal_dirs.py
+  python3 roles/apparmor/scripts/_check_deny_personal_dirs.py roles/apparmor/local_vars/deny_personal_dirs.aa
 """
 
 import re
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).parent.parent
-_DEFAULT_FILE = _ROOT / "roles" / "apparmor" / "local_vars" / "deny_personal_dirs.aa"
-_TEMPLATE = _ROOT / "roles/apparmor/templates/local_mixin_deny_personal_dirs.aa.j2"
+# `roles/apparmor/scripts/<this file>` -> `roles/apparmor/` is two `parent`s up.
+_ROLE_DIR = Path(__file__).resolve().parent.parent
+_DEFAULT_FILE = _ROLE_DIR / "local_vars" / "deny_personal_dirs.aa"
+_TEMPLATE = _ROLE_DIR / "templates" / "local_mixin_deny_personal_dirs.aa.j2"
 
 _SEP = "=" * 50
 
@@ -139,8 +140,8 @@ def _check_file(filepath: Path) -> int:
 
     print()
     print(_bold(_SEP))
-    print("To regenerate: python3 scripts/gen_deny_personal_dirs.py <dir> [<dir> ...]")
-    print("Example:       python3 scripts/gen_deny_personal_dirs.py ~/secret_projects ~/vault/*")
+    print("To regenerate: python3 roles/apparmor/scripts/_gen_deny_personal_dirs.py <dir> [<dir> ...]")
+    print("Example:       python3 roles/apparmor/scripts/_gen_deny_personal_dirs.py ~/secret_projects ~/vault/*")
     print(_bold(_SEP))
 
     if errors:

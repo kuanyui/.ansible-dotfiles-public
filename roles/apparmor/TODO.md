@@ -2,7 +2,7 @@
 
 ## `python3-jsonschema` install: handled by the role itself
 
-`scripts/gen_personal_dirs_aa_mixins.py` validates
+`roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py` validates
 `roles/apparmor/local_vars/personal_dirs.yml` against a JSON Schema at playbook
 run time using the `jsonschema` Python package.
 

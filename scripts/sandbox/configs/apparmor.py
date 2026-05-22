@@ -20,11 +20,11 @@ SANDBOX_DIR = Path(__file__).resolve().parents[1]
 DUMMY_COMMANDS_DIR = SANDBOX_DIR / "dummy_commands"
 PERSONAL_DIRS_YML = PROJECT_DIR / "roles" / "apparmor" / "local_vars" / "personal_dirs.yml"
 DENY_PERSONAL_DIRS = PROJECT_DIR / "roles" / "apparmor" / "local_vars" / "deny_personal_dirs.aa"
-CHECK_DENY_PERSONAL_DIRS = PROJECT_DIR / "scripts" / "check_deny_personal_dirs.py"
+CHECK_DENY_PERSONAL_DIRS = PROJECT_DIR / "roles" / "apparmor" / "scripts" / "_check_deny_personal_dirs.py"
 
 
-_SCAFFOLD_PERSONAL_DIRS_YML = PROJECT_DIR / "scripts" / "gen_personal_dirs_definitions_yaml.py"
-_SCAFFOLD_DENY_PERSONAL_DIRS = PROJECT_DIR / "scripts" / "gen_deny_personal_dirs.py"
+_SCAFFOLD_PERSONAL_DIRS_YML = PROJECT_DIR / "roles" / "apparmor" / "scripts" / "gen_personal_dirs_definitions_yaml.py"
+_SCAFFOLD_DENY_PERSONAL_DIRS = PROJECT_DIR / "roles" / "apparmor" / "scripts" / "_gen_deny_personal_dirs.py"
 
 
 def _missing_input_file(missing: Path, scaffolder: Path, extra_note: str = "") -> "SystemExit":

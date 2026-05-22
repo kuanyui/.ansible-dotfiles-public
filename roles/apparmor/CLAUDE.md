@@ -92,9 +92,9 @@ Source of truth:
 
 - `roles/apparmor/app_categories.yml` - the category list (single source).
 - `roles/apparmor/local_vars/personal_dirs.yml` - per-path access policy,
-  gitignored. Scaffolded by `scripts/gen_personal_dirs_definitions_yaml.py` and
+  gitignored. Scaffolded by `roles/apparmor/scripts/gen_personal_dirs_definitions_yaml.py` and
   then hand-edited.
-- `scripts/gen_personal_dirs_aa_mixins.py` - validates the YAML against
+- `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py` - validates the YAML against
   a JSON Schema (with the category enum injected from `app_categories.yml` at
   run time) and emits one abstraction per category.
 

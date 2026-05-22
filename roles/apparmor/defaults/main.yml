@@ -77,7 +77,7 @@ apparmor_template_abstraction_names:
   - local_mixin_xdg_dir_downloads
   - local_mixin_deny_personal_dirs  # DEPRECATED, removed once every profile migrates
   # Per-category personal_dirs abstractions, generated at playbook run time by
-  # scripts/gen_personal_dirs_aa_mixins.py. Names must match the categories
+  # roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py. Names must match the categories
   # listed in roles/apparmor/app_categories.yml.
   - local_mixin_personal_dirs__for__web_browser
   - local_mixin_personal_dirs__for__image_viewer

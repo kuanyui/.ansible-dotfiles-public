@@ -2,8 +2,8 @@
 # =============================================================================
 # DEPRECATED - kept for in-flight migration only, do not use for new work.
 # =============================================================================
-# Replaced by scripts/gen_personal_dirs_definitions_yaml.py, which writes a YAML
-# scaffold consumed by scripts/gen_personal_dirs_aa_mixins.py to produce
+# Replaced by roles/apparmor/scripts/gen_personal_dirs_definitions_yaml.py, which writes a YAML
+# scaffold consumed by roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py to produce
 # per-category abstractions (local_mixin_personal_dirs__for__<category>).
 #
 # This script and the abstraction it feeds (local_mixin_deny_personal_dirs)
@@ -14,9 +14,9 @@
 """Generate an AppArmor deny-rule scaffold for personal directories.
 
 Usage examples:
-  python3 scripts/gen_deny_personal_dirs.py ~/secret_projects
-  python3 scripts/gen_deny_personal_dirs.py ~/secret_projects ~/vault/*
-  python3 scripts/gen_deny_personal_dirs.py ~/vault/* -o roles/apparmor/local_vars/my_deny.aa
+  python3 roles/apparmor/scripts/_gen_deny_personal_dirs.py ~/secret_projects
+  python3 roles/apparmor/scripts/_gen_deny_personal_dirs.py ~/secret_projects ~/vault/*
+  python3 roles/apparmor/scripts/_gen_deny_personal_dirs.py ~/vault/* -o roles/apparmor/local_vars/my_deny.aa
 """
 
 import argparse
@@ -25,7 +25,9 @@ import os
 import sys
 from pathlib import Path
 
-_DEFAULT_OUTPUT = "roles/apparmor/local_vars/deny_personal_dirs.aa"
+# `roles/apparmor/scripts/<this file>` -> `roles/apparmor/` is two `parent`s up.
+_ROLE_DIR = Path(__file__).resolve().parent.parent
+_DEFAULT_OUTPUT = _ROLE_DIR / "local_vars" / "deny_personal_dirs.aa"
 
 
 def resolve_paths(raw: str) -> list[Path]:
@@ -120,7 +122,7 @@ def main() -> None:
         "  cx   - child profile transition, env NOT scrubbed\n"
         "  Ux   - unconfined, env scrubbed   (avoid)\n"
         "  ux   - unconfined, env NOT scrubbed  (avoid)\n\n"
-        "Run scripts/check_deny_personal_dirs.py to verify."
+        "Run roles/apparmor/scripts/_check_deny_personal_dirs.py to verify."
     )
 
 
