@@ -4,5 +4,78 @@
     msg: "Skipping apparmor (setup_apparmor={{ setup_apparmor | default(false) }})."
   when: not setup_apparmor | default(false) | bool
 
+# `python3-jsonschema` is a hard dep of the validator script (used by both
+# the playbook-internal build step in common.yml AND the Makefile's preview
+# step before this playbook even starts). Probe first without `become` -
+# on a host that already has it, the install task is skipped and no sudo
+# prompt happens here. Only on a clean host does sudo prompt for this one
+# install (one-time cost per host).
+- name: Probe whether the `jsonschema` python module is importable
+  ansible.builtin.command: python3 -c "import jsonschema"
+  register: _jsonschema_probe
+  changed_when: false
+  failed_when: false
+  when: setup_apparmor | default(false) | bool
+  tags: apparmor
+
+- name: Install `python3-jsonschema` if not importable
+  ansible.builtin.package:
+    name: python3-jsonschema
+    state: present
+  become: true
+  when:
+    - setup_apparmor | default(false) | bool
+    - _jsonschema_probe.rc | default(1) != 0
+  tags: apparmor
+
+# Preview + confirm. Uses `ansible.builtin.pause` for BOTH display and the
+# y/N prompt - `pause` writes its `prompt:` straight to the terminal (it
+# has to, to read input), bypassing `debug`'s JSON-list formatting. Schema
+# validation happens in the previous task; if invalid, the playbook aborts
+# before this prompt is reached. Skipped in sandbox flow via the var below,
+# because sandbox does its own preview in `_pre_flight` before podman starts.
+- name: Slurp `{{ role_path }}/local_vars/personal_dirs.yml` for preview
+  ansible.builtin.slurp:
+    src: "{{ role_path }}/local_vars/personal_dirs.yml"
+  register: _personal_dirs_raw
+  when:
+    - setup_apparmor | default(false) | bool
+    - not (apparmor_non_interactive | default(false) | bool)
+  tags: apparmor
+
+- name: Schema-validate `personal_dirs.yml` via `--validate-only`
+  ansible.builtin.command:
+    cmd: python3 {{ role_path }}/scripts/gen_personal_dirs_aa_mixins.py --validate-only
+  changed_when: false
+  when:
+    - setup_apparmor | default(false) | bool
+    - not (apparmor_non_interactive | default(false) | bool)
+  tags: apparmor
+
+- name: Preview `personal_dirs.yml` and confirm before applying
+  ansible.builtin.pause:
+    prompt: |
+      ============================================================
+      Contents of {{ role_path }}/local_vars/personal_dirs.yml
+      ============================================================
+      {{ _personal_dirs_raw.content | b64decode }}
+      ============================================================
+
+      Schema OK. Proceed with applying the AppArmor profiles? [y/N]
+  register: _apparmor_confirm
+  when:
+    - setup_apparmor | default(false) | bool
+    - not (apparmor_non_interactive | default(false) | bool)
+  tags: apparmor
+
+- name: Abort if user did not say yes
+  ansible.builtin.fail:
+    msg: Aborted by user (no `y` / `yes` at confirmation prompt).
+  when:
+    - setup_apparmor | default(false) | bool
+    - not (apparmor_non_interactive | default(false) | bool)
+    - (_apparmor_confirm.user_input | default('') | lower) not in ['y', 'yes']
+  tags: apparmor
+
 - ansible.builtin.include_tasks: _install.yml
   when: setup_apparmor | default(false) | bool

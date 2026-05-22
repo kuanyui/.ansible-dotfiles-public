@@ -15,66 +15,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import SandboxConfig  # noqa: E402
 
-PROJECT_DIR = Path(__file__).resolve().parents[3]
 SANDBOX_DIR = Path(__file__).resolve().parents[1]
 DUMMY_COMMANDS_DIR = SANDBOX_DIR / "dummy_commands"
-PERSONAL_DIRS_YML = PROJECT_DIR / "roles" / "apparmor" / "local_vars" / "personal_dirs.yml"
-DENY_PERSONAL_DIRS = PROJECT_DIR / "roles" / "apparmor" / "local_vars" / "deny_personal_dirs.aa"
-CHECK_DENY_PERSONAL_DIRS = PROJECT_DIR / "roles" / "apparmor" / "scripts" / "_check_deny_personal_dirs.py"
-
-
-_SCAFFOLD_PERSONAL_DIRS_YML = PROJECT_DIR / "roles" / "apparmor" / "scripts" / "gen_personal_dirs_definitions_yaml.py"
-_SCAFFOLD_DENY_PERSONAL_DIRS = PROJECT_DIR / "roles" / "apparmor" / "scripts" / "_gen_deny_personal_dirs.py"
-
-
-def _missing_input_file(missing: Path, scaffolder: Path, extra_note: str = "") -> "SystemExit":
-    """Tell the user what to run. The `Run:` line is a clean starter command
-    (no `--help`) so it can be copy-pasted and then extended with arguments.
-    The scaffolder's `--help` output follows below under a divider as
-    reference documentation."""
-    print(f"ERROR: {missing} not found.", file=sys.stderr)
-    if extra_note:
-        print(extra_note, file=sys.stderr)
-    print("", file=sys.stderr)
-    print("Run:", file=sys.stderr)
-    print("", file=sys.stderr)
-    starter = f"python3 {scaffolder.relative_to(PROJECT_DIR)}"
-    print(starter, file=sys.stderr)
-    print("", file=sys.stderr)
-    print("-------- usage of the above script --------", file=sys.stderr)
-    print("", file=sys.stderr)
-    subprocess.run([sys.executable, str(scaffolder), "--help"])
-    return SystemExit(1)
 
 
 def _pre_flight(project_dir: Path) -> None:
-    # Mirror Makefile `apply-apparmor`: existence check for the new YAML
-    # pipeline, then the same existence + bare-x lint for the DEPRECATED `.aa`
-    # (still required while `local_mixin_container_base` depends on the old
-    # single-mixin abstraction).
-    #
-    # Schema validation of the YAML happens inside the playbook (gated by
-    # `python3-jsonschema` install via `ansible.builtin.package`), not here -
-    # this pre-flight only runs stdlib-safe checks.
-    if not PERSONAL_DIRS_YML.exists():
-        raise _missing_input_file(PERSONAL_DIRS_YML, _SCAFFOLD_PERSONAL_DIRS_YML)
-
-    if not DENY_PERSONAL_DIRS.exists():
-        raise _missing_input_file(
-            DENY_PERSONAL_DIRS,
-            _SCAFFOLD_DENY_PERSONAL_DIRS,
-            extra_note="(still required while container_base mixin uses it - DEPRECATED).",
-        )
-    # `apparmor_parser` only catches invalid policy modes (e.g. `d` copied
-    # from an audit-log mask) at kernel load time, which `--skip-kernel-load`
-    # in the post-check skips - so this lint is the only place the bare-x
-    # syntax issue can be caught inside the sandbox.
-    result = subprocess.run(
-        [sys.executable, str(CHECK_DENY_PERSONAL_DIRS)],
-        cwd=str(project_dir),
-    )
-    if result.returncode != 0:
-        raise SystemExit(result.returncode)
+    """Preview `personal_dirs.yml` + schema-validate it BEFORE any container
+    work (image build, apt install, project copy - the ~1-2 min preamble).
+    Lets the user `Ctrl+C` immediately if the YAML looks wrong, instead of
+    paying the container-setup cost only to see the preview from inside the
+    playbook later. Mirrors the Makefile `apply-apparmor` target's preview
+    step; the role itself no longer carries preview/confirm tasks since
+    ansible's local connection can't produce clean stdout for them."""
+    validator = project_dir / "roles" / "apparmor" / "scripts" / "gen_personal_dirs_aa_mixins.py"
+    subprocess.run([sys.executable, str(validator), "--validate-only"], check=True)
 
 
 def _post_check_apparmor_syntax(project_dir: Path, container) -> int:
@@ -145,7 +99,12 @@ CONFIG = SandboxConfig(
         Path.home() / ".mozilla/firefox/profiles.ini":
             "/home/sandboxuser/.mozilla/firefox/profiles.ini",
     },
-    extra_ansible_vars={"setup_apparmor": True},
+    extra_ansible_vars={
+        "setup_apparmor": True,
+        # Skip the role's preview+confirm pause - sandbox does the same
+        # preview in `_pre_flight` above, BEFORE any container work happens.
+        "apparmor_non_interactive": True,
+    },
     # Full unit override for `apparmor.service` inside the sandbox. Reason: the
     # stock Debian unit has `AssertSecurity=apparmor` (and/or `ConditionSecurity=`),
     # which checks the kernel-level LSM state. In a rootless container

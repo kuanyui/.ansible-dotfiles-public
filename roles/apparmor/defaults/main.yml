@@ -7,6 +7,15 @@ apparmor_xdg_download_subdir: "Downloads"   # fallback; overridden at runtime fr
 apparmor_xdg_pictures_subdir: "Pictures"   # fallback; overridden at runtime from user-dirs.dirs
 apparmor_xdg_screenshots_exists: false     # fallback; overridden at runtime by stat task
 
+# `apparmor_non_interactive`: skip the `personal_dirs.yml` preview + y/N
+# confirm pair in `tasks/main.yml`. Off by default - safety net for
+# `make apply-apparmor`. The sandbox config (`scripts/sandbox/configs/apparmor.py`)
+# sets it to true because sandbox does its own preview in `_pre_flight`
+# BEFORE any container work, which is a better UX than waiting through the
+# ~1-2 min image build only to see the preview from inside the playbook.
+apparmor_non_interactive: false
+
+
 # Static AppArmor profiles managed by this role.
 # src: filename under roles/apparmor/files/profiles/
 # dest: filename deployed to /etc/apparmor.d/ (no extension)
