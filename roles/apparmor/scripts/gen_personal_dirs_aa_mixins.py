@@ -39,6 +39,14 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+# Sibling helper - kept in its own module because syntax highlighting is a
+# preview-UX concern, not part of the abstraction-generation pipeline.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from preview_yaml_with_syntax_highlight import (  # noqa: E402
+    colorize_preview,
+    resolve_color_mode,
+)
 # `jsonschema` is intentionally NOT imported at module top. It is a hard runtime
 # dep only of `validate_definitions()`. Importing it eagerly here would mean any
 # transitive import (e.g. scaffold script -> this module for `build_schema` /
@@ -343,6 +351,17 @@ def main() -> None:
             "playbook."
         ),
     )
+    parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help=(
+            "Colorize the --validate-only YAML preview. `auto` (default) "
+            "enables color when stdout is a TTY and NO_COLOR is unset; "
+            "`always` forces it on (useful when piping into another viewer "
+            "that handles ANSI, e.g. ansible.builtin.pause)."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -374,8 +393,14 @@ def main() -> None:
         except (OSError, ValueError, yaml.YAMLError) as e:
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
-        print(f"# Contents of {args.definitions}:")
-        print(raw.rstrip())
+        color = resolve_color_mode(args.color)
+        # Path on its own line so triple-click / double-click selects ONLY
+        # the path (mixing prose like "# Contents of X:" breaks copy-paste).
+        print("# Contents of:")
+        print(args.definitions)
+        print()
+        print(colorize_preview(raw.rstrip(), color=color, star_sentinel=_ANY_SENTINEL))
+        print()
         print(f"# OK - {len(definitions)} entr{'y' if len(definitions) == 1 else 'ies'}, schema-valid.")
         return
 
