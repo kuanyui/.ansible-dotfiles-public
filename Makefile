@@ -68,8 +68,8 @@ apply-incus:  ## Install v-<agent> Incus VM launchers (bypasses `setup_incus` ga
 unapply-incus:  ## Uninstall incus launchers (reads ~/.local/share/ansible-managed/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_uninstall.yml
 
-apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). Role previews `personal_dirs.yml` + asks y/N before any `become: true` task; first sudo prompt fires mid-playbook (after confirm) and sudo's own ~15min cache covers the rest. Bypasses `setup_apparmor` gate.
-	$(PLAYBOOK) --diff $(PLAYBOOKS)/apparmor.yml
+apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). Asks for the BECOME password up-front (`--ask-become-pass`, same as other `apply-*` targets) so ansible's later `become: true` tasks don't fail with `sudo: a password is required`; ansible's default sudo invocation includes `-n` (non-interactive), so a primed sudo cache is not enough on its own. Role previews `personal_dirs.yml` + asks y/N before any `become: true` task. Bypasses `setup_apparmor` gate.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/apparmor.yml
 
 ### -------------------------------------------------------------------------
 ### Dry-run (--check --diff)
