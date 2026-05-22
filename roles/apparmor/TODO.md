@@ -8,12 +8,20 @@ run time using the `jsonschema` Python package.
 
 Handled by:
 
-- `roles/apparmor/tasks/common.yml`: an `ansible.builtin.package` task installs
-  `python3-jsonschema` (same package name on Debian / openSUSE / Fedora) before
-  the builder is invoked. `ansible_pkg_mgr` dispatches to the right backend.
-- `scripts/sandbox/configs/apparmor.py`: `extra_packages_apt` also lists
-  `python3-jsonschema` so the sandbox image has it from build time, before
-  the playbook even runs.
+- `roles/apparmor/tasks/main.yml`: delegates to the shared sub-role
+  `_install_distro_packages` via `ansible.builtin.include_role`. The sub-role
+  takes a per-`os_family` dict (Debian / Suse / RedHat) with `install: [...]`
+  + optional `probe`; it shells out to `zypper --non-interactive install` on
+  openSUSE (because `ansible.builtin.package` would dispatch to
+  `community.general.zypper`, violating the ansible-core-only rule) and uses
+  `ansible.builtin.apt` / `ansible.builtin.dnf` elsewhere. The probe
+  (`python3 -c "import jsonschema"`) gates the install so hosts that already
+  have it skip silently. See `roles/_install_distro_packages/tasks/main.yml`
+  for the contract.
+- `scripts/sandbox/configs/apparmor.py`: `_pre_flight` runs the same probe
+  on the host (before any container work) and shells out to the host's
+  package manager via `sudo` if missing. `extra_packages_apt` then ensures
+  the sandbox container also has it from apt install time.
 - `roles/apparmor/CLAUDE.md`: documents the hard dep.
 
 Rule: install the distro package, not via pip. This project uses ansible-core

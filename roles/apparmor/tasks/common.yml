@@ -119,16 +119,9 @@
 # `{{ role_path }}/local_vars/generated_abstractions/`, which is then copied
 # into `/etc/apparmor.d/abstractions/`.
 
-# `python3-jsonschema` is a hard runtime dep of the builder script; without
-# it the next `command:` task crashes with `ModuleNotFoundError`. The distro
-# package name is `python3-jsonschema` on Debian / openSUSE / Fedora alike,
-# so `ansible.builtin.package` dispatches correctly.
-- name: Install distro package `python3-jsonschema` (hard dep of `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py`)
-  ansible.builtin.package:
-    name: python3-jsonschema
-    state: present
-  become: true
-  tags: apparmor
+# `python3-jsonschema` install is handled earlier in main.yml via the
+# `_install_distro_packages` sub-role (probe + distro-aware install). By the
+# time this builder runs, jsonschema is guaranteed present.
 
 - name: Stat `{{ role_path }}/local_vars/personal_dirs.yml`
   ansible.builtin.stat:

@@ -1,0 +1,113 @@
+---
+# Distro-aware package installer using only ansible-core modules. Avoids
+# `ansible.builtin.package` because that dispatches to `community.general.zypper`
+# on openSUSE, which violates this project's ansible-core-only rule (see
+# top-level CLAUDE.md).
+#
+# Caller passes a per-os_family dict via `install_distro_packages`. Each
+# entry under an `os_family` key is itself a dict:
+#
+#   install: [pkg, ...]    # REQUIRED: list of package names for that family
+#   probe:   <shell cmd>   # OPTIONAL: rc=0 means "already done", skip install
+#
+# Behavior:
+#   - host's `os_family` not in dict      -> FAIL (caller did not declare support)
+#   - `probe` omitted                     -> install runs unconditionally (rely on
+#                                            apt/dnf/zypper's own idempotency)
+#   - `probe` rc=0                        -> install is skipped (semantic
+#                                            "already done", e.g. `import X`)
+#   - `probe` rc!=0                       -> install runs
+#
+# Supported os_family values: Debian, Suse, RedHat. Adding a new family means
+# adding one branch below; this role is the single point of change.
+#
+# Usage:
+#   - name: Ensure `python3-jsonschema` is present
+#     ansible.builtin.include_role:
+#       name: _install_distro_packages
+#     vars:
+#       install_distro_packages:
+#         Debian:
+#           install: [python3-jsonschema]
+#           probe: 'python3 -c "import jsonschema"'
+#         Suse:
+#           install: [python3-jsonschema]
+#           probe: 'python3 -c "import jsonschema"'
+#         RedHat:
+#           install: [python3-jsonschema]
+#           probe: 'python3 -c "import jsonschema"'
+
+- name: Assert `install_distro_packages` was provided and is a dict
+  ansible.builtin.assert:
+    that:
+      - install_distro_packages is defined
+      - install_distro_packages is mapping
+    fail_msg: >-
+      `install_distro_packages` must be a dict keyed by ansible_facts.os_family
+      (Debian / Suse / RedHat), with `install: [...]` per entry. See
+      roles/_install_distro_packages/tasks/main.yml for the contract.
+
+- name: Assert host's `os_family` is declared in `install_distro_packages`
+  ansible.builtin.assert:
+    that: ansible_facts['os_family'] in install_distro_packages
+    fail_msg: >-
+      Host's os_family '{{ ansible_facts["os_family"] }}' is not declared in
+      `install_distro_packages`. Caller either does not support this distro,
+      or forgot to add an entry. Declared families:
+      {{ install_distro_packages.keys() | list }}.
+
+- name: Set `_install_distro_packages_entry` to the host's `os_family` block
+  ansible.builtin.set_fact:
+    _install_distro_packages_entry: "{{ install_distro_packages[ansible_facts['os_family']] }}"
+
+- name: Assert the `os_family` entry has a non-empty `install:` list
+  ansible.builtin.assert:
+    that:
+      - _install_distro_packages_entry.install is defined
+      - _install_distro_packages_entry.install is sequence
+      - _install_distro_packages_entry.install | length > 0
+    fail_msg: >-
+      `install_distro_packages[{{ ansible_facts["os_family"] }}].install` must
+      be a non-empty list of package names.
+
+- name: Probe (`{{ _install_distro_packages_entry.probe | default("(none)") }}`) whether packages are already present
+  ansible.builtin.shell: "{{ _install_distro_packages_entry.probe }}"
+  register: _install_distro_packages_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _install_distro_packages_entry.probe is defined
+
+- name: Set `_install_distro_packages_needed` based on probe result (true when no probe, or probe rc!=0)
+  ansible.builtin.set_fact:
+    _install_distro_packages_needed: >-
+      {{ (_install_distro_packages_entry.probe is not defined) or
+         (_install_distro_packages_probe.rc | default(1) != 0) }}
+
+- name: Install `{{ _install_distro_packages_entry.install | join(", ") }}` via `zypper --non-interactive install` (openSUSE)
+  ansible.builtin.command:
+    argv: "{{ ['zypper', '--non-interactive', 'install'] + _install_distro_packages_entry.install }}"
+  become: true
+  when:
+    - _install_distro_packages_needed | bool
+    - ansible_facts['os_family'] == 'Suse'
+
+- name: Install `{{ _install_distro_packages_entry.install | join(", ") }}` via `ansible.builtin.apt` (Debian)
+  ansible.builtin.apt:
+    name: "{{ _install_distro_packages_entry.install }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+  when:
+    - _install_distro_packages_needed | bool
+    - ansible_facts['os_family'] == 'Debian'
+
+- name: Install `{{ _install_distro_packages_entry.install | join(", ") }}` via `ansible.builtin.dnf` (RedHat)
+  ansible.builtin.dnf:
+    name: "{{ _install_distro_packages_entry.install }}"
+    state: present
+  become: true
+  when:
+    - _install_distro_packages_needed | bool
+    - ansible_facts['os_family'] == 'RedHat'

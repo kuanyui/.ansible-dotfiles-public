@@ -4,28 +4,29 @@
     msg: "Skipping apparmor (setup_apparmor={{ setup_apparmor | default(false) }})."
   when: not setup_apparmor | default(false) | bool
 
-# `python3-jsonschema` is a hard dep of the validator script (used by both
-# the playbook-internal build step in common.yml AND the Makefile's preview
-# step before this playbook even starts). Probe first without `become` -
-# on a host that already has it, the install task is skipped and no sudo
-# prompt happens here. Only on a clean host does sudo prompt for this one
-# install (one-time cost per host).
-- name: Probe whether the `jsonschema` python module is importable
-  ansible.builtin.command: python3 -c "import jsonschema"
-  register: _jsonschema_probe
-  changed_when: false
-  failed_when: false
+# `python3-jsonschema` is a hard dep of the validator script invoked by the
+# preview step (--validate-only) AND by common.yml's build step. Delegate
+# install to the shared sub-role; it handles the openSUSE / Debian / RedHat
+# split with ansible-core only (the `community.general.zypper` workaround).
+# On a host that already has it, the probe rc=0 and the install is skipped
+# silently (no sudo prompt). On a clean host, install fires once.
+- name: Ensure `python3-jsonschema` (hard dep of `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py`)
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+    apply:
+      tags: apparmor
+  vars:
+    install_distro_packages:
+      Debian:
+        install: [python3-jsonschema]
+        probe: 'python3 -c "import jsonschema"'
+      Suse:
+        install: [python3-jsonschema]
+        probe: 'python3 -c "import jsonschema"'
+      RedHat:
+        install: [python3-jsonschema]
+        probe: 'python3 -c "import jsonschema"'
   when: setup_apparmor | default(false) | bool
-  tags: apparmor
-
-- name: Install `python3-jsonschema` if not importable
-  ansible.builtin.package:
-    name: python3-jsonschema
-    state: present
-  become: true
-  when:
-    - setup_apparmor | default(false) | bool
-    - _jsonschema_probe.rc | default(1) != 0
   tags: apparmor
 
 # Preview + confirm. Uses `ansible.builtin.pause` for BOTH display and the
