@@ -84,3 +84,11 @@
     owner @{HOME}/.mozilla/firefox/firefox-mpris/ rw,
     owner @{HOME}/.mozilla/firefox/firefox-mpris/** rwk,
 
+    # XDG cross-app recents - GTK file dialog reads recently-used.xbel on
+    # every open/save to populate its "Recently Used" tab. The file is a
+    # SHARED log of every recent-file event across every GTK / xdg-utils
+    # app on the system (filenames + paths + which app opened them) -
+    # exactly what an isolated browser must not see. `deny` (NOT `audit
+    # deny`) silences the spam from GTK probing it on each dialog open.
+    deny owner @{HOME}/.local/share/recently-used.xbel r,
+
