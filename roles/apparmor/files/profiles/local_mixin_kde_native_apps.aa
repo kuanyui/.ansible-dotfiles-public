@@ -66,8 +66,6 @@ owner @{HOME}/.local/share/#[0-9]* rw,           # QSaveFile temp directly under
 owner @{HOME}/.local/share/kxmlgui5/{,**} rwl,   # KXmlGui per-app GUI layouts; `l` covers hard-link backup step
 owner /run/user/*/gvfs/ r,                       # GVfs FUSE mount enumeration (KIO interop with GNOME apps)
 
-# KIO - thumbnailer cache.
-# Only `w` on the size-bucketed subdirs (chmod is the audited operation;
-# `w` is the AppArmor mode that covers chmod). Reads or file-level writes
-# inside these dirs have not been audited yet.
-owner @{HOME}/.cache/thumbnails/{normal,large,x-large,xx-large}/ w,
+# XDG thumbnail cache is intentionally NOT here - it's a cross-desktop
+# freedesktop.org spec (not KDE-specific), so it lives in its own mixin.
+# Apps that write thumbnails should also `#include <abstractions/local_mixin_xdg_thumbnailer>`.

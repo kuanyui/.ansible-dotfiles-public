@@ -1,0 +1,26 @@
+# Managed by Ansible - do not edit manually
+# XDG thumbnail cache writer -
+# /etc/apparmor.d/abstractions/local_mixin_xdg_thumbnailer
+#
+# Include this in profiles for apps that generate thumbnails per the
+# freedesktop.org XDG thumbnail spec - file managers (Dolphin, Nautilus,
+# Thunar) and image viewers (Gwenview, Eye of GNOME, gThumb). Apps that
+# only consume thumbnails passively (file dialog previews etc.) usually
+# don't need this; only apps that WRITE new thumbnails do.
+#
+# Spec: https://specifications.freedesktop.org/thumbnail-spec/
+#
+# Covers all size buckets (normal / large / x-large / xx-large), the
+# fail/ subdir (failed thumbnail records to avoid retry loops), and all
+# file operations (atomic save via O_TMPFILE + linkat, named <hash>.png
+# files, flock on lock files).
+#
+# Broad `rwk` is safe here because:
+#   - own-user cache (`owner` keyword) - no cross-user exposure
+#   - contents are PNG derivatives of images the app already has access
+#     to via its personal_dirs grants, so writing them does not reveal
+#     anything new
+#   - the directory is dedicated to thumbnails (not shared with other
+#     app data), so broadening does not cross app boundaries
+
+owner @{HOME}/.cache/thumbnails/{,**} rwk,
