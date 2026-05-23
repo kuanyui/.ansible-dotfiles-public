@@ -52,6 +52,8 @@ owner @{PROC}/@{pid}/mounts r,                # own pid only
 /sys/devices/pci*/**/uevent r,                # PCI device uevent files
 /sys/devices/pci*/**/vendor r,                # PCI device vendor ID files
 /sys/devices/pci*/**/device r,                # PCI device numeric IDs
+/sys/devices/pci*/**/subsystem_vendor r,      # PCI subsystem vendor IDs
+/sys/devices/pci*/**/subsystem_device r,      # PCI subsystem device IDs
 /run/udev/data/* r,                           # udev per-device metadata (Solid maps sysfs nodes to udev tags)
 
 # KIO + KXmlGui - state files written via QSaveFile / KSaveFile atomic save.
