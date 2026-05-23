@@ -120,6 +120,28 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     owner @{HOME}/.local/share/gwenview/** rwkl,
     owner @{HOME}/.local/state/gwenviewstaterc rwk,
     owner @{HOME}/.local/state/gwenviewstaterc.lock rwk,
-    owner @{HOME}/.local/state/#[0-9]* rw,     # QSaveFile temp for atomic save of gwenviewstaterc
+    owner @{HOME}/.local/state/#[0-9]* rw,                # QSaveFile temp for atomic save of gwenviewstaterc
+    owner @{HOME}/.local/state/gwenviewstaterc.?????? l,  # KSaveFile mkstemp link target (6-char suffix from mkstemp)
+    owner @{HOME}/.config/#[0-9]* rw,                     # QSaveFile temp for atomic save of files under .config/
+
+    # KIO - NSS uid/gid name resolution silently denied. kioworker calls
+    # getpwuid / getgrgid via libc NSS to render file Owner/Group columns
+    # only; actual open/read/write uses kernel uid checks, not NSS, so
+    # denying only breaks that cosmetic display. /usr/etc/ is openSUSE's
+    # NSS fallback path. If KIO rules later get factored into a dedicated
+    # mixin (local_mixin_kio), this block moves there too.
+    deny /etc/nsswitch.conf r,
+    deny /usr/etc/nsswitch.conf r,
+    deny /etc/passwd r,
+    deny /etc/group r,
+
+    # Baloo file index intentionally blocked. Baloo's Xapian database under
+    # ~/.local/share/baloo/ contains the user's full-text index (every
+    # filename, EXIF, document body, mail header that baloo has crawled).
+    # An image viewer has no business reading that. Cost: KIO file dialogs
+    # lose baloo-backed search-as-you-type integration; basic file
+    # listing still works. Use plain `deny` (NOT `audit deny`) to silence
+    # the spam from kioworker probing the index.
+    deny owner @{HOME}/.local/share/baloo/{,**} r,
 
 }
