@@ -60,6 +60,8 @@ apparmor_static_abstractions:
     dest: abstractions/local_mixin_xdg
   - src: local_mixin_kde.aa
     dest: abstractions/local_mixin_kde
+  - src: local_mixin_kde_native_apps.aa
+    dest: abstractions/local_mixin_kde_native_apps
   - src: local_mixin_container_base.aa
     dest: abstractions/local_mixin_container_base
 

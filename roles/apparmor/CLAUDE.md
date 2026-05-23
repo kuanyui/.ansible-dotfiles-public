@@ -150,3 +150,34 @@ These three are distinct and must not be conflated:
 
 Never call an AppArmor profile a "sandbox profile". Never suggest `Ux` to fix disconnected-path
 denials - that removes MAC. The correct fix is `flags=(attach_disconnected)`.
+
+## Least-privilege scoping (strictly audit-driven)
+
+Profile and mixin rules must be **strictly audit-driven**. When extending a profile or mixin
+in response to a denial, the default posture is the narrowest rule that fixes the audited
+denial. NOT one mode wider, NOT one path level deeper, NOT one extra parent dir.
+
+- **Only audited paths.** If audit shows `/sys/bus/` and `/sys/bus/usb/devices/`, the rule is
+  two specific lines, NOT `/sys/bus/{,**} r,`. If a deeper path appears in a later audit,
+  expand then. Same for `{,**}` glob suffixes - only add the suffix when sub-path access is
+  actually audited.
+- **Only audited modes.** Audit shows `r` -> rule is `r`, not `rwk`. Audit shows `chmod`
+  (`w` mask in policy) -> rule is `w`, not `rw`. Add `k` (flock), `l` (hard link), or `m`
+  (mmap exec) only when the corresponding operation appears in audit, never preemptively
+  "because it's a state file / library / cache".
+- **No speculative parent dirs.** If audit shows chmod on `~/.cache/foo/normal/`, do not
+  also grant `~/.cache/foo/`. The parent is added only if a future audit shows an operation
+  on the parent itself.
+- **Mixin scope is multiplied.** A rule in a mixin grants that access to every profile that
+  includes the mixin. Before adding to a mixin, confirm the path is needed by 3+ distinct
+  callers (the "3rd-caller rule" - see TODO.md). Until then, inline into the single profile
+  that needs it. A single audit hit is NEVER enough evidence to promote to a mixin.
+- **`owner` keyword by default** on any `~/` or `/proc/<pid>/` rule. For self-introspection,
+  prefer `@{PROC}/@{pid}/...` (literally own pid) over `owner /proc/[0-9]*/...` (any
+  same-user pid) - the threat model assumes the confined app may be compromised, and
+  cross-process info disclosure between same-user pids is still disclosure.
+- **No "since we're already adding".** Adjacent rules that look related but are not audited
+  do not get a free ride.
+
+The cost of being too narrow is one extra audit iteration. The cost of being too broad is
+attack surface that takes a security review to find again.

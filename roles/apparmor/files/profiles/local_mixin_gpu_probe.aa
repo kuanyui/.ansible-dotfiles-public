@@ -13,6 +13,11 @@
 # local_mixin_gpu, not here. This mixin must NEVER grant any of those -
 # keeping the metadata-vs-hardware boundary tight is the whole point.
 #
+# Intentionally narrow: only the strict common subset (just glvnd) is in
+# here. Apps that need broader GPU stack reads (mpv, gwenview) inline
+# them per-profile. Promote a new path here only when a third caller hits
+# the same denial (TODO.md "3rd-caller" rule).
+#
 # Current callers: mpv (local_base_mpv), Telegram (local_pathbased_telegram),
 # Gwenview (local_pathbased_gwenview).
 

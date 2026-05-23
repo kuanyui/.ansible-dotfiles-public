@@ -12,6 +12,9 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     #include <abstractions/fonts>
 
     #include <abstractions/local_mixin_kde>
+    #include <abstractions/local_mixin_kde_native_apps>
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_audio>
     #include <abstractions/local_mixin_xdg_dir_pictures_screenshots>
     #include <abstractions/local_mixin_xdg_dir_downloads>
     #include <abstractions/local_mixin_deny_keyrings>
@@ -41,6 +44,48 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     # scoped here instead of promoting to local_mixin_qt or local_mixin_kde.
     owner /run/user/*/#[0-9]* rwk,
 
+    # Session / machine identity. Read by libsystemd-style code and KDE
+    # frameworks for D-Bus session identification. Both files are world-
+    # readable; the values themselves are not secrets (boot_id changes on
+    # every boot, machine-id is a stable but well-known per-host identifier).
+    @{PROC}/sys/kernel/random/boot_id r,
+    /etc/machine-id r,
+
+    # KIO worker sockets. KIO spawns kioworker processes for each protocol
+    # (file://, sftp://, etc.) and bonds to them via unix sockets in
+    # XDG_RUNTIME_DIR. The atomic-create pattern is: open O_TMPFILE, bind,
+    # then linkat() the anon fd to the final socket path. `rwl` covers the
+    # socket file's read/write traffic and the final hard-link step.
+    owner /run/user/*/gwenview*.kioworker.socket rwl,
+
+    # udmabuf - kernel module that lets userspace assemble dma-buf objects
+    # from regular memfd-backed pages, without needing GPU device access.
+    # Used by gwenview's image render pipeline for zero-copy delivery of
+    # decoded image frames to the compositor (Wayland dmabuf protocol).
+    # Distinct from the GPU device nodes (/dev/dri/renderD*) which stay
+    # denied - udmabuf only deals with the host RAM side of the handover.
+    /dev/udmabuf rw,
+
+    # 3D / DRI / Vulkan / mesa-shader-cache inert metadata. Kept inline (NOT
+    # promoted to local_mixin_gpu_probe) because telegram - the third caller
+    # of gpu_probe - runs with `LIBGL_ALWAYS_SOFTWARE=1` and explicitly does
+    # NOT want the vulkan / drirc / shader-cache reads (over-grant would
+    # let a compromised telegram pollute the system-wide mesa shader cache).
+    # mpv has the same set inline. Promote here only when a non-telegram /
+    # non-mpv / non-gwenview app hits the same denials.
+    /dev/dri/ r,                                  # DRM card directory listing (NOT the device nodes)
+    /usr/share/vulkan/icd.d/{,**} r,              # Vulkan installable client driver manifests
+    /usr/share/vulkan/implicit_layer.d/{,**} r,   # Vulkan implicit layer manifests
+    /usr/share/drirc.d/{,**} r,                   # DRI driver workaround configs
+    owner @{HOME}/.cache/mesa_shader_cache/{,**} rwk,  # llvmpipe software rasterizer also writes here
+
+    # Process self-introspection (only /proc/<own pid>/fd/, narrowly scoped
+    # to what gwenview actually audits - KIO/Qt walking own open fds during
+    # kioworker fork). NOT promoted to local_mixin_qt: most Qt apps do not
+    # need this and granting it widens the attack surface (ASLR addresses,
+    # mmap'd library inspection, env var leaks via /proc/<pid>/environ).
+    owner @{PROC}/@{pid}/fd/ r,
+
     # Gwenview's own application data
     /usr/share/gwenview/{,**} r,                 # color schemes, images, cursors, etc.
     /usr/libexec/libheif/{,**} r,                # libheif plugins (HEIC / HEIF format support)
@@ -60,5 +105,6 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     owner @{HOME}/.local/share/gwenview/ rw,
     owner @{HOME}/.local/share/gwenview/** rwkl,
     owner @{HOME}/.local/state/gwenviewstaterc rwk,
+    owner @{HOME}/.local/state/gwenviewstaterc.lock rwk,
 
 }

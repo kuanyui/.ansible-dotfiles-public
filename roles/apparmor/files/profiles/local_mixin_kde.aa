@@ -1,29 +1,29 @@
 # Managed by Ansible - do not edit manually
 # KDE desktop integration rules - /etc/apparmor.d/abstractions/local_mixin_kde
 #
-# Include this in any profile that uses KDE frameworks at runtime. Pulls in
+# Include this in any profile that needs KDE *theme* integration: reading
+# the color scheme, window manager hints, input device settings, and the
+# notification framework's installed .notifyrc files. Pulls in
 # local_mixin_qt automatically (KDE always requires Qt). Typical users:
-# Chromium, VSCode, Gwenview, Okular, other KDE-integrated GUI apps.
+# Chromium, VSCode, Telegram, and other non-KDE-native apps that just
+# want their UI to match the KDE theme.
+#
+# For profiles that ARE native KDE apps (Okular, Gwenview, etc.) and use
+# KIO for file dialogs, Solid for hardware probing, KXmlGui for toolbars,
+# or the KDE thumbnailer / KFilePlacesView state files, ALSO include
+# local_mixin_kio. That split exists to keep this mixin's attack surface
+# small for the many non-KDE callers above.
 #
 # KDE frameworks touched here:
 #   - KConfig          configuration file parser (kdeglobals, kwinrc, etc.)
 #   - KColorScheme     color scheme library (Breeze and friends)
 #   - KNotifications   desktop notification framework (.notifyrc files)
-#   - KIO              I/O / filesystem abstraction (file dialogs,
-#                      KFilePlacesView, thumbnailer)
-#   - Solid            KDE hardware abstraction layer. Probes block devices,
-#                      batteries, network state by reading /proc, /sys,
-#                      /etc/fstab.
-#   - KXmlGui          per-app GUI layout state (toolbar / menu definitions)
-#   - QSaveFile        Qt's atomic-save tempfile pattern (`#<digits>`) used
-#                      by KConfig / KIO whenever a KDE state file is rewritten
 
 #include <abstractions/local_mixin_qt>
 
-# KConfig - system-wide config files in /etc/xdg/
+# KConfig - system-wide theme/config files in /etc/xdg/
 /etc/xdg/kdeglobals r,                        # KDE global theme/fonts
 /etc/xdg/kwinrc r,                            # window manager defaults
-/etc/xdg/baloofilerc r,                       # baloo file indexer config
 
 # KColorScheme - system color scheme files
 /usr/share/color-schemes/{,**} r,             # BreezeLight.colors and friends
@@ -31,43 +31,10 @@
 # KNotifications - system .notifyrc files
 /usr/share/knotifications6/{,**} r,
 
-# KConfig - user config files in ~/.config/
+# KConfig - user theme/config files in ~/.config/
 owner @{HOME}/.config/kdeglobals r,           # user theme / fonts / colors
 owner @{HOME}/.config/kdedefaults/{,**} r,    # distribution-level overrides
 owner @{HOME}/.config/kcminputrc r,           # input device settings (cursor, mouse speed)
 owner @{HOME}/.config/kwinrc r,               # window manager user settings
 owner @{HOME}/.config/klanguageoverridesrc r, # per-app language overrides
 owner @{HOME}/.config/breezerc r,             # Breeze theme (window decorations, animations)
-owner @{HOME}/.config/baloofilerc r,          # user baloo file indexer config
-owner @{HOME}/.config/trashrc r,              # user trash config (paths, retention)
-
-# Solid - KDE hardware abstraction layer.
-# Probes the system's storage / device / power / network topology. Storage
-# probe path (the most visible one):
-#   KIO's KFilePlacesView -> Solid -> reads /proc/<pid>/{mountinfo,mounts},
-#   /etc/fstab, scans /sys/{bus,class}/ for udev metadata -> returns "you
-#   have a USB drive at /run/media/foo" to render the "Devices" /
-#   "Removable" sections in file dialogs.
-# METADATA ONLY. The actual mounted contents under /run/media/, /media/,
-# /mnt/ remain denied via local_mixin_deny_mounted_external_media. `owner`
-# on /proc/<pid>/ limits reads to processes the same user owns (cross-user
-# info disclosure stays blocked).
-owner /proc/[0-9]*/mountinfo r,               # kernel mount table for own pids
-owner /proc/[0-9]*/mounts r,                  # legacy mount table for own pids
-/etc/fstab r,                                 # text fstab (NOT permission to mount)
-/ r,                                          # KDirLister enumerates root-dir entries (NOT recursive read of /)
-/sys/bus/ r,                                  # Solid device-class probe (dir entries only)
-/sys/class/ r,                                # Solid device-class probe (dir entries only)
-
-# KIO + KXmlGui - state files written via QSaveFile / KSaveFile atomic save.
-# QSaveFile writes a `#<digits>` temp in the target file's directory,
-# fsync()s, then atomic-renames over the target. KXmlGui additionally
-# hard-links the temp to a backup before the rename, which is why
-# kxmlgui5/ needs the `l` mode.
-owner @{HOME}/.local/share/user-places.xbel rwk, # KIO KFilePlacesView bookmarks
-owner @{HOME}/.local/share/#[0-9]* rwk,          # QSaveFile temp directly under .local/share/ (atomic save of user-places.xbel)
-owner @{HOME}/.local/share/kxmlgui5/{,**} rwkl,  # KXmlGui per-app GUI layouts; `l` covers the hard-link backup step
-
-# KIO - thumbnailer cache
-owner @{HOME}/.cache/thumbnails/ rw,                                        # cache root (chmod target)
-owner @{HOME}/.cache/thumbnails/{normal,large,x-large,xx-large}/{,**} rwk,  # size-bucketed thumbnail dirs

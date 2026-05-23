@@ -1,0 +1,68 @@
+# Managed by Ansible - do not edit manually
+# KDE native-app framework rules -
+# /etc/apparmor.d/abstractions/local_mixin_kde_native_apps
+#
+# Include this in profiles that are themselves NATIVE KDE apps (Okular,
+# Gwenview, Dolphin, Kate, etc.) - i.e. apps that use KIO for file dialogs,
+# Solid for device probing, KXmlGui for toolbars/menus, or the KDE
+# thumbnailer cache. This complements local_mixin_kde (which only covers
+# theme integration) - native KDE apps include BOTH.
+#
+# Do NOT include this in profiles that merely want KDE theme integration
+# (Chromium, VSCode, Telegram, mpv, etc.). Those apps don't go through
+# KIO/Solid/KXmlGui, so granting them this mixin's rules just widens their
+# attack surface for no functional benefit. Use local_mixin_kde alone for
+# those.
+#
+# Scope: STRICTLY audit-driven. Every rule below maps to a specific denial
+# observed in a real KDE app's audit log. When a path or mode is needed but
+# not yet audited, add it on the next iteration rather than speculatively
+# pre-granting (see the related discussion in TODO.md and the project-level
+# CLAUDE.md).
+#
+# KDE frameworks touched here:
+#   - KIO              I/O / filesystem abstraction (file dialogs,
+#                      KFilePlacesView, thumbnailer)
+#   - Solid            KDE hardware abstraction layer. Probes block devices,
+#                      batteries, network state by reading /proc, /sys,
+#                      /etc/fstab.
+#   - KXmlGui          per-app GUI layout state (toolbar / menu definitions)
+#   - QSaveFile        Qt's atomic-save tempfile pattern (`#<digits>`) used
+#                      by KConfig / KIO whenever a KDE state file is rewritten
+
+# KConfig - file-indexer / trash subsystem configs (read by KIO when listing
+# directories or computing search results)
+/etc/xdg/baloofilerc r,                       # system-wide baloo file indexer config
+owner @{HOME}/.config/baloofilerc r,          # user baloo file indexer config
+owner @{HOME}/.config/trashrc r,              # user trash config (paths, retention)
+
+# Solid - KDE hardware abstraction layer.
+# KIO's KFilePlacesView calls Solid to enumerate mounted storage and render
+# the "Devices" / "Removable" sections in file dialogs. METADATA ONLY: the
+# actual mounted contents under /run/media/, /media/, /mnt/ remain denied
+# via local_mixin_deny_mounted_external_media. Each rule below is
+# audit-driven; broaden only when a new denial appears.
+owner @{PROC}/@{pid}/mountinfo r,             # own pid only (@{pid} = current process)
+owner @{PROC}/@{pid}/mounts r,                # own pid only
+/etc/fstab r,                                 # text fstab (NOT permission to mount)
+/ r,                                          # KDirLister enumerates root-dir entries
+/sys/bus/ r,                                  # `/sys/bus/` directory listing
+/sys/bus/usb/devices/ r,                      # USB device directory listing
+/sys/class/ r,                                # `/sys/class/` directory listing
+/sys/devices/pci*/**/uevent r,                # PCI device uevent files only (NOT the whole pci subtree)
+
+# KIO + KXmlGui - state files written via QSaveFile / KSaveFile atomic save.
+# QSaveFile writes a `#<digits>` temp in the target file's directory,
+# fsync()s, then atomic-renames over the target. KXmlGui additionally
+# hard-links the temp to a backup before the rename, which is why
+# kxmlgui5/ needs the `l` mode.
+owner @{HOME}/.local/share/user-places.xbel r,   # KIO KFilePlacesView bookmarks (only read audited so far)
+owner @{HOME}/.local/share/#[0-9]* rw,           # QSaveFile temp directly under .local/share/
+owner @{HOME}/.local/share/kxmlgui5/{,**} rwl,   # KXmlGui per-app GUI layouts; `l` covers hard-link backup step
+owner /run/user/*/gvfs/ r,                       # GVfs FUSE mount enumeration (KIO interop with GNOME apps)
+
+# KIO - thumbnailer cache.
+# Only `w` on the size-bucketed subdirs (chmod is the audited operation;
+# `w` is the AppArmor mode that covers chmod). Reads or file-level writes
+# inside these dirs have not been audited yet.
+owner @{HOME}/.cache/thumbnails/{normal,large,x-large,xx-large}/ w,
