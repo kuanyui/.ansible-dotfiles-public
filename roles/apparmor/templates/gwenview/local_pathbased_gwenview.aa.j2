@@ -32,6 +32,14 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     /tmp/.X11-unix/ r,
     /tmp/.X11-unix/X* rw,
     owner /run/user/*/xauth_* r,
+{% else %}
+    # X11 attack surface intentionally blocked (Qt / KDE still probe these
+    # paths under Wayland for XWayland fallback). Use plain `deny` (NOT
+    # `audit deny`) so the implicit-deny audit-log spam is silenced while
+    # the paths stay hard-denied.
+    deny /tmp/.X11-unix/{,*} rw,
+    deny owner /run/user/*/xauth_* r,
+    deny owner @{HOME}/.Xauthority r,
 {% endif %}
 
     # D-Bus (desktop notifications, portal access)
@@ -88,8 +96,14 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
 
     # Gwenview's own application data
     /usr/share/gwenview/{,**} r,                 # color schemes, images, cursors, etc.
-    /usr/libexec/libheif/{,**} r,                # libheif plugins (HEIC / HEIF format support)
+    /usr/libexec/libheif/ r,                     # libheif plugin directory listing
+    /usr/libexec/libheif/libheif-*.so rm,        # libheif plugins (HEIC / HEIF format support); `m` = mmap-exec for dlopen
     /usr/share/kImageAnnotator/{,**} r,          # kImageAnnotator library data + Qt .qm translations
+
+    # KIO worker - spawned per-protocol (file://, sftp://, etc.). Inherit-
+    # exec keeps the worker under gwenview's own confinement instead of
+    # going unconfined.
+    /usr/libexec/kf6/kioworker ix,
 
     # User config and cache.
     # `.local/share/gwenview/** rwkl` includes `l` so gwenview can hard-link
@@ -106,5 +120,6 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     owner @{HOME}/.local/share/gwenview/** rwkl,
     owner @{HOME}/.local/state/gwenviewstaterc rwk,
     owner @{HOME}/.local/state/gwenviewstaterc.lock rwk,
+    owner @{HOME}/.local/state/#[0-9]* rw,     # QSaveFile temp for atomic save of gwenviewstaterc
 
 }

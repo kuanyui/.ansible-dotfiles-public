@@ -49,7 +49,9 @@ owner @{PROC}/@{pid}/mounts r,                # own pid only
 /sys/bus/ r,                                  # `/sys/bus/` directory listing
 /sys/bus/usb/devices/ r,                      # USB device directory listing
 /sys/class/ r,                                # `/sys/class/` directory listing
-/sys/devices/pci*/**/uevent r,                # PCI device uevent files only (NOT the whole pci subtree)
+/sys/devices/pci*/**/uevent r,                # PCI device uevent files
+/sys/devices/pci*/**/vendor r,                # PCI device vendor ID files
+/run/udev/data/* r,                           # udev per-device metadata (Solid maps sysfs nodes to udev tags)
 
 # KIO + KXmlGui - state files written via QSaveFile / KSaveFile atomic save.
 # QSaveFile writes a `#<digits>` temp in the target file's directory,
