@@ -1,0 +1,19 @@
+# Managed by Ansible - do not edit manually
+# GPU/render API metadata probe (NOT GPU hardware access) -
+# /etc/apparmor.d/abstractions/local_mixin_gpu_probe
+#
+# Include this in any profile whose process scans EGL vendor configs at
+# startup without needing actual GPU hardware access. Qt's EGL loader does
+# this unconditionally - reading the config dir reveals which EGL
+# implementations exist (mesa, nvidia, etc.) but does NOT grant access to
+# the GPU device nodes themselves.
+#
+# Hardware GPU access (the /dev/dri/render* nodes, /dev/nvidiactl, mesa
+# shader cache writes, vulkan / drirc / PCI sysfs reads) belongs in
+# local_mixin_gpu, not here. This mixin must NEVER grant any of those -
+# keeping the metadata-vs-hardware boundary tight is the whole point.
+#
+# Current callers: mpv (local_base_mpv), Telegram (local_pathbased_telegram),
+# Gwenview (local_pathbased_gwenview).
+
+/usr/share/glvnd/egl_vendor.d/{,**} r,        # EGL vendor configs; Qt EGL loader scans these at startup

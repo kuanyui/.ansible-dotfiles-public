@@ -44,6 +44,8 @@ apparmor_static_abstractions:
     dest: abstractions/local_mixin_gpu
   - src: local_mixin_gpu_chromium_based.aa
     dest: abstractions/local_mixin_gpu_chromium_based
+  - src: local_mixin_gpu_probe.aa
+    dest: abstractions/local_mixin_gpu_probe
   - src: local_mixin_audio.aa
     dest: abstractions/local_mixin_audio
   - src: local_mixin_gtk.aa

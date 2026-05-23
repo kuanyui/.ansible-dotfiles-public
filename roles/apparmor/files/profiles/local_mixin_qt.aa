@@ -1,13 +1,25 @@
 # Managed by Ansible - do not edit manually
 # Qt framework integration rules - /etc/apparmor.d/abstractions/local_mixin_qt
 #
-# Include this in any profile that uses Qt for rendering or UI.
-# Covers Qt translations. For KDE-specific config (kdeglobals, kwinrc etc.),
-# also include local_mixin_kde.
-# XDG base resources (MIME, icons, applications, user-dirs) are pulled in via local_mixin_xdg.
+# Include this in any profile that uses Qt for rendering or UI. Covers Qt
+# translations, ICU Unicode data, the Qt crash-handler sysctl read, and the
+# QSaveFile atomic-save tempfile pattern in XDG_RUNTIME_DIR.
+# For KDE-specific config (kdeglobals, kwinrc etc.), also include
+# local_mixin_kde. XDG base resources (MIME, icons, applications, user-dirs)
+# are pulled in via local_mixin_xdg.
 
 #include <abstractions/local_mixin_xdg>
 
-# System share
+# Qt UI translation catalogs
 /usr/share/qt5/translations/{,**} r,          # Qt5 UI translation catalogs
 /usr/share/qt6/translations/{,**} r,          # Qt6 UI translation catalogs
+
+# ICU - Unicode / collation / locale data. Qt uses ICU for text processing
+# (string normalisation, case folding, regex). Distros ship versioned
+# subdirs like /usr/share/icu/78.3/icudt78l.dat.
+/usr/share/icu/{,**} r,
+
+# Qt crash handler. KCrash and the Qt5/Qt6 fault handler read the system's
+# core_pattern at startup so they know what to do on SIGSEGV; informational
+# read, no write needed.
+@{PROC}/sys/kernel/core_pattern r,

@@ -20,6 +20,7 @@
     #include <abstractions/local_mixin_deny_persistent_attack>
     #include <abstractions/local_mixin_personal_dirs__for__video_player>
     #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_gpu_probe>
 
     # mpv system resources
     /usr/share/mpv/{,**} r,
@@ -34,10 +35,12 @@
     # `local_mixin_gpu` (used by `local_attachmentless_mpv_gpu`).
     # Allow the reads so the no-GPU profile (`local_pathbased_mpv`) does not spam
     # the audit log every time mesa/vulkan/egl scan their config dirs and PCI bus.
+    # The `glvnd/egl_vendor.d/` read is shared with telegram + gwenview, so it
+    # is factored into `local_mixin_gpu_probe` (included above); the rules below
+    # are mpv-specific (vulkan / drirc / PCI sysfs / i915 perf sysctl).
     /dev/dri/ r,
     /usr/share/vulkan/icd.d/{,**} r,
     /usr/share/vulkan/implicit_layer.d/{,**} r,
-    /usr/share/glvnd/egl_vendor.d/{,**} r,
     /usr/share/drirc.d/{,**} r,
     /sys/bus/pci/devices/{,**} r,
     /sys/devices/pci*/{,**} r,

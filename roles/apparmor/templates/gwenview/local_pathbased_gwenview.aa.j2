@@ -18,6 +18,7 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     #include <abstractions/local_mixin_deny_persistent_attack>
     #include <abstractions/local_mixin_personal_dirs__for__image_viewer>
     #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_gpu_probe>
 
     # network access intentionally denied
 
@@ -33,13 +34,31 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     # D-Bus (desktop notifications, portal access)
     owner /run/user/*/bus rw,
 
-    # User config and cache
+    # Anonymous-file (`#<inode>`) reads/writes directly under XDG_RUNTIME_DIR.
+    # `#<digits>` is how the kernel represents unnamed files (typically opened
+    # via `O_TMPFILE`, or unlinked while an fd is still open) in audit logs.
+    # Gwenview hits this; not yet seen with other Qt/KDE apps, so keep it
+    # scoped here instead of promoting to local_mixin_qt or local_mixin_kde.
+    owner /run/user/*/#[0-9]* rwk,
+
+    # Gwenview's own application data
+    /usr/share/gwenview/{,**} r,                 # color schemes, images, cursors, etc.
+    /usr/libexec/libheif/{,**} r,                # libheif plugins (HEIC / HEIF format support)
+    /usr/share/kImageAnnotator/{,**} r,          # kImageAnnotator library data + Qt .qm translations
+
+    # User config and cache.
+    # `.local/share/gwenview/** rwkl` includes `l` so gwenview can hard-link
+    # files in `recentfolders/` (KSaveFile backup step on history rewrites).
+    # `gwenviewrc.lock` is a KConfig lock file (created via mknod, then
+    # flock'd; `w` covers create, `k` covers flock).
     owner @{HOME}/.config/gwenviewrc rw,
+    owner @{HOME}/.config/gwenviewrc.lock rwk,
     owner @{HOME}/.config/gwenview/ rw,
     owner @{HOME}/.config/gwenview/** rwk,
     owner @{HOME}/.cache/gwenview/ rw,
     owner @{HOME}/.cache/gwenview/** rwk,
     owner @{HOME}/.local/share/gwenview/ rw,
-    owner @{HOME}/.local/share/gwenview/** rwk,
+    owner @{HOME}/.local/share/gwenview/** rwkl,
+    owner @{HOME}/.local/state/gwenviewstaterc rwk,
 
 }
