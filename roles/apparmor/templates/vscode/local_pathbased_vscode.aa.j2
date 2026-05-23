@@ -107,11 +107,18 @@ profile local_pathbased_vscode /usr/share/code/code {
     # System-wide git configuration - read by git child processes inheriting this profile
     /etc/gitconfig r,
     /etc/shells r,                                  # libuv: enumerate available shells for integrated terminal
+    /etc/zshenv r,                                  # system zsh init: read by integrated terminal's zsh on startup
+    /etc/zprofile r,                                # same
+    /etc/zshrc r,                                   # same
     /usr/share/libalternatives/{,**} r,             # openSUSE libalternatives: npm child resolves binary alternatives at startup
 
-    # Workspace file access - VS Code is a code editor; arbitrary read/write across home is expected
+    # Workspace file access - VS Code is a code editor; arbitrary read/write
+    # across home is expected. `k` (flock) is included because SQLite-backed
+    # state DBs (VSCode workspace storage, extension state, etc.) live under
+    # various user-chosen paths in home and refuse to open without locking.
+    # No extra attack surface since rw is already broad.
     owner @{HOME}/ r,
-    owner @{HOME}/** rw,
+    owner @{HOME}/** rwk,
     deny @{HOME}/.nvm/** x,                           # nvm-managed node binaries must not run under this profile
 
     # VS Code user data - explicit k and m on top of the broad rw above
