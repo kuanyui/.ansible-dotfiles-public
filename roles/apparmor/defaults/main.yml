@@ -36,6 +36,8 @@ apparmor_static_abstractions:
     dest: abstractions/local_mixin_deny_browser_config
   - src: local_mixin_deny_mounted_external_media.aa
     dest: abstractions/local_mixin_deny_mounted_external_media
+  - src: local_mixin_deny_gpu.aa
+    dest: abstractions/local_mixin_deny_gpu
   - src: local_mixin_deny_keyrings.aa
     dest: abstractions/local_mixin_deny_keyrings
   - src: local_mixin_deny_persistent_attack.aa

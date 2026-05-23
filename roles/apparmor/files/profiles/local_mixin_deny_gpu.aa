@@ -1,0 +1,26 @@
+# Managed by Ansible - do not edit manually
+# Deny GPU hardware access - /etc/apparmor.d/abstractions/local_mixin_deny_gpu
+#
+# Include this in any profile that has no legitimate reason to touch GPU
+# hardware. Mesa-based apps silently fall back to llvmpipe (software
+# rasterizer) - imperceptible for static UI / image display, somewhat
+# slower for heavy 3D / video decode / animation workloads. Skips Mesa
+# shader compiler, DRM kernel module, and vendor blob attack surface.
+#
+# Wayland zero-copy buffer handoff still works via /dev/udmabuf (memfd-
+# based dmabuf) without needing the DRM render node, so compositor
+# delivery of decoded frames is unaffected. Apps that need that must
+# grant /dev/udmabuf rw in their own profile.
+#
+# Companion: local_mixin_gpu (the opposite - GRANTS GPU access). Do NOT
+# include both in the same profile.
+#
+# `deny` (NOT `audit deny`) so the audit-log spam from Mesa / VA-API /
+# Vulkan probing these device nodes at startup is silenced.
+
+deny /dev/dri/renderD* rw,            # GPU compute (Mesa / VA-API / Vulkan render node)
+deny /dev/dri/card* rw,               # DRM primary node (KMS modesetting; Mesa legacy fallback)
+deny /dev/nvidiactl rw,               # NVIDIA command submission
+deny /dev/nvidia* rw,                 # NVIDIA per-GPU / UVM / modeset device
+deny /dev/nvidia-caps/{,**} rw,       # NVIDIA capabilities tree (newer drivers)
+deny /dev/kfd rw,                     # AMD ROCm compute device
