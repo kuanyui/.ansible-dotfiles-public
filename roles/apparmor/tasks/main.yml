@@ -4,12 +4,16 @@
     msg: "Skipping apparmor (setup_apparmor={{ setup_apparmor | default(false) }})."
   when: not setup_apparmor | default(false) | bool
 
-# `python3-jsonschema` is a hard dep of the validator script invoked by the
-# preview step (--validate-only) AND by common.yml's build step. Delegate
-# install to the shared sub-role; it handles the openSUSE / Debian / RedHat
-# split with ansible-core only (the `community.general.zypper` workaround).
-# On a host that already has it, the probe rc=0 and the install is skipped
-# silently (no sudo prompt). On a clean host, install fires once.
+# `python3-jsonschema` is a hard dep of the validator script invoked by
+# common.yml's build step. Delegate install to the shared sub-role; it
+# handles the openSUSE / Debian / RedHat split with ansible-core only
+# (the `community.general.zypper` workaround).
+#
+# Skipped when `apparmor_non_interactive=true` because both pre-flights
+# that set that var (`make apply-apparmor` script, `make sandbox-apparmor`
+# `_pre_flight`) install jsonschema themselves before ansible starts -
+# faster (no ansible startup + sub-role for a probe that always rc=0 on
+# repeat runs) and avoids a second sudo prompt mid-playbook.
 - name: Ensure `python3-jsonschema` (hard dep of `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py`)
   ansible.builtin.include_role:
     name: _install_distro_packages
@@ -26,7 +30,9 @@
       RedHat:
         install: [python3-jsonschema]
         probe: 'python3 -c "import jsonschema"'
-  when: setup_apparmor | default(false) | bool
+  when:
+    - setup_apparmor | default(false) | bool
+    - not (apparmor_non_interactive | default(false) | bool)
   tags: apparmor
 
 # Preview + confirm. Uses `ansible.builtin.pause` for BOTH display and the

@@ -34,6 +34,9 @@ Usage:
 
 import argparse
 import json
+import shlex
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -177,6 +180,45 @@ def build_schema(categories: list[dict[str, str]]) -> dict[str, Any]:
             },
         },
     }
+
+
+def _ensure_jsonschema() -> None:
+    """Probe for `jsonschema` and install `python3-jsonschema` via sudo if
+    missing. Runs whenever this script is invoked in any mode that needs
+    schema validation (default build, --validate-only, --confirm). The
+    sandbox `_pre_flight` and `make apply-apparmor` both reach jsonschema
+    through this single entry point - no duplicate install logic in the
+    sandbox config or the role's tasks. Distro package name is the same
+    on Debian / openSUSE / Fedora."""
+    probe = subprocess.run(
+        [sys.executable, "-c", "import jsonschema"],
+        check=False,
+        capture_output=True,
+    )
+    if probe.returncode == 0:
+        return
+
+    if shutil.which("zypper"):
+        cmd = ["sudo", "zypper", "--non-interactive", "install", "python3-jsonschema"]
+    elif shutil.which("apt-get"):
+        cmd = ["sudo", "apt-get", "install", "--yes", "python3-jsonschema"]
+    elif shutil.which("dnf"):
+        cmd = ["sudo", "dnf", "install", "--assumeyes", "python3-jsonschema"]
+    else:
+        raise RuntimeError(
+            "No supported package manager found (need zypper, apt-get, or dnf). "
+            "Install python3-jsonschema manually and retry."
+        )
+    print(
+        "==> python3-jsonschema is required by this script but is not installed.\n"
+        "    Source: your distro's official package repository (NOT pip / PyPI).\n"
+        "    About to run the following command; sudo may prompt for your password:\n"
+        "\n"
+        f"        {shlex.join(cmd)}\n"
+        "\n"
+        "    Press Ctrl+C now to abort, or wait for sudo to prompt.\n"
+    )
+    subprocess.run(cmd, check=True)
 
 
 def _format_path_error(error_path: list[Any]) -> str:
@@ -352,6 +394,18 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help=(
+            "Pre-flight for `make apply-apparmor`: probe + install "
+            "`python3-jsonschema` if missing (via sudo), validate the "
+            "definitions YAML, show the colored preview, and prompt for "
+            "y/N. Exit 0 only on `y`/`yes`. Used so the heavy parts "
+            "(install probe, validation, preview, confirmation) happen "
+            "BEFORE ansible-playbook starts up, instead of mid-playbook."
+        ),
+    )
+    parser.add_argument(
         "--color",
         choices=("auto", "always", "never"),
         default="auto",
@@ -371,8 +425,17 @@ def main() -> None:
         sys.exit(1)
 
     if args.dump_schema:
+        # Doesn't need jsonschema; skip the probe.
         print(json.dumps(build_schema(categories), indent=2))
         return
+
+    # Everything past this point eventually calls validate_definitions(),
+    # which lazy-imports the jsonschema module. Ensure the distro package
+    # is installed first so this script is self-bootstrapping for every
+    # caller (sandbox `_pre_flight`, `make apply-apparmor` pre-flight,
+    # role's --validate-only and default build modes). Idempotent probe;
+    # fast no-op when already present.
+    _ensure_jsonschema()
 
     if not args.definitions.exists():
         print(
@@ -382,7 +445,7 @@ def main() -> None:
         )
         sys.exit(1)
 
-    if args.validate_only:
+    if args.validate_only or args.confirm:
         # Pre-flight check: load + validate, echo content, no writes.
         try:
             raw = args.definitions.read_text(encoding="utf-8")
@@ -402,6 +465,16 @@ def main() -> None:
         print(colorize_preview(raw.rstrip(), color=color, star_sentinel=_ANY_SENTINEL))
         print()
         print(f"# OK - {len(definitions)} entr{'y' if len(definitions) == 1 else 'ies'}, schema-valid.")
+
+        if args.confirm:
+            print()
+            try:
+                reply = input("Proceed with applying the AppArmor profiles? [y/N] ").strip().lower()
+            except EOFError:
+                reply = ""
+            if reply not in ("y", "yes"):
+                print("Aborted by user.", file=sys.stderr)
+                sys.exit(1)
         return
 
     try:
