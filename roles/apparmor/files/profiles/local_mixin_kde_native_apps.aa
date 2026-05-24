@@ -30,9 +30,10 @@
 #   - QSaveFile        Qt's atomic-save tempfile pattern (`#<digits>`) used
 #                      by KConfig / KIO whenever a KDE state file is rewritten
 
-# KConfig - file-indexer / trash subsystem configs (read by KIO when listing
-# directories or computing search results)
+# KConfig - KIO core + file-indexer + trash subsystem configs (loaded by
+# every KIO consumer at init / first file-dialog open).
 /etc/xdg/baloofilerc r,                       # system-wide baloo file indexer config
+owner @{HOME}/.config/kiorc r,                # KIO library defaults (confirmations, "Open With" history, protocol prefs)
 owner @{HOME}/.config/baloofilerc r,          # user baloo file indexer config
 owner @{HOME}/.config/trashrc r,              # user trash config (paths, retention)
 

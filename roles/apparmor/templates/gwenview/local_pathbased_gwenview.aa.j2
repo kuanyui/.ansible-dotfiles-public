@@ -125,7 +125,7 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     owner @{HOME}/.local/state/#[0-9]* rw,                  # QSaveFile temp for atomic save of gwenviewstaterc
     owner @{HOME}/.local/state/gwenviewstaterc.?????? rwl,  # KSaveFile mkstemp link target (linkat + later rename/unlink)
     owner @{HOME}/.config/#[0-9]* rw,                       # QSaveFile temp for atomic save of files under .config/
-    owner @{HOME}/.config/gwenviewrc.?????? l,              # KSaveFile mkstemp link target (only `l` audited so far)
+    owner @{HOME}/.config/gwenviewrc.?????? wl,             # KSaveFile mkstemp link target (linkat + later rename/unlink)
 
     # KIO - NSS uid/gid name resolution silently denied. kioworker calls
     # getpwuid / getgrgid via libc NSS to render file Owner/Group columns
