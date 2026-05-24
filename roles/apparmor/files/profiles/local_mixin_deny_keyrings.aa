@@ -8,3 +8,11 @@ audit deny @{HOME}/.ssh/{,**} mrwklx,
 audit deny @{HOME}/.gnupg/{,**} mrwklx,
 audit deny @{HOME}/.config/syncthingtray.ini mrwklx,
 audit deny @{HOME}/.local/state/syncthing/{,**} mrwklx,
+# Klipper (KDE Plasma clipboard manager) history. Anything the user has
+# ever copy-pasted lives here - passwords, API tokens, SSH key fragments,
+# private URLs - so it's a credential store by accident, treated as such.
+# Klipper itself talks to the clipboard via Wayland / X11 sockets, never
+# reads its own history file from another process, so no legitimate
+# external reader exists; any DENIED hit here is a signal worth seeing
+# in audit log.
+audit deny @{HOME}/.local/share/klipper/{,**} mrwklx,

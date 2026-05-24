@@ -37,6 +37,17 @@ owner @{HOME}/.config/kiorc r,                # KIO library defaults (confirmati
 owner @{HOME}/.config/baloofilerc r,          # user baloo file indexer config
 owner @{HOME}/.config/trashrc r,              # user trash config (paths, retention)
 
+# XDG trash data dir. KIO writes here when user deletes a file via file
+# dialog / right-click "Move to Trash". Per freedesktop XDG trash spec:
+#   Trash/files/         actual deleted files (renamed in)
+#   Trash/info/          .trashinfo metadata per deleted file
+#   Trash/directorysizes optional cache of dir sizes
+# Trash IS cross-desktop (Nautilus etc. use the same paths); if a non-KDE
+# caller eventually hits the same denial, factor out into a dedicated
+# local_mixin_xdg_trash. For now KDE-native scope matches the only
+# audited caller (gwenview via kioworker).
+owner @{HOME}/.local/share/Trash/{,**} rwk,
+
 # Solid - KDE hardware abstraction layer.
 # KIO's KFilePlacesView calls Solid to enumerate mounted storage and render
 # the "Devices" / "Removable" sections in file dialogs. METADATA ONLY: the
