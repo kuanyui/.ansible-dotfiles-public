@@ -354,8 +354,15 @@ def _print_diff(before: Path, after: Path, ignore_empty_dir_leftovers: bool = Fa
     print("=" * 60)
     print(" SANDBOX DIFF  (before -> after)")
     print("=" * 60)
+    # `--no-dereference`: compare symlinks by their target-string, not by
+    # following them. Snapshots store absolute-target symlinks (e.g. cert hash
+    # links `/etc/ssl/certs/X.0 -> /usr/share/ca-certificates/.../X.crt`) as-is.
+    # On extraction the absolute target resolves against the HOST root, not
+    # the extraction dir - which on a non-Debian host yields ENOENT for every
+    # Debian-path symlink and breaks the diff. Comparing by symlink-text
+    # sidesteps this entirely; identical symlinks compare equal.
     diff_out = subprocess.run(
-        ["diff", "-ruN", str(before), str(after)],
+        ["diff", "-ruN", "--no-dereference", str(before), str(after)],
         capture_output=True, text=True,
     ).stdout
     # Round-trip caller asks us to suppress 'Only in' entries that point at
@@ -729,7 +736,7 @@ def _run_round_trip(
     # the verdict source because _print_diff's job is display, not pass/fail.
     # Filter the same benign empty-dir leftovers as the display path.
     diff_check = subprocess.run(
-        ["diff", "-rq", str(before_dir), str(post_unapply_dir)],
+        ["diff", "-rq", "--no-dereference", str(before_dir), str(post_unapply_dir)],
         capture_output=True, text=True, check=False,
     )
     real_leftover = [
@@ -744,6 +751,14 @@ def _run_round_trip(
         for ln in real_leftover:
             cleaned = ln.replace(str(before_dir), "<baseline>").replace(str(post_unapply_dir), "<post-unapply>")
             print(f"    {cleaned}")
+        # rc >= 2 from `diff -rq` means diff itself failed (unreadable file,
+        # broken symlink, etc.) - not a content mismatch. Surface rc + stderr
+        # so it's distinguishable from a real "files weren't cleaned up" fail.
+        if diff_check.returncode not in (0, 1):
+            print(f"  (diff -rq exited rc={diff_check.returncode}; stderr below)")
+            stderr_lines = diff_check.stderr.strip().splitlines() or ["(empty)"]
+            for ln in stderr_lines:
+                print(f"    {ln}")
         rc += 1
     else:
         print("  ROUND-TRIP OK - filesystem matches pre-apply baseline.")
