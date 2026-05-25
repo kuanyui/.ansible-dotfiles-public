@@ -17,10 +17,10 @@ networks:
 storage_pools:
   - name: default
     driver: dir
-{%- if incus_storage_pool_source %}
+{% if incus_storage_pool_source %}
     config:
       source: {{ incus_storage_pool_source }}
-{%- endif %}
+{% endif %}
 profiles:
   - name: default
     devices:

@@ -3,13 +3,32 @@
 # so on a fully-set-up host this whole file becomes a no-op that doesn't even
 # prompt for sudo. Only the steps that actually need elevation invoke `become`.
 
-# ---------- Probe phase (no become) ----------
+# ---------- Pre-flight asserts ----------
+# Only distros that ship `incus` in their OFFICIAL repo are supported. We
+# intentionally do NOT configure third-party repos here (Zabbly for Ubuntu,
+# COPR for RHEL/Rocky/Alma) - that conflicts with the project's
+# ansible-core-only / no-curl-pipe-sh posture. Escape hatch: set
+# `incus_skip_host_setup: true` and provision `incus` manually; the role
+# then only renders user-space launchers in `install.yml`.
 
-- name: Probe whether `incus` binary is on PATH
-  ansible.builtin.command: command -v incus
-  register: _incus_binary_check
-  changed_when: false
-  failed_when: false
+- name: Assert host distribution ships `incus` in its official repo (Fedora / Debian / openSUSE)
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] in _incus_supported_distributions
+    fail_msg: >-
+      `{{ ansible_facts["distribution"] }}` does not ship `incus` in its
+      official repo (as of 2026-05). Supported: Fedora 41+, Debian trixie+
+      (or bookworm-backports), openSUSE Tumbleweed, openSUSE Leap 15.6+.
+      To run on an unsupported distro, set `incus_skip_host_setup: true`
+      and provision `incus` manually.
+  vars:
+    _incus_supported_distributions:
+      - Fedora
+      - Debian
+      - openSUSE Leap
+      - openSUSE Tumbleweed
+
+# ---------- Probe phase (no become) ----------
 
 - name: Probe whether `incus.service` is active
   ansible.builtin.command: systemctl is-active incus.service
@@ -24,12 +43,20 @@
 
 # ---------- Mutation phase (become only when probe says so) ----------
 
-- name: Install `incus` package via distro repo (only if binary is missing)
-  ansible.builtin.package:
-    name: incus
-    state: present
-  become: true
-  when: _incus_binary_check.rc != 0
+- name: Install `incus` package via official distro repo (only if `incus` binary is missing)
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+  vars:
+    install_distro_packages:
+      Debian:
+        install: [incus]
+        probe: command -v incus
+      Suse:
+        install: [incus]
+        probe: command -v incus
+      RedHat:
+        install: [incus]
+        probe: command -v incus
 
 - name: Ensure `incus.service` is started + enabled (only if not already active)
   ansible.builtin.systemd:
