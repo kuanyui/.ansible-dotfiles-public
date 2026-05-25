@@ -29,25 +29,31 @@ playbooks/                # entry playbooks
   └─ apparmor.yml         # └─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
+callback_plugins/         # local ansible callback plugins (profile_tasks for per-task timing)
 group_vars/
   └─ all.yml              # global variables + `setup_*` opt-in gates + `shared_*` partials
-roles/
-  ├─ _shared/             # [VIRTUAL] byte-identical dotfile fragments (templates only, no tasks)
-  ├─ dotfiles/            # [ROLE] .bashrc + .tmux.conf etc.
-  │   ├─ tasks/           #         playbook logic
-  │   ├─ files/           #         static files (copy module)
-  │   ├─ templates/       #         jinja2 templates (template module)
-  │   └─ defaults/        #         default variables
-  ├─ zsh/                 # [ROLE] install zsh + plugins, deploy .zshrc, chsh
-  ├─ emacs/               # [ROLE] install emacs + elisp packages
-  ├─ packages/            # [ROLE] frequently used packages from distro repos
-  ├─ podman/              # [ROLE] configure podman OCI runtime (e.g. libkrun on openSUSE)
-  ├─ container_templates/ # [ROLE] render Makefile/Dockerfile/dotfiles trees per container variant
-  ├─ container_apps/      # [ROLE] consume container_templates output + install ~/.local/bin/c-<name> launchers
-  ├─ incus/               # [ROLE] install ~/.local/bin/v-<name> launchers; one Incus KVM VM per (agent, project)
-  └─ apparmor/            # [ROLE] AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / ...)
+roles/                    # see Roles table below
 scripts/                  # standalone helper scripts (apparmor profile gen / sandbox dry-run)
 ```
+
+### Roles
+
+Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they have no paired playbook and are not standalone entry points.
+
+| Role | Purpose |
+|---|---|
+| [`_shared/`](roles/_shared/) | Byte-identical dotfile fragments included by `dotfiles` / `zsh` / etc. Templates only, no tasks. |
+| [`_install_distro_packages/`](roles/_install_distro_packages/) | Cross-distro package install (zypper / apt / dnf); ansible-core-only, avoids `community.general.zypper`. |
+| [`dotfiles/`](roles/dotfiles/) | `.bashrc`, `.tmux.conf`, and friends. |
+| [`zsh/`](roles/zsh/) | Install zsh + plugins, deploy `.zshrc`, run `chsh`. |
+| [`emacs/`](roles/emacs/) | Install Emacs + elisp packages. |
+| [`packages/`](roles/packages/) | Frequently-used distro packages (basic / net / sys / Wayland tools). |
+| [`local_pkgs/`](roles/local_pkgs/) | Redirect npm / pip / pipx / cargo / go global installs from `~/.local/` into `~/.local-pkgs/<tool>/`, so XDG + ansible-managed dotfiles stay separable from language-level package state. |
+| [`podman/`](roles/podman/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
+| [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |
+| [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
+| [`incus/`](roles/incus/) | Install `v-<agent>` launchers; one Incus KVM VM per `(agent, project)` for stronger isolation than rootless podman. |
+| [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
 
 ## Installation
 
