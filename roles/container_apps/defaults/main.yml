@@ -6,16 +6,21 @@
 # or pass `-e container_apps_state=absent` to the install playbook.
 container_apps_state: present
 
-# Shared root for everything this project's roles drop under the user's home.
-# We don't use the distro/XDG-standard sub-paths (e.g. `~/.local/share/zsh/
-# site-functions/`, `~/.local/share/bash-completion/completions/`) so that:
-#   1. behavior is identical across distros - no reliance on a distro shipping
-#      the `bash-completion` package nor on per-distro zsh fpath defaults;
+# `container_apps`'s own subdir under the shared `~/.local/share/ansible-managed/`
+# parent. Each role gets its own subdir (`container-apps`, `incus`, ...) so
+# uninstall = `rm -rf <role's subdir>` cleanly without nuking siblings.
+# Why `ansible-managed/` instead of distro/XDG paths (e.g.
+# `~/.local/share/zsh/site-functions/`):
+#   1. behavior identical across distros - no reliance on a `bash-completion`
+#      package nor on per-distro zsh fpath defaults;
 #   2. ansible-managed files are obviously namespaced and trivially auditable
 #      (`ls ~/.local/share/ansible-managed/`);
-#   3. uninstall = wipe this dir + clean launchers in ~/.local/bin/, no
-#      hunting through multiple XDG locations.
-container_apps_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed"
+#   3. uninstall is a single `rm -rf` per role, no hunting through multiple
+#      XDG locations.
+# Discovery: `.zshrc` globs `ansible-managed/*/zsh-completions` into fpath;
+# `.bashrc` loops `ansible-managed/*/bash-completions/*`. New roles drop files
+# in their own subdir; no shell rc edit needed per role.
+container_apps_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/container-apps"
 
 # Where the rendered Makefile + Dockerfile + dotfiles trees live. Shared with
 # `roles/container_templates` via `include_role` (this role injects this path

@@ -17,7 +17,7 @@
 #                                                |
 #                                                v
 #   roles/container_templates/  per-template assets under
-#                               `~/.local/share/ansible-managed/container-templates/<tpl>/`,
+#                               `~/.local/share/ansible-managed/container-apps/container-templates/<tpl>/`,
 #                               including Dockerfile{,.krun,.systemd}, the
 #                               rendered dotfiles, and host-cli.sh. <-- YOU ARE HERE
 #                               (Per-template means: one host-cli.sh per
@@ -26,7 +26,7 @@
 #
 # Concrete example for `c-claude-crun init`:
 #   1. shell runs `~/.local/bin/c-claude-crun`                                          (launcher; container_apps)
-#   2. launcher `exec`s `~/.local/share/ansible-managed/container-templates/claude/host-cli.sh init`   (this file; container_templates)
+#   2. launcher `exec`s `~/.local/share/ansible-managed/container-apps/container-templates/claude/host-cli.sh init`   (this file; container_templates)
 # ===========================================================================
 
 set -euo pipefail
@@ -166,7 +166,7 @@ ASSETS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/assets" 2>/dev/null && pw
 # the sshd-only `Dockerfile.krun` instead. `--systemd=always` is intentionally
 # NOT set here because there is no systemd inside the krun image; the flag's
 # job (mount /sys/fs/cgroup etc.) is irrelevant to a non-systemd workload.
-SSH_KEY="$HOME/.local/share/ansible-managed/container-templates/host_ssh_key"
+SSH_KEY="{{ container_templates_output_dir }}/host_ssh_key"
 # `--publish 127.0.0.1::22` decoded:
 #   - `127.0.0.1`    bind host side to loopback only (not 0.0.0.0)
 #   - empty middle   (between the two `:`) -> let podman pick a random ephemeral

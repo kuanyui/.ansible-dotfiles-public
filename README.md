@@ -115,16 +115,20 @@ esac
 Add to **`~/.bashrc`**:
 
 ```bash
-# Ansible-managed bash completions (deployed by `.ansible-dotfiles-public/roles/container_apps`).
-# We do NOT use the XDG bash-completion dynamic-loader path because that
-# requires the `bash-completion` package on every target distro. Eager-source
-# is unconditional and cross-distro.
-if [ -d "${HOME}/.local/share/ansible-managed/bash-completions" ]; then
-    for _comp in "${HOME}/.local/share/ansible-managed/bash-completions"/*; do
+# Ansible-managed bash completions. Each managed role drops its scripts under
+# its own `~/.local/share/ansible-managed/<role>/bash-completions/` subdir
+# (`container_apps`, `incus`, ...); the outer loop globs across all roles
+# so new roles don't require editing this snippet. We do NOT use the XDG
+# bash-completion dynamic-loader path because that requires the
+# `bash-completion` package on every target distro - eager-source here is
+# unconditional and cross-distro.
+for _comp_dir in "${HOME}/.local/share/ansible-managed"/*/bash-completions; do
+    [ -d "$_comp_dir" ] || continue
+    for _comp in "$_comp_dir"/*; do
         [ -r "$_comp" ] && . "$_comp"
     done
-    unset _comp
-fi
+done
+unset _comp_dir _comp
 ```
 
 ### 3. zsh tab-completion for the launchers
@@ -132,8 +136,12 @@ fi
 Add to **`~/.zshrc`**, **before** any `compinit` call (the `fpath` change is only honored by the next `compinit`):
 
 ```zsh
-# Ansible-managed zsh completions (deployed by `.ansible-dotfiles-public/roles/container_apps`).
-fpath=(${HOME}/.local/share/ansible-managed/zsh-completions $fpath)
+# Ansible-managed zsh completions. Each managed role drops `_<cmd>` files
+# under its own `~/.local/share/ansible-managed/<role>/zsh-completions/`
+# subdir (`container-apps/zsh-completions/_c-*`, `incus/zsh-completions/_v-*`,
+# ...); the glob auto-discovers across all roles. `(N)` is null-glob so it's
+# safe even before any role has installed completions.
+fpath=(${HOME}/.local/share/ansible-managed/*/zsh-completions(N) $fpath)
 
 # If your .zshrc doesn't already initialize completions, add these two lines
 # AFTER the fpath assignment above. If you already call `compinit` somewhere,

@@ -1,7 +1,7 @@
 """Sandbox config for `playbooks/container_apps.yml`.
 
 Installs `c-<template>-<runtime>` launchers + completions + the rendered
-`container-templates/` tree under `~/.local/share/ansible-managed/`. Pure file
+`container-templates/` tree under `~/.local/share/ansible-managed/container-apps/`. Pure file
 deployment - the role doesn't actually invoke `podman` at install time, so we
 don't need the binary inside the sandbox.
 

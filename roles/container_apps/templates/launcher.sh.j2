@@ -17,7 +17,7 @@
 #                                                |
 #                                                v
 #   roles/container_templates/  per-template assets under
-#                               `~/.local/share/ansible-managed/container-templates/<tpl>/`,
+#                               `~/.local/share/ansible-managed/container-apps/container-templates/<tpl>/`,
 #                               including Dockerfile{,.krun,.systemd}, the
 #                               rendered dotfiles, and host-cli.sh.
 #                               (Per-template means: one host-cli.sh per
@@ -26,7 +26,7 @@
 #
 # Concrete example for `c-claude-crun init`:
 #   1. shell runs `~/.local/bin/c-claude-crun`                                          (launcher; container_apps)
-#   2. launcher `exec`s `~/.local/share/ansible-managed/container-templates/claude/host-cli.sh init`   (host-cli.sh; container_templates)
+#   2. launcher `exec`s `~/.local/share/ansible-managed/container-apps/container-templates/claude/host-cli.sh init`   (host-cli.sh; container_templates)
 # ===========================================================================
 #
 # Examples:

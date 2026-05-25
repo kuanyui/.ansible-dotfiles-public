@@ -79,16 +79,22 @@ if ! shopt -oq posix; then
     fi
 fi
 
-# Eager-source ansible-managed bash completions. We don't reuse the XDG
-# bash-completion dynamic-loader path (`~/.local/share/bash-completion/
-# completions/<cmd>`) because it requires the bash-completion package and a
-# loader handshake; eager-source here is unconditional and cross-distro.
-if [ -d "${HOME}/.local/share/ansible-managed/bash-completions" ]; then
-    for _comp in "${HOME}/.local/share/ansible-managed/bash-completions"/*; do
+# Eager-source ansible-managed bash completions. Each managed role drops
+# its completion scripts under its own
+# `~/.local/share/ansible-managed/<role>/bash-completions/` subdir (e.g.
+# `container-apps/bash-completions/c-claude-crun`, `incus/bash-completions/
+# v-claude`); the outer loop globs across all roles so new roles don't
+# require editing this file. We don't reuse the XDG bash-completion
+# dynamic-loader path (`~/.local/share/bash-completion/completions/<cmd>`)
+# because it requires the bash-completion package and a loader handshake;
+# eager-source here is unconditional and cross-distro.
+for _comp_dir in "${HOME}/.local/share/ansible-managed"/*/bash-completions; do
+    [ -d "$_comp_dir" ] || continue
+    for _comp in "$_comp_dir"/*; do
         [ -r "$_comp" ] && . "$_comp"
     done
-    unset _comp
-fi
+done
+unset _comp_dir _comp
 
 # completion for Makefile target
 complete -W "\`grep -oE '^[a-zA-Z0-9_.-]+:([^=]|$)' ?akefile | sed 's/[^a-zA-Z0-9_.-]*$//'\`" make

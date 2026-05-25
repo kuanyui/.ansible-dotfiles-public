@@ -65,7 +65,7 @@ unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/conta
 apply-incus:  ## Install v-<agent> Incus VM launchers (bypasses `setup_incus` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus.yml
 
-unapply-incus:  ## Uninstall incus launchers (reads ~/.local/share/ansible-managed/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
+unapply-incus:  ## Uninstall incus launchers (reads ~/.local/share/ansible-managed/incus/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_uninstall.yml
 
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). Two phases: (1) a fast Python pre-flight does `python3-jsonschema` probe/install + `personal_dirs.yml` schema-validate + colored preview + y/N confirm, all BEFORE ansible-playbook starts so you do not have to wait for ansible to spin up just to be prompted; (2) only on `y` does ansible run, with `apparmor_non_interactive=true` to skip the now-redundant in-playbook validate/preview/confirm. Asks for the BECOME password up-front (`--ask-become-pass`) because ansible's default sudo invocation uses `-n` (non-interactive) which fails without a piped password. Bypasses `setup_apparmor` gate.

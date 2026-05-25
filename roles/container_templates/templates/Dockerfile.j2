@@ -104,7 +104,7 @@ RUN apt-get update && \
 RUN systemctl enable ssh
 
 # `SSH_AUTHORIZED_KEY` is passed via `podman build --build-arg` from the host;
-# see `host-cli.sh`'s `_ensure_ssh_key` (generates `~/.local/share/ansible-managed/container-templates/host_ssh_key{,.pub}` on demand).
+# see `host-cli.sh`'s `_ensure_ssh_key` (generates `~/.local/share/ansible-managed/container-apps/container-templates/host_ssh_key{,.pub}` on demand).
 ARG SSH_AUTHORIZED_KEY=""
 RUN mkdir -p /home/user/.ssh && \
     echo "$SSH_AUTHORIZED_KEY" > /home/user/.ssh/authorized_keys && \
@@ -134,7 +134,7 @@ RUN apt-get update && \
 RUN ssh-keygen -A && mkdir -p /run/sshd
 
 # `SSH_AUTHORIZED_KEY` is passed via `podman build --build-arg` from the host;
-# see `host-cli.sh`'s `_ensure_ssh_key` (generates `~/.local/share/ansible-managed/container-templates/host_ssh_key{,.pub}` on demand).
+# see `host-cli.sh`'s `_ensure_ssh_key` (generates `~/.local/share/ansible-managed/container-apps/container-templates/host_ssh_key{,.pub}` on demand).
 # Deployed to both `user` and `root` so `c-<template>-krun bash-root` /
 # `zsh-root` can ssh in as root (key-only).
 ARG SSH_AUTHORIZED_KEY=""
