@@ -41,7 +41,7 @@
 
 - name: Set `_podman_containers_conf_path` to `~/.config/containers/containers.conf` when `podman_runtime_scope` is `user`
   ansible.builtin.set_fact:
-    _podman_containers_conf_path: "{{ ansible_env.HOME }}/.config/containers/containers.conf"
+    _podman_containers_conf_path: "{{ ansible_facts['env']['HOME'] }}/.config/containers/containers.conf"
   when: setup_podman and podman_runtime_scope == 'user'
 
 - name: Set `_podman_containers_conf_path` to `/etc/containers/containers.conf` when `podman_runtime_scope` is `system`
@@ -51,7 +51,7 @@
 
 - name: Create `~/.config/containers/` directory when `setup_podman` is true, `podman_runtime_scope` is `user`, and `podman_set_default_runtime` is true
   ansible.builtin.file:
-    path: "{{ ansible_env.HOME }}/.config/containers"
+    path: "{{ ansible_facts['env']['HOME'] }}/.config/containers"
     state: directory
     mode: "0755"
   when:

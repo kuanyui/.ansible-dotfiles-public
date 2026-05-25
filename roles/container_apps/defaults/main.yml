@@ -15,7 +15,7 @@ container_apps_state: present
 #      (`ls ~/.local/share/ansible-managed/`);
 #   3. uninstall = wipe this dir + clean launchers in ~/.local/bin/, no
 #      hunting through multiple XDG locations.
-container_apps_root: "{{ ansible_env.HOME }}/.local/share/ansible-managed"
+container_apps_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed"
 
 # Where the rendered Makefile + Dockerfile + dotfiles trees live. Shared with
 # `roles/container_templates` via `include_role` (this role injects this path
@@ -25,7 +25,7 @@ container_apps_install_root: "{{ container_apps_root }}/container-templates"
 # Where to drop launcher scripts. KEPT at `~/.local/bin/` (not moved into
 # `container_apps_root`) because that's THE standard PATH location - moving
 # launchers anywhere else would require adding that to PATH in shell rc.
-container_apps_bin_dir: "{{ ansible_env.HOME }}/.local/bin"
+container_apps_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
 
 # Where to drop zsh completion files. `roles/zsh`'s rendered `.zshrc` adds
 # this dir to fpath BEFORE compinit so completions are picked up automatically.

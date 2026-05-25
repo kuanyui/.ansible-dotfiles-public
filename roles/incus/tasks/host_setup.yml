@@ -36,8 +36,8 @@
   changed_when: false
   failed_when: false
 
-- name: Probe whether `{{ ansible_user_id }}` is already in the `incus-admin` group
-  ansible.builtin.command: id -nG {{ ansible_user_id }}
+- name: Probe whether `{{ ansible_facts['user_id'] }}` is already in the `incus-admin` group
+  ansible.builtin.command: id -nG {{ ansible_facts['user_id'] }}
   register: _incus_groups_check
   changed_when: false
 
@@ -66,9 +66,9 @@
   become: true
   when: _incus_svc_check.stdout | trim != 'active'
 
-- name: Add `{{ ansible_user_id }}` to `incus-admin` group (only if not already a member)
+- name: Add `{{ ansible_facts['user_id'] }}` to `incus-admin` group (only if not already a member)
   ansible.builtin.user:
-    name: "{{ ansible_user_id }}"
+    name: "{{ ansible_facts['user_id'] }}"
     groups: incus-admin
     append: true
   become: true
@@ -78,7 +78,7 @@
 - name: Print re-login warning if the group was just added (group membership only takes effect in NEW shells)
   ansible.builtin.debug:
     msg: |
-      `{{ ansible_user_id }}` was just added to the `incus-admin` group.
+      `{{ ansible_facts['user_id'] }}` was just added to the `incus-admin` group.
       You MUST log out + back in (or `newgrp incus-admin` in this shell)
       before `v-<agent>` launchers can talk to the incus daemon. The
       preseed step below runs via `become: true` so this playbook is
@@ -108,7 +108,7 @@
       space accounting balloons).
       Either:
         (a) Set `incus_storage_pool_source` to an ext4/xfs path
-            (e.g. `/data/vm/incus` or `/home/{{ ansible_user_id }}/incus-storage`)
+            (e.g. `/data/vm/incus` or `/home/{{ ansible_facts['user_id'] }}/incus-storage`)
             via host_vars/<hostname>.yml, or
         (b) After this playbook finishes, disable CoW for the storage dir:
               sudo chattr -R +C /var/lib/incus/storage-pools/

@@ -13,7 +13,7 @@
     state: present
   when:
     - setup_zsh
-    - ansible_os_family in ['Debian', 'RedHat']
+    - ansible_facts['os_family'] in ['Debian', 'RedHat']
 
 - name: Set zsh as default shell for {{ target_user }}
   ansible.builtin.user:
@@ -23,9 +23,9 @@
 
 - name: Set zsh as default shell for invoking user
   ansible.builtin.user:
-    name: "{{ ansible_env.SUDO_USER }}"
+    name: "{{ ansible_facts['env']['SUDO_USER'] }}"
     shell: /bin/zsh
   when:
     - setup_zsh
-    - ansible_env.SUDO_USER is defined
-    - ansible_env.SUDO_USER != target_user
+    - ansible_facts['env']['SUDO_USER'] is defined
+    - ansible_facts['env']['SUDO_USER'] != target_user

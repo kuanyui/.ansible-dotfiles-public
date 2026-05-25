@@ -6,7 +6,7 @@
 # `include_role`, or one-off `ansible-playbook -e ...`) can override this to
 # stage rendered output elsewhere - useful for scaffolding a new project from
 # a template without touching the user's install.
-container_templates_output_dir: "{{ ansible_env.HOME }}/.local/share/ansible-managed/container-templates"
+container_templates_output_dir: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/container-templates"
 
 # `container_templates_with_systemd`: when rendering `Dockerfile.j2`, include
 # the systemd + sshd installation tail block. Used internally by `tasks/main.yml`

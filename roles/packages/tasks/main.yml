@@ -40,7 +40,7 @@
     cache_valid_time: 3600
   when:
     - packages_install_sys_tools
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
     - packages_sys_tools.debian | length > 0
 
 - name: Install system tools (RedHat)
@@ -49,7 +49,7 @@
     state: present
   when:
     - packages_install_sys_tools
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
     - packages_sys_tools.redhat | length > 0
 
 - name: Packages to install when packages_install_wayland_tools is true

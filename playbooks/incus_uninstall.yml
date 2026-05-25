@@ -1,5 +1,5 @@
 ---
-- name: Uninstall Incus launchers via `roles/incus` (`incus_apps_state: absent`)
+- name: "Uninstall Incus launchers via `roles/incus` (`incus_apps_state: absent`)"
   hosts: localhost
   connection: local
   gather_facts: true

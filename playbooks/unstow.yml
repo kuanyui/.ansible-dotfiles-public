@@ -26,7 +26,7 @@
             echo "removed: $link"
             (( removed++ )) || true
           fi
-        done < <(find "{{ ansible_env.HOME }}" -maxdepth 6 -type l -print0 2>/dev/null)
+        done < <(find "{{ ansible_facts['env']['HOME'] }}" -maxdepth 6 -type l -print0 2>/dev/null)
         echo "__removed__:$removed"
       args:
         executable: /bin/bash
