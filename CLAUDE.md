@@ -70,6 +70,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - All code content (comments, variable names, strings) must be in English.
 - The Claude Code execution environment is NOT the user's main development machine. Only read files within the current project directory (pwd). Do not explore paths outside it (e.g. do not `ls /home/user/` or read files from sibling directories).
 - Use hyphens (-) not em-dashes (—).
+- Documentation style (READMEs, role docstrings, human-facing comments): assume readers have dyslexia. Be as concise as possible, no fluff. Prefer tables and short bullets over prose. Cut anything that doesn't carry information. Applies to newly-written content from now on; existing docs are not retroactively rewritten unless they happen to be edited for other reasons.
 - Ansible: use ansible-core only. Do not use community.general or other collections.
 - Python scripts: all function signatures (parameters and return types) must carry type annotations. Prefer modern syntax (`list[str]`, `tuple[int, str]`, `X | None`) over the deprecated `typing` aliases (`List`, `Tuple`, `Optional`).
 - Ansible task names: expose the underlying variable names directly (e.g. "Packages to install when `packages_install_basic_tools` is true"). Ansible is already complex and obscure - task names should make the controlling variables immediately visible so debugging requires no reverse-engineering. Conventions inside task names:

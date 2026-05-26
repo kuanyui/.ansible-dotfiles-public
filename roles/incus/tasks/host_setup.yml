@@ -17,7 +17,7 @@
       - ansible_facts['distribution'] in _incus_supported_distributions
     fail_msg: >-
       `{{ ansible_facts["distribution"] }}` does not ship `incus` in its
-      official repo (as of 2026-05). Supported: Fedora 41+, Debian trixie+
+      official repo (as of 2026-05). Supported: Fedora 43+, Debian trixie+
       (or bookworm-backports), openSUSE Tumbleweed, openSUSE Leap 15.6+.
       To run on an unsupported distro, set `incus_skip_host_setup: true`
       and provision `incus` manually.
@@ -57,6 +57,26 @@
       RedHat:
         install: [incus]
         probe: command -v incus
+
+# `guestfs-tools` (Red Hat / libguestfs) provides `virt-builder`, used as a
+# safer alternative to `curl`-ing raw ISOs when bringing in a custom VM disk
+# image (GPG-verified, pre-built qcow2 from libguestfs.org/builder/). All
+# three supported families ship this under the same package name since
+# libguestfs split its tools out in 2022.
+- name: Install `guestfs-tools` package (provides `virt-builder` for GPG-verified VM disk image fetch; only if `virt-builder` binary is missing)
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+  vars:
+    install_distro_packages:
+      Debian:
+        install: [guestfs-tools]
+        probe: command -v virt-builder
+      Suse:
+        install: [guestfs-tools]
+        probe: command -v virt-builder
+      RedHat:
+        install: [guestfs-tools]
+        probe: command -v virt-builder
 
 - name: Ensure `incus.service` is started + enabled (only if not already active)
   ansible.builtin.systemd:

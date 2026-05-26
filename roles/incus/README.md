@@ -135,3 +135,81 @@ sudo du -sh /var/lib/incus/*                # raw breakdown
 | One cached image | `incus image delete <fingerprint>` |
 | All unused images | wait 10 days OR lower `images.remote_cache_expiry` in preseed |
 | Nuke everything | `sudo systemctl stop incus && sudo rm -rf /var/lib/incus/* && sudo systemctl start incus` |
+
+## Q&A
+
+### Where do cached incus images, per-VM disk files, installer ISOs, and snapshots live? Can the paths be changed?
+
+Three things called "image" in this stack, do not conflate them:
+
+- **Cached incus image** - a tarball fetched from a remote (e.g. `images:`); for VMs it bundles a pre-built qcow2 disk + metadata. One per fingerprint, shared by every VM launched from it.
+- **Per-VM disk file** - a qcow2 file (`root.img`), one per VM, copied out of the cached incus image at `incus launch` time. This is what the VM actually boots from and writes to.
+- **Installer ISO** - bootable install media (`.iso`). Not used by `incus launch images:*`; only relevant if you import one yourself.
+
+All three plus snapshots live under `/var/lib/incus/`:
+
+| What | Default path |
+|---|---|
+| Cached incus image (tarball: qcow2 + metadata) | `/var/lib/incus/images/` |
+| Per-VM disk file (qcow2, `dir` backend) | `/var/lib/incus/storage-pools/<pool>/virtual-machines/<vm>/root.img` |
+| Per-VM snapshot (`dir` backend) | `/var/lib/incus/storage-pools/<pool>/virtual-machines-snapshots/<vm>/<snap>/` |
+| Installer ISO (only if you imported one) | inside the storage pool you targeted via `incus storage volume import --type=iso` |
+
+What `incus launch images:debian/13` pulls is a cached incus image, NOT an installer ISO - this is incus's normal install path: copy the cached qcow2 into a per-VM disk file, boot it, done.
+
+If you actually need to run an installer ISO (custom install, niche distro):
+
+```sh
+incus storage volume import default debian-13.iso debian13-installer --type=iso
+```
+
+Safer source for VM disk images than raw `curl` of an ISO: `virt-builder` (from `guestfs-tools`, the Red Hat / libguestfs toolkit; maintained at libguestfs.org since 2009) downloads + GPG-verifies upstream pre-built qcow2 disks. This role installs `guestfs-tools` for you on Debian / Fedora / openSUSE (same package name on all three since libguestfs split tools out in 2022). Then `incus image import` to register the result as a cached incus image, or `incus storage volume import` to attach it as a one-off disk.
+
+Customizable:
+- whole tree: symlink `/var/lib/incus` elsewhere (see [Move everything](#move-everything-image-cache--pool--db))
+- per-pool storage path: `incus_storage_pool_source` at first init, or `incus storage create <pool> dir source=/path` post-init
+- cached-image directory: not movable separately - it tracks wherever `/var/lib/incus/` points
+
+### ext4, btrfs noCoW, or btrfs - which for VM disks?
+
+Depends on the incus storage backend:
+
+| Backend | Best FS | Why |
+|---|---|---|
+| `dir` (this role's default) | ext4 / xfs | predictable, no double-CoW |
+| `dir` | btrfs + `chattr +C` on the storage dir | disables CoW per-file |
+| `btrfs` | btrfs | incus uses subvolumes + reflinks, manages CoW at the right level |
+| `zfs` | zfs | same idea on zvol |
+
+Bad combo: `dir` backend on plain btrfs (no `chattr +C`). qcow2 random writes amplify under btrfs CoW; `du` balloons; fragmentation hurts I/O. The role's `host_setup.yml` warns about this; the `openSUSE + snapper trap` section above covers a related failure mode.
+
+### Does incus conflict with virt-manager? Can virt-manager see incus VMs?
+
+No conflict, no visibility either.
+
+- incus invokes QEMU directly; virt-manager goes through libvirt. Two separate stacks, sharing only `/dev/kvm`.
+- virt-manager does NOT list incus VMs (and incus does not list libvirt VMs).
+- Default networks do not overlap: libvirt `virbr0` = `192.168.122.0/24`, incus `incusbr0` = an auto-picked subnet.
+- Both stacks add their own nftables rules. Usually harmless.
+
+### How to pick NAT vs Bridge for a VM?
+
+This role's default: NAT via the managed bridge `incusbr0` (built-in DHCP + DNS + outbound NAT, host-only - VMs reach the internet, the LAN does not reach VMs).
+
+Switch one VM to LAN-bridged:
+
+```sh
+# A) macvlan: no host setup, but host <-> VM is blocked by macvlan kernel limit
+incus config device override <vm> eth0 nictype=macvlan parent=<host-nic>
+
+# B) real Linux bridge (host must have `br0` set up via NetworkManager/netplan first): host <-> VM works
+incus config device override <vm> eth0 nictype=bridged parent=br0
+```
+
+Restore NAT on a single VM:
+
+```sh
+incus config device override <vm> eth0 network=incusbr0
+```
+
+Apply to every new VM: edit the `default` profile, or create a separate profile and assign it at launch.
