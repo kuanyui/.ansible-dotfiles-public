@@ -26,11 +26,14 @@
 #   1. We don't have a stable registry of which VMs have been created.
 #   2. Bulk-deleting all `v-*-*` VMs could clobber unrelated user work.
 # If you want to wipe everything, list with `incus list ^v-` and delete by hand.
-- name: Remove launchers, completions, manifest
+
+- name: Remove launchers from `~/.local/bin/` (outside `{{ incus_root }}`)
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
-  loop: "{{ (_incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='launcher_path') | list)
-          + (_incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='completion_zsh') | list)
-          + (_incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='completion_bash') | list)
-          + [incus_manifest_path] }}"
+  loop: "{{ _incus_manifest.apps | map(attribute='variants') | flatten | map(attribute='launcher_path') | list }}"
+
+- name: Wipe `incus`'s own subdir `{{ _incus_manifest.incus_root | default(incus_root) }}` (completions, VM dotfiles staging, manifest itself; siblings under `ansible-managed/` untouched)
+  ansible.builtin.file:
+    path: "{{ _incus_manifest.incus_root | default(incus_root) }}"
+    state: absent

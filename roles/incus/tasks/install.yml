@@ -54,3 +54,31 @@
     src: manifest.yml.j2
     dest: "{{ incus_manifest_path }}"
     mode: "0644"
+
+# ---------- Stage VM dotfiles ----------
+# Render `.bashrc` / `.tmux.conf` / `.zshrc` into a host-side staging dir.
+# `v-launcher.sh` pushes this dir into the VM via `incus file push` at
+# `init` time (see `_provision_vm`). Rendered host-side once at apply
+# time - VM-side `init` is just a file copy, no per-VM templating.
+# Note: templates are rendered against the HOST's `ansible_facts`, so any
+# `{% if ansible_facts['os_family'] == 'Debian' %}` block in `.zshrc.j2`
+# fires based on the HOST distro, not the VM's (always Debian). Minor
+# rough edge; the affected blocks define helper functions that are nice
+# but non-essential.
+- name: Stage VM dotfiles via `roles/dotfiles` into `{{ incus_root }}/vm-rootfs/home/user/`
+  ansible.builtin.include_role:
+    name: dotfiles
+  vars:
+    target_home: "{{ incus_root }}/vm-rootfs/home/user"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+
+- name: Stage VM `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `{{ incus_root }}/vm-rootfs/home/user/.zshrc`
+  ansible.builtin.include_role:
+    name: zsh
+    tasks_from: deploy-zsh-config.yml
+  vars:
+    target_home: "{{ incus_root }}/vm-rootfs/home/user"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: false
