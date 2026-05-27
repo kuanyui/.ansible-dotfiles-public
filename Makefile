@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus resync-incus-dotfiles aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -67,6 +67,17 @@ apply-incus:  ## Install v-<agent> Incus VM launchers (bypasses `setup_incus` ga
 
 unapply-incus:  ## Uninstall incus launchers (reads ~/.local/share/ansible-managed/incus/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_uninstall.yml
+
+resync-incus-dotfiles:  ## Re-push staged dotfiles into every existing v-* VM (non-destructive; same `incus file push` the launcher runs at `init`). Assumes `make apply-incus` already re-rendered the staging dir.
+	@set -e; \
+	STAGING="$$HOME/.local/share/ansible-managed/incus/vm-rootfs/home/user"; \
+	if [ ! -d "$$STAGING" ]; then echo "Staging dir not found: $$STAGING -- run 'make apply-incus' first" >&2; exit 1; fi; \
+	VMS=$$(incus list '^v-' --format csv --columns n); \
+	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
+	for vm in $$VMS; do \
+	    echo "==> Re-pushing dotfiles into $$vm"; \
+	    incus file push --recursive --uid 1000 --gid 1000 "$$STAGING/." "$$vm/home/user/"; \
+	done
 
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). Two phases: (1) a fast Python pre-flight does `python3-jsonschema` probe/install + `personal_dirs.yml` schema-validate + colored preview + y/N confirm, all BEFORE ansible-playbook starts so you do not have to wait for ansible to spin up just to be prompted; (2) only on `y` does ansible run, with `apparmor_non_interactive=true` to skip the now-redundant in-playbook validate/preview/confirm. Asks for the BECOME password up-front (`--ask-become-pass`) because ansible's default sudo invocation uses `-n` (non-interactive) which fails without a piped password. Bypasses `setup_apparmor` gate.
 	python3 roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py --confirm
