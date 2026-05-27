@@ -1,12 +1,13 @@
 # {{ ansible_managed }}
 #
 # Preseed for `incus admin init`. Minimal but functional:
-#   - `default` storage pool, `dir` backend (simplest, no btrfs/zfs/lvm deps)
+#   - `default` storage pool, backend = `{{ incus_storage_pool_driver }}`
 #   - `incusbr0` bridge with auto IPv4/IPv6 so VMs get network out of the box
 #   - default profile attaches `eth0` -> incusbr0 + root disk -> default pool
 #
-# Users wanting btrfs/zfs/larger storage should re-init manually after
-# customizing this preseed or via `incus storage create`.
+# Storage pool: see `roles/_incus_host_setup/defaults/main.yml` for the three
+# `incus_storage_pool_{driver,source,size}` vars. `host_vars/<hostname>.yml`
+# is the typical place to override per-machine.
 config: {}
 networks:
   - name: incusbr0
@@ -16,10 +17,15 @@ networks:
       ipv6.address: auto
 storage_pools:
   - name: default
-    driver: dir
-{% if incus_storage_pool_source %}
+    driver: {{ incus_storage_pool_driver }}
+{% if incus_storage_pool_source or incus_storage_pool_size %}
     config:
+{% if incus_storage_pool_source %}
       source: {{ incus_storage_pool_source }}
+{% endif %}
+{% if incus_storage_pool_size %}
+      size: {{ incus_storage_pool_size }}
+{% endif %}
 {% endif %}
 profiles:
   - name: default

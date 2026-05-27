@@ -95,16 +95,62 @@ Fixes (pick one, manual):
 - put incus on a different filesystem
 - OR stay on `dir` backend (no subvolumes, no interaction)
 
-## Move VM disks elsewhere
+## Configuring the storage pool
 
-Useful if `/` is small. Effective only at first-time `incus admin init`:
+Three vars in [`roles/_incus_host_setup/defaults/main.yml`](../_incus_host_setup/defaults/main.yml) drive the preseed pool config. Set in `host_vars/<hostname>.yml`. Effective ONLY at first-time `incus admin init --preseed`:
+
+| Var | Project default | Meaning |
+|---|---|---|
+| `incus_storage_pool_driver` | `btrfs` | backend: `dir` / `btrfs` / `zfs` / `lvm-thin` |
+| `incus_storage_pool_source` | `/home/incus-storage.img` | dir path / btrfs subvol / image file / LV name (see below) |
+| `incus_storage_pool_size` | `500GiB` | only for loop-file backends (btrfs / zfs creating an image) |
+
+### Why `btrfs` loop file on `/home` as the default?
+
+The project targets hosts where `/` is a small btrfs system partition (often ~160-180 GB on openSUSE / Tumbleweed installs) and `/home` is a much larger ext4 partition. Putting Incus VM disks directly on `/` runs it out of space fast; putting them on `/home` with btrfs in a loop file gets us CoW snapshots without repartitioning. The loop file is sparse - actual `/home` usage starts near zero and grows as VMs write. Tradeoff vs a real btrfs partition: ~5-10% overhead (ext4 → loop → btrfs).
+
+### Overrides (in `host_vars/<hostname>.yml`)
+
+**Use Incus's built-in default** (dir on `/`, no CoW; only when `/` has plenty of space):
 
 ```yaml
-# host_vars/<hostname>.yml
-incus_storage_pool_source: /data/vm/incus
+incus_storage_pool_driver: dir
+incus_storage_pool_source: ""
+incus_storage_pool_size: ""
 ```
 
-For a post-init move: use `incus storage create <new-pool>` and migrate VMs by hand.
+**Sidecar disk mounted at `/data`** (no CoW, simplest):
+
+```yaml
+incus_storage_pool_driver: dir
+incus_storage_pool_source: /data/vm/incus
+incus_storage_pool_size: ""
+```
+
+**Already-set-up ZFS dataset**:
+
+```yaml
+incus_storage_pool_driver: zfs
+incus_storage_pool_source: tank/incus    # ZFS dataset name, no leading /
+incus_storage_pool_size: ""
+```
+
+### Post-init changes
+
+The preseed task is gated to ONLY fire when the `default` pool doesn't exist yet. To change layout after init:
+
+```sh
+# (1) create a second pool with the new layout
+incus storage create archive btrfs source=/home/incus-archive.img size=200GiB
+
+# (2) move a VM to it
+incus stop v-claude-proj
+incus move v-claude-proj v-claude-proj --storage archive
+incus start v-claude-proj
+
+# (3) optional: delete the old pool once empty
+incus storage delete default
+```
 
 ## Move everything (image cache + pool + DB)
 
@@ -167,7 +213,7 @@ Safer source for VM disk images than raw `curl` of an ISO: `virt-builder` (from 
 
 Customizable:
 - whole tree: symlink `/var/lib/incus` elsewhere (see [Move everything](#move-everything-image-cache--pool--db))
-- per-pool storage path: `incus_storage_pool_source` at first init, or `incus storage create <pool> dir source=/path` post-init
+- per-pool config: `incus_storage_pool_{driver,source,size}` at first init (see [Configuring the storage pool](#configuring-the-storage-pool)), or `incus storage create <pool> <driver> source=... [size=...]` post-init
 - cached-image directory: not movable separately - it tracks wherever `/var/lib/incus/` points
 
 ### ext4, btrfs noCoW, or btrfs - which for VM disks?

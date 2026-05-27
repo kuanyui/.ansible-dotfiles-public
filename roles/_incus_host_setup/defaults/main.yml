@@ -1,21 +1,83 @@
 ---
 # Internal utility role - shared host-level prep for any incus-using role
-# (`roles/incus_agents`, future `roles/incus_workstations`). Each face role
+# (`roles/incus_agents`, `roles/incus_workstations`). Each face role
 # `include_role`s this and supplies whatever VM-level config it needs on top.
 #
-# `incus_storage_pool_source`: filesystem path where the `default` storage pool
-# lives (the dir backend's `source` config). Empty -> incus's own default,
-# which is `/var/lib/incus/storage-pools/default/` on `/`. Set to an absolute
-# path elsewhere if `/` is small or on a filesystem you don't want VM disks
-# on (e.g. btrfs - VM qcow2 + CoW is a known bad combo: huge space waste +
-# slow random writes; if you're stuck on btrfs use `chattr +C` on the source
-# dir, or point this at an ext4/xfs filesystem instead).
+# ---------- Storage pool config (preseed-only, first-time init) ----------
+# These three vars feed into the `default` storage_pool block of
+# `templates/incus_preseed.yml.j2`. They are EFFECTIVE ONLY at first-time
+# `incus admin init --preseed`; already-initialized incus won't be re-pointed.
+# To change pool layout after the fact: `incus storage create <new-pool> ...`
+# + manual `incus move` of VMs, then `incus storage delete default`.
 #
-# Typical per-host setup via `host_vars/<hostname>.yml`:
-#   incus_storage_pool_source: /data/vm/incus       # if machine has /data/vm
-#   incus_storage_pool_source: /home/{{user}}/incus-storage  # /home is ext4
+# ---------- Why this project's default is `btrfs` + loop file on `/home` ----------
+# The project targets hosts where `/` is a small btrfs system partition (often
+# ~160-180 GB; openSUSE Tumbleweed installer defaults look like this) and
+# `/home` is a much larger ext4 partition (e.g. 1.8 TB). Putting Incus VM
+# disks directly on `/` would run it out of space fast.
 #
-# Effective ONLY at first-time init (preseed step). Already-initialized
-# incus won't be re-pointed by this var; to migrate after the fact, see
-# `incus storage create` + manual VM moves, or wipe + re-init.
-incus_storage_pool_source: ""
+# So the role's default is: create a btrfs loop file at `/home/incus-storage.img`
+# (sparse - actual `/home` usage starts near zero and grows as VMs write),
+# point the `default` pool at it. btrfs gives cheap CoW snapshots; the loop
+# file gets us btrfs semantics without repartitioning ext4 `/home`.
+#
+# Override in `host_vars/<hostname>.yml` for any machine that doesn't fit:
+# see Examples block below.
+
+
+# Examples for `host_vars/<hostname>.yml`:
+#
+#   # (this role's default - no override needed) btrfs loop file on `/home`.
+#   # Recommended for the project's typical hosts (small btrfs `/`, big ext4
+#   # `/home`); CoW makes per-VM disk + snapshot cheap.
+#   incus_storage_pool_driver: btrfs
+#   incus_storage_pool_source: /home/incus-storage.img
+#   incus_storage_pool_size: 500GiB
+#
+#   # Override: Incus's built-in default behavior (dir backend at
+#   # `/var/lib/incus/storage-pools/default/` on `/`). No CoW. Only fine on
+#   # hosts where `/` has plenty of free space.
+#   incus_storage_pool_driver: dir
+#   incus_storage_pool_source: ""
+#   incus_storage_pool_size: ""
+#
+#   # Override: plain dir on a sidecar disk mounted at /data
+#   incus_storage_pool_driver: dir
+#   incus_storage_pool_source: /data/vm/incus
+#   incus_storage_pool_size: ""
+#
+#   # Override: zfs loop file on /home
+#   incus_storage_pool_driver: zfs
+#   incus_storage_pool_source: /home/incus-storage.zfs
+#   incus_storage_pool_size: 500GiB
+
+
+
+# `incus_storage_pool_driver`: which backend Incus creates the `default` pool
+# with. Affects per-VM disk cost + snapshot semantics:
+#   - `dir`        full copy per VM, no CoW. Works on any FS. Slow snapshots.
+#   - `btrfs`      CoW reference per VM + per snapshot, near-zero space cost.
+#                  This role's default (see rationale above).
+#   - `zfs`        same idea, ZFS clones. Requires zfsutils on host.
+#   - `lvm-thin`   thin LV per VM. Requires an LVM thin pool already configured.
+incus_storage_pool_driver: btrfs
+
+# `incus_storage_pool_source`: where the pool lives on disk. Semantics
+# depend on `incus_storage_pool_driver`:
+#   - `dir`:    a directory path; Incus drops VM root.img files inside.
+#               Empty -> Incus default `/var/lib/incus/storage-pools/default/`.
+#   - `btrfs`:  EITHER an existing btrfs subvolume OR a file path that
+#               doesn't exist yet (Incus creates it as a loop-mounted btrfs
+#               image; requires `incus_storage_pool_size` set).
+#   - `zfs`:    an existing ZFS dataset name OR a file path (loop file).
+#   - `lvm-thin`: name of an existing LVM thin pool (no `/` prefix).
+#
+incus_storage_pool_source: /home/incus-storage.img
+
+# `incus_storage_pool_size`: only meaningful for loop-file backends
+# (`btrfs` / `zfs` with `source` pointing at a file path that doesn't
+# exist yet). Incus creates a sparse file of this declared size; actual
+# disk usage on the host starts near zero and grows as VMs write. For
+# `dir` / existing block-device backends, leave empty (Incus rejects it).
+# Sizes accept `GiB` / `TiB` (binary), e.g. `500GiB`, `2TiB`.
+incus_storage_pool_size: 500GiB
