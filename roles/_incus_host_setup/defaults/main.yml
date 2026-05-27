@@ -1,0 +1,21 @@
+---
+# Internal utility role - shared host-level prep for any incus-using role
+# (`roles/incus_agents`, future `roles/incus_workstations`). Each face role
+# `include_role`s this and supplies whatever VM-level config it needs on top.
+#
+# `incus_storage_pool_source`: filesystem path where the `default` storage pool
+# lives (the dir backend's `source` config). Empty -> incus's own default,
+# which is `/var/lib/incus/storage-pools/default/` on `/`. Set to an absolute
+# path elsewhere if `/` is small or on a filesystem you don't want VM disks
+# on (e.g. btrfs - VM qcow2 + CoW is a known bad combo: huge space waste +
+# slow random writes; if you're stuck on btrfs use `chattr +C` on the source
+# dir, or point this at an ext4/xfs filesystem instead).
+#
+# Typical per-host setup via `host_vars/<hostname>.yml`:
+#   incus_storage_pool_source: /data/vm/incus       # if machine has /data/vm
+#   incus_storage_pool_source: /home/{{user}}/incus-storage  # /home is ext4
+#
+# Effective ONLY at first-time init (preseed step). Already-initialized
+# incus won't be re-pointed by this var; to migrate after the fact, see
+# `incus storage create` + manual VM moves, or wipe + re-init.
+incus_storage_pool_source: ""

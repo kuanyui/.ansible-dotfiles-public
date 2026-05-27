@@ -13,7 +13,7 @@
 #                              -> rootless podman container; shared host kernel
 #                                 (crun) or libkrun microVM (krun).
 #
-#   roles/incus/  (this file)  ~/.local/bin/v-<agent>
+#   roles/incus_agents/  (this file)  ~/.local/bin/v-<agent>
 #                              -> full KVM VM via Incus; full hardware isolation,
 #                                 separate guest kernel, virtio-fs share by
 #                                 QEMU's standalone virtiofsd (pivot_root +
@@ -255,7 +255,7 @@ _provision_vm() {
         chsh --shell /bin/zsh user
     '
 
-    # Push the host-side rendered dotfiles (rendered once at `roles/incus`
+    # Push the host-side rendered dotfiles (rendered once at `roles/incus_agents`
     # apply time; see install.yml) into the VM. `--uid 1000 --gid 1000`
     # sets ownership to `user` inside the VM, overriding whatever uid/gid
     # the staging files carry on the host.

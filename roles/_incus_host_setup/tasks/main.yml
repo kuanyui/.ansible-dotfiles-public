@@ -1,15 +1,19 @@
 ---
-# Host-side prep for `roles/incus`. Each step is gated on a no-`become` probe,
-# so on a fully-set-up host this whole file becomes a no-op that doesn't even
-# prompt for sudo. Only the steps that actually need elevation invoke `become`.
+# Shared host-level prep for any incus-using face role (`roles/incus_agents`,
+# future `roles/incus_workstations`). Included via `include_role:
+# _incus_host_setup` from the caller. Each step is gated on a no-`become`
+# probe, so on a fully-set-up host this whole file becomes a no-op that
+# doesn't even prompt for sudo; only steps that actually need elevation
+# invoke `become`.
 
 # ---------- Pre-flight asserts ----------
 # Only distros that ship `incus` in their OFFICIAL repo are supported. We
 # intentionally do NOT configure third-party repos here (Zabbly for Ubuntu,
 # COPR for RHEL/Rocky/Alma) - that conflicts with the project's
-# ansible-core-only / no-curl-pipe-sh posture. Escape hatch: set
-# `incus_skip_host_setup: true` and provision `incus` manually; the role
-# then only renders user-space launchers in `install.yml`.
+# ansible-core-only / no-curl-pipe-sh posture. Escape hatch: each face role
+# exposes its own `*_skip_host_setup` var (e.g. `incus_agents_skip_host_setup:
+# true`) which gates the caller's `include_role: _incus_host_setup`. The
+# user then provisions `incus` manually.
 
 - name: Assert host distribution ships `incus` in its official repo (Fedora / Debian / openSUSE)
   ansible.builtin.assert:
@@ -19,8 +23,9 @@
       `{{ ansible_facts["distribution"] }}` does not ship `incus` in its
       official repo (as of 2026-05). Supported: Fedora 43+, Debian trixie+
       (or bookworm-backports), openSUSE Tumbleweed, openSUSE Leap 15.6+.
-      To run on an unsupported distro, set `incus_skip_host_setup: true`
-      and provision `incus` manually.
+      To run on an unsupported distro, set the calling role's
+      `*_skip_host_setup` var to true (e.g. `incus_agents_skip_host_setup:
+      true` for `roles/incus_agents`) and provision `incus` manually.
   vars:
     _incus_supported_distributions:
       - Fedora

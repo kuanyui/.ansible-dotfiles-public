@@ -1,6 +1,6 @@
-"""Sandbox config for `playbooks/incus.yml`.
+"""Sandbox config for `playbooks/incus_agents.yml`.
 
-Verifies the role-level concerns of `roles/incus`: schema asserts pass,
+Verifies the role-level concerns of `roles/incus_agents`: schema asserts pass,
 `v-<agent>` launchers + completions get rendered to the right places, the
 install manifest is well-formed, and the uninstall path cleans them back to
 the pre-apply baseline.
@@ -26,17 +26,17 @@ DUMMY_COMMANDS_DIR = SANDBOX_DIR / "dummy_commands"
 
 
 CONFIG = SandboxConfig(
-    name="incus",
+    name="incus_agents",
     description="v-<agent> Incus VM launcher install + manifest + round-trip uninstall (incus binary stubbed; host-level daemon/group setup skipped).",
-    playbook=Path("playbooks/incus.yml"),
+    playbook=Path("playbooks/incus_agents.yml"),
     dummy_commands=[
         DUMMY_COMMANDS_DIR / "incus",
     ],
-    # Skip the host_setup.yml include - it needs real apt install + systemd
-    # incus.service + `incus admin init` (KVM/network), none of which work
-    # inside a rootless podman container. The launcher render half of the
-    # role still runs and is what we're actually verifying.
-    extra_ansible_vars={"incus_skip_host_setup": True},
-    unapply_playbook=Path("playbooks/incus_uninstall.yml"),
-    unapply_ansible_vars={"incus_skip_host_setup": True},
+    # Skip the shared host-level prep done by `roles/_incus_host_setup`
+    # (apt install + systemd incus.service + `incus admin init`), none of
+    # which work inside a rootless podman container. The launcher render
+    # half of the role still runs and is what we're actually verifying.
+    extra_ansible_vars={"incus_agents_skip_host_setup": True},
+    unapply_playbook=Path("playbooks/incus_agents_uninstall.yml"),
+    unapply_ansible_vars={"incus_agents_skip_host_setup": True},
 )

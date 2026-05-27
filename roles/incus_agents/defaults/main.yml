@@ -1,36 +1,23 @@
 ---
-# `incus_storage_pool_source`: filesystem path where the `default` storage pool
-# lives (the dir backend's `source` config). Empty -> incus's own default,
-# which is `/var/lib/incus/storage-pools/default/` on `/`. Set to an absolute
-# path elsewhere if `/` is small or on a filesystem you don't want VM disks
-# on (e.g. btrfs - VM qcow2 + CoW is a known bad combo: huge space waste +
-# slow random writes; if you're stuck on btrfs use `chattr +C` on the source
-# dir, or point this at an ext4/xfs filesystem instead).
-#
-# Typical per-host setup via `host_vars/<hostname>.yml`:
-#   incus_storage_pool_source: /data/vm/incus       # if machine has /data/vm
-#   incus_storage_pool_source: /home/{{user}}/incus-storage  # /home is ext4
-#
-# Effective ONLY at first-time init (preseed step). Already-initialized
-# incus won't be re-pointed by this var; to migrate after the fact, see
-# `incus storage create` + manual VM moves, or wipe + re-init.
-incus_storage_pool_source: ""
-
-# `incus_skip_host_setup`: skip the apt-install + service-enable + group-add +
-# `incus admin init` chain in `host_setup.yml`. Only the user-space launcher
-# render in `install.yml` runs. Used by the sandbox (which can't satisfy
-# incus's KVM/network requirements inside a rootless container) and as an
-# escape hatch for users who want to manage host-level incus setup
-# themselves. Off by default - normal `make apply-incus` does the host setup.
-incus_skip_host_setup: false
+# `incus_agents_skip_host_setup`: skip the shared host-level prep done by
+# `roles/_incus_host_setup` (apt install incus + guestfs-tools, daemon
+# enable + start, `incus-admin` group add, `incus admin init --preseed`).
+# Only the user-space launcher render in `install.yml` runs. Used by the
+# sandbox (which can't satisfy incus's KVM/network requirements inside a
+# rootless container) and as an escape hatch for users who want to manage
+# host-level incus setup themselves. Off by default - normal
+# `make apply-incus-agents` does the host setup.
+# Note: `incus_storage_pool_source` lives in `roles/_incus_host_setup`'s
+# defaults (it's host-level, shared with any future incus-using role).
+incus_agents_skip_host_setup: false
 
 # `incus_apps_state` mirrors `container_apps_state`:
 #   - `present` (default): render launchers, completions, install manifest.
 #   - `absent`: read manifest, remove everything it recorded. Used by
-#     `playbooks/incus_uninstall.yml`.
+#     `playbooks/incus_agents_uninstall.yml`.
 incus_apps_state: present
 
-# `roles/incus`'s own subdir under the shared `~/.local/share/ansible-managed/`
+# `roles/incus_agents`'s own subdir under the shared `~/.local/share/ansible-managed/`
 # parent (sibling of `container_apps`'s `container-apps/` subdir). Each role
 # owns its own subdir, so uninstall = `rm -rf {{ incus_root }}` cleanly
 # without touching siblings. Completions live under here too and are
@@ -40,7 +27,7 @@ incus_apps_state: present
 # user-local binaries; per-launcher paths are tracked in the manifest and
 # removed individually on uninstall (filename prefix `v-` vs container_apps's
 # `c-` keeps them distinguishable in `~/.local/bin/`).
-incus_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus"
+incus_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus_agents"
 incus_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
 incus_zsh_completion_dir: "{{ incus_root }}/zsh-completions"
 incus_bash_completion_dir: "{{ incus_root }}/bash-completions"

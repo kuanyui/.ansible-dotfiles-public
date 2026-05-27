@@ -1,10 +1,10 @@
 ---
-- name: Skip `incus` role unless `setup_incus` is true
+- name: Skip `incus_agents` role unless `setup_incus_agents` is true
   ansible.builtin.debug:
-    msg: "Skipping incus (setup_incus={{ setup_incus | default(false) }})."
-  when: not setup_incus | default(false) | bool
+    msg: "Skipping incus_agents (setup_incus_agents={{ setup_incus_agents | default(false) }})."
+  when: not setup_incus_agents | default(false) | bool
 
-- when: setup_incus | default(false) | bool
+- when: setup_incus_agents | default(false) | bool
   block:
     - name: Validate `incus_apps_state` is `present` or `absent`
       ansible.builtin.assert:
@@ -35,10 +35,12 @@
       loop_control:
         label: "{{ item.name | default('<unnamed>') }}"
 
-    - ansible.builtin.include_tasks: host_setup.yml
+    - name: Run shared host-level prep (apt install incus + guestfs-tools, preseed init, group add) via `roles/_incus_host_setup`
+      ansible.builtin.include_role:
+        name: _incus_host_setup
       when:
         - incus_apps_state == 'present'
-        - not (incus_skip_host_setup | default(false) | bool)
+        - not (incus_agents_skip_host_setup | default(false) | bool)
 
     - ansible.builtin.include_tasks: install.yml
       when: incus_apps_state == 'present'

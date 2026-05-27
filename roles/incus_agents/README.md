@@ -1,4 +1,4 @@
-# roles/incus
+# roles/incus_agents
 
 Per-project KVM VM launchers. One VM per `(agent, project)`.
 
@@ -26,7 +26,7 @@ VM name = `v-<agent>-<projectname>`. Different projects get different VMs.
 - **Agent binary**:
   - claude → `curl -fsSL https://claude.ai/install.sh | bash`
   - codex → `npm install -g @openai/codex`
-- **Dotfiles**: `~/.bashrc`, `~/.zshrc`, `~/.tmux.conf` (rendered host-side at `apply-incus` time, synced into the VM on every `init` - idempotent, so editing host dotfiles + re-`apply-incus` + next `v-<agent> init` propagates changes into all VMs)
+- **Dotfiles**: `~/.bashrc`, `~/.zshrc`, `~/.tmux.conf` (rendered host-side at `apply-incus-agents` time, synced into the VM on every `init` - idempotent, so editing host dotfiles + re-`apply-incus-agents` + next `v-<agent> init` propagates changes into all VMs)
 - **Your project dir**: virtio-fs shared at `/workspaces/<projectname>`. `shift=true` maps host UID 1000 ↔ VM UID 1000, so files appear as `user`, not `nobody`.
 
 ## How `v-claude init` works
@@ -47,7 +47,7 @@ VM name = `v-<agent>-<projectname>`. Different projects get different VMs.
 | Base image cache | `/var/lib/incus/images/<sha>` | ~1 GB each |
 | VM root disks | `/var/lib/incus/storage-pools/default/virtual-machines/<vm>/root.img` | depends on backend (below) |
 | Daemon state | `/var/lib/incus/database/` | ~10 MB |
-| Staged dotfiles (host) | `~/.local/share/ansible-managed/incus/vm-rootfs/home/user/` | <100 KB |
+| Staged dotfiles (host) | `~/.local/share/ansible-managed/incus_agents/vm-rootfs/home/user/` | <100 KB |
 
 Image is downloaded **once** per remote source. Every VM created from it gets its own root disk.
 

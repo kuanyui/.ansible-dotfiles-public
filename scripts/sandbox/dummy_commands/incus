@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sandbox stub for `incus`. The `roles/incus` install task only invokes
+# Sandbox stub for `incus`. The `roles/incus_agents` install task only invokes
 # `incus --version` to gate "is this binary present?"; we don't actually
 # spin up VMs inside the sandbox container (nested KVM via libkrun/crun
 # isn't worth the complexity for what this sandbox is meant to verify).

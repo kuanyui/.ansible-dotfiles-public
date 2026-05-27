@@ -52,7 +52,8 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`podman/`](roles/podman/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |
 | [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
-| [`incus/`](roles/incus/) | Install `v-<agent>` launchers; one Incus KVM VM per `(agent, project)` for stronger isolation than rootless podman. |
+| [`_incus_host_setup/`](roles/_incus_host_setup/) | Internal sub-role: shared host-level prep (apt install `incus` + `guestfs-tools`, `incus admin init --preseed`, `incus-admin` group add). Included by every face role that drives incus. |
+| [`incus_agents/`](roles/incus_agents/) | Install `v-<agent>` launchers; one Incus KVM VM per `(agent, project)` for stronger isolation than rootless podman. |
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
 
 ## Installation
@@ -144,7 +145,7 @@ Add to **`~/.zshrc`**, **before** any `compinit` call (the `fpath` change is onl
 ```zsh
 # Ansible-managed zsh completions. Each managed role drops `_<cmd>` files
 # under its own `~/.local/share/ansible-managed/<role>/zsh-completions/`
-# subdir (`container-apps/zsh-completions/_c-*`, `incus/zsh-completions/_v-*`,
+# subdir (`container-apps/zsh-completions/_c-*`, `incus_agents/zsh-completions/_v-*`,
 # ...); the glob auto-discovers across all roles. `(N)` is null-glob so it's
 # safe even before any role has installed completions.
 fpath=(${HOME}/.local/share/ansible-managed/*/zsh-completions(N) $fpath)
@@ -171,21 +172,21 @@ which _c-claude-crun                           # should resolve to the completio
 c-claude-crun <TAB>                            # should list subcommands with descriptions
 ```
 
-## VM-isolated agent launchers via `roles/incus`
+## VM-isolated agent launchers via `roles/incus_agents`
 
-For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/incus` provides parallel `v-<agent>` launchers that spin up a full Incus KVM VM per `(agent, project)`. Each VM is a Debian minimal install with the agent native-installed inside, and the project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, giving a stronger isolation boundary than libkrun's in-process virtio-fs).
+For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/incus_agents` provides parallel `v-<agent>` launchers that spin up a full Incus KVM VM per `(agent, project)`. Each VM is a Debian minimal install with the agent native-installed inside, and the project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, giving a stronger isolation boundary than libkrun's in-process virtio-fs).
 
 ### Install
 
 ```bash
-make apply-incus
+make apply-incus-agents
 ```
 
-The role auto-installs the `incus` package, starts + enables `incus.service`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus-admin` group. Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password.
+The role auto-installs the `incus` package, starts + enables `incus.service`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus-admin` group. Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password. (Host-level prep lives in `roles/_incus_host_setup` and is shared with any future incus face role.)
 
 If your user was just added to `incus-admin`, **log out + back in** (or `newgrp incus-admin` in this shell) before running `v-<agent>` — group membership only refreshes on new login.
 
-For storage layout (where image cache / VM disks land, how the base image is reused across N VMs, how to relocate stuff off `/`), see [`roles/incus/README.md`](roles/incus/README.md).
+For storage layout (where image cache / VM disks land, how the base image is reused across N VMs, how to relocate stuff off `/`), see [`roles/incus_agents/README.md`](roles/incus_agents/README.md).
 
 Produces `~/.local/bin/v-claude`, `~/.local/bin/v-codex` (plus completions). Subcommands mirror the `c-<tpl>-<runtime>` family:
 
@@ -193,12 +194,12 @@ Produces `~/.local/bin/v-claude`, `~/.local/bin/v-codex` (plus completions). Sub
 cd ~/projects/foo
 v-claude init        # launch VM, share $PWD into /workspaces/foo, install claude
 v-claude claude      # run claude inside the VM
-v-claude shell       # bash into the VM
+v-claude shell       # zsh into the VM
 v-claude stop        # shut down the VM (state preserved)
 v-claude rma         # rm all: delete the VM and its disk
 ```
 
-VM names are derived from `cwd` exactly like `c-claude-crun` derives container names, so `~/work/foo` and `~/sandbox/foo` get separate VMs. Resource defaults (4 CPU / 4 GiB RAM / 10 GiB disk per VM) are in `roles/incus/defaults/main.yml`. Cold boot is ~10-15 s; subsequent `v-claude claude` reuses the running VM.
+VM names are derived from `cwd` exactly like `c-claude-crun` derives container names, so `~/work/foo` and `~/sandbox/foo` get separate VMs. Resource defaults (4 CPU / 4 GiB RAM / 10 GiB disk per VM) are in `roles/incus_agents/defaults/main.yml`. Cold boot is ~10-15 s; subsequent `v-claude claude` reuses the running VM.
 
 ### Threat model: where `v-*` is stronger than `c-*-crun` / `c-*-krun`
 

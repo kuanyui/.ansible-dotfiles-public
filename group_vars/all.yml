@@ -30,11 +30,12 @@ podman_runtime_scope: "user"  # "user" | "system"
 # VMs, fresh installs) shouldn't pull in podman + libkrun + npm globals
 # automatically. The dedicated `playbooks/container_apps.yml` overrides this.
 setup_container_apps: false
-# `setup_incus`: install `v-<agent>` launchers (Incus KVM VM per agent+project)
-# via `roles/incus`. Off by default - Incus is a heavier dep than podman (host
-# needs `sudo apt install incus`, `sudo incus admin init`, and the user in the
-# `incus-admin` group). Dedicated playbook `playbooks/incus.yml` overrides this.
-setup_incus: false
+# `setup_incus_agents`: install `v-<agent>` launchers (Incus KVM VM per agent+project)
+# via `roles/incus_agents`. Off by default - Incus is a heavier dep than podman
+# (host needs `sudo apt install incus`, `sudo incus admin init`, and the user
+# in the `incus-admin` group). Dedicated playbook `playbooks/incus_agents.yml`
+# overrides this.
+setup_incus_agents: false
 # `setup_apparmor`: deploy AppArmor profiles for desktop GUI apps (Firefox /
 # Chromium / VLC / mpv / VSCode / Telegram / etc.) via `roles/apparmor`. Off by
 # default because target hosts are usually VMs where these profiles don't apply.

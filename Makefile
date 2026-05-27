@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus resync-incus-dotfiles aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus-agents apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus-agents check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus-agents resync-incus-agents-dotfiles aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-agents sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -62,16 +62,16 @@ apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local
 unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/container-templates/.ansible-manifest.yml, removes everything it recorded)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps_uninstall.yml
 
-apply-incus:  ## Install v-<agent> Incus VM launchers (bypasses `setup_incus` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
-	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus.yml
+apply-incus-agents:  ## Install v-<agent> Incus VM launchers via `roles/incus_agents` (bypasses `setup_incus_agents` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_agents.yml
 
-unapply-incus:  ## Uninstall incus launchers (reads ~/.local/share/ansible-managed/incus/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
-	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_uninstall.yml
+unapply-incus-agents:  ## Uninstall incus agent launchers (reads ~/.local/share/ansible-managed/incus_agents/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_agents_uninstall.yml
 
-resync-incus-dotfiles:  ## Re-push staged dotfiles into every existing v-* VM (non-destructive; same `incus file push` the launcher runs at `init`). Assumes `make apply-incus` already re-rendered the staging dir.
+resync-incus-agents-dotfiles:  ## Re-push staged dotfiles into every existing v-* VM (non-destructive; same `incus file push` the launcher runs at `init`). Assumes `make apply-incus-agents` already re-rendered the staging dir.
 	@set -e; \
-	STAGING="$$HOME/.local/share/ansible-managed/incus/vm-rootfs/home/user"; \
-	if [ ! -d "$$STAGING" ]; then echo "Staging dir not found: $$STAGING -- run 'make apply-incus' first" >&2; exit 1; fi; \
+	STAGING="$$HOME/.local/share/ansible-managed/incus_agents/vm-rootfs/home/user"; \
+	if [ ! -d "$$STAGING" ]; then echo "Staging dir not found: $$STAGING -- run 'make apply-incus-agents' first" >&2; exit 1; fi; \
 	VMS=$$(incus list '^v-' --format csv --columns n); \
 	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
 	for vm in $$VMS; do \
@@ -102,8 +102,8 @@ check-podman-runtime:  ## Dry-run diff for podman OCI runtime config
 check-container-apps:  ## Dry-run diff for container_apps install
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/container_apps.yml
 
-check-incus:  ## Dry-run diff for incus launcher install
-	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus.yml
+check-incus-agents:  ## Dry-run diff for incus agent launcher install
+	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_agents.yml
 
 check-apparmor:  ## Dry-run diff for AppArmor profile deployment
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/apparmor.yml
@@ -165,8 +165,8 @@ sandbox-root:  ## Dry-run `apply-root` (packages + zsh + emacs + dotfiles, is_ro
 sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtime> launcher install) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) container_apps
 
-sandbox-incus:  ## Dry-run `apply-incus` (v-<agent> launcher install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
-	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus
+sandbox-incus-agents:  ## Dry-run `apply-incus-agents` (v-<agent> launcher install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_agents
 
 sandbox-podman-runtime:  ## Dry-run `apply-podman-runtime` (containers.conf write; `crun` and `podman` are stubbed) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) podman_runtime

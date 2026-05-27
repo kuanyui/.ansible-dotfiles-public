@@ -27,7 +27,7 @@ select-word-style bash
 # Pick up ansible-managed completion functions. Each managed role drops `_<cmd>`
 # files under its own `~/.local/share/ansible-managed/<role>/zsh-completions/`
 # subdir (e.g. `container-apps/zsh-completions/_c-claude-crun`,
-# `incus/zsh-completions/_v-claude`); the glob auto-discovers across all
+# `incus_agents/zsh-completions/_v-claude`); the glob auto-discovers across all
 # roles, so adding a new role doesn't require editing this file. Must run
 # BEFORE `compinit` for new fpath entries to be scanned. `(N)` is null-glob
 # (no error if zero matches). Project-private path (not the distro-standard
@@ -79,12 +79,12 @@ function dotfiles-public-update () {
 {# `override_os_family` is an OPTIONAL caller-provided override of the
    gather-time `ansible_facts['os_family']`. Host-side callers
    (`playbooks/user.yml` etc.) don't set it, so the default kicks in -
-   behavior unchanged. `roles/incus` sets it to `Debian` when staging
-   `.zshrc` for VM consumption, because the VM is always Debian 13 even
-   when the HOST running ansible is openSUSE / Fedora / etc. (without
-   this override, the host's `os_family` would leak into the VM's .zshrc
-   and the Debian-only `apt-install-without-recommends` helper below
-   would silently disappear for non-Debian hosts).
+   behavior unchanged. `roles/incus_agents` sets it to `Debian` when
+   staging `.zshrc` for VM consumption, because the VM is always
+   Debian 13 even when the HOST running ansible is openSUSE / Fedora /
+   etc. (without this override, the host's `os_family` would leak into
+   the VM's .zshrc and the Debian-only `apt-install-without-recommends`
+   helper below would silently disappear for non-Debian hosts).
 #}
 {% if (override_os_family | default(ansible_facts['os_family'])) == 'Debian' %}
 function apt-install-without-recommends () {
