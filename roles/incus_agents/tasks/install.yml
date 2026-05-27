@@ -75,7 +75,7 @@
     target_user: "{{ ansible_facts['user_id'] }}"
     target_group: "{{ ansible_facts['user_id'] }}"
 
-- name: Stage VM `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `{{ incus_root }}/vm-rootfs/home/user/.zshrc`
+- name: "Stage VM `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `{{ incus_root }}/vm-rootfs/home/user/.zshrc`"
   ansible.builtin.include_role:
     name: zsh
     tasks_from: deploy-zsh-config.yml

@@ -1,0 +1,45 @@
+---
+- name: Skip `incus_workstations` role unless `setup_incus_workstations` is true
+  ansible.builtin.debug:
+    msg: "Skipping incus_workstations (setup_incus_workstations={{ setup_incus_workstations | default(false) }})."
+  when: not setup_incus_workstations | default(false) | bool
+
+- when: setup_incus_workstations | default(false) | bool
+  block:
+    - name: Validate `incus_workstations_state` is `present` or `absent`
+      ansible.builtin.assert:
+        that: incus_workstations_state in ['present', 'absent']
+        fail_msg: "incus_workstations_state must be `present` or `absent`, got `{{ incus_workstations_state }}`."
+
+    - name: Validate each `incus_workstations` entry
+      ansible.builtin.assert:
+        that:
+          - item.name is defined
+          - item.apt_packages is defined
+          - item.apt_packages is sequence
+          # `item.name` becomes a subcommand token in the launcher's dispatch
+          # `case` (templates/v-launcher.sh.j2). Reserved tokens would collide
+          # and shadow the built-in subcommand.
+          - item.name not in ['help', 'env', 'init', 'start', 'stop', 'shell', 'gui', 'update', 'snapshot', 'rma']
+        fail_msg: |
+          incus_workstations entry `{{ item.name | default('<unnamed>') }}` is malformed.
+          Required: `name` (string) + `apt_packages` (list, may be empty).
+          `name` also must not be one of: help, env, init, start, stop, shell,
+          gui, update, snapshot, rma (reserved launcher subcommands).
+          Got: {{ item }}
+      loop: "{{ incus_workstations }}"
+      loop_control:
+        label: "{{ item.name | default('<unnamed>') }}"
+
+    - name: Run shared host-level prep (apt install incus + guestfs-tools, preseed init, group add) via `roles/_incus_host_setup`
+      ansible.builtin.include_role:
+        name: _incus_host_setup
+      when:
+        - incus_workstations_state == 'present'
+        - not (incus_workstations_skip_host_setup | default(false) | bool)
+
+    - ansible.builtin.include_tasks: install.yml
+      when: incus_workstations_state == 'present'
+
+    - ansible.builtin.include_tasks: uninstall.yml
+      when: incus_workstations_state == 'absent'

@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus-agents apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus-agents check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus-agents resync-incus-agents-dotfiles aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-agents sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus-agents apply-incus-workstations apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus-agents check-incus-workstations check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus-agents unapply-incus-workstations resync-incus-agents-dotfiles aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-agents sandbox-incus-workstations sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -79,6 +79,12 @@ resync-incus-agents-dotfiles:  ## Re-push staged dotfiles into every existing v-
 	    incus file push --recursive --uid 1000 --gid 1000 "$$STAGING/." "$$vm/home/user/"; \
 	done
 
+apply-incus-workstations:  ## Install v-<workstation> Incus persistent VM launchers via `roles/incus_workstations` (bypasses `setup_incus_workstations` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_workstations.yml
+
+unapply-incus-workstations:  ## Uninstall incus workstation launchers (reads ~/.local/share/ansible-managed/incus_workstations/incus-workstations.manifest.yml; leaves any existing VMs + snapshots alone - delete those manually with `v-<name> rma` or `incus delete`).
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_workstations_uninstall.yml
+
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). Two phases: (1) a fast Python pre-flight does `python3-jsonschema` probe/install + `personal_dirs.yml` schema-validate + colored preview + y/N confirm, all BEFORE ansible-playbook starts so you do not have to wait for ansible to spin up just to be prompted; (2) only on `y` does ansible run, with `apparmor_non_interactive=true` to skip the now-redundant in-playbook validate/preview/confirm. Asks for the BECOME password up-front (`--ask-become-pass`) because ansible's default sudo invocation uses `-n` (non-interactive) which fails without a piped password. Bypasses `setup_apparmor` gate.
 	python3 roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py --confirm
 	$(PLAYBOOK) --diff --ask-become-pass -e apparmor_non_interactive=true $(PLAYBOOKS)/apparmor.yml
@@ -104,6 +110,9 @@ check-container-apps:  ## Dry-run diff for container_apps install
 
 check-incus-agents:  ## Dry-run diff for incus agent launcher install
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_agents.yml
+
+check-incus-workstations:  ## Dry-run diff for incus workstation launcher install
+	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_workstations.yml
 
 check-apparmor:  ## Dry-run diff for AppArmor profile deployment
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/apparmor.yml
@@ -167,6 +176,9 @@ sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtim
 
 sandbox-incus-agents:  ## Dry-run `apply-incus-agents` (v-<agent> launcher install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_agents
+
+sandbox-incus-workstations:  ## Dry-run `apply-incus-workstations` (v-<workstation> launcher install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_workstations
 
 sandbox-podman-runtime:  ## Dry-run `apply-podman-runtime` (containers.conf write; `crun` and `podman` are stubbed) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) podman_runtime

@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Persistent VM launcher for `{{ workstation.name }}` ({{ workstation.display_name | default(workstation.name) }}).
+# ONE persistent Incus VM per purpose (not per-project, unlike
+# `roles/incus_agents`'s `v-<agent>-<project>`). First `init` does the
+# heavy lifting (apt install + dotfiles push); subsequent runs are no-op
+# on the apt side - use the `update` subcommand to refresh.
+#
+# ===========================================================================
+# Architecture compared to `roles/incus_agents`:
+#
+#   roles/incus_agents/       v-<agent>-<project>  per-(agent, project), short-lived
+#                             init runs apt + agent install + dotfiles EVERY time
+#
+#   roles/incus_workstations/ v-<name>             per-purpose, long-lived
+#   (this file)               init runs heavy setup ONCE (gated by marker file)
+#                             update subcommand explicitly refreshes
+#                             snapshot CLI baked in
+#                             gui subcommand for SPICE display
+# ===========================================================================
+
+set -euo pipefail
+
+# ---------- Config (baked in at apply time) ----------
+WORKSTATION_NAME="{{ workstation.name }}"
+DISPLAY_NAME="{{ workstation.display_name | default(workstation.name) }}"
+VM_NAME="v-{{ workstation.name }}"
+HAS_GUI={{ '1' if (workstation.gui | default(false) | bool) else '0' }}
+VM_BASE_IMAGE="{{ vm_cfg.base_image }}"
+VM_CPU="{{ vm_cfg.cpu }}"
+VM_MEMORY="{{ vm_cfg.memory }}"
+VM_DISK="{{ vm_cfg.disk }}"
+
+# Packages installed inside the VM at first `init` (gated by marker file
+# below, so re-running `init` doesn't re-apt). Use `update` to force.
+APT_PACKAGES=( {% for p in workstation.apt_packages | default([]) %}"{{ p }}" {% endfor %})
+
+# Mounts (virtio-fs shares). Format `host|target`; `|` chosen because both
+# fields can theoretically contain `:` (Windows-style or remote URIs). `~`
+# in `host` expanded at runtime via `eval echo`.
+MOUNTS=(
+{% for m in workstation.mounts | default([]) %}
+    "{{ m.host }}|{{ m.target }}"
+{% endfor %}
+)
+
+# Marker file inside the VM. Presence == "first-time provisioning done".
+# `init` checks this; `update` ignores it (always re-runs heavy setup).
+PROVISIONED_MARKER="/etc/.ansible-workstation-provisioned"
+
+# Path on host where dotfiles staging lives (rendered by
+# `roles/incus_workstations/tasks/install.yml` at apply time).
+STAGING_DIR="{{ incus_workstations_root }}/vm-rootfs/home/user"
+
+# ---------- VM lifecycle helpers ----------
+_vm_exists() { incus info "$VM_NAME" >/dev/null 2>&1; }
+# Anchor with `^...$` so `v-claude` doesn't pattern-match `v-claude-foo`.
+_vm_running() { [[ "$(incus list "^${VM_NAME}$" --format csv --columns s 2>/dev/null)" == "RUNNING" ]]; }
+
+_wait_vm_ready() {
+    # Cold boot is usually 10-15s; give a generous timeout.
+    local deadline=$((SECONDS + 90))
+    while (( SECONDS < deadline )); do
+        if incus exec "$VM_NAME" -- true 2>/dev/null; then return 0; fi
+        sleep 1
+    done
+    echo "VM '$VM_NAME' did not become ready within 90s" >&2; exit 1
+}
+
+_is_provisioned() {
+    incus exec "$VM_NAME" -- test -f "$PROVISIONED_MARKER" >/dev/null 2>&1
+}
+
+_run_apt_install() {
+    # `${APT_PACKAGES[*]}` is interpolated into the heredoc so the package
+    # list is baked into the script the VM runs. Common packages first
+    # (always installed even if entry's APT_PACKAGES is empty).
+    local pkgs="${APT_PACKAGES[*]}"
+    incus exec "$VM_NAME" -- bash -ec "
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install --yes --no-install-recommends \\
+            openssh-server curl git ca-certificates sudo \\
+            zsh zsh-syntax-highlighting zsh-autosuggestions tmux \\
+            ${pkgs}
+    "
+}
+
+_ensure_user_and_shell() {
+    incus exec "$VM_NAME" -- bash -ec '
+        if ! id user >/dev/null 2>&1; then
+            useradd --create-home --shell /bin/zsh --uid 1000 user
+            echo "user ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/user
+        fi
+        chsh --shell /bin/zsh user
+    '
+}
+
+_push_dotfiles() {
+    if [[ ! -d "$STAGING_DIR" ]]; then
+        echo "Staging dir missing: $STAGING_DIR -- did you run 'make apply-incus-workstations'?" >&2
+        return 1
+    fi
+    incus file push --recursive --uid 1000 --gid 1000 "$STAGING_DIR/." "$VM_NAME/home/user/"
+}
+
+_attach_mounts() {
+    # Called once at first VM creation. Idempotent re-add is annoying; if
+    # you change `mounts` after VM exists, detach manually with
+    # `incus config device remove`.
+    local mount_spec host_path target dev_name
+    for mount_spec in "${MOUNTS[@]}"; do
+        host_path="${mount_spec%%|*}"
+        target="${mount_spec#*|}"
+        host_path="$(eval echo "$host_path")"   # expand ~
+        # `incus config device add` requires a name; derive from target.
+        dev_name="workspace_$(echo "$target" | sed 's|^/workspaces/||; s|[/-]|_|g')"
+        echo "==> Attach virtio-fs: $host_path -> $target (device $dev_name)"
+        # shift=true uses idmap shifting so host UID == VM UID (1000:1000).
+        incus config device add "$VM_NAME" "$dev_name" disk \
+            "source=$host_path" \
+            "path=$target" \
+            shift=true
+    done
+}
+
+# ---------- Subcommands ----------
+
+cmd_help() {
+    cat <<EOF
+$VM_NAME - $DISPLAY_NAME (persistent Incus VM)
+
+Usage: v-$WORKSTATION_NAME <subcommand> [args]
+
+Subcommands:
+  help              Show this message
+  env               Show resolved configuration
+  init              Create VM if missing, attach mounts, run first-time
+                    setup (idempotent: apt + dotfiles skipped if already
+                    provisioned - use 'update' to refresh).
+  start             Start the VM if stopped
+  stop              Stop the VM (state preserved on disk)
+EOF
+    if [[ "$HAS_GUI" == "1" ]]; then
+        cat <<EOF
+  gui               Open SPICE display in 'virt-viewer' (host needs
+                    'virt-viewer' or 'remote-viewer' installed)
+EOF
+    fi
+    cat <<EOF
+  shell             zsh into the VM as 'user'
+  update            Force-refresh: apt update + upgrade, re-install
+                    APT_PACKAGES, re-push dotfiles. Use after editing host
+                    dotfiles + 'make apply-incus-workstations'.
+  snapshot ...      Snapshot CLI: create / list / restore / delete
+  rma               rm all: stop + delete the VM (config + disk +
+                    snapshots all gone). Spelled rma not rm to stay far
+                    from the system 'rm'.
+
+Config (compiled in at render time):
+  base image: $VM_BASE_IMAGE
+  cpu:        $VM_CPU
+  memory:     $VM_MEMORY
+  disk:       $VM_DISK
+  GUI:        $([[ "$HAS_GUI" == "1" ]] && echo yes || echo no)
+EOF
+{# Avoid `${#MOUNTS[@]}` in bash - the `{#` collides with Jinja2's comment
+   delimiter at render time (the agents launcher hit the same trap and
+   worked around it with a manual counter). Here we just gate the block
+   at render time: if there are no mounts, skip emitting the section
+   entirely - no bash-side length check needed. #}
+{% if workstation.mounts | default([]) | length > 0 %}
+    echo "Mounts:"
+    for m in "${MOUNTS[@]}"; do printf '  %s -> %s\n' "${m%%|*}" "${m#*|}"; done
+{% endif %}
+}
+
+cmd_env() {
+    cat <<EOF
+WORKSTATION_NAME : $WORKSTATION_NAME
+DISPLAY_NAME     : $DISPLAY_NAME
+VM_NAME          : $VM_NAME
+HAS_GUI          : $HAS_GUI
+VM_BASE_IMAGE    : $VM_BASE_IMAGE
+VM_CPU           : $VM_CPU
+VM_MEMORY        : $VM_MEMORY
+VM_DISK          : $VM_DISK
+APT_PACKAGES     : ${APT_PACKAGES[*]}
+STAGING_DIR      : $STAGING_DIR
+EOF
+{% if workstation.mounts | default([]) | length > 0 %}
+    echo "MOUNTS:"
+    for m in "${MOUNTS[@]}"; do printf '  %s -> %s\n' "${m%%|*}" "${m#*|}"; done
+{% endif %}
+}
+
+cmd_init() {
+    if _vm_exists; then
+        echo "==> VM $VM_NAME already exists; starting if stopped..."
+        _vm_running || incus start "$VM_NAME"
+        _wait_vm_ready
+    else
+        echo "==> Launching $VM_NAME from $VM_BASE_IMAGE ($VM_CPU CPU / $VM_MEMORY / $VM_DISK)..."
+        incus launch "$VM_BASE_IMAGE" "$VM_NAME" \
+            --vm \
+            --config "limits.cpu=$VM_CPU" \
+            --config "limits.memory=$VM_MEMORY" \
+            --device "root,size=$VM_DISK"
+        _wait_vm_ready
+        _attach_mounts
+    fi
+
+    if _is_provisioned; then
+        echo "==> $VM_NAME already provisioned (marker $PROVISIONED_MARKER); skipping apt + dotfiles."
+        echo "    Run 'v-$WORKSTATION_NAME update' to refresh apt + dotfiles."
+    else
+        echo "==> First-time provisioning $VM_NAME (apt + dotfiles, ~minutes for big package sets)..."
+        _run_apt_install
+        _ensure_user_and_shell
+        _push_dotfiles
+        incus exec "$VM_NAME" -- touch "$PROVISIONED_MARKER"
+        echo "==> $VM_NAME provisioned."
+    fi
+    echo "==> $VM_NAME ready."
+    [[ "$HAS_GUI" == "1" ]] && echo "    For GUI: v-$WORKSTATION_NAME gui"
+    return 0
+}
+
+cmd_start() {
+    _vm_exists || { echo "VM $VM_NAME does not exist; run 'init' first." >&2; exit 1; }
+    _vm_running || incus start "$VM_NAME"
+    _wait_vm_ready
+}
+
+cmd_stop() { _vm_exists && incus stop "$VM_NAME" 2>/dev/null || true; }
+
+cmd_rma() {
+    _vm_exists && incus delete -f "$VM_NAME" 2>/dev/null || true
+}
+
+cmd_shell() {
+    cmd_init   # idempotent
+    incus exec --user 1000 --group 1000 --cwd /home/user "$VM_NAME" -- zsh
+}
+
+cmd_gui() {
+    if [[ "$HAS_GUI" != "1" ]]; then
+        echo "$VM_NAME was rendered with gui=false; no SPICE display." >&2
+        echo "Set 'gui: true' on the entry in your inventory and re-run 'make apply-incus-workstations'." >&2
+        exit 1
+    fi
+    cmd_init
+    echo "==> Opening SPICE display for $VM_NAME (needs 'virt-viewer' or 'remote-viewer' on host)..."
+    # `incus console --type=vga` spawns the host's `remote-viewer` / `virt-viewer`
+    # automatically. If neither is installed, incus prints a clear error.
+    incus console --type=vga "$VM_NAME"
+}
+
+cmd_update() {
+    cmd_init   # idempotent: bring VM up
+    echo "==> Refreshing apt (update + upgrade + reinstall APT_PACKAGES) in $VM_NAME..."
+    incus exec "$VM_NAME" -- bash -ec "
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get upgrade --yes
+        apt-get install --yes --no-install-recommends ${APT_PACKAGES[*]}
+    "
+    echo "==> Re-pushing dotfiles..."
+    _push_dotfiles
+    echo "==> $VM_NAME updated."
+}
+
+# ---------- Snapshot CLI ----------
+cmd_snapshot() {
+    local sub="${1:-help}"; shift || true
+    case "$sub" in
+        create)
+            local name="${1:-}"
+            [[ -z "$name" ]] && { echo "Usage: v-$WORKSTATION_NAME snapshot create <name>" >&2; exit 1; }
+            _vm_exists || { echo "VM $VM_NAME does not exist." >&2; exit 1; }
+            echo "==> Creating snapshot '$name' of $VM_NAME..."
+            incus snapshot create "$VM_NAME" "$name"
+            ;;
+        list)
+            _vm_exists || { echo "VM $VM_NAME does not exist." >&2; exit 1; }
+            incus info "$VM_NAME" | sed -n '/^Snapshots:/,/^[A-Z]/p' | sed '$d'
+            ;;
+        restore)
+            local name="${1:-}"
+            [[ -z "$name" ]] && { echo "Usage: v-$WORKSTATION_NAME snapshot restore <name>" >&2; exit 1; }
+            _vm_exists || { echo "VM $VM_NAME does not exist." >&2; exit 1; }
+            echo "==> Restoring $VM_NAME to snapshot '$name'..."
+            incus snapshot restore "$VM_NAME" "$name"
+            ;;
+        delete)
+            local name="${1:-}"
+            [[ -z "$name" ]] && { echo "Usage: v-$WORKSTATION_NAME snapshot delete <name>" >&2; exit 1; }
+            _vm_exists || { echo "VM $VM_NAME does not exist." >&2; exit 1; }
+            echo "==> Deleting snapshot '$name' of $VM_NAME..."
+            incus snapshot delete "$VM_NAME" "$name"
+            ;;
+        help|*)
+            cat <<EOF
+Usage: v-$WORKSTATION_NAME snapshot <subcommand>
+
+Subcommands:
+  create <name>    Create a snapshot of $VM_NAME at its current state
+  list             List snapshots of $VM_NAME
+  restore <name>   Roll $VM_NAME back to the named snapshot
+  delete <name>    Remove a named snapshot
+
+Snapshot cost depends on storage pool backend:
+  - dir    : full copy, slow, doubles disk
+  - btrfs/zfs/lvm-thin : CoW reference, instant, near-zero space
+EOF
+            ;;
+    esac
+}
+
+# ---------- Dispatch ----------
+sub="${1:-help}"; shift || true
+case "$sub" in
+    help|env|init|start|stop|shell|gui|update|snapshot|rma)
+        "cmd_${sub}" "$@"
+        ;;
+    *)
+        echo "Unknown subcommand: $sub" >&2
+        cmd_help >&2
+        exit 1
+        ;;
+esac

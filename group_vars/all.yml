@@ -36,6 +36,13 @@ setup_container_apps: false
 # in the `incus-admin` group). Dedicated playbook `playbooks/incus_agents.yml`
 # overrides this.
 setup_incus_agents: false
+
+# `setup_incus_workstations`: install `v-<workstation>` launchers (one persistent
+# Incus KVM VM per purpose - Qt dev env, browser-in-VM, Telegram-in-VM, ...)
+# via `roles/incus_workstations`. Same heavy dep as `setup_incus_agents`; the
+# two roles share `roles/_incus_host_setup`. Off by default. Dedicated playbook
+# `playbooks/incus_workstations.yml` overrides this.
+setup_incus_workstations: false
 # `setup_apparmor`: deploy AppArmor profiles for desktop GUI apps (Firefox /
 # Chromium / VLC / mpv / VSCode / Telegram / etc.) via `roles/apparmor`. Off by
 # default because target hosts are usually VMs where these profiles don't apply.
