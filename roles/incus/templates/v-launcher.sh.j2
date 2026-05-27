@@ -329,7 +329,10 @@ cmd_rma()   { _vm_exists && incus delete -f "$VM_NAME" 2>/dev/null || true; }
 
 cmd_shell() {
     cmd_init   # idempotent: init if missing, start if stopped
-    incus exec --user 1000 --group 1000 --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- bash
+    # `zsh` not `bash`: user's default shell was chsh'd to zsh at `init`, and
+    # the dotfiles pushed in include `~/.zshrc`. TTY is attached via `incus
+    # exec`, so zsh auto-detects interactive and sources `~/.zshrc`.
+    incus exec --user 1000 --group 1000 --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- zsh
 }
 
 cmd_agent() {

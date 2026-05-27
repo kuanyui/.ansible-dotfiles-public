@@ -26,7 +26,7 @@ VM name = `v-<agent>-<projectname>`. Different projects get different VMs.
 - **Agent binary**:
   - claude → `curl -fsSL https://claude.ai/install.sh | bash`
   - codex → `npm install -g @openai/codex`
-- **Dotfiles**: `~/.bashrc`, `~/.zshrc`, `~/.tmux.conf` (rendered host-side at `apply-incus` time, pushed in at first `init`)
+- **Dotfiles**: `~/.bashrc`, `~/.zshrc`, `~/.tmux.conf` (rendered host-side at `apply-incus` time, synced into the VM on every `init` - idempotent, so editing host dotfiles + re-`apply-incus` + next `v-<agent> init` propagates changes into all VMs)
 - **Your project dir**: virtio-fs shared at `/workspaces/<projectname>`. `shift=true` maps host UID 1000 ↔ VM UID 1000, so files appear as `user`, not `nobody`.
 
 ## How `v-claude init` works
