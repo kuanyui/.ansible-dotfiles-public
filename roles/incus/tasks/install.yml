@@ -60,11 +60,13 @@
 # `v-launcher.sh` pushes this dir into the VM via `incus file push` at
 # `init` time (see `_provision_vm`). Rendered host-side once at apply
 # time - VM-side `init` is just a file copy, no per-VM templating.
-# Note: templates are rendered against the HOST's `ansible_facts`, so any
-# `{% if ansible_facts['os_family'] == 'Debian' %}` block in `.zshrc.j2`
-# fires based on the HOST distro, not the VM's (always Debian). Minor
-# rough edge; the affected blocks define helper functions that are nice
-# but non-essential.
+#
+# `override_os_family: Debian` is the only fact override we need: VM is
+# always Debian 13 (per `incus_vm_defaults.base_image`), and `.zshrc.j2`
+# has exactly one `ansible_facts['os_family']` reference (the
+# `apt-install-without-recommends` helper). Without this, the helper
+# would silently disappear from the VM's `.zshrc` when the HOST is
+# Fedora / openSUSE / etc. `.bashrc.j2` has no `ansible_facts` refs at all.
 - name: Stage VM dotfiles via `roles/dotfiles` into `{{ incus_root }}/vm-rootfs/home/user/`
   ansible.builtin.include_role:
     name: dotfiles
@@ -82,3 +84,4 @@
     target_user: "{{ ansible_facts['user_id'] }}"
     target_group: "{{ ansible_facts['user_id'] }}"
     is_root: false
+    override_os_family: Debian

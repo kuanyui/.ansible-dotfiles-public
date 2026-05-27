@@ -76,7 +76,17 @@ function dotfiles-public-update () {
     git reset --hard origin/master &&
 }
 
-{% if ansible_facts['os_family'] == 'Debian' %}
+{# `override_os_family` is an OPTIONAL caller-provided override of the
+   gather-time `ansible_facts['os_family']`. Host-side callers
+   (`playbooks/user.yml` etc.) don't set it, so the default kicks in -
+   behavior unchanged. `roles/incus` sets it to `Debian` when staging
+   `.zshrc` for VM consumption, because the VM is always Debian 13 even
+   when the HOST running ansible is openSUSE / Fedora / etc. (without
+   this override, the host's `os_family` would leak into the VM's .zshrc
+   and the Debian-only `apt-install-without-recommends` helper below
+   would silently disappear for non-Debian hosts).
+#}
+{% if (override_os_family | default(ansible_facts['os_family'])) == 'Debian' %}
 function apt-install-without-recommends () {
     {% if not is_root %}sudo {% endif %}apt install --no-install-recommends $@
 }
