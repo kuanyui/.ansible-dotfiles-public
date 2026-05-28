@@ -17,6 +17,16 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     #include <abstractions/local_mixin_deny_persistent_attack>
     #include <abstractions/local_mixin_personal_dirs__for__image_viewer>
     #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_glycin>
+
+    # Python launcher re-opened by the interpreter at runtime (argv[0])
+    /usr/bin/mcomix r,
+
+    # /usr/bin directory listing (names only); triggered during image loading
+    /usr/bin/ r,
+
+    # Root directory listing (names only); occurs during glycin image-load startup
+    / r,
 
     # network access intentionally denied
 
@@ -36,10 +46,18 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     /usr/bin/7z ix,
     /usr/bin/unrar ix,
 
+    # Glycin image loader - bwrap exec transitions to local_attachmentless_glycin
+    /usr/bin/bwrap Px -> local_attachmentless_glycin,
+    signal (send) set=(kill) peer=local_attachmentless_glycin,
+
     # User config and cache
     owner @{HOME}/.config/mcomix/ rw,
     owner @{HOME}/.config/mcomix/** rwk,
     owner @{HOME}/.cache/mcomix/ rw,
     owner @{HOME}/.cache/mcomix/** rwk,
+
+    # Reading own cgroup for thread-pool sizing; harmless self-introspection
+    owner @{PROC}/@{pid}/cgroup r,
+
 
 }

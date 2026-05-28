@@ -9,3 +9,7 @@
 # then execs bwrap which transitions to local_attachmentless_glycin
 /usr/libexec/glycin-loaders/{,**} ix,
 /usr/share/glycin-loaders/{,**} r,
+
+# gdk-pixbuf glycin shim creates temp files in /tmp while decoding images;
+# the path prefix is fixed by the loader library, not chosen by the calling app
+owner /tmp/gdk-pixbuf-glycin-tmp.* rw,
