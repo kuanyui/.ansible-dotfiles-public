@@ -18,6 +18,7 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     #include <abstractions/local_mixin_personal_dirs__for__image_viewer>
     #include <abstractions/local_mixin_deny_mounted_external_media>
     #include <abstractions/local_mixin_glycin>
+    #include <abstractions/local_mixin_tmpdir>
 
     # Python launcher re-opened by the interpreter at runtime (argv[0])
     /usr/bin/mcomix r,
@@ -58,6 +59,19 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
 
     # Reading own cgroup for thread-pool sizing; harmless self-introspection
     owner @{PROC}/@{pid}/cgroup r,
+    # CPU quota for the same thread-pool sizing (GLib reads the cgroup v2 limit)
+    /sys/fs/cgroup/user.slice/cpu.max r,
 
+    # Plain `deny` (NOT `audit deny`): these attempts are routine/benign (a library probes
+    # them every launch), so a denied hit is log noise, not a security signal - silence it.
+    # NSS user/group lookup (getpwuid): non-sensitive, world-readable, viewer does not need.
+    deny /etc/nsswitch.conf r,
+    deny /usr/etc/nsswitch.conf r,
+    deny /etc/passwd r,
+    deny /etc/group r,
+    # ldconfig = Python ctypes find_library() locating a .so to dlopen in-process, notably the
+    # non-free libunrar.so for CBR/RAR. Denying it steers mcomix to the already-allowed,
+    # separately-confined /usr/bin/unrar binary, keeping the RAR parser out of its address space.
+    deny /usr/sbin/ldconfig x,
 
 }

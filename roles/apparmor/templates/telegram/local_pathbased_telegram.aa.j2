@@ -10,10 +10,17 @@
 # flags=(attach_disconnected): required because Telegram runs inside bwrap's mount namespace;
 # /proc and /dev inside bwrap are new mounts (not bind-mounts) and appear disconnected from host root.
 #
+# flags=(mediate_deleted): Telegram is a Qt app and writes tdata/ atomically with the
+# O_TMPFILE + linkat() pattern - open an unnamed temp inode, write, then link it to its final
+# name. The source inode never had a name, so without this flag AppArmor fails the link's name
+# lookup ("Failed name lookup - deleted entry", error=-2) and denies it. mediate_deleted makes
+# AppArmor mediate the deleted-but-open inode against the existing tdata rules below; it grants
+# no new paths.
+#
 # Draft - put in complain mode first to capture missing paths:
 #   sudo aa-complain /etc/apparmor.d/local_pathbased_telegram
 
-profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected) {
+profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected mediate_deleted) {
     #include <abstractions/base>
     #include <abstractions/nameservice>
     #include <abstractions/fonts>
