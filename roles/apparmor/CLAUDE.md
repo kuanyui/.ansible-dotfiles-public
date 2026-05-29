@@ -52,6 +52,13 @@ profiles are static or dynamically generated. Static profiles go in
 `roles/apparmor/files/profiles/`. Templates go in `roles/apparmor/templates/`. Per-application
 task files go in `roles/apparmor/tasks/` and are imported from `roles/apparmor/tasks/main.yml`.
 
+A new static profile/mixin under `files/profiles/` is NOT deployed until it is registered in
+`apparmor_static_profiles` / `apparmor_static_abstractions` in `defaults/main.yml` (the deploy
+loop in `tasks/static.yml` reads those lists, not a glob). Creating the file and adding a
+profile's `#include` alone makes `apparmor_parser` fail on the missing include. The same lists
+also feed the idempotent `local_*` cleanup allowlist, so registering protects the file from
+removal as an orphan.
+
 ## Makefile target naming
 Target names must clearly describe behavior, not just the subject. A target that blocks and
 follows output in real time must include `-watch`. A target that reads a static snapshot must
@@ -151,6 +158,17 @@ These three are distinct and must not be conflated:
 Never call an AppArmor profile a "sandbox profile". Never suggest `Ux` to fix disconnected-path
 denials - that removes MAC. The correct fix is `flags=(attach_disconnected)`.
 
+## audit deny vs plain deny
+
+Two deny forms, chosen by one test: **is a denied attempt a SIGNAL or NOISE?** (Not "should it
+access this?" - least-privilege denies both regardless.)
+
+- `audit deny` = security tripwire. Sensitive target or never-legitimate access; a denied hit is
+  worth seeing in the log. E.g. `local_mixin_deny_keyrings`, `local_mixin_deny_persistent_attack`.
+- plain `deny` = silence benign noise. Routine access some library does on every launch (GPU
+  device/ICD probes, NSS `getpwuid`, machine-id, `find_library` ldconfig/compiler probes); a
+  denied hit is noise. Silencing keeps the real `audit deny` tripwires visible instead of buried.
+
 ## Least-privilege scoping (strictly audit-driven)
 
 Profile and mixin rules must be **strictly audit-driven**. When extending a profile or mixin
@@ -171,7 +189,9 @@ denial. NOT one mode wider, NOT one path level deeper, NOT one extra parent dir.
 - **Mixin scope is multiplied.** A rule in a mixin grants that access to every profile that
   includes the mixin. Before adding to a mixin, confirm the path is needed by 3+ distinct
   callers (the "3rd-caller rule" - see TODO.md). Until then, inline into the single profile
-  that needs it. A single audit hit is NEVER enough evidence to promote to a mixin.
+  that needs it. A single audit hit is NEVER enough evidence to promote an app-specific path to
+  a mixin. (Exceptions - library-determined paths and shared `deny` rules - in **Mixin
+  promotion** below.)
 - **`owner` keyword by default** on any `~/` or `/proc/<pid>/` rule. For self-introspection,
   prefer `@{PROC}/@{pid}/...` (literally own pid) over `owner /proc/[0-9]*/...` (any
   same-user pid) - the threat model assumes the confined app may be compromised, and
@@ -181,3 +201,32 @@ denial. NOT one mode wider, NOT one path level deeper, NOT one extra parent dir.
 
 The cost of being too narrow is one extra audit iteration. The cost of being too broad is
 attack surface that takes a security review to find again.
+
+## Mixin promotion (refines the 3rd-caller rule)
+
+The "3rd-caller rule" above is the default for **app-specific** paths. Three refinements:
+
+- **Library/framework-determined path** - fixed by a library, not chosen by the app (glycin's
+  `gdk-pixbuf-glycin-tmp.*` temp prefix, `/etc/machine-id`, `recently-used.xbel`). Structural
+  sharing is already proven, so a mixin is justified on the FIRST caller; no need to wait for 3.
+- **deny-mixin vs allow-mixin asymmetry** - a shared `deny` only ever REMOVES access, so it is
+  safe to create early. A shared `allow` GRANTS surface to every includer; keep it inline until
+  a 2nd+ caller genuinely needs it.
+- **The mixin test is "do all includers want the same policy?"** - NOT "is it a standard path?".
+  `recently-used.xbel` is an XDG standard, but browsers want it denied while local viewers want it
+  allowed, so it must NOT live in `local_mixin_gtk`/`local_mixin_xdg` (both included by browsers).
+  Split-policy paths stay inline, or get a dedicated opt-in mixin.
+- **Privilege-boundary transitions stay per-profile** even when library-determined - e.g.
+  `/usr/bin/bwrap Px -> local_attachmentless_glycin,` plus its `signal (send) set=(kill)`. Each
+  profile's right to spawn a more-privileged peer must be visible in that profile, not in a mixin.
+
+## Threat-model calibration
+
+Calibrate deny/allow to the specific app, not a blanket "deny anything sensitive-ish". Before
+denying a feature-enabling path, ask: does THIS app have network egress? Does it process untrusted
+input? Is the data sensitive (contents/secrets) or low-value metadata (paths/timestamps)?
+
+A no-network local viewer earns more allow-latitude than a browser. Do not copy another profile's
+deny without checking its threat model applies: firefox denies `recently-used.xbel` because it is
+network-facing and runs untrusted content; mcomix allows it (its profile denies all network), so a
+compromised viewer cannot exfiltrate the recents, and the user keeps the feature.

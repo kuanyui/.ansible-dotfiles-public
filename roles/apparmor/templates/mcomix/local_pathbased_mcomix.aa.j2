@@ -65,6 +65,8 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     owner @{PROC}/@{pid}/cgroup r,
     # CPU quota for the same thread-pool sizing (GLib reads the cgroup v2 limit)
     /sys/fs/cgroup/user.slice/cpu.max r,
+    # Own mount table; harmless self-introspection
+    owner @{PROC}/@{pid}/mounts r,                # own pid only
 
     # Plain `deny` (NOT `audit deny`): these attempts are routine/benign (a library probes
     # them every launch), so a denied hit is log noise, not a security signal - silence it.
@@ -83,5 +85,17 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     # and silence like ldconfig. (gcc-15 is version-specific; a toolchain bump may resurface it.)
     deny /usr/bin/gcc-15 x,
     deny /usr/bin/alts x,
+
+    # XDG cross-app recents - GtkRecentManager reads recently-used.xbel and rewrites it
+    # atomically (temp file + chmod + rename) to record opened comics, powering the "recently
+    # opened" menu. This is the freedesktop Desktop Bookmark Spec file: URIs + mime types +
+    # timestamps + which apps registered them, not file contents or secrets. ALLOWED for mcomix
+    # because this profile denies all network access (a compromised viewer cannot exfiltrate the
+    # history) and the user wants the recents feature. Kept inline, NOT in local_mixin_gtk/xdg:
+    # those mixins are also included by browsers (firefox/chromium/msedge) whose threat model
+    # wants this denied - firefox carries an explicit deny. Granting it in the shared mixin would
+    # silently hand cross-app file history to chromium/msedge.
+    owner @{HOME}/.local/share/recently-used.xbel rw,
+    owner @{HOME}/.local/share/recently-used.xbel.* rw,
 
 }
