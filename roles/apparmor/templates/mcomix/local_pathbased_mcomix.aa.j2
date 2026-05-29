@@ -51,11 +51,15 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     /usr/bin/bwrap Px -> local_attachmentless_glycin,
     signal (send) set=(kill) peer=local_attachmentless_glycin,
 
-    # User config and cache
+    # User config, cache, and data (bookmarks.pickle + library.db SQLite store).
+    # Data dir mirrors the config/cache pattern: k covers SQLite file locking, and ** absorbs
+    # the db sidecar files (library.db-journal / -wal / -shm) without per-file iteration.
     owner @{HOME}/.config/mcomix/ rw,
     owner @{HOME}/.config/mcomix/** rwk,
     owner @{HOME}/.cache/mcomix/ rw,
     owner @{HOME}/.cache/mcomix/** rwk,
+    owner @{HOME}/.local/share/mcomix/ rw,
+    owner @{HOME}/.local/share/mcomix/** rwk,
 
     # Reading own cgroup for thread-pool sizing; harmless self-introspection
     owner @{PROC}/@{pid}/cgroup r,
@@ -73,5 +77,11 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     # non-free libunrar.so for CBR/RAR. Denying it steers mcomix to the already-allowed,
     # separately-confined /usr/bin/unrar binary, keeping the RAR parser out of its address space.
     deny /usr/sbin/ldconfig x,
+    # Same find_library() probe falling back to its next strategy when ldconfig is unavailable:
+    # invoke the C compiler (cc -> gcc-15 via the openSUSE `alts` alternatives helper) to resolve
+    # the .so through a linker trace. An image viewer has no business exec'ing a compiler; deny
+    # and silence like ldconfig. (gcc-15 is version-specific; a toolchain bump may resurface it.)
+    deny /usr/bin/gcc-15 x,
+    deny /usr/bin/alts x,
 
 }
