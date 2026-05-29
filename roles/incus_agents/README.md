@@ -44,12 +44,13 @@ VM name = `v-<agent>-<projectname>`. Different projects get different VMs.
 
 | What | Default path | Size |
 |---|---|---|
-| Base image cache | `/var/lib/incus/images/<sha>` | ~1 GB each |
-| VM root disks | `/var/lib/incus/storage-pools/default/virtual-machines/<vm>/root.img` | depends on backend (below) |
-| Daemon state | `/var/lib/incus/database/` | ~10 MB |
+| Base image cache (always on `/`) | `/var/lib/incus/images/<sha>` | ~1 GB each |
+| Daemon state (always on `/`) | `/var/lib/incus/database/` | ~10 MB |
+| Pool blocks (project default = btrfs loop on `/home`) | `/home/incus-storage.img` (sparse, declared 500GiB) | grows with VM writes |
+| VM root disks (mount-view, regardless of backend) | `/var/lib/incus/storage-pools/default/virtual-machines/<vm>/` | depends on backend, see CoW table below |
 | Staged dotfiles (host) | `~/.local/share/ansible-managed/incus_agents/vm-rootfs/home/user/` | <100 KB |
 
-Image is downloaded **once** per remote source. Every VM created from it gets its own root disk.
+Image is downloaded **once** per remote source. Every VM created from it gets its own root disk. For the full table of where each data kind lands under each storage pool config, see [Where do cached images, VM disks, ISOs, snapshots live?](#where-do-cached-incus-images-per-vm-disk-files-installer-isos-and-snapshots-live-can-the-paths-be-changed) in Q&A.
 
 ## CoW: how disk grows with N VMs
 
@@ -57,12 +58,10 @@ Same `images:debian/13`, 10 different projects:
 
 | Backend | Per-VM disk | 10 VMs total | When to pick |
 |---|---|---|---|
-| **`dir`** (this role's default) | full ~1 GB copy | ~11 GB | works on any FS, no setup |
-| `btrfs` | few MB + writes | ~2-3 GB | btrfs FS (openSUSE etc) |
-| `zfs` | few MB + writes | ~2-3 GB | zfs FS |
-| `lvm-thin` | few MB + writes | ~2-3 GB | LVM thin pool |
-
-`dir` is universal but uses N× the disk. Switch to `btrfs` / `zfs` if you run >5 VMs.
+| `dir` | full ~1 GB copy | ~11 GB | works on any FS, no setup; Incus's built-in default |
+| **`btrfs`** (this role's default, via loop file on `/home`) | few MB + writes | ~2-3 GB | want CoW snapshots; no btrfs partition needed (loop file inside ext4 `/home` is fine) |
+| `zfs` | few MB + writes | ~2-3 GB | host has ZFS |
+| `lvm-thin` | few MB + writes | ~2-3 GB | host has an LVM thin pool already configured |
 
 Backend is chosen at first-time `incus admin init`. Changing later needs a manual re-init (this role won't redo it).
 
@@ -189,19 +188,43 @@ sudo du -sh /var/lib/incus/*                # raw breakdown
 Three things called "image" in this stack, do not conflate them:
 
 - **Cached incus image** - a tarball fetched from a remote (e.g. `images:`); for VMs it bundles a pre-built qcow2 disk + metadata. One per fingerprint, shared by every VM launched from it.
-- **Per-VM disk file** - a qcow2 file (`root.img`), one per VM, copied out of the cached incus image at `incus launch` time. This is what the VM actually boots from and writes to.
+- **Per-VM disk file** - one per VM, created from the cached image at `incus launch` time. Format depends on storage pool backend (qcow2 file for `dir`, btrfs subvolume for `btrfs`, ZFS dataset for `zfs`, thin LV for `lvm-thin`). This is what the VM actually boots from and writes to.
 - **Installer ISO** - bootable install media (`.iso`). Not used by `incus launch images:*`; only relevant if you import one yourself.
 
-All three plus snapshots live under `/var/lib/incus/`:
+#### Always on `/` (daemon-level, NOT affected by storage pool config)
 
-| What | Default path |
+| What | Path |
 |---|---|
-| Cached incus image (tarball: qcow2 + metadata) | `/var/lib/incus/images/` |
-| Per-VM disk file (qcow2, `dir` backend) | `/var/lib/incus/storage-pools/<pool>/virtual-machines/<vm>/root.img` |
-| Per-VM snapshot (`dir` backend) | `/var/lib/incus/storage-pools/<pool>/virtual-machines-snapshots/<vm>/<snap>/` |
-| Installer ISO (only if you imported one) | inside the storage pool you targeted via `incus storage volume import --type=iso` |
+| Cached incus image (tarball: qcow2 + metadata) | `/var/lib/incus/images/<fingerprint>/` |
+| Daemon database + server certs | `/var/lib/incus/database/`, `/var/lib/incus/server.crt`, ... |
+| Daemon config | `/etc/incus/` |
+| Logs | `/var/log/incus/` |
 
-What `incus launch images:debian/13` pulls is a cached incus image, NOT an installer ISO - this is incus's normal install path: copy the cached qcow2 into a per-VM disk file, boot it, done.
+These move only if you symlink `/var/lib/incus` whole (see [Move everything](#move-everything-image-cache--pool--db)).
+
+#### Pool-level data (depends on `incus_storage_pool_{driver,source,size}`)
+
+`<pool>` below = `/var/lib/incus/storage-pools/default/` — the **mount point** where Incus exposes the `default` pool, regardless of backend. For `dir` backend that's also where the actual files live; for loop-file backends, that mount points INTO the loop file's filesystem.
+
+| | **`btrfs` loop on `/home`**<br>(project default) | **`dir` on `/`**<br>(Incus's built-in default) | **`dir` on `/data`** | **`zfs` loop on `/home`** |
+|---|---|---|---|---|
+| `defaults/main.yml` config | `driver: btrfs`<br>`source: /home/incus-storage.img`<br>`size: 500GiB` | `driver: dir`<br>`source: ""`<br>`size: ""` | `driver: dir`<br>`source: /data/vm/incus`<br>`size: ""` | `driver: zfs`<br>`source: /home/incus-storage.zfs`<br>`size: 500GiB` |
+| Pool blocks physically live in | `/home/incus-storage.img` (sparse loop file, btrfs FS inside) | inside `/` filesystem, at `<pool>/` directly | inside `/data` filesystem, at `/data/vm/incus/` directly | `/home/incus-storage.zfs` (sparse loop file, ZFS pool inside) |
+| Per-VM root disk | btrfs subvol, CoW-cloned from pool template | full qcow2 file at `<pool>/virtual-machines/<vm>/root.img` | full qcow2 at `/data/vm/incus/virtual-machines/<vm>/root.img` | ZFS dataset, CoW clone of pool template |
+| Per-VM snapshot | btrfs subvol snapshot — instant, ~0 space | full dir copy at `<pool>/virtual-machines-snapshots/<vm>/<snap>/` — slow, doubles disk | full dir copy at `/data/vm/incus/virtual-machines-snapshots/<vm>/<snap>/` | ZFS snapshot — instant, ~0 space |
+| Pool template (image clone src) | btrfs subvol at `<pool>/images/<fp>` (inside loop) | none (`dir` backend has no template; each VM is a fresh full copy of the daemon-level cached image) | none (same as above) | ZFS dataset `default/images/<fp>` |
+| Imported ISO (custom volume) | custom volume in pool (inside loop) | `<pool>/custom/iso/<volname>/` (real dir on `/`) | `/data/vm/incus/custom/iso/<volname>/` | ZFS dataset under pool |
+| CoW snapshots cheap? | **yes** (btrfs reflinks) | no (full copy each time) | no | **yes** (ZFS snapshots) |
+
+#### Reading the table
+
+- Even with the loop-file backends, `incus list` / `incus storage info default` reports paths under `<pool>` (= `/var/lib/incus/storage-pools/default/`). That's the MOUNT view. The actual blocks are inside the `source:` loop file on `/home`.
+- `du -sh /var/lib/incus/` will UNDERCOUNT for loop-file backends because the pool's contents live in the loop file on `/home`, not on `/`. Use `du -sh /home/incus-storage.img` (or `incus storage info default`) for real usage.
+- For `dir`-on-`/` (Incus built-in default), `<pool>` IS the real path, so `du -sh /var/lib/incus/` counts everything.
+
+#### Installer ISO (rare path)
+
+What `incus launch images:debian/13` pulls is a cached incus image, NOT an installer ISO - this is incus's normal install path: clone the cached image into a per-VM disk file, boot it, done.
 
 If you actually need to run an installer ISO (custom install, niche distro):
 
@@ -211,10 +234,11 @@ incus storage volume import default debian-13.iso debian13-installer --type=iso
 
 Safer source for VM disk images than raw `curl` of an ISO: `virt-builder` (from `guestfs-tools`, the Red Hat / libguestfs toolkit; maintained at libguestfs.org since 2009) downloads + GPG-verifies upstream pre-built qcow2 disks. This role installs `guestfs-tools` for you on Debian / Fedora / openSUSE (same package name on all three since libguestfs split tools out in 2022). Then `incus image import` to register the result as a cached incus image, or `incus storage volume import` to attach it as a one-off disk.
 
-Customizable:
-- whole tree: symlink `/var/lib/incus` elsewhere (see [Move everything](#move-everything-image-cache--pool--db))
-- per-pool config: `incus_storage_pool_{driver,source,size}` at first init (see [Configuring the storage pool](#configuring-the-storage-pool)), or `incus storage create <pool> <driver> source=... [size=...]` post-init
-- cached-image directory: not movable separately - it tracks wherever `/var/lib/incus/` points
+#### What can be moved where
+
+- **Whole tree** (cached images + pool + DB + config): symlink `/var/lib/incus` elsewhere — see [Move everything](#move-everything-image-cache--pool--db).
+- **Per-pool blocks** (where the VMs / snapshots / pool template actually live): `incus_storage_pool_{driver,source,size}` at first init (see [Configuring the storage pool](#configuring-the-storage-pool)), or `incus storage create <pool> <driver> source=... [size=...]` post-init.
+- **Cached-image directory**: not movable separately - it always lives under wherever `/var/lib/incus/` points.
 
 ### ext4, btrfs noCoW, or btrfs - which for VM disks?
 
@@ -222,9 +246,9 @@ Depends on the incus storage backend:
 
 | Backend | Best FS | Why |
 |---|---|---|
-| `dir` (this role's default) | ext4 / xfs | predictable, no double-CoW |
+| `dir` | ext4 / xfs | predictable, no double-CoW |
 | `dir` | btrfs + `chattr +C` on the storage dir | disables CoW per-file |
-| `btrfs` | btrfs | incus uses subvolumes + reflinks, manages CoW at the right level |
+| `btrfs` (this role's default, via loop file) | btrfs | incus uses subvolumes + reflinks, manages CoW at the right level. Loop file on ext4 `/home` works because the btrfs layer only sees its own block device |
 | `zfs` | zfs | same idea on zvol |
 
 Bad combo: `dir` backend on plain btrfs (no `chattr +C`). qcow2 random writes amplify under btrfs CoW; `du` balloons; fragmentation hurts I/O. The role's `host_setup.yml` warns about this; the `openSUSE + snapper trap` section above covers a related failure mode.
