@@ -1,0 +1,18 @@
+# Managed by Ansible - do not edit manually
+# Deny host machine-id reads - /etc/apparmor.d/abstractions/local_mixin_deny_machine_id
+#
+# Include in any networked / telemetry-prone profile that must not read the host's stable
+# machine-id and hand it to a remote party as a device fingerprint. Both paths are the same
+# identifier (systemd uses /etc/machine-id, D-Bus historically used /var/lib/dbus/machine-id;
+# one is usually a symlink to the other, but apps probe both names).
+#
+# Plain `deny` (NOT `audit deny`): libsystemd / Qt / D-Bus read machine-id routinely at startup,
+# so a denied hit is benign noise, not a security signal - silence it. Apps that lose the read
+# fall back to generating their own per-app random ID, which is the privacy-preferable outcome.
+#
+# Scope note: denies ONLY the machine-id. Other fingerprint vectors are deliberately NOT bundled
+# here - notably /proc/sys/kernel/random/boot_id, which some profiles (gwenview) must READ;
+# bundling it would break them. Add new vectors only when a concrete profile needs them.
+
+deny /etc/machine-id r,
+deny /var/lib/dbus/machine-id r,

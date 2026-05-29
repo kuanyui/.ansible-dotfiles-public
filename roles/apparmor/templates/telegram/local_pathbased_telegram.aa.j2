@@ -38,6 +38,7 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected me
     #include <abstractions/local_mixin_deny_mounted_external_media>
     #include <abstractions/local_mixin_gpu_probe>
     #include <abstractions/local_mixin_deny_gpu>
+    #include <abstractions/local_mixin_deny_machine_id>
 
     # Open clicked links/files in the default application; ix keeps xdg-open confined
     /usr/bin/xdg-open rix,
@@ -84,18 +85,40 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected me
     # of LIBGL_ALWAYS_SOFTWARE, so the directory must be readable even though GPU is unused.
     # That read is now factored into the shared `local_mixin_gpu_probe` abstraction
     # included above.
+    #
+    # The remaining GPU userspace discovery (Vulkan / DRI / EGL external platform / NVIDIA app
+    # profiles / the /dev/dri dir listing / mesa shader cache) is inert metadata Telegram does
+    # not need under LIBGL_ALWAYS_SOFTWARE=1. Explicit `deny` (silence): this is the counterpart
+    # to gwenview, which inlines these as ALLOW precisely so Telegram can keep them denied - a
+    # compromised Telegram must not pollute the shared mesa shader cache. local_mixin_deny_gpu
+    # above already blocks the device nodes; these lines silence the leftover discovery reads.
+    deny /dev/dri/ r,
+    deny /usr/share/vulkan/icd.d/{,**} r,
+    deny /usr/share/vulkan/implicit_layer.d/{,**} r,
+    deny /usr/share/drirc.d/{,**} r,
+    deny /usr/share/egl/egl_external_platform.d/{,**} r,
+    deny /usr/share/nvidia/nvidia-application-profiles-* r,
+    deny @{HOME}/.cache/mesa_shader_cache/{,**} rwk,
+    # udmabuf zero-copy buffer assembly: denied (silence) - the minimal GPU-less posture uses
+    # plain memory copies for frame delivery. gwenview grants this inline; Telegram does not.
+    deny /dev/udmabuf rw,
 
     # Qt reads /dev/tty to detect whether stdout is a terminal
     /dev/tty r,
+
+    # Battery / power status (directory listing); Telegram polls power state
+    /sys/class/power_supply/ r,
 
     # Process self-inspection
     owner @{PROC}/@{pid}/ r,
     owner @{PROC}/@{pid}/** r,
     @{PROC}/sys/kernel/core_pattern r,
+    # systemd-detect-virt (allowed above) reads osrelease for VM/container detection
+    @{PROC}/sys/kernel/osrelease r,
 
     # PipeWire audio client configuration (main file + drop-in directory)
-    # /usr/share/pipewire/client.conf r,
-    # /usr/share/pipewire/client.conf.d/{,*} r,
+    /usr/share/pipewire/client.conf r,
+    /usr/share/pipewire/client.conf.d/{,*} r,
 
     # libheif plugins for HEIF/HEIC image support; m required to mmap the .so files
     /usr/libexec/libheif/{,*} rm,
