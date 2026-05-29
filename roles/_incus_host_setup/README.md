@@ -169,23 +169,26 @@ These move only if you symlink `/var/lib/incus` whole (see [Move everything](#mo
 
 #### Pool-level data (depends on `incus_storage_pool_{driver,source,size}`)
 
-`<pool>` below = `/var/lib/incus/storage-pools/default/` - the **mount point** where Incus exposes the `default` pool, regardless of backend. For `dir` backend that's also where the actual files live; for loop-file backends, that mount points INTO the loop file's filesystem.
+Two backend families behave differently on disk:
 
-| | **`btrfs` loop on `/home`**<br>(project default) | **`dir` on `/`**<br>(Incus's built-in default) | **`dir` on `/data`** | **`zfs` loop on `/home`** |
+- **`dir` backend**: the `source:` value IS the storage directory tree. Incus writes VM disks (qcow2 files), snapshots (dir copies), and custom volumes (ISOs etc.) directly there. With empty `source:` it defaults to `/var/lib/incus/storage-pools/default/`. There is no separate "mount point"; the `source:` path IS the path.
+- **`btrfs` / `zfs` loop-file backend**: the `source:` value is a sparse `.img` file. The inner filesystem (btrfs FS or ZFS pool) lives inside that file. Incus mounts/imports it at `/var/lib/incus/storage-pools/default/`, so `ls` and `incus storage info` work via that path even though the actual blocks are inside the `.img` file.
+
+| | **btrfs loop on `/home`**<br>(project default) | **dir on `/`**<br>(Incus built-in default) | **dir on `/data`** | **zfs loop on `/home`** |
 |---|---|---|---|---|
 | `defaults/main.yml` config | `driver: btrfs`<br>`source: /home/incus-storage.img`<br>`size: 500GiB` | `driver: dir`<br>`source: ""`<br>`size: ""` | `driver: dir`<br>`source: /data/vm/incus`<br>`size: ""` | `driver: zfs`<br>`source: /home/incus-storage.zfs`<br>`size: 500GiB` |
-| Pool blocks physically live in | `/home/incus-storage.img` (sparse loop file, btrfs FS inside) | inside `/` filesystem, at `<pool>/` directly | inside `/data` filesystem, at `/data/vm/incus/` directly | `/home/incus-storage.zfs` (sparse loop file, ZFS pool inside) |
-| Per-VM root disk | btrfs subvol, CoW-cloned from pool template | full qcow2 file at `<pool>/virtual-machines/<vm>/root.img` | full qcow2 at `/data/vm/incus/virtual-machines/<vm>/root.img` | ZFS dataset, CoW clone of pool template |
-| Per-VM snapshot | btrfs subvol snapshot - instant, ~0 space | full dir copy at `<pool>/virtual-machines-snapshots/<vm>/<snap>/` - slow, doubles disk | full dir copy at `/data/vm/incus/virtual-machines-snapshots/<vm>/<snap>/` | ZFS snapshot - instant, ~0 space |
-| Pool template (image clone src) | btrfs subvol at `<pool>/images/<fp>` (inside loop) | none (`dir` backend has no template; each VM is a fresh full copy of the daemon-level cached image) | none (same as above) | ZFS dataset `default/images/<fp>` |
-| Imported ISO (custom volume) | custom volume in pool (inside loop) | `<pool>/custom/iso/<volname>/` (real dir on `/`) | `/data/vm/incus/custom/iso/<volname>/` | ZFS dataset under pool |
+| Where the actual blocks live on host | `/home/incus-storage.img` (sparse btrfs loop file) | `/var/lib/incus/storage-pools/default/` (real directory tree) | `/data/vm/incus/` (real directory tree) | `/home/incus-storage.zfs` (sparse ZFS loop file) |
+| Where you `ls` to navigate the pool | `/var/lib/incus/storage-pools/default/` (loop file mounted here) | `/var/lib/incus/storage-pools/default/` (= the storage path itself) | `/data/vm/incus/` (= the storage path itself) | `/var/lib/incus/storage-pools/default/` (ZFS pool `default` imported here) |
+| Per-VM root disk | btrfs subvolume, CoW-cloned from pool template (visible at `.../virtual-machines/<vm>/`) | full qcow2 file at `/var/lib/incus/storage-pools/default/virtual-machines/<vm>/root.img` | full qcow2 file at `/data/vm/incus/virtual-machines/<vm>/root.img` | ZFS dataset, CoW clone of pool template (visible at `.../virtual-machines/<vm>/`) |
+| Per-VM snapshot | btrfs subvolume snapshot (instant, ~0 space) | full directory copy at `/var/lib/incus/storage-pools/default/virtual-machines-snapshots/<vm>/<snap>/` (slow, doubles disk) | full directory copy at `/data/vm/incus/virtual-machines-snapshots/<vm>/<snap>/` (slow, doubles disk) | ZFS snapshot (instant, ~0 space) |
+| Pool template (image clone src) | btrfs subvolume `images/<fp>/` under the mount point | none (`dir` backend has no template; each VM = fresh full copy of the daemon-level cached image) | none (same as above) | ZFS dataset `default/images/<fp>` |
+| Imported ISO (custom volume) | btrfs custom volume in pool | real dir at `/var/lib/incus/storage-pools/default/custom/iso/<volname>/` | real dir at `/data/vm/incus/custom/iso/<volname>/` | ZFS dataset under pool |
 | CoW snapshots cheap? | **yes** (btrfs reflinks) | no (full copy each time) | no | **yes** (ZFS snapshots) |
 
 #### Reading the table
 
-- Even with the loop-file backends, `incus list` / `incus storage info default` reports paths under `<pool>` (= `/var/lib/incus/storage-pools/default/`). That's the MOUNT view. The actual blocks are inside the `source:` loop file on `/home`.
-- `du -sh /var/lib/incus/` will UNDERCOUNT for loop-file backends because the pool's contents live in the loop file on `/home`, not on `/`. Use `du -sh /home/incus-storage.img` (or `incus storage info default`) for real usage.
-- For `dir`-on-`/` (Incus built-in default), `<pool>` IS the real path, so `du -sh /var/lib/incus/` counts everything.
+- The row "Where the actual blocks live on host" is what `du` / `df` see. For loop-file backends, `du -sh /var/lib/incus/` UNDERCOUNTS the pool because the data lives inside the `.img` file on `/home`; use `du -sh /home/incus-storage.img` (or `incus storage info default`). For `dir` backends, the two rows are the same path, so `du` on either gives the truth.
+- For `dir` backend with `source: /data/vm/incus`, there is **no** `/var/lib/incus/storage-pools/default/` directory at all - the pool is just `/data/vm/incus/`. The "mount point" canonicalization only matters for loop-file backends that need a place to mount.
 
 #### Installer ISO (rare path)
 
