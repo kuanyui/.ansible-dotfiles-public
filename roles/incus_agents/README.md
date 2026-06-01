@@ -4,6 +4,7 @@ Per-project KVM VM launchers. One VM per `(agent, project)`.
 
 Stronger isolation than `c-<agent>-<runtime>` rootless containers: separate kernel, virtio-fs share via standalone `virtiofsd`.
 
+> [!IMPORTANT]
 > Host-level concerns (which distros are supported, what gets installed on the host, the storage pool config matrix, CoW backends, openSUSE+snapper trap, moving the install tree, NAT vs bridge, virt-manager coexistence, `du` undercounting on loop-file pools) are all in [`roles/_incus_host_setup/README.md`](../_incus_host_setup/README.md). Those apply equally to this role and to `roles/incus_workstations`.
 >
 > This file covers only what's specific to LLM agent VMs.

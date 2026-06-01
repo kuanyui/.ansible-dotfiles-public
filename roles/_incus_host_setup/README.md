@@ -55,7 +55,8 @@ Fixes (pick one, manual):
 - put incus on a different filesystem
 - OR stay on `dir` backend (no subvolumes, no interaction)
 
-Note: this project's default uses btrfs LOOP FILE on `/home` (not a btrfs subvolume of `/`), so the snapper trap doesn't apply to the default config - snapper doesn't snapshot `/home`'s loop file contents because they're inside a single file from snapper's perspective.
+> [!NOTE]
+> This project's default uses btrfs LOOP FILE on `/home` (not a btrfs subvolume of `/`), so the snapper trap doesn't apply to the default config - snapper doesn't snapshot `/home`'s loop file contents because they're inside a single file from snapper's perspective.
 
 ## Configuring the storage pool
 
@@ -169,10 +170,13 @@ These move only if you symlink `/var/lib/incus` whole (see [Move everything](#mo
 
 #### Pool-level data (depends on `incus_storage_pool_{driver,source,size}`)
 
+> [!TIP]
+> **What is a "loop file"?** A regular file (e.g. `/home/incus-storage.img`) that sits on an ordinary host filesystem (e.g. ext4 `/home`), but the Linux kernel can be told to treat the file's bytes as if they were a raw block device via the **loop driver** (`/dev/loop<N>`). Incus then formats a different filesystem (a btrfs filesystem, or a ZFS pool) INSIDE those bytes, and mounts / imports that inner filesystem at a canonical path under `/var/lib/incus/`. So from above (`ls /var/lib/incus/storage-pools/default/`) you see the inner filesystem's contents like any directory; from below (`du -sh /home/incus-storage.img`) you see how many bytes the file actually consumes on ext4 `/home`. The whole point is to get btrfs / ZFS semantics (snapshots, CoW clones) without needing a dedicated btrfs / ZFS partition.
+
 Two backend families behave differently on disk:
 
-- **`dir` backend**: the `source:` value IS the storage directory tree. Incus writes VM disks (qcow2 files), snapshots (dir copies), and custom volumes (ISOs etc.) directly there. With empty `source:` it defaults to `/var/lib/incus/storage-pools/default/`. There is no separate "mount point"; the `source:` path IS the path.
-- **`btrfs` / `zfs` loop-file backend**: the `source:` value is a sparse `.img` file. The inner filesystem (btrfs FS or ZFS pool) lives inside that file. Incus mounts the loop file at `/var/lib/incus/storage-pools/default/` for btrfs (or imports the ZFS pool with the name `default` for zfs), so `ls` and `incus storage info` work via that path even though the actual blocks are inside the `.img` file.
+- **`dir` backend**: the `source:` value IS the storage directory tree on a real filesystem - no loop file involved. Incus writes VM disks (qcow2 files), snapshots (directory copies), and custom volumes (ISOs etc.) directly into that directory. With empty `source:` it defaults to `/var/lib/incus/storage-pools/default/`. There is no separate "mount point"; the `source:` path IS the path you `ls`.
+- **`btrfs` / `zfs` loop-file backend**: the `source:` value is the path to a sparse `.img` file (a loop file as defined above). The inner filesystem (btrfs FS or ZFS pool) lives inside that file. Incus mounts the loop file's btrfs FS at `/var/lib/incus/storage-pools/default/` (or imports the inner ZFS pool with the name `default`) at daemon start, so `ls` and `incus storage info` work via that path even though the actual blocks are inside the `.img` file.
 
 Placeholders used in the cells below:
 
@@ -181,7 +185,7 @@ Placeholders used in the cells below:
 - `<snap>` - whatever name you passed to `incus snapshot create <vm-name> <snap>`.
 - `<volname>` - the volume name you passed to `incus storage volume import default <iso-file> <volname> --type=iso`.
 
-| | **btrfs loop on `/home`**<br>(project default) | **dir on `/`**<br>(Incus built-in default) | **dir on `/data`** | **zfs loop on `/home`** |
+| | **btrfs loop file on `/home`**<br>(project default) | **`dir` backend on `/`**<br>(Incus built-in default) | **`dir` backend on `/data`** | **zfs loop file on `/home`** |
 |---|---|---|---|---|
 | `defaults/main.yml` config | `driver: btrfs`<br>`source: /home/incus-storage.img`<br>`size: 500GiB` | `driver: dir`<br>`source: ""`<br>`size: ""` | `driver: dir`<br>`source: /data/vm/incus`<br>`size: ""` | `driver: zfs`<br>`source: /home/incus-storage.zfs`<br>`size: 500GiB` |
 | Where the actual blocks live on host | `/home/incus-storage.img` (a sparse btrfs loop file) | `/var/lib/incus/storage-pools/default/` (a real directory tree) | `/data/vm/incus/` (a real directory tree) | `/home/incus-storage.zfs` (a sparse ZFS loop file) |
@@ -194,7 +198,7 @@ Placeholders used in the cells below:
 
 #### Reading the table
 
-- The row **"Where the actual blocks live on host"** is what `du` / `df` measure. For the two loop-file backends (`btrfs` loop on `/home`, `zfs` loop on `/home`), `du -sh /var/lib/incus/` **UNDERCOUNTS** the pool because the pool's data lives inside the `.img` file on `/home`, not under `/var/lib/incus/`. To get real usage:
+- The row **"Where the actual blocks live on host"** is what `du` / `df` measure. For the two loop-file backends (btrfs loop file on `/home`, zfs loop file on `/home`), `du -sh /var/lib/incus/` **UNDERCOUNTS** the pool because the pool's data lives inside the `.img` file on `/home`, not under `/var/lib/incus/`. To get real usage:
   - btrfs loop case: `du -sh /home/incus-storage.img` (or `incus storage info default`)
   - zfs loop case: `du -sh /home/incus-storage.zfs`
 - For the two `dir` cases, the "actual blocks" row equals the "navigate the pool" row, so `du` on either path counts everything.

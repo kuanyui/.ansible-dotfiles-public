@@ -4,6 +4,7 @@ Persistent Incus VM launchers, one VM per purpose. For things like Qt/C++ dev en
 
 Different from [`roles/incus_agents`](../incus_agents/): one persistent VM per *purpose* (not per project), heavier resources, GUI-friendly, snapshot CLI baked in, apt-install happens ONCE at first `init` (not every time).
 
+> [!IMPORTANT]
 > Host-level concerns (which distros are supported, what gets installed on the host, the storage pool config matrix, CoW backends, openSUSE+snapper trap, moving the install tree, NAT vs bridge, virt-manager coexistence, `du` undercounting on loop-file pools) are all in [`roles/_incus_host_setup/README.md`](../_incus_host_setup/README.md). Those apply equally to this role and to `roles/incus_agents`.
 >
 > This file covers only what's specific to persistent workstation VMs.
