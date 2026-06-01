@@ -68,6 +68,12 @@
 # conditional (the `apt-install-without-recommends` helper).
 # TODO: when multi-distro VM support lands, parse each entry's `base_image`
 # and render per-family staging dirs.
+- name: Ensure VM dotfiles staging dir `{{ incus_workstations_root }}/vm-rootfs/home/user` exists (roles/dotfiles only creates SUB-dirs of `target_home`, not `target_home` itself)
+  ansible.builtin.file:
+    path: "{{ incus_workstations_root }}/vm-rootfs/home/user"
+    state: directory
+    mode: "0755"
+
 - name: Stage VM dotfiles via `roles/dotfiles` into `{{ incus_workstations_root }}/vm-rootfs/home/user/`
   ansible.builtin.include_role:
     name: dotfiles

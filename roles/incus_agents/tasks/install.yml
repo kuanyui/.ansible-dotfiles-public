@@ -67,6 +67,12 @@
 # `apt-install-without-recommends` helper). Without this, the helper
 # would silently disappear from the VM's `.zshrc` when the HOST is
 # Fedora / openSUSE / etc. `.bashrc.j2` has no `ansible_facts` refs at all.
+- name: Ensure VM dotfiles staging dir `{{ incus_root }}/vm-rootfs/home/user` exists (roles/dotfiles only creates SUB-dirs of `target_home`, not `target_home` itself - host-side flow gets away with this because $HOME always exists)
+  ansible.builtin.file:
+    path: "{{ incus_root }}/vm-rootfs/home/user"
+    state: directory
+    mode: "0755"
+
 - name: Stage VM dotfiles via `roles/dotfiles` into `{{ incus_root }}/vm-rootfs/home/user/`
   ansible.builtin.include_role:
     name: dotfiles
