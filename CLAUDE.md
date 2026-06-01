@@ -81,3 +81,16 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - CLI arguments in code/scripts/Makefiles/subprocess calls: always use the long `--option` form (`--non-interactive`, `--yes`, `--recursive`), never the short flag form (`-n`, `-y`, `-r`). Short flags are opaque and command-specific (e.g. `zypper -n` = non-interactive, `tar -n` = no-recursion, `grep -n` = line-number); long flags are self-documenting in diffs and important for non-interactive sudo flags where misreading could change security-relevant behavior.
 - Transparency before privileged actions: any script step that needs `sudo` / root password, or that modifies system files / fetches assets from outside the repo, must print BEFORE executing: (1) the exact command that will run (full argv, copyable as-is, e.g. via `shlex.join`), (2) the source of anything being installed (distro official repo vs `pip` / PyPI vs `curl | sh` vs vendor binary), (3) that sudo may prompt for a password. The user must be able to read what's about to happen and Ctrl+C with complete information; never hide privileged behavior behind a vague "Installing X...".
 - Ansible role naming: role directories prefixed with `_` (e.g. `roles/_install_distro_packages/`) are internal utility roles - meant to be invoked via `ansible.builtin.include_role` from other roles, NOT as a standalone playbook entry point. They do not get a paired playbook in `playbooks/` and are not exposed via Makefile targets. The `_` prefix is the visible marker; the absence of `playbooks/<role_name>.yml` is the structural check. (Ansible has no official term for this - "sub-role" / "library role" are colloquial; for ansible they are just regular roles, the privacy is a project convention.) This extends the same `_` prefix convention used for internal task files (e.g. `roles/apparmor/tasks/_install.yml`).
+- Ansible-managed user-home namespace - every face role MUST own exactly one hyphenated subdir under `~/.local/share/ansible-managed/`. Current mapping:
+
+  ```
+  ~/.local/share/ansible-managed/container-apps/       <- roles/container_apps
+  ~/.local/share/ansible-managed/incus-agents/         <- roles/incus_agents
+  ~/.local/share/ansible-managed/incus-workstations/   <- roles/incus_workstations
+  ```
+
+  - Subdir name uses hyphens; the Ansible role directory uses underscores. They differ on purpose (XDG-ish path vs Ansible role name conventions).
+  - Everything the role deploys (manifest, zsh/bash completions, staging files, ssh keys, ...) lives inside its single subdir.
+  - Uninstall is `rm -rf ~/.local/share/ansible-managed/<role-subdir>/`. No per-file chasing through a manifest.
+  - Files MUST NOT land directly at `~/.local/share/ansible-managed/` itself. That breaks the `~/.local/share/ansible-managed/*/zsh-completions(N)` glob in `roles/zsh/templates/.zshrc.j2` and forces uninstall logic that can't just `rm -rf`.
+  - Utility roles (e.g. `roles/container_templates`) may "guest" inside a face role's subdir, for example writing into `~/.local/share/ansible-managed/container-apps/container-templates/`. They MUST NOT own a separate `~/.local/share/ansible-managed/<x>/` of their own; they get cleaned up when their host face role is uninstalled.
