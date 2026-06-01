@@ -21,7 +21,7 @@ incus_workstations_state: present
 # `rm -rf {{ incus_workstations_root }}` cleanly without touching siblings.
 # Completions auto-discovered by `.zshrc` / `.bashrc` via the
 # `ansible-managed/*/zsh-completions` glob - no per-role rc edit needed.
-incus_workstations_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus_workstations"
+incus_workstations_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus-workstations"
 incus_workstations_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
 incus_workstations_zsh_completion_dir: "{{ incus_workstations_root }}/zsh-completions"
 incus_workstations_bash_completion_dir: "{{ incus_workstations_root }}/bash-completions"

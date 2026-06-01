@@ -146,7 +146,7 @@ Add to **`~/.zshrc`**, **before** any `compinit` call (the `fpath` change is onl
 ```zsh
 # Ansible-managed zsh completions. Each managed role drops `_<cmd>` files
 # under its own `~/.local/share/ansible-managed/<role>/zsh-completions/`
-# subdir (`container-apps/zsh-completions/_c-*`, `incus_agents/zsh-completions/_v-*`,
+# subdir (`container-apps/zsh-completions/_c-*`, `incus-agents/zsh-completions/_v-*`,
 # ...); the glob auto-discovers across all roles. `(N)` is null-glob so it's
 # safe even before any role has installed completions.
 fpath=(${HOME}/.local/share/ansible-managed/*/zsh-completions(N) $fpath)

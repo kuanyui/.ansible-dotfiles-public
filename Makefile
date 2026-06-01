@@ -65,12 +65,12 @@ unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/conta
 apply-incus-agents:  ## Install v-<agent> Incus VM launchers via `roles/incus_agents` (bypasses `setup_incus_agents` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_agents.yml
 
-unapply-incus-agents:  ## Uninstall incus agent launchers (reads ~/.local/share/ansible-managed/incus_agents/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
+unapply-incus-agents:  ## Uninstall incus agent launchers (reads ~/.local/share/ansible-managed/incus-agents/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_agents_uninstall.yml
 
 resync-incus-agents-dotfiles:  ## Re-push staged dotfiles into every existing v-* VM (non-destructive; same `incus file push` the launcher runs at `init`). Assumes `make apply-incus-agents` already re-rendered the staging dir.
 	@set -e; \
-	STAGING="$$HOME/.local/share/ansible-managed/incus_agents/vm-rootfs/home/user"; \
+	STAGING="$$HOME/.local/share/ansible-managed/incus-agents/vm-rootfs/home/user"; \
 	if [ ! -d "$$STAGING" ]; then echo "Staging dir not found: $$STAGING -- run 'make apply-incus-agents' first" >&2; exit 1; fi; \
 	VMS=$$(incus list '^v-' --format csv --columns n); \
 	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
@@ -82,7 +82,7 @@ resync-incus-agents-dotfiles:  ## Re-push staged dotfiles into every existing v-
 apply-incus-workstations:  ## Install v-<workstation> Incus persistent VM launchers via `roles/incus_workstations` (bypasses `setup_incus_workstations` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_workstations.yml
 
-unapply-incus-workstations:  ## Uninstall incus workstation launchers (reads ~/.local/share/ansible-managed/incus_workstations/incus-workstations.manifest.yml; leaves any existing VMs + snapshots alone - delete those manually with `v-<name> rma` or `incus delete`).
+unapply-incus-workstations:  ## Uninstall incus workstation launchers (reads ~/.local/share/ansible-managed/incus-workstations/incus-workstations.manifest.yml; leaves any existing VMs + snapshots alone - delete those manually with `v-<name> rma` or `incus delete`).
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_workstations_uninstall.yml
 
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). Two phases: (1) a fast Python pre-flight does `python3-jsonschema` probe/install + `personal_dirs.yml` schema-validate + colored preview + y/N confirm, all BEFORE ansible-playbook starts so you do not have to wait for ansible to spin up just to be prompted; (2) only on `y` does ansible run, with `apparmor_non_interactive=true` to skip the now-redundant in-playbook validate/preview/confirm. Asks for the BECOME password up-front (`--ask-become-pass`) because ansible's default sudo invocation uses `-n` (non-interactive) which fails without a piped password. Bypasses `setup_apparmor` gate.
