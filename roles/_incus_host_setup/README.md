@@ -65,12 +65,36 @@ Three vars in [`defaults/main.yml`](defaults/main.yml) drive the preseed pool co
 | Var | Project default | Meaning |
 |---|---|---|
 | `incus_storage_pool_driver` | `btrfs` | backend: `dir` / `btrfs` / `zfs` / `lvm-thin` |
-| `incus_storage_pool_source` | `/home/incus-storage.img` | dir path / btrfs subvol / image file / LV name (see below) |
-| `incus_storage_pool_size` | `500GiB` | only for loop-file backends (btrfs / zfs creating an image) |
+| `incus_storage_pool_source` | `/home/incus-storage.img` | meaning depends on the driver; see [Source semantics per driver](#source-semantics-per-driver) below |
+| `incus_storage_pool_size` | `500GiB` | only for `source:` forms where Incus CREATES a sparse file (loop file). For everything else (dir tree, existing subvolume, dedicated block device, already-existing ZFS dataset / LVM thin pool), leave empty |
+
+### Source semantics per driver
+
+This is the key section: **the same `source:` value means different things for different `driver:` values**. Picking `btrfs` does NOT automatically mean a loop file - it's just one of three forms Incus accepts. Per [Incus's official btrfs / zfs / lvm reference](https://linuxcontainers.org/incus/docs/main/reference/storage_btrfs/):
+
+| Driver | Valid `source:` forms | What Incus does with it |
+|---|---|---|
+| `dir` | Empty | Falls back to default location `/var/lib/incus/storage-pools/default/` (a directory on `/`) |
+| `dir` | Path to an existing directory | Uses that directory directly to store VM disks (qcow2 files), snapshots, custom volumes |
+| `btrfs` | Path to an existing btrfs subvolume (the host has a real btrfs filesystem somewhere) | Uses the subvolume directly, no formatting. CoW comes from the underlying btrfs FS. **No `size:` needed.** |
+| `btrfs` | Path to an existing block device (e.g. `/dev/nvme0n1p3`) | Runs `mkfs.btrfs` on the block device, mounts it under `/var/lib/incus/storage-pools/default/`. CoW native. **No `size:` needed** (size = device size). |
+| `btrfs` | Path to a file that doesn't exist yet (e.g. `/home/incus-storage.img`) | Creates the file as sparse, attaches via the loop driver (`/dev/loop<N>`), runs `mkfs.btrfs` inside. **`size:` IS REQUIRED** (determines the loop file's declared size). |
+| `zfs` | Name of an existing ZFS dataset (no leading `/`, e.g. `tank/incus`) | Uses the dataset directly. CoW native. **No `size:` needed.** |
+| `zfs` | Path to an existing block device | Creates a new ZFS pool on it. **No `size:` needed.** |
+| `zfs` | Path to a file that doesn't exist yet | Creates a loop file ZFS pool. **`size:` IS REQUIRED.** |
+| `lvm-thin` | Name of an existing LVM thin pool (format: `<volume-group>/<thinpool>`) | Uses the thin pool. Requires LVM thin pool to be already created on the host. **No `size:` needed.** |
+
+So "I want CoW" does NOT force you into a loop file. Loop file is just the most portable option when the host has no dedicated CoW filesystem / partition / device for Incus to use.
 
 ### Why `btrfs` loop file on `/home` as the project default?
 
-The project targets hosts where `/` is a small btrfs system partition (often ~160-180 GB on openSUSE / Tumbleweed installs) and `/home` is a much larger ext4 partition. Putting Incus VM disks directly on `/` runs it out of space fast; putting them on `/home` with btrfs in a loop file gets us CoW snapshots without repartitioning. The loop file is sparse - actual `/home` usage starts near zero and grows as VMs write. Tradeoff vs a real btrfs partition: ~5-10% overhead (ext4 → loop → btrfs).
+The project targets hosts where `/` is a small btrfs system partition (often ~160-180 GB on openSUSE / Tumbleweed installs) and `/home` is a much larger ext4 partition. Out of the three btrfs source forms above:
+
+- Existing btrfs subvolume on `/`: `/` is too small to hold VM disks.
+- Block device dedicated to Incus: requires repartitioning `/home` or adding a new disk - hardware-level change we don't want to assume.
+- Loop file on `/home`: works on the existing ext4 `/home` partition without touching anything. Sparse file, ~0 initial space.
+
+So loop file is the project's default because it requires zero hardware / partition changes. Tradeoff vs a dedicated block device: ~5-10% I/O overhead (ext4 → loop driver → btrfs), measurable but acceptable for the assumed use case.
 
 ### Overrides (in `host_vars/<hostname>.yml`)
 
@@ -90,7 +114,23 @@ incus_storage_pool_source: /data/vm/incus
 incus_storage_pool_size: ""
 ```
 
-**Already-set-up ZFS dataset**:
+**Dedicated block device** (best performance, CoW; requires you've partitioned `/dev/nvme0n1p3` or similar for this purpose):
+
+```yaml
+incus_storage_pool_driver: btrfs
+incus_storage_pool_source: /dev/nvme0n1p3
+incus_storage_pool_size: ""
+```
+
+**Existing btrfs subvolume** (CoW, no loop file overhead; requires you have a btrfs FS somewhere with enough space):
+
+```yaml
+incus_storage_pool_driver: btrfs
+incus_storage_pool_source: /mnt/btrfs-data/incus
+incus_storage_pool_size: ""
+```
+
+**Already-set-up ZFS dataset** (CoW, no loop file overhead; requires host has ZFS):
 
 ```yaml
 incus_storage_pool_driver: zfs
