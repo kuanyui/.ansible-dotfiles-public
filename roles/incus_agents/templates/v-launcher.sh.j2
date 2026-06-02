@@ -163,7 +163,10 @@ Subcommands:
                     Idempotent: re-running on an existing VM is a no-op start.
   start             Start an existing stopped VM
   stop              Stop the VM
-  shell             ssh into the VM as 'user', cwd = $WORKSPACE_WORKDIR
+  shell             Open a shell in the VM as 'user' (alias: shell-user),
+                    cwd = $WORKSPACE_WORKDIR
+  shell-user        Same as 'shell': unprivileged 'user' zsh
+  shell-root        Root maintenance shell (bash, uid 0), cwd = $WORKSPACE_WORKDIR
   $AGENT_NAME           Run $AGENT_DISPLAY ('$AGENT_COMMAND') inside the VM,
                     cwd = $WORKSPACE_WORKDIR
   rma               rm all: stop + delete the VM entirely (config + disk).
@@ -358,13 +361,26 @@ cmd_start() { _vm_exists || { echo "VM $VM_NAME does not exist; run 'init' first
 cmd_stop()  { _vm_exists && incus stop "$VM_NAME" 2>/dev/null || true; }
 cmd_rma()   { _vm_exists && incus delete -f "$VM_NAME" 2>/dev/null || true; }
 
-cmd_shell() {
+cmd_shell_user() {
     _ensure_vm_up
     _provision_vm   # marker-gated: provisions the first time, then skips
     # `zsh` not `bash`: user's default shell was chsh'd to zsh at provision
     # time, and the dotfiles pushed in include `~/.zshrc`. TTY is attached via
     # `incus exec`, so zsh auto-detects interactive and sources `~/.zshrc`.
     incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- zsh
+}
+
+# `shell` is the everyday entry point and a deliberate alias for `shell-user`.
+cmd_shell() { cmd_shell_user "$@"; }
+
+cmd_shell_root() {
+    _ensure_vm_up
+    _provision_vm   # marker-gated: provisions the first time, then skips
+    # Root maintenance shell. No --user/--group/--env: `incus exec` defaults to
+    # uid 0. `bash` not `zsh` - root has no staged ~/.zshrc, so plain bash is
+    # the predictable maintenance shell (zsh would drop into the new-user
+    # wizard against root's empty home).
+    incus exec --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- bash
 }
 
 cmd_agent() {
@@ -379,7 +395,7 @@ cmd_agent() {
 # ---------- Dispatch ----------
 sub="${1:-help}"; shift || true
 case "$sub" in
-    help|env|init|start|stop|shell|rma|{{ incus_app.name }})
+    help|env|init|start|stop|shell|shell-user|shell-root|rma|{{ incus_app.name }})
         # User-facing names keep hyphens; bash function names use underscores.
         # The agent subcommand is renamed to a fixed `cmd_agent` (vs per-agent
         # function name) so the dispatch line above doesn't have to be edited
