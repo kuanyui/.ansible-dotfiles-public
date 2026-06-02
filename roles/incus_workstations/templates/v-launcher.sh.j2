@@ -154,9 +154,13 @@ Usage: v-$WORKSTATION_NAME <subcommand> [args]
 Subcommands:
   help              Show this message
   env               Show resolved configuration
-  init              Create VM if missing, attach mounts, run first-time
-                    setup (idempotent: apt + dotfiles skipped if already
-                    provisioned - use 'update' to refresh).
+  init              Create VM if missing, attach mounts, run first-time setup
+                    (apt + user + dotfiles). If the VM already exists: prints a
+                    note and exits - does NOT recreate or re-provision. Use
+                    'update' (apt+dotfiles) or 'overwrite-dotfiles' to refresh.
+  overwrite-dotfiles
+                    Re-push dotfiles into /home/user + /root (overlay: same-
+                    named files overwritten, nothing deleted).
   start             Start the VM if stopped
   stop              Stop the VM (state preserved on disk)
 EOF
@@ -220,7 +224,9 @@ EOF
 {% endif %}
 }
 
-cmd_init() {
+# Ensure the VM exists and is running: launch + attach mounts on first
+# creation, otherwise start it if stopped. Does NOT provision - callers decide.
+_ensure_vm_up() {
     if _vm_exists; then
         echo "==> VM $VM_NAME already exists; starting if stopped..."
         _vm_running || incus start "$VM_NAME"
@@ -235,21 +241,47 @@ cmd_init() {
         _wait_vm_ready
         _attach_mounts
     fi
+}
 
+# First-time provisioning, marker-gated: apt + user + dotfiles, exactly once.
+# `update` forces a full refresh; `overwrite-dotfiles` re-pushes just dotfiles.
+_provision_once() {
     if _is_provisioned; then
-        echo "==> $VM_NAME already provisioned (marker $PROVISIONED_MARKER); skipping apt + dotfiles."
-        echo "    Run 'v-$WORKSTATION_NAME update' to refresh apt + dotfiles."
-    else
-        echo "==> First-time provisioning $VM_NAME (apt + dotfiles, ~minutes for big package sets)..."
-        _run_apt_install
-        _ensure_user_and_shell
-        _push_dotfiles
-        incus exec "$VM_NAME" -- touch "$PROVISIONED_MARKER"
-        echo "==> $VM_NAME provisioned."
+        return 0
     fi
+    echo "==> First-time provisioning $VM_NAME (apt + dotfiles, ~minutes for big package sets)..."
+    _run_apt_install
+    _ensure_user_and_shell
+    _push_dotfiles
+    incus exec "$VM_NAME" -- touch "$PROVISIONED_MARKER"
+    echo "==> $VM_NAME provisioned."
+}
+
+cmd_init() {
+    # Create-only. If the VM already exists, `init` does NOT recreate or
+    # re-provision it - it just says so and exits (no apt re-run, no dotfile
+    # clobber). Use the pointed-to subcommands for the other intents.
+    if _vm_exists; then
+        echo "==> VM $VM_NAME already exists. 'init' does NOT recreate or re-provision it."
+        echo "    start / enter   : v-$WORKSTATION_NAME shell"
+        echo "    refresh dotfiles: v-$WORKSTATION_NAME overwrite-dotfiles"
+        echo "    refresh apt+dots: v-$WORKSTATION_NAME update"
+        echo "    rebuild         : v-$WORKSTATION_NAME rma && v-$WORKSTATION_NAME init"
+        return 0
+    fi
+    _ensure_vm_up     # VM absent -> launch + attach mounts
+    _provision_once   # fresh VM -> apt + user + dotfiles
     echo "==> $VM_NAME ready."
     [[ "$HAS_GUI" == "1" ]] && echo "    For GUI: v-$WORKSTATION_NAME gui"
     return 0
+}
+
+cmd_overwrite_dotfiles() {
+    # On-demand re-push of dotfiles (overlay; see _push_dotfiles). Bypasses the
+    # provisioned marker, so it works on a fully set-up VM without re-apt.
+    _ensure_vm_up
+    _push_dotfiles
+    echo "==> dotfiles overlaid into /home/user + /root."
 }
 
 cmd_start() {
@@ -265,7 +297,8 @@ cmd_rma() {
 }
 
 cmd_shell_user() {
-    cmd_init   # idempotent
+    _ensure_vm_up
+    _provision_once   # marker-gated: provisions the first time, then skips
     # `--env HOME/USER`: `incus exec --user/--group` sets uid/gid but NOT $HOME,
     # so zsh would not find ~/.zshrc (and $HOME-writing tools would land at /).
     incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd /home/user "$VM_NAME" -- zsh
@@ -275,7 +308,8 @@ cmd_shell_user() {
 cmd_shell() { cmd_shell_user "$@"; }
 
 cmd_shell_root() {
-    cmd_init   # idempotent
+    _ensure_vm_up
+    _provision_once   # marker-gated: provisions the first time, then skips
     # Root maintenance shell. No --user/--group/--env: `incus exec` defaults to
     # uid 0. `bash` not `zsh` - root has no staged ~/.zshrc, so plain bash is
     # the predictable maintenance shell (zsh would drop into the new-user
@@ -290,7 +324,8 @@ cmd_set_root_password() {
     # not user's). A process running as `user` that doesn't know the password
     # still cannot escalate. The operator's `shell-root` / `incus exec` path is
     # orthogonal (host-socket auth) and works with or without this.
-    cmd_init   # ensure VM up + `user` provisioned before referencing it
+    _ensure_vm_up
+    _provision_once   # ensure `user` exists before referencing it in sudoers
     local root_password root_password_confirm
     read -rsp "New root password for $VM_NAME: " root_password; echo
     read -rsp "Confirm: " root_password_confirm; echo
@@ -317,7 +352,8 @@ cmd_unset_root_password() {
     # process cannot escalate at all (no sudo, no su). Operator root via
     # `shell-root` / `incus exec` is host-socket auth and stays unaffected.
     # Idempotent: safe to run when already locked down.
-    cmd_init
+    _ensure_vm_up
+    _provision_once
     incus exec "$VM_NAME" -- bash -ec '
         rm -f /etc/sudoers.d/user
         passwd --lock root >/dev/null
@@ -331,7 +367,8 @@ cmd_gui() {
         echo "Set 'gui: true' on the entry in your inventory and re-run 'make apply-incus-workstations'." >&2
         exit 1
     fi
-    cmd_init
+    _ensure_vm_up
+    _provision_once
     echo "==> Opening SPICE display for $VM_NAME (needs 'virt-viewer' or 'remote-viewer' on host)..."
     # `incus console --type=vga` spawns the host's `remote-viewer` / `virt-viewer`
     # automatically. If neither is installed, incus prints a clear error.
@@ -339,7 +376,8 @@ cmd_gui() {
 }
 
 cmd_update() {
-    cmd_init   # idempotent: bring VM up
+    _ensure_vm_up
+    _provision_once   # marker-gated: provisions the first time, then skips
     echo "==> Refreshing apt (update + upgrade + reinstall APT_PACKAGES) in $VM_NAME..."
     incus exec "$VM_NAME" -- bash -ec "
         export DEBIAN_FRONTEND=noninteractive
@@ -402,7 +440,7 @@ EOF
 # ---------- Dispatch ----------
 sub="${1:-help}"; shift || true
 case "$sub" in
-    help|env|init|start|stop|shell|shell-user|shell-root|set-root-password|unset-root-password|gui|update|snapshot|rma)
+    help|env|init|overwrite-dotfiles|start|stop|shell|shell-user|shell-root|set-root-password|unset-root-password|gui|update|snapshot|rma)
         # User-facing names keep hyphens; bash function names use underscores.
         "cmd_${sub//-/_}" "$@"
         ;;
