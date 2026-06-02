@@ -172,7 +172,7 @@ Subcommands:
   shell             Open a shell in the VM as 'user' (alias: shell-user),
                     cwd = $WORKSPACE_WORKDIR
   shell-user        Same as 'shell': unprivileged 'user' zsh
-  shell-root        Root maintenance shell (bash, uid 0), cwd = $WORKSPACE_WORKDIR
+  shell-root        Root maintenance shell (zsh, uid 0), cwd = $WORKSPACE_WORKDIR
   set-root-password Set the VM root password and enable 'user' sudo, gated by
                     that password. Default (without this): 'user' CANNOT sudo;
                     root is reachable only via shell-root / incus exec.
@@ -306,8 +306,11 @@ _provision_vm() {
             useradd --create-home --shell /bin/zsh --uid 1000 user
         fi
         # `chsh` is idempotent and self-heals VMs created by earlier launcher
-        # versions where the user was created with /bin/bash.
+        # versions where the account had /bin/bash. Both `user` and root get
+        # zsh so `su -` / console login match the `shell` / `shell-root`
+        # subcommands (which exec zsh and have staged ~/.zshrc in both homes).
         chsh --shell /bin/zsh user
+        chsh --shell /bin/zsh root
     '
 
     _push_dotfiles
@@ -417,11 +420,12 @@ cmd_shell() { cmd_shell_user "$@"; }
 cmd_shell_root() {
     _ensure_vm_up
     _provision_vm   # marker-gated: provisions the first time, then skips
-    # Root maintenance shell. No --user/--group/--env: `incus exec` defaults to
-    # uid 0. `bash` not `zsh` - root has no staged ~/.zshrc, so plain bash is
-    # the predictable maintenance shell (zsh would drop into the new-user
-    # wizard against root's empty home).
-    incus exec --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- bash
+    # Root shell as uid 0 (incus exec defaults to root; no --user). zsh, same as
+    # the user shell: provisioning now pushes the dotfiles into /root too, so
+    # `~/.zshrc` exists there (no new-user wizard). `--env HOME=/root` is
+    # required because `incus exec` doesn't set $HOME, and without it zsh
+    # wouldn't find /root/.zshrc.
+    incus exec --env HOME=/root --env USER=root --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- zsh
 }
 
 cmd_set_root_password() {

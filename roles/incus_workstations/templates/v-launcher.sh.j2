@@ -98,7 +98,11 @@ _ensure_user_and_shell() {
         if ! id user >/dev/null 2>&1; then
             useradd --create-home --shell /bin/zsh --uid 1000 user
         fi
+        # Both `user` and root get zsh so `su -` / console login match the
+        # `shell` / `shell-root` subcommands (which exec zsh and have staged
+        # ~/.zshrc in both homes). `chsh` is idempotent.
         chsh --shell /bin/zsh user
+        chsh --shell /bin/zsh root
     '
 }
 
@@ -173,7 +177,7 @@ EOF
     cat <<EOF
   shell             Open a shell as 'user' (alias: shell-user), zsh
   shell-user        Same as 'shell': unprivileged 'user' zsh
-  shell-root        Root maintenance shell (bash, uid 0)
+  shell-root        Root maintenance shell (zsh, uid 0)
   set-root-password Set the VM root password and enable 'user' sudo, gated by
                     that password. Default (without this): 'user' CANNOT sudo;
                     root is reachable only via shell-root / incus exec.
@@ -310,11 +314,12 @@ cmd_shell() { cmd_shell_user "$@"; }
 cmd_shell_root() {
     _ensure_vm_up
     _provision_once   # marker-gated: provisions the first time, then skips
-    # Root maintenance shell. No --user/--group/--env: `incus exec` defaults to
-    # uid 0. `bash` not `zsh` - root has no staged ~/.zshrc, so plain bash is
-    # the predictable maintenance shell (zsh would drop into the new-user
-    # wizard against root's empty home).
-    incus exec --cwd /home/user "$VM_NAME" -- bash
+    # Root shell as uid 0 (incus exec defaults to root; no --user). zsh, same as
+    # the user shell: provisioning now pushes the dotfiles into /root too, so
+    # `~/.zshrc` exists there (no new-user wizard). `--env HOME=/root` is
+    # required because `incus exec` doesn't set $HOME, and without it zsh
+    # wouldn't find /root/.zshrc.
+    incus exec --env HOME=/root --env USER=root --cwd /home/user "$VM_NAME" -- zsh
 }
 
 cmd_set_root_password() {
