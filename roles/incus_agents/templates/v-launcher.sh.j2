@@ -167,6 +167,9 @@ Subcommands:
                     cwd = $WORKSPACE_WORKDIR
   shell-user        Same as 'shell': unprivileged 'user' zsh
   shell-root        Root maintenance shell (bash, uid 0), cwd = $WORKSPACE_WORKDIR
+  set-root-password Set the VM root password and enable 'user' sudo, gated by
+                    that password. Default (without this): 'user' CANNOT sudo;
+                    root is reachable only via shell-root / incus exec.
   $AGENT_NAME           Run $AGENT_DISPLAY ('$AGENT_COMMAND') inside the VM,
                     cwd = $WORKSPACE_WORKDIR
   rma               rm all: stop + delete the VM entirely (config + disk).
@@ -258,9 +261,16 @@ _provision_vm() {
             zsh zsh-syntax-highlighting zsh-autosuggestions \
             tmux
         # Create unprivileged `user` if not present. UID 1000 matches host shift.
+        # NO sudoers entry by default: a process running as `user` inside the
+        # guest MUST NOT be able to escalate to root - that is the whole point
+        # of running the agent unprivileged. `incus exec` gives the HOST
+        # operator root with no in-guest password (auth is the host`s
+        # incus-admin group + socket, unreachable from inside the guest), so
+        # that path is unaffected. To opt into IN-GUEST escalation, run
+        # `v-<agent> set-root-password`: it sets root`s password AND enables
+        # `user` sudo gated by that same password (Defaults:user rootpw).
         if ! id user >/dev/null 2>&1; then
             useradd --create-home --shell /bin/zsh --uid 1000 user
-            echo "user ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/user
         fi
         # `chsh` is idempotent and self-heals VMs created by earlier launcher
         # versions where the user was created with /bin/bash.
@@ -383,6 +393,35 @@ cmd_shell_root() {
     incus exec --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- bash
 }
 
+cmd_set_root_password() {
+    # Opt into IN-GUEST privilege escalation. Default provisioning gives `user`
+    # NO sudo at all; this sets root's password and enables `user` sudo gated by
+    # THAT password (`Defaults:user rootpw` -> sudo prompts for root's password,
+    # not user's). A process running as `user` that doesn't know the password
+    # still cannot escalate. The operator's `shell-root` / `incus exec` path is
+    # orthogonal (host-socket auth) and works with or without this.
+    _ensure_vm_up
+    _provision_vm   # ensure `user` exists before referencing it in sudoers
+    local root_password root_password_confirm
+    read -rsp "New root password for $VM_NAME: " root_password; echo
+    read -rsp "Confirm: " root_password_confirm; echo
+    [[ -n "$root_password" ]] || { echo "Empty password rejected." >&2; exit 1; }
+    [[ "$root_password" == "$root_password_confirm" ]] \
+        || { echo "Passwords do not match." >&2; exit 1; }
+    # Password travels via stdin (the pipe), never argv - so it is not visible
+    # in the VM's process list. `chpasswd` reads `user:password` lines.
+    printf 'root:%s\n' "$root_password" | incus exec "$VM_NAME" -- chpasswd
+    incus exec "$VM_NAME" -- bash -ec '
+        cat > /etc/sudoers.d/user <<EOF
+Defaults:user rootpw
+user ALL=(ALL) ALL
+EOF
+        chmod 0440 /etc/sudoers.d/user
+        visudo --check --file=/etc/sudoers.d/user
+    '
+    echo "==> root password set; \`user\` may now sudo (prompts for the root password)."
+}
+
 cmd_agent() {
     _ensure_vm_up
     _provision_vm   # marker-gated: provisions the first time, then skips
@@ -395,7 +434,7 @@ cmd_agent() {
 # ---------- Dispatch ----------
 sub="${1:-help}"; shift || true
 case "$sub" in
-    help|env|init|start|stop|shell|shell-user|shell-root|rma|{{ incus_app.name }})
+    help|env|init|start|stop|shell|shell-user|shell-root|set-root-password|rma|{{ incus_app.name }})
         # User-facing names keep hyphens; bash function names use underscores.
         # The agent subcommand is renamed to a fixed `cmd_agent` (vs per-agent
         # function name) so the dispatch line above doesn't have to be edited

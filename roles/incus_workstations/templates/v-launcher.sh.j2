@@ -88,10 +88,15 @@ _run_apt_install() {
 }
 
 _ensure_user_and_shell() {
+    # NO sudoers entry by default: a process running as `user` inside the guest
+    # MUST NOT be able to escalate to root. `incus exec` gives the HOST operator
+    # root with no in-guest password (host-socket auth, unreachable from inside
+    # the guest), so that path is unaffected. Opt into in-guest escalation with
+    # `v-<name> set-root-password` (sets root`s password + enables `user` sudo
+    # gated by that same password).
     incus exec "$VM_NAME" -- bash -ec '
         if ! id user >/dev/null 2>&1; then
             useradd --create-home --shell /bin/zsh --uid 1000 user
-            echo "user ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/user
         fi
         chsh --shell /bin/zsh user
     '
@@ -155,7 +160,12 @@ EOF
 EOF
     fi
     cat <<EOF
-  shell             zsh into the VM as 'user'
+  shell             Open a shell as 'user' (alias: shell-user), zsh
+  shell-user        Same as 'shell': unprivileged 'user' zsh
+  shell-root        Root maintenance shell (bash, uid 0)
+  set-root-password Set the VM root password and enable 'user' sudo, gated by
+                    that password. Default (without this): 'user' CANNOT sudo;
+                    root is reachable only via shell-root / incus exec.
   update            Force-refresh: apt update + upgrade, re-install
                     APT_PACKAGES, re-push dotfiles. Use after editing host
                     dotfiles + 'make apply-incus-workstations'.
@@ -245,11 +255,51 @@ cmd_rma() {
     _vm_exists && incus delete -f "$VM_NAME" 2>/dev/null || true
 }
 
-cmd_shell() {
+cmd_shell_user() {
     cmd_init   # idempotent
     # `--env HOME/USER`: `incus exec --user/--group` sets uid/gid but NOT $HOME,
     # so zsh would not find ~/.zshrc (and $HOME-writing tools would land at /).
     incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd /home/user "$VM_NAME" -- zsh
+}
+
+# `shell` is the everyday entry point and a deliberate alias for `shell-user`.
+cmd_shell() { cmd_shell_user "$@"; }
+
+cmd_shell_root() {
+    cmd_init   # idempotent
+    # Root maintenance shell. No --user/--group/--env: `incus exec` defaults to
+    # uid 0. `bash` not `zsh` - root has no staged ~/.zshrc, so plain bash is
+    # the predictable maintenance shell (zsh would drop into the new-user
+    # wizard against root's empty home).
+    incus exec --cwd /home/user "$VM_NAME" -- bash
+}
+
+cmd_set_root_password() {
+    # Opt into IN-GUEST privilege escalation. Default provisioning gives `user`
+    # NO sudo at all; this sets root's password and enables `user` sudo gated by
+    # THAT password (`Defaults:user rootpw` -> sudo prompts for root's password,
+    # not user's). A process running as `user` that doesn't know the password
+    # still cannot escalate. The operator's `shell-root` / `incus exec` path is
+    # orthogonal (host-socket auth) and works with or without this.
+    cmd_init   # ensure VM up + `user` provisioned before referencing it
+    local root_password root_password_confirm
+    read -rsp "New root password for $VM_NAME: " root_password; echo
+    read -rsp "Confirm: " root_password_confirm; echo
+    [[ -n "$root_password" ]] || { echo "Empty password rejected." >&2; exit 1; }
+    [[ "$root_password" == "$root_password_confirm" ]] \
+        || { echo "Passwords do not match." >&2; exit 1; }
+    # Password travels via stdin (the pipe), never argv. `chpasswd` reads
+    # `user:password` lines.
+    printf 'root:%s\n' "$root_password" | incus exec "$VM_NAME" -- chpasswd
+    incus exec "$VM_NAME" -- bash -ec '
+        cat > /etc/sudoers.d/user <<EOF
+Defaults:user rootpw
+user ALL=(ALL) ALL
+EOF
+        chmod 0440 /etc/sudoers.d/user
+        visudo --check --file=/etc/sudoers.d/user
+    '
+    echo "==> root password set; \`user\` may now sudo (prompts for the root password)."
 }
 
 cmd_gui() {
@@ -329,8 +379,9 @@ EOF
 # ---------- Dispatch ----------
 sub="${1:-help}"; shift || true
 case "$sub" in
-    help|env|init|start|stop|shell|gui|update|snapshot|rma)
-        "cmd_${sub}" "$@"
+    help|env|init|start|stop|shell|shell-user|shell-root|set-root-password|gui|update|snapshot|rma)
+        # User-facing names keep hyphens; bash function names use underscores.
+        "cmd_${sub//-/_}" "$@"
         ;;
     *)
         echo "Unknown subcommand: $sub" >&2
