@@ -102,7 +102,10 @@ _push_dotfiles() {
         echo "Staging dir missing: $STAGING_DIR -- did you run 'make apply-incus-workstations'?" >&2
         return 1
     fi
-    incus file push --recursive --uid 1000 --gid 1000 "$STAGING_DIR/." "$VM_NAME/home/user/"
+    # `--create-dirs` is mandatory with `--recursive` + uid/gid override:
+    # incus errors "Can't override UID/GID in recursive mode without -p"
+    # otherwise (it must own any directories it creates).
+    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$STAGING_DIR/." "$VM_NAME/home/user/"
 }
 
 _attach_mounts() {
@@ -241,7 +244,9 @@ cmd_rma() {
 
 cmd_shell() {
     cmd_init   # idempotent
-    incus exec --user 1000 --group 1000 --cwd /home/user "$VM_NAME" -- zsh
+    # `--env HOME/USER`: `incus exec --user/--group` sets uid/gid but NOT $HOME,
+    # so zsh would not find ~/.zshrc (and $HOME-writing tools would land at /).
+    incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd /home/user "$VM_NAME" -- zsh
 }
 
 cmd_gui() {

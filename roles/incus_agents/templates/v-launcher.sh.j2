@@ -258,9 +258,12 @@ _provision_vm() {
     # Push the host-side rendered dotfiles (rendered once at `roles/incus_agents`
     # apply time; see install.yml) into the VM. `--uid 1000 --gid 1000`
     # sets ownership to `user` inside the VM, overriding whatever uid/gid
-    # the staging files carry on the host.
+    # the staging files carry on the host. `--create-dirs` is mandatory here:
+    # incus refuses `--recursive` + uid/gid override without it ("Can't
+    # override UID/GID in recursive mode without -p"), since it must own any
+    # directories it creates along the way.
     echo "==> Pushing dotfiles into $VM_NAME (~/.bashrc, ~/.zshrc, ~/.tmux.conf)..."
-    incus file push --recursive --uid 1000 --gid 1000 \
+    incus file push --recursive --create-dirs --uid 1000 --gid 1000 \
         "{{ incus_root }}/vm-rootfs/home/user/." \
         "$VM_NAME/home/user/"
 {% if incus_app.agent.install_script_url is defined %}
@@ -268,7 +271,11 @@ _provision_vm() {
     # ~/.local/bin/ inside the VM. The install URL is passed as a positional
     # argument ($1) rather than interpolated into the script body, so any
     # shell metachars in the YAML value don't get evaluated by bash.
-    incus exec --user 1000 --group 1000 --cwd /home/user "$VM_NAME" -- \
+    # `--env HOME/USER`: `incus exec --user/--group` sets the uid/gid but NOT
+    # $HOME, so the installer's `mkdir "$HOME/.claude"` would expand to
+    # `mkdir /.claude` and fail with EACCES. Set them explicitly here and at
+    # every other run-as-`user` exec below (npm install, shell, agent).
+    incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd /home/user "$VM_NAME" -- \
         bash -c 'curl -fsSL "$1" | bash' _ "$AGENT_INSTALL_URL"
 {% else %}
     # npm-based install (e.g. codex). Install nodejs/npm at the system level,
@@ -278,7 +285,7 @@ _provision_vm() {
         export DEBIAN_FRONTEND=noninteractive
         apt-get install --yes --no-install-recommends nodejs npm
     '
-    incus exec --user 1000 --group 1000 --cwd /home/user "$VM_NAME" -- \
+    incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd /home/user "$VM_NAME" -- \
         bash -ec '
             mkdir -p ~/.local/npm_global
             npm config set prefix ~/.local/npm_global
@@ -332,14 +339,14 @@ cmd_shell() {
     # `zsh` not `bash`: user's default shell was chsh'd to zsh at `init`, and
     # the dotfiles pushed in include `~/.zshrc`. TTY is attached via `incus
     # exec`, so zsh auto-detects interactive and sources `~/.zshrc`.
-    incus exec --user 1000 --group 1000 --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- zsh
+    incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- zsh
 }
 
 cmd_agent() {
     cmd_init
     # Need a login shell so ~/.local/bin (where curl installer drops the binary)
     # is on PATH. `bash -lc` sources the user's bash login files.
-    incus exec --user 1000 --group 1000 --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- \
+    incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- \
         bash -lc "$AGENT_COMMAND"
 }
 

@@ -76,7 +76,7 @@ resync-incus-agents-dotfiles:  ## Re-push staged dotfiles into every existing v-
 	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
 	for vm in $$VMS; do \
 	    echo "==> Re-pushing dotfiles into $$vm"; \
-	    incus file push --recursive --uid 1000 --gid 1000 "$$STAGING/." "$$vm/home/user/"; \
+	    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$$STAGING/." "$$vm/home/user/"; \
 	done
 
 apply-incus-workstations:  ## Install v-<workstation> Incus persistent VM launchers via `roles/incus_workstations` (bypasses `setup_incus_workstations` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
