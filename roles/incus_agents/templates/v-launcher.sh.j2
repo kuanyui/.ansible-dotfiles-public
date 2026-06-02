@@ -271,10 +271,18 @@ _provision_vm() {
     # incus refuses `--recursive` + uid/gid override without it ("Can't
     # override UID/GID in recursive mode without -p"), since it must own any
     # directories it creates along the way.
+    #
+    # Path semantics: push the source dir `.../home/user` INTO the target's
+    # parent `/home/`, NOT `.../home/user/.` into `/home/user/`. incus does
+    # `filepath.Clean` on the source (stripping a trailing `/.`) and appends
+    # its basename to the target - so the rsync-style `src/. -> dest/` "copy
+    # contents" idiom does NOT work here: it produced `/home/user/user/`.
+    # Pushing the `user` dir into `/home/` resolves to `/home/user/` (which
+    # already exists from useradd above) and merges the dotfiles in.
     echo "==> Pushing dotfiles into $VM_NAME (~/.bashrc, ~/.zshrc, ~/.tmux.conf)..."
     incus file push --recursive --create-dirs --uid 1000 --gid 1000 \
-        "{{ incus_root }}/vm-rootfs/home/user/." \
-        "$VM_NAME/home/user/"
+        "{{ incus_root }}/vm-rootfs/home/user" \
+        "$VM_NAME/home/"
 {% if incus_app.agent.install_script_url is defined %}
     # Curl-based install (e.g. claude). Runs as `user` so the binary lands in
     # ~/.local/bin/ inside the VM. The install URL is passed as a positional

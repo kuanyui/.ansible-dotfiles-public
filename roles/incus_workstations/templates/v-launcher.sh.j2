@@ -104,8 +104,11 @@ _push_dotfiles() {
     fi
     # `--create-dirs` is mandatory with `--recursive` + uid/gid override:
     # incus errors "Can't override UID/GID in recursive mode without -p"
-    # otherwise (it must own any directories it creates).
-    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$STAGING_DIR/." "$VM_NAME/home/user/"
+    # otherwise (it must own any directories it creates). Push the `user` dir
+    # INTO `/home/` (not `$STAGING_DIR/.` into `/home/user/`): incus appends
+    # the source basename to the target, so `src/. -> /home/user/` nests as
+    # `/home/user/user/`. `user -> /home/` resolves to the existing `/home/user`.
+    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$STAGING_DIR" "$VM_NAME/home/"
 }
 
 _attach_mounts() {
