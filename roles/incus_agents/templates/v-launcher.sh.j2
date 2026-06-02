@@ -231,12 +231,21 @@ _wait_vm_ready() {
 }
 
 _provision_vm() {
-    # Called unconditionally from `cmd_init` (whether the VM is fresh or
-    # already existed). Every step here MUST be idempotent: apt-get
-    # install / useradd guarded by `id user` / `chsh` / curl-installer /
-    # npm install / `incus file push` all already are, which means a
-    # half-provisioned VM (e.g. apt failed mid-way on first run) can be
-    # repaired just by re-running `init`, without `rma`-ing the whole VM.
+    # `force` (passed by `cmd_init`) re-runs the whole pass even on an
+    # already-provisioned VM - the repair path for a half-provisioned VM (apt
+    # failure on first run, network blip during curl-install, etc.); every step
+    # below is idempotent. WITHOUT `force` (the `shell` / agent path) we SKIP
+    # entirely once the VM is marked provisioned, so day-to-day
+    # `v-<agent> shell` / `v-<agent> <agent>` don't re-run apt-get update + the
+    # dotfile push on every single launch. The marker is written LAST, so a
+    # failure mid-provision (set -e aborts) leaves the VM unmarked and the next
+    # run retries the whole thing.
+    local force="${1:-}"
+    local provisioned_marker=/var/lib/v-launcher-provisioned
+    if [[ "$force" != "force" ]] \
+        && incus exec "$VM_NAME" -- test -f "$provisioned_marker" 2>/dev/null; then
+        return 0
+    fi
     echo "==> Provisioning $VM_NAME (apt: agent + sshd + zsh + tmux; chsh; dotfiles)..."
     incus exec "$VM_NAME" -- bash -ec '
         export DEBIAN_FRONTEND=noninteractive
@@ -292,9 +301,15 @@ _provision_vm() {
             npm install -g "$1"
         ' _ "$AGENT_INSTALL_NPM_PKG"
 {% endif %}
+    # Mark provisioned (see the skip-check at the top of this function). Root-
+    # owned path; `incus exec` without --user runs as root, which can write it.
+    incus exec "$VM_NAME" -- touch "$provisioned_marker"
 }
 
-cmd_init() {
+# Ensure the VM exists and is running: launch + attach virtio-fs mounts on
+# first creation, otherwise just start it if stopped. Does NOT provision -
+# callers decide whether to provision and whether to force it.
+_ensure_vm_up() {
     if _vm_exists; then
         echo "==> VM $VM_NAME already exists; starting if stopped..."
         _vm_running || incus start "$VM_NAME"
@@ -321,12 +336,13 @@ cmd_init() {
         done
         unset _i
     fi
+}
 
-    # Run unconditionally - lets `init` repair a half-provisioned VM (apt
-    # failure on first run, network blip during curl-install, etc.) without
-    # forcing the user to `rma` and rebuild. All steps inside _provision_vm
-    # are idempotent.
-    _provision_vm
+cmd_init() {
+    _ensure_vm_up
+    # `force`: `init` is the explicit (re)provision / repair entry point, so it
+    # always runs the full pass regardless of the provisioned marker.
+    _provision_vm force
     echo "==> $VM_NAME ready. Try: v-$AGENT_NAME $AGENT_NAME"
 }
 
@@ -335,15 +351,17 @@ cmd_stop()  { _vm_exists && incus stop "$VM_NAME" 2>/dev/null || true; }
 cmd_rma()   { _vm_exists && incus delete -f "$VM_NAME" 2>/dev/null || true; }
 
 cmd_shell() {
-    cmd_init   # idempotent: init if missing, start if stopped
-    # `zsh` not `bash`: user's default shell was chsh'd to zsh at `init`, and
-    # the dotfiles pushed in include `~/.zshrc`. TTY is attached via `incus
-    # exec`, so zsh auto-detects interactive and sources `~/.zshrc`.
+    _ensure_vm_up
+    _provision_vm   # marker-gated: provisions the first time, then skips
+    # `zsh` not `bash`: user's default shell was chsh'd to zsh at provision
+    # time, and the dotfiles pushed in include `~/.zshrc`. TTY is attached via
+    # `incus exec`, so zsh auto-detects interactive and sources `~/.zshrc`.
     incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- zsh
 }
 
 cmd_agent() {
-    cmd_init
+    _ensure_vm_up
+    _provision_vm   # marker-gated: provisions the first time, then skips
     # Need a login shell so ~/.local/bin (where curl installer drops the binary)
     # is on PATH. `bash -lc` sources the user's bash login files.
     incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- \
