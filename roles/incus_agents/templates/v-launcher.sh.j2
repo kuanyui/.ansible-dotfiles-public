@@ -170,6 +170,8 @@ Subcommands:
   set-root-password Set the VM root password and enable 'user' sudo, gated by
                     that password. Default (without this): 'user' CANNOT sudo;
                     root is reachable only via shell-root / incus exec.
+  unset-root-password
+                    Revert set-root-password: remove 'user' sudo + re-lock root.
   $AGENT_NAME           Run $AGENT_DISPLAY ('$AGENT_COMMAND') inside the VM,
                     cwd = $WORKSPACE_WORKDIR
   rma               rm all: stop + delete the VM entirely (config + disk).
@@ -422,6 +424,20 @@ EOF
     echo "==> root password set; \`user\` may now sudo (prompts for the root password)."
 }
 
+cmd_unset_root_password() {
+    # Revert `set-root-password`: remove the `user` sudoers entry AND re-lock
+    # root's password, returning to the locked-down default where a `user`
+    # process cannot escalate at all (no sudo, no su). Operator root via
+    # `shell-root` / `incus exec` is host-socket auth and stays unaffected.
+    # Idempotent: safe to run when already locked down.
+    _ensure_vm_up
+    incus exec "$VM_NAME" -- bash -ec '
+        rm -f /etc/sudoers.d/user
+        passwd --lock root >/dev/null
+    '
+    echo "==> sudoers removed and root password re-locked; back to locked-down default."
+}
+
 cmd_agent() {
     _ensure_vm_up
     _provision_vm   # marker-gated: provisions the first time, then skips
@@ -434,7 +450,7 @@ cmd_agent() {
 # ---------- Dispatch ----------
 sub="${1:-help}"; shift || true
 case "$sub" in
-    help|env|init|start|stop|shell|shell-user|shell-root|set-root-password|rma|{{ incus_app.name }})
+    help|env|init|start|stop|shell|shell-user|shell-root|set-root-password|unset-root-password|rma|{{ incus_app.name }})
         # User-facing names keep hyphens; bash function names use underscores.
         # The agent subcommand is renamed to a fixed `cmd_agent` (vs per-agent
         # function name) so the dispatch line above doesn't have to be edited
