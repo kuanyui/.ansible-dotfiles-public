@@ -67,6 +67,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 # Project Guidelines
 
+- NEVER commit in this project. Do not run `git commit` / `git add` / `git push`, and do not offer to. The user commits their own work, in their own batches. Make the file edits and stop; leave the working tree dirty for the user to review and commit. This holds even after large multi-file changes - do not treat "this is a lot of changes" as a reason to offer a commit.
 - All code content (comments, variable names, strings) must be in English.
 - Variable names must be unambiguous on their own - the name alone must answer "X of what?". A bare noun that leaves the qualifier implicit is forbidden: not `current` / `zone` / `name` / `path` / `count`, but `current_zone_of_bridge` / `firewalld_zone` / `vm_name` / `staging_dir` / `mount_count`. The test: if reading the identifier in isolation (no surrounding code) raises "of what?" or "which one?", it is too vague - bake the answer into the name. Applies to all languages (bash, Python, Jinja, Ansible vars).
 - The Claude Code execution environment is NOT the user's main development machine. Only read files within the current project directory (pwd). Do not explore paths outside it (e.g. do not `ls /home/user/` or read files from sibling directories).

@@ -114,6 +114,13 @@ _push_dotfiles() {
     # the source basename to the target, so `src/. -> /home/user/` nests as
     # `/home/user/user/`. `user -> /home/` resolves to the existing `/home/user`.
     incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$STAGING_DIR" "$VM_NAME/home/"
+    # Give root the SAME dotfiles, so `shell-root` isn't a bare shell. incus's
+    # basename rule can't land a dir named `user` at `/root` directly, so push
+    # it into /tmp (owned by root via --uid 0) and copy the contents into
+    # /root. `cp -aT` copies INTO /root (not /root/user) and preserves the
+    # root ownership the push set.
+    incus file push --recursive --create-dirs --uid 0 --gid 0 "$STAGING_DIR" "$VM_NAME/tmp/"
+    incus exec "$VM_NAME" -- bash -ec 'cp -aT /tmp/user /root && rm -rf /tmp/user'
 }
 
 _attach_mounts() {

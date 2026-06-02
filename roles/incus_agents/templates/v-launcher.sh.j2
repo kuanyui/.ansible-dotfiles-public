@@ -294,10 +294,19 @@ _provision_vm() {
     # contents" idiom does NOT work here: it produced `/home/user/user/`.
     # Pushing the `user` dir into `/home/` resolves to `/home/user/` (which
     # already exists from useradd above) and merges the dotfiles in.
-    echo "==> Pushing dotfiles into $VM_NAME (~/.bashrc, ~/.zshrc, ~/.tmux.conf)..."
+    echo "==> Pushing dotfiles into $VM_NAME /home/user + /root (~/.bashrc, ~/.zshrc, ~/.tmux.conf)..."
     incus file push --recursive --create-dirs --uid 1000 --gid 1000 \
         "{{ incus_root }}/vm-rootfs/home/user" \
         "$VM_NAME/home/"
+    # Give root the SAME dotfiles, so `shell-root` isn't a bare shell. incus's
+    # basename rule can't land a dir named `user` at `/root` directly, so push
+    # it into /tmp (owned by root via --uid 0) and copy the contents into
+    # /root. `cp -aT` copies INTO /root (not /root/user) and preserves the
+    # root ownership the push set.
+    incus file push --recursive --create-dirs --uid 0 --gid 0 \
+        "{{ incus_root }}/vm-rootfs/home/user" \
+        "$VM_NAME/tmp/"
+    incus exec "$VM_NAME" -- bash -ec 'cp -aT /tmp/user /root && rm -rf /tmp/user'
 {% if incus_app.agent.install_script_url is defined %}
     # Curl-based install (e.g. claude). Runs as `user` so the binary lands in
     # ~/.local/bin/ inside the VM. The install URL is passed as a positional
