@@ -16,6 +16,7 @@ Face-role-specific docs:
 - Adds `$USER` to `incus-admin` group (re-login required for membership to take effect).
 - Probes `/` filesystem type; warns about the `qcow2 + btrfs CoW` trap when defaulting to `dir` backend on a btrfs `/`.
 - Runs `incus admin init --preseed` exactly once (only if the `default` storage pool doesn't already exist).
+- On firewalld hosts (Fedora / openSUSE): moves the `incusbr0` bridge into the `trusted` zone (only if not already there). Without this, the default `public` zone DROPs DHCP and VMs never get an IPv4 lease - see [Q&A](#firewalld-hosts-vms-get-an-ipv6-address-but-no-ipv4-apt-fails-with-temporary-failure-resolving). Skipped on non-firewalld hosts (Debian + bare nftables).
 
 All steps gated on no-`become` probes - on a fully-set-up host this whole role is a no-op that doesn't even prompt for sudo.
 
@@ -283,6 +284,23 @@ No conflict, no visibility either.
 - virt-manager does NOT list incus VMs (and incus does not list libvirt VMs).
 - Default networks do not overlap: libvirt `virbr0` = `192.168.122.0/24`, incus `incusbr0` = an auto-picked subnet.
 - Both stacks add their own nftables rules. Usually harmless.
+
+### firewalld hosts: VMs get an IPv6 address but no IPv4, apt fails with "Temporary failure resolving"
+
+Symptom: VM has only an `fd42:...` (IPv6 SLAAC) address, `ip -4 addr` shows nothing, `ping 1.1.1.1` is "Network is unreachable".
+
+Cause: firewalld leaves `incusbr0` unassigned, so it falls into the default `public` zone. `public` permits ICMPv6 (so IPv6 RA gets through and SLAAC works) but DROPs DHCP (udp/67) on INPUT - so the VM's DHCPv4 DISCOVER never reaches the bridge's dnsmasq, and no IPv4 lease is issued. NAT / forwarding being fine is irrelevant when the VM has no IPv4 at all.
+
+Fix (this role now does it automatically; manual form for already-provisioned hosts):
+
+```sh
+sudo firewall-cmd --permanent --zone=trusted --change-interface=incusbr0
+sudo firewall-cmd --reload
+incus restart <vm>            # re-trigger DHCP
+incus exec <vm> -- ip -4 addr show    # expect 10.x.x.x
+```
+
+`trusted` scope is one interface only - a private internal NAT segment carrying only your own VMs - so it does NOT widen your real NICs (still in `public`). On openSUSE this is the same firewalld that YaST Firewall manages; `incusbr0` won't appear in YaST's interface picker (it's not NetworkManager-managed), but YaST sees the binding after the CLI writes it.
 
 ### How to pick NAT vs Bridge for a VM?
 

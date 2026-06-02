@@ -165,3 +165,51 @@
   become: true
   register: _incus_init
   changed_when: _incus_init.rc == 0
+
+# ---------- firewalld: trust the incusbr0 bridge (only on firewalld hosts) ----------
+# On firewalld-managed hosts (Fedora, openSUSE) the `incusbr0` bridge is NOT
+# assigned to any zone, so it falls into the default zone (usually `public`),
+# which DROPs DHCP (udp/67) on INPUT. Symptom: VMs get an IPv6 SLAAC address
+# (ICMPv6 RA is permitted) but never obtain an IPv4 lease, so apt fails with
+# "Temporary failure resolving deb.debian.org".
+#
+# Fix: put `incusbr0` into the built-in `trusted` zone. Scope is this ONE
+# interface - a private internal NAT segment (10.x/24) carrying only our own
+# VMs - so trusting it does NOT widen the host's real NICs (still in `public`).
+# `incusbr0` is the fixed bridge name from `incus_preseed.yml.j2`.
+#
+# Detection MUST use `systemctl is-active firewalld`, NOT `firewall-cmd`. Any
+# `firewall-cmd` call as a non-root user goes through polkit; under Ansible
+# (non-interactive, no polkit agent attached) that call BLOCKS FOREVER waiting
+# for an auth that never comes - a hang, not just a prompt. `systemctl
+# is-active` needs neither root nor polkit (same idiom as the incus probe
+# above), so it is the safe no-`become` detector. Hosts without firewalld
+# (Debian + bare nftables) report non-active here and skip the apply task -
+# incus manages its own rules there.
+- name: Probe whether `firewalld` is active (the `incusbr0` zone fix only applies to firewalld hosts)
+  ansible.builtin.command: systemctl is-active firewalld
+  register: _incus_firewalld_active
+  changed_when: false
+  failed_when: false
+
+# Everything that touches `firewall-cmd` is done HERE, in ONE `become: true`
+# task running fully as root. Root bypasses polkit entirely, so there is no
+# hang and no second password prompt (the become password is already cached
+# from `--ask-become-pass`). The read-decide-change-reload is collapsed into a
+# single privileged invocation so idempotency is decided in-script: if
+# `incusbr0` is already in `trusted` it is a true no-op (changed_when false).
+- name: Ensure `incusbr0` is in the firewalld `trusted` zone (fixes VMs not getting a DHCPv4 lease; no-op if already trusted)
+  ansible.builtin.shell: |
+    set -eu
+    current_zone_of_incusbr0="$(firewall-cmd --get-zone-of-interface=incusbr0 2>/dev/null || true)"
+    if [ "$current_zone_of_incusbr0" = "trusted" ]; then
+        echo "INCUSBR0_ALREADY_TRUSTED"
+        exit 0
+    fi
+    firewall-cmd --permanent --zone=trusted --change-interface=incusbr0
+    firewall-cmd --reload
+    echo "INCUSBR0_MOVED_TO_TRUSTED"
+  become: true
+  register: _incus_firewalld_zone_apply
+  changed_when: "'INCUSBR0_MOVED_TO_TRUSTED' in _incus_firewalld_zone_apply.stdout"
+  when: _incus_firewalld_active.stdout | trim == 'active'
