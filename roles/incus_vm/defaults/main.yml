@@ -1,36 +1,36 @@
 ---
-# `incus_workstations_skip_host_setup`: skip the shared host-level prep done by
+# `incus_vm_skip_host_setup`: skip the shared host-level prep done by
 # `roles/_incus_host_setup` (apt install incus + guestfs-tools, daemon
 # enable + start, `incus-admin` group add, `incus admin init --preseed`).
 # Only the user-space launcher render in `install.yml` runs. Used by the
 # sandbox and as an escape hatch for users who manage host-level incus
-# setup themselves. Off by default - normal `make apply-incus-workstations`
+# setup themselves. Off by default - normal `make apply-incus-vm`
 # does the host setup.
-incus_workstations_skip_host_setup: false
+incus_vm_skip_host_setup: false
 
-# `incus_workstations_state` mirrors `container_apps_state` /
+# `incus_vm_state` mirrors `container_apps_state` /
 # `incus_apps_state`:
 #   - `present` (default): render launchers, completions, install manifest.
 #   - `absent`: read manifest, remove everything it recorded. Used by
-#     `playbooks/incus_workstations_uninstall.yml`.
-incus_workstations_state: present
+#     `playbooks/incus_vm_uninstall.yml`.
+incus_vm_state: present
 
-# `roles/incus_workstations`'s own subdir under the shared
+# `roles/incus_vm`'s own subdir under the shared
 # `~/.local/share/ansible-managed/` parent (sibling of `incus_agents/` and
 # `container-apps/`). Each role owns its own subdir, so uninstall =
-# `rm -rf {{ incus_workstations_root }}` cleanly without touching siblings.
+# `rm -rf {{ incus_vm_root }}` cleanly without touching siblings.
 # Completions auto-discovered by `.zshrc` / `.bashrc` via the
 # `ansible-managed/*/zsh-completions` glob - no per-role rc edit needed.
-incus_workstations_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus-workstations"
-incus_workstations_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
-incus_workstations_zsh_completion_dir: "{{ incus_workstations_root }}/zsh-completions"
-incus_workstations_bash_completion_dir: "{{ incus_workstations_root }}/bash-completions"
-incus_workstations_manifest_path: "{{ incus_workstations_root }}/incus-workstations.manifest.yml"
+incus_vm_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus-vm"
+incus_vm_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+incus_vm_zsh_completion_dir: "{{ incus_vm_root }}/zsh-completions"
+incus_vm_bash_completion_dir: "{{ incus_vm_root }}/bash-completions"
+incus_vm_manifest_path: "{{ incus_vm_root }}/incus-vm.manifest.yml"
 
-# Default resource allocation when an `incus_workstations` entry doesn't override.
+# Default resource allocation when an `incus_vm` entry doesn't override.
 # Heavier than `incus_agents` defaults because desktop apps + GUI session
 # expect headroom (qtcreator + g++ alone can peak at ~6 GB during a big build).
-incus_workstations_vm_defaults:
+incus_vm_defaults:
   base_image: images:debian/13
   cpu: 4
   memory: 8GiB
@@ -47,7 +47,7 @@ incus_workstations_vm_defaults:
 #                               (both write `~/.local/bin/v-<name>`).
 #   display_name   (optional)   human-readable label shown in `help` / `env`.
 #                               Defaults to `name` if not set.
-#   base_image     (optional)   override `incus_workstations_vm_defaults.base_image`.
+#   base_image     (optional)   override `incus_vm_defaults.base_image`.
 #   cpu / memory / disk (optional) override resource defaults.
 #   gui            (optional)   enable the `gui` subcommand (SPICE display).
 #                               Default false. The launcher still works
@@ -67,8 +67,8 @@ incus_workstations_vm_defaults:
 #     dir name (every Linux desktop ships it). NOT recommending project
 #     dirs here because those vary per user; add yours in your own override
 #     OR attach post-hoc via `incus config device add` (no role edit,
-#     no VM rebuild - see roles/incus_workstations/README.md).
-incus_workstations: []
+#     no VM rebuild - see roles/incus_vm/README.md).
+incus_vm: []
   # Example: Qt / C++ development environment (no default mount - you'll
   # want to mount YOUR project dir; do it via `mounts:` here OR post-hoc
   # `incus config device add v-qtdev proj disk source=$HOME/your/path

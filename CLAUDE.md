@@ -89,7 +89,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
   ```
   ~/.local/share/ansible-managed/container-apps/       <- roles/container_apps
   ~/.local/share/ansible-managed/incus-agents/         <- roles/incus_agents
-  ~/.local/share/ansible-managed/incus-workstations/   <- roles/incus_workstations
+  ~/.local/share/ansible-managed/incus-vm/   <- roles/incus_vm
   ```
 
   - Subdir name uses hyphens; the Ansible role directory uses underscores. They differ on purpose (XDG-ish path vs Ansible role name conventions).

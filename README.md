@@ -24,8 +24,10 @@ playbooks/                # entry playbooks
   ├─ podman.yml           # ├─ dedicated entry: configure podman OCI runtime
   ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
   ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
-  ├─ incus.yml            # ├─ dedicated entry: install v-<agent> Incus VM launchers
-  ├─ incus_uninstall.yml  # ├─ uninstall flow (reads install manifest)
+  ├─ incus_agents.yml     # ├─ dedicated entry: install v-<agent> Incus VM launchers (per project)
+  ├─ incus_agents_uninstall.yml  # ├─ uninstall flow (reads install manifest)
+  ├─ incus_vm.yml         # ├─ dedicated entry: install v-<name> Incus VM launchers (per purpose)
+  ├─ incus_vm_uninstall.yml      # ├─ uninstall flow (reads install manifest)
   └─ apparmor.yml         # └─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
@@ -54,7 +56,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
 | [`_incus_host_setup/`](roles/_incus_host_setup/) | Internal sub-role: shared host-level prep (apt install `incus` + `guestfs-tools`, `incus admin init --preseed`, `incus-admin` group add). Included by every face role that drives incus. |
 | [`incus_agents/`](roles/incus_agents/) | Install `v-<agent>` launchers; one Incus KVM VM per `(agent, project)` for stronger isolation than rootless podman. |
-| [`incus_workstations/`](roles/incus_workstations/) | Install `v-<name>` launchers backed by one persistent Incus VM per purpose (Qt/C++ dev env, browser-in-VM, Telegram-in-VM, ...). GUI via SPICE, snapshot CLI baked in. |
+| [`incus_vm/`](roles/incus_vm/) | Install `v-<name>` launchers backed by one persistent Incus VM per purpose (Qt/C++ dev env, browser-in-VM, Telegram-in-VM, ...). GUI via SPICE, snapshot CLI baked in. |
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
 
 ## Installation

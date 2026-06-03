@@ -13,7 +13,7 @@
 #   roles/incus_agents/       v-<agent>-<project>  per-(agent, project), short-lived
 #                             init runs apt + agent install + dotfiles EVERY time
 #
-#   roles/incus_workstations/ v-<name>             per-purpose, long-lived
+#   roles/incus_vm/ v-<name>             per-purpose, long-lived
 #   (this file)               init runs heavy setup ONCE (gated by marker file)
 #                             update subcommand explicitly refreshes
 #                             snapshot CLI baked in
@@ -50,10 +50,10 @@ MOUNTS=(
 PROVISIONED_MARKER="/etc/.ansible-workstation-provisioned"
 
 # Paths on host where dotfiles staging lives (rendered by
-# `roles/incus_workstations/tasks/install.yml` at apply time). Two variants:
+# `roles/incus_vm/tasks/install.yml` at apply time). Two variants:
 # the `user` tree (is_root=false) and the `root` tree (is_root=true).
-STAGING_DIR="{{ incus_workstations_root }}/vm-rootfs/home/user"
-ROOT_STAGING_DIR="{{ incus_workstations_root }}/vm-rootfs/root"
+STAGING_DIR="{{ incus_vm_root }}/vm-rootfs/home/user"
+ROOT_STAGING_DIR="{{ incus_vm_root }}/vm-rootfs/root"
 
 # ---------- VM lifecycle helpers ----------
 _vm_exists() { incus info "$VM_NAME" >/dev/null 2>&1; }
@@ -110,7 +110,7 @@ _ensure_user_and_shell() {
 
 _push_dotfiles() {
     if [[ ! -d "$STAGING_DIR" || ! -d "$ROOT_STAGING_DIR" ]]; then
-        echo "Staging dir missing ($STAGING_DIR / $ROOT_STAGING_DIR) -- did you run 'make apply-incus-workstations'?" >&2
+        echo "Staging dir missing ($STAGING_DIR / $ROOT_STAGING_DIR) -- did you run 'make apply-incus-vm'?" >&2
         return 1
     fi
     # `--create-dirs` is mandatory with `--recursive` + uid/gid override:
@@ -184,7 +184,7 @@ EOF
                     Revert set-root-password: remove 'user' sudo + re-lock root.
   update            Force-refresh: apt update + upgrade, re-install
                     APT_PACKAGES, re-push dotfiles. Use after editing host
-                    dotfiles + 'make apply-incus-workstations'.
+                    dotfiles + 'make apply-incus-vm'.
   snapshot ...      Snapshot CLI: create / list / restore / delete
   delete            Delete the VM entirely (config + disk + snapshots).
                     Asks y/N first. The base image is NOT removed - only this
@@ -425,7 +425,7 @@ cmd_unset_root_password() {
 cmd_gui() {
     if [[ "$HAS_GUI" != "1" ]]; then
         echo "$VM_NAME was rendered with gui=false; no SPICE display." >&2
-        echo "Set 'gui: true' on the entry in your inventory and re-run 'make apply-incus-workstations'." >&2
+        echo "Set 'gui: true' on the entry in your inventory and re-run 'make apply-incus-vm'." >&2
         exit 1
     fi
     _ensure_vm_up

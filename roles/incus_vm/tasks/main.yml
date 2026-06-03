@@ -1,17 +1,17 @@
 ---
-- name: Skip `incus_workstations` role unless `setup_incus_workstations` is true
+- name: Skip `incus_vm` role unless `setup_incus_vm` is true
   ansible.builtin.debug:
-    msg: "Skipping incus_workstations (setup_incus_workstations={{ setup_incus_workstations | default(false) }})."
-  when: not setup_incus_workstations | default(false) | bool
+    msg: "Skipping incus_vm (setup_incus_vm={{ setup_incus_vm | default(false) }})."
+  when: not setup_incus_vm | default(false) | bool
 
-- when: setup_incus_workstations | default(false) | bool
+- when: setup_incus_vm | default(false) | bool
   block:
-    - name: Validate `incus_workstations_state` is `present` or `absent`
+    - name: Validate `incus_vm_state` is `present` or `absent`
       ansible.builtin.assert:
-        that: incus_workstations_state in ['present', 'absent']
-        fail_msg: "incus_workstations_state must be `present` or `absent`, got `{{ incus_workstations_state }}`."
+        that: incus_vm_state in ['present', 'absent']
+        fail_msg: "incus_vm_state must be `present` or `absent`, got `{{ incus_vm_state }}`."
 
-    - name: Validate each `incus_workstations` entry
+    - name: Validate each `incus_vm` entry
       ansible.builtin.assert:
         that:
           - item.name is defined
@@ -22,13 +22,13 @@
           # and shadow the built-in subcommand.
           - item.name not in ['help', 'env', 'init', 'overwrite-dotfiles', 'start', 'stop', 'shell', 'shell-user', 'shell-root', 'set-root-password', 'unset-root-password', 'gui', 'update', 'snapshot', 'delete']
         fail_msg: |
-          incus_workstations entry `{{ item.name | default('<unnamed>') }}` is malformed.
+          incus_vm entry `{{ item.name | default('<unnamed>') }}` is malformed.
           Required: `name` (string) + `apt_packages` (list, may be empty).
           `name` also must not be a reserved launcher subcommand: help, env, init,
           overwrite-dotfiles, start, stop, shell, shell-user, shell-root,
           set-root-password, unset-root-password, gui, update, snapshot, delete.
           Got: {{ item }}
-      loop: "{{ incus_workstations }}"
+      loop: "{{ incus_vm }}"
       loop_control:
         label: "{{ item.name | default('<unnamed>') }}"
 
@@ -36,11 +36,11 @@
       ansible.builtin.include_role:
         name: _incus_host_setup
       when:
-        - incus_workstations_state == 'present'
-        - not (incus_workstations_skip_host_setup | default(false) | bool)
+        - incus_vm_state == 'present'
+        - not (incus_vm_skip_host_setup | default(false) | bool)
 
     - ansible.builtin.include_tasks: install.yml
-      when: incus_workstations_state == 'present'
+      when: incus_vm_state == 'present'
 
     - ansible.builtin.include_tasks: uninstall.yml
-      when: incus_workstations_state == 'absent'
+      when: incus_vm_state == 'absent'

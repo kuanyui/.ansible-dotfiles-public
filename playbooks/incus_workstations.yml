@@ -1,9 +1,0 @@
----
-- name: Install v-<workstation> Incus persistent VM launchers via `roles/incus_workstations`
-  hosts: localhost
-  connection: local
-  gather_facts: true
-  vars:
-    setup_incus_workstations: true  # dedicated entry point: bypass the host-level opt-in gate
-  roles:
-    - incus_workstations

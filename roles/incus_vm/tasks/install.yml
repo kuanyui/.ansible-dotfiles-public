@@ -3,63 +3,63 @@
 # `incus admin init`, group add) is shared with `roles/incus_agents` via
 # `roles/_incus_host_setup` and runs separately from `tasks/main.yml`.
 
-- name: Ensure `incus_workstations_{bin,zsh_completion,bash_completion}_dir` exist
+- name: Ensure `incus_vm_{bin,zsh_completion,bash_completion}_dir` exist
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
     mode: "0755"
   loop:
-    - "{{ incus_workstations_bin_dir }}"
-    - "{{ incus_workstations_zsh_completion_dir }}"
-    - "{{ incus_workstations_bash_completion_dir }}"
+    - "{{ incus_vm_bin_dir }}"
+    - "{{ incus_vm_zsh_completion_dir }}"
+    - "{{ incus_vm_bash_completion_dir }}"
 
-- name: Install launcher script `{{ incus_workstations_bin_dir }}/v-<name>`
+- name: Install launcher script `{{ incus_vm_bin_dir }}/v-<name>`
   ansible.builtin.template:
     src: v-launcher.sh.j2
-    dest: "{{ incus_workstations_bin_dir }}/v-{{ workstation.name }}"
+    dest: "{{ incus_vm_bin_dir }}/v-{{ workstation.name }}"
     mode: "0755"
-  loop: "{{ incus_workstations }}"
+  loop: "{{ incus_vm }}"
   loop_control:
     loop_var: workstation
     label: "v-{{ workstation.name }}"
   vars:
     # Merge defaults + entry-level overrides into a single dict the template
     # can read without `| default(...)` on every field.
-    vm_cfg: "{{ incus_workstations_vm_defaults | combine({
-      'base_image': workstation.base_image | default(incus_workstations_vm_defaults.base_image),
-      'cpu': workstation.cpu | default(incus_workstations_vm_defaults.cpu),
-      'memory': workstation.memory | default(incus_workstations_vm_defaults.memory),
-      'disk': workstation.disk | default(incus_workstations_vm_defaults.disk),
+    vm_cfg: "{{ incus_vm_defaults | combine({
+      'base_image': workstation.base_image | default(incus_vm_defaults.base_image),
+      'cpu': workstation.cpu | default(incus_vm_defaults.cpu),
+      'memory': workstation.memory | default(incus_vm_defaults.memory),
+      'disk': workstation.disk | default(incus_vm_defaults.disk),
     }) }}"
 
-- name: Install zsh completion `{{ incus_workstations_zsh_completion_dir }}/_v-<name>`
+- name: Install zsh completion `{{ incus_vm_zsh_completion_dir }}/_v-<name>`
   ansible.builtin.template:
     src: _v-launcher.zsh.j2
-    dest: "{{ incus_workstations_zsh_completion_dir }}/_v-{{ workstation.name }}"
+    dest: "{{ incus_vm_zsh_completion_dir }}/_v-{{ workstation.name }}"
     mode: "0644"
-  loop: "{{ incus_workstations }}"
+  loop: "{{ incus_vm }}"
   loop_control:
     loop_var: workstation
     label: "_v-{{ workstation.name }}"
   vars:
     launcher_name: "v-{{ workstation.name }}"
 
-- name: Install bash completion `{{ incus_workstations_bash_completion_dir }}/v-<name>`
+- name: Install bash completion `{{ incus_vm_bash_completion_dir }}/v-<name>`
   ansible.builtin.template:
     src: _v-launcher.bash.j2
-    dest: "{{ incus_workstations_bash_completion_dir }}/v-{{ workstation.name }}"
+    dest: "{{ incus_vm_bash_completion_dir }}/v-{{ workstation.name }}"
     mode: "0644"
-  loop: "{{ incus_workstations }}"
+  loop: "{{ incus_vm }}"
   loop_control:
     loop_var: workstation
     label: "v-{{ workstation.name }}"
   vars:
     launcher_name: "v-{{ workstation.name }}"
 
-- name: Write install manifest `{{ incus_workstations_manifest_path }}`
+- name: Write install manifest `{{ incus_vm_manifest_path }}`
   ansible.builtin.template:
     src: manifest.yml.j2
-    dest: "{{ incus_workstations_manifest_path }}"
+    dest: "{{ incus_vm_manifest_path }}"
     mode: "0644"
 
 # ---------- Stage VM dotfiles (user + root variants) ----------
@@ -73,4 +73,4 @@
   ansible.builtin.include_role:
     name: _incus_guest_setup_dotfiles
   vars:
-    incus_guest_setup_dotfiles_root: "{{ incus_workstations_root }}"
+    incus_guest_setup_dotfiles_root: "{{ incus_vm_root }}"

@@ -1,25 +1,25 @@
-# incus_workstations redesign notes
+# incus_vm redesign notes
 
 Status: **design discussion, nothing built yet.** This file records the
 current-state analysis, the design directions explored, and the refactors that
-must land *before* the larger `incus-workspaces` rework can start. It is a
+must land *before* the larger `incus_vm` rework can start. It is a
 working scratchpad, not a finished spec. Each decision below is tagged
 **DECIDED** / **LEANING** / **OPEN**.
 
-Terminology note: the current role is `roles/incus_workstations`. The proposed
-successor is referred to as `incus-workspaces` here; the final name is itself
+Terminology note: the current role is `roles/incus_vm`. The proposed
+successor is referred to as `incus_vm` here; the final name is itself
 **OPEN** (`workstations` vs `workspaces`).
 
 ---
 
 ## 1. What triggered this
 
-`make apply-incus-workstations` produces no `~/.local/bin/v-<name>` launcher.
+`make apply-incus-vm` produces no `~/.local/bin/v-<name>` launcher.
 
-Not a bug: `roles/incus_workstations/defaults/main.yml` ships
-`incus_workstations: []` (empty). Launchers are rendered by a loop over that
+Not a bug: `roles/incus_vm/defaults/main.yml` ships
+`incus_vm: []` (empty). Launchers are rendered by a loop over that
 list (`tasks/install.yml:16-21`), so an empty list renders nothing. The role
-*does* run (the playbook bypasses the `setup_incus_workstations` gate), there is
+*does* run (the playbook bypasses the `setup_incus_vm` gate), there is
 just no data to render.
 
 Contrast: `roles/incus_agents` ships default entries (`claude`, `codex`, ...),
@@ -40,7 +40,7 @@ The launcher template `templates/v-launcher.sh.j2` mixes three things:
 | --- | --- | --- |
 | VM lifecycle (launch/start/stop/snapshot/mount/gui/rma) | `v-launcher.sh.j2` | No - pure incus |
 | Provisioning (install packages, create user, chsh, push dotfiles) | `_run_apt_install` etc. in same file | Yes |
-| Package list | `incus_workstations[*].apt_packages` (data) | - |
+| Package list | `incus_vm[*].apt_packages` (data) | - |
 
 The provisioning concern is **hardcoded to Debian/apt**:
 
@@ -52,7 +52,7 @@ The provisioning concern is **hardcoded to Debian/apt**:
 
 Consequence (answers "is the set of producible workstations hardcoded?"):
 
-- **Which** workstations get built = data (`incus_workstations` var). Not hardcoded.
+- **Which** workstations get built = data (`incus_vm` var). Not hardcoded.
 - **How** they are provisioned = a single hardcoded Debian/apt path. **This is
   the hardcoded part.** Adding openSUSE today means editing the template; a
   user-set `base_image: images:opensuse/tumbleweed` would reach `_run_apt_install`
@@ -78,12 +78,12 @@ The repo is already a multi-distro provisioning system. The launcher's bash
 | `roles/distro_packages` package groups (renamed from `roles/packages`; now delegates installs to `_install_distro_packages`) | named bundles, each a `{common, debian, suse, redhat}` dict (e.g. `distro_packages_net_tools: {common: [nethogs, traceroute, ...]}`) toggled by `distro_packages_install_*` booleans | Debian / Suse / RedHat |
 | `roles/zsh` `install-zsh-from-distro-repo.yml` | install zsh + plugins + chsh, os_family-aware | multi |
 | `roles/emacs` `install-emacs-from-distro-repo.yml` | install emacs + emacs packages, os_family-aware | multi |
-| `roles/dotfiles` | stage zshrc/bashrc/etc.; already included by `incus_workstations/tasks/install.yml` | - |
+| `roles/dotfiles` | stage zshrc/bashrc/etc.; already included by `incus_vm/tasks/install.yml` | - |
 | JSON Schema precedent | `roles/apparmor/local_vars/personal_dirs.schema.json` + python validator | - |
 | Python precedent | `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py` (type-annotated, per CLAUDE.md) | - |
 
 Key fact: **openSUSE support already exists in the repo's roles**; the
-`incus_workstations` launcher just does not use it.
+`incus_vm` launcher just does not use it.
 
 Also: the repo provisions `hosts: localhost, connection: local`
 (`playbooks/user.yml`). "Target hosts are usually VMs" (CLAUDE.md) means *the
@@ -178,12 +178,12 @@ memory: 16GiB               # scalar override
 Today each VM is a ~450-line bash script, near-identical except baked-in config.
 Adding 3 OS branches + preset composition + a radically different Windows path
 would mean maintaining that branching across N bash copies - bad. A single
-python `incus-workspaces` engine (one codebase, real data structures, testable,
+python `incus_vm` engine (one codebase, real data structures, testable,
 type-annotated per CLAUDE.md) is more maintainable. The `v-<name>` ergonomics
-can be preserved with thin generated shims: `v-qtdev` -> `incus-workspaces --name qtdev`.
+can be preserved with thin generated shims: `v-qtdev` -> `incus_vm --name qtdev`.
 
 CLI sketch the user floated:
-`incus-workspaces init --name debian13qtdev --os debian13 --presets qtdev firefox emacs vscode`
+`incus_vm init --name debian13qtdev --os debian13 --presets qtdev firefox emacs vscode`
 - acceptable as a convenience entry point, subject to 4.4 (must persist to YAML).
 
 ### 4.7 OS selector - **OPEN (detail)**
@@ -235,7 +235,7 @@ host config (emacs.d etc.), or is installing the package enough?**
 
 ## 6. Prerequisite refactors (do these to the *current* state first)
 
-The user wants to refactor the current state before building `incus-workspaces`.
+The user wants to refactor the current state before building `incus_vm`.
 Ordered by independence from the open question in section 5.
 
 ### Safe now (independent of section 5)
@@ -287,17 +287,17 @@ Ordered by independence from the open question in section 5.
 | 4.8 | Windows = separate provisioner tier, phased later | DECIDED |
 | 5 | preset = packages-only vs can-pull-a-role | **RESOLVED -> packages-only, no ansible in VM (see §8.1)** |
 | 6.1 | Rename `packages` -> `distro_packages` + delegate to `_install_distro_packages` | DONE |
-| - | Final name `incus-workstations` vs `incus-workspaces` | OPEN |
-| 8 | Merge `incus_agents` + `incus_workstations` into one engine | LEANING (strong) |
+| - | Final name `incus-vm` vs `incus_vm` | OPEN |
+| 8 | Merge `incus_agents` + `incus_vm` into one engine | LEANING (strong) |
 | 8.1 | Provision from HOST via `incus exec`; no ansible/python in guest | DECIDED |
 | 8.3 | Three-tier install: package_groups / flat packages / post_install_script | DECIDED |
 | 8.6 | mounts: declarative `cwd` token (no shell `$(...)`), `/workspaces/` guest, frozen at creation | DECIDED |
 
 ---
 
-## 8. Converged design: unified `incus-workspaces` (this session)
+## 8. Converged design: unified `incus_vm` (this session)
 
-Direction shift: **merge `incus_agents` + `incus_workstations` into one engine.**
+Direction shift: **merge `incus_agents` + `incus_vm` into one engine.**
 The two roles are ~90% identical (VM lifecycle + provisioning + the two-variant
 dotfiles staging, already shared via `_incus_guest_setup_dotfiles`). The only
 real difference is the VM identity model (per-project cwd vs fixed). "claude"
@@ -404,7 +404,7 @@ base-dev:
 - **`ivm` entry form**: DECIDED -> single dispatcher `ivm <name> <cmd>` (one
   binary, no `ivm-*` shim clutter; `ivm <TAB>` completes VM names, `ivm <name>
   <TAB>` completes subcommands). Per-name shims rejected.
-- Role rename `incus_workstations` -> `incus_vm`: DECIDED; the actual file rename
+- Role rename `incus_vm` -> `incus_vm`: DECIDED; the actual file rename
   deferred until the engine is built (the old bash role is being replaced).
 - `sys.ssh_server` use = external / IDE-remote access: CONFIRMED.
 

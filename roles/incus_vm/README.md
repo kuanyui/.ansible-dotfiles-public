@@ -1,4 +1,4 @@
-# roles/incus_workstations
+# roles/incus_vm
 
 Persistent Incus VM launchers, one VM per purpose. For things like Qt/C++ dev environment, Telegram-in-a-VM, browser-in-a-VM.
 
@@ -11,8 +11,8 @@ Different from [`roles/incus_agents`](../incus_agents/): one persistent VM per *
 
 ## Quick start
 
-1. Edit `roles/incus_workstations/defaults/main.yml` and uncomment / add an entry in `incus_workstations:`.
-2. `make apply-incus-workstations`
+1. Edit `roles/incus_vm/defaults/main.yml` and uncomment / add an entry in `incus_vm:`.
+2. `make apply-incus-vm`
 3. `v-<name> init` (heavy first-time setup, may take minutes for big apt sets)
 4. `v-<name> gui` if you set `gui: true` (opens SPICE in `virt-viewer`)
 5. `v-<name> snapshot create <snap>` before risky changes
@@ -29,7 +29,7 @@ Different from [`roles/incus_agents`](../incus_agents/): one persistent VM per *
 
 ## Schema
 
-Per `incus_workstations[*]` entry:
+Per `incus_vm[*]` entry:
 
 | Field | Required | Default | What it does |
 |---|---|---|---|
@@ -85,7 +85,7 @@ Add those to the entry's `apt_packages:` (the example entries in `defaults/main.
 
 ## Adding / removing mounts post-hoc
 
-The `mounts:` field in your entry is only consulted at **first-time VM creation**. Once the VM exists, edits to `mounts:` (followed by `apply-incus-workstations`) only re-render the launcher script — the VM's actual attached devices are NOT touched.
+The `mounts:` field in your entry is only consulted at **first-time VM creation**. Once the VM exists, edits to `mounts:` (followed by `apply-incus-vm`) only re-render the launcher script — the VM's actual attached devices are NOT touched.
 
 To add or remove mounts on an already-existing VM, talk to Incus directly. Both work on a **running** VM (no shutdown needed, no guest fstab edit needed - `incus-agent` inside the VM auto-mounts via virtio-fs):
 
@@ -118,7 +118,7 @@ If you'll routinely snapshot, switch the pool backend to `btrfs` / `zfs`. See [C
 
 ## Name collision with `roles/incus_agents`
 
-Both roles drop launchers at `~/.local/bin/v-<name>`. **Don't use the same `name` in `incus_apps[*]` and `incus_workstations[*]`** — the second one to apply overwrites the first one's launcher.
+Both roles drop launchers at `~/.local/bin/v-<name>`. **Don't use the same `name` in `incus_apps[*]` and `incus_vm[*]`** — the second one to apply overwrites the first one's launcher.
 
 Pick names that signal which role they belong to:
 - Agents: `claude`, `codex` (LLM agent names)
@@ -131,10 +131,10 @@ No automatic cross-role check exists yet (each role has its own manifest).
 | What | Default path |
 |---|---|
 | Launcher script | `~/.local/bin/v-<name>` |
-| zsh completion | `~/.local/share/ansible-managed/incus-workstations/zsh-completions/_v-<name>` |
-| bash completion | `~/.local/share/ansible-managed/incus-workstations/bash-completions/v-<name>` |
-| Install manifest | `~/.local/share/ansible-managed/incus-workstations/incus-workstations.manifest.yml` |
-| Staged VM dotfiles | `~/.local/share/ansible-managed/incus-workstations/vm-rootfs/home/user/` (user variant) + `.../vm-rootfs/root/` (root variant) |
+| zsh completion | `~/.local/share/ansible-managed/incus-vm/zsh-completions/_v-<name>` |
+| bash completion | `~/.local/share/ansible-managed/incus-vm/bash-completions/v-<name>` |
+| Install manifest | `~/.local/share/ansible-managed/incus-vm/incus-vm.manifest.yml` |
+| Staged VM dotfiles | `~/.local/share/ansible-managed/incus-vm/vm-rootfs/home/user/` (user variant) + `.../vm-rootfs/root/` (root variant) |
 | VM disk (incus default) | `/var/lib/incus/storage-pools/default/virtual-machines/v-<name>/root.img` |
 | VM snapshots (incus default) | `/var/lib/incus/storage-pools/default/virtual-machines-snapshots/v-<name>/<snap>/` |
 
@@ -146,7 +146,7 @@ For deeper storage layout (image cache, CoW backends, openSUSE + snapper trap, m
 |---|---|
 | Stop one VM | `v-<name> stop` |
 | Delete one VM (config + disk + snapshots) | `v-<name> rma` |
-| Remove launchers + manifest (leaves VMs intact) | `make unapply-incus-workstations` |
+| Remove launchers + manifest (leaves VMs intact) | `make unapply-incus-vm` |
 | List all workstation VMs | `incus list ^v-` (also shows agents - check by name) |
 
 ## TODOs / known limitations
@@ -154,4 +154,4 @@ For deeper storage layout (image cache, CoW backends, openSUSE + snapper trap, m
 - **Single-distro**: launcher's apt commands are Debian-only. If you set `base_image: images:fedora/43` or similar in an entry, the first-`init` apt step will fail. TODO: parse `base_image` at render time + emit `apt` / `dnf` / `zypper` accordingly.
 - **GUI scope**: only `incus console --type=vga` (SPICE full-VM display). No per-app Wayland / X11 forwarding yet.
 - **No cross-role name check**: agents and workstations can collide on `v-<name>`. User is responsible.
-- **Sandbox**: round-trip works with empty `incus_workstations: []` (the default). For real-launcher coverage, override via `-e` or uncomment defaults examples.
+- **Sandbox**: round-trip works with empty `incus_vm: []` (the default). For real-launcher coverage, override via `-e` or uncomment defaults examples.

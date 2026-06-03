@@ -1,12 +1,12 @@
 # roles/_incus_host_setup
 
-Internal sub-role - shared host-level prep for any incus-using face role (`roles/incus_agents`, `roles/incus_workstations`, future ones too). NOT a standalone playbook entry point; called via `include_role: _incus_host_setup` from each face role.
+Internal sub-role - shared host-level prep for any incus-using face role (`roles/incus_agents`, `roles/incus_vm`, future ones too). NOT a standalone playbook entry point; called via `include_role: _incus_host_setup` from each face role.
 
 This README covers everything that is **independent of which face role you're using**: supported distros, what gets installed on the host, the `default` storage pool config matrix, the openSUSE+snapper btrfs trap, moving incus data around post-install, host-level inspecting / cleanup, and the network / virt-manager FAQs.
 
 Face-role-specific docs:
 - LLM agent VMs (ephemeral, per `(agent, project)`): [`roles/incus_agents/README.md`](../incus_agents/README.md)
-- Persistent purpose VMs (one per use case, GUI-capable, snapshots): [`roles/incus_workstations/README.md`](../incus_workstations/README.md)
+- Persistent purpose VMs (one per use case, GUI-capable, snapshots): [`roles/incus_vm/README.md`](../incus_vm/README.md)
 
 ## What this role does on the host
 
@@ -221,7 +221,7 @@ Two backend families behave differently on disk:
 
 Placeholders used in the cells below:
 
-- `<vm-name>` - the VM's name. Per [`roles/incus_agents`](../incus_agents/), this is `v-<agent>-<projectname>` (e.g. `v-claude-projfoo`); for [`roles/incus_workstations`](../incus_workstations/) it's `v-<workstation-name>` (e.g. `v-qtdev`).
+- `<vm-name>` - the VM's name. Per [`roles/incus_agents`](../incus_agents/), this is `v-<agent>-<projectname>` (e.g. `v-claude-projfoo`); for [`roles/incus_vm`](../incus_vm/) it's `v-<workstation-name>` (e.g. `v-qtdev`).
 - `<image-fingerprint>` - the SHA256 fingerprint of a cached incus image, ~64 hex chars; for `images:debian/13` it's something like `b8a3e07c1f29...` (the daemon-level cache directory `/var/lib/incus/images/<image-fingerprint>/` stores the corresponding tarball + metadata).
 - `<snap>` - whatever name you passed to `incus snapshot create <vm-name> <snap>`.
 - `<volname>` - the volume name you passed to `incus storage volume import default <iso-file> <volname> --type=iso`.

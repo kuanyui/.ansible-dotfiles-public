@@ -8,8 +8,8 @@ Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 ## incus launcher improvements
 
 - [x] **1. Decide launcher language (bash vs Python)** -> **bash now.**
-  Python rewrite deferred to the bigger `incus-workspaces` redesign (presets /
-  multi-distro / Windows; see `roles/incus_workstations/REDESIGN.md` §4.6),
+  Python rewrite deferred to the bigger `incus_vm` redesign (presets /
+  multi-distro / Windows; see `roles/incus_vm/REDESIGN.md` §4.6),
   where it pays for itself. The bash thrown away by doing #2/#3 now is ~30
   lines; the "test twice" cost is marginal vs a premature 956-line rewrite.
 
@@ -58,8 +58,8 @@ Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
 ## Notes / future
 
-- Python launcher rewrite: deferred to the `incus-workspaces` redesign (see
-  `roles/incus_workstations/REDESIGN.md`). Trigger = presets / multi-distro /
+- Python launcher rewrite: deferred to the `incus_vm` redesign (see
+  `roles/incus_vm/REDESIGN.md`). Trigger = presets / multi-distro /
   Windows. The 11 duplicated subcommands across the two launchers get unified
   there.
 - Runtime-unverifiable here (no incus in this env): the `root -> /` push landing

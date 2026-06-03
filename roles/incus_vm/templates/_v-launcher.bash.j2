@@ -1,12 +1,12 @@
 # {{ ansible_managed }}
 #
-# bash completion for `{{ launcher_name }}` (incus_workstations launcher).
+# bash completion for `{{ launcher_name }}` (incus_vm launcher).
 # Eager-sourced from ~/.bashrc.
 
 _{{ launcher_name | replace('-', '_') }}() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local script="{{ incus_workstations_bin_dir }}/{{ launcher_name }}"
+    local script="{{ incus_vm_bin_dir }}/{{ launcher_name }}"
 
     # Subcommand of `snapshot` (e.g. `v-foo snapshot c<TAB>` -> `create`).
     if [[ "${COMP_WORDS[1]:-}" == "snapshot" ]] && [[ "$COMP_CWORD" == 2 ]]; then

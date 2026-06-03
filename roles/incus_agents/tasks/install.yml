@@ -57,7 +57,7 @@
 
 # ---------- Stage VM dotfiles (user + root variants) ----------
 # Delegated to the shared `roles/_incus_guest_setup_dotfiles` (also used by
-# `roles/incus_workstations`); it renders `vm-rootfs/home/user` (is_root=false)
+# `roles/incus_vm`); it renders `vm-rootfs/home/user` (is_root=false)
 # and `vm-rootfs/root` (is_root=true) under the passed root, which the
 # launcher's `_push_dotfiles` pushes to /home/user and /root respectively.
 - name: Stage VM dotfiles (user + root variants) via `roles/_incus_guest_setup_dotfiles`

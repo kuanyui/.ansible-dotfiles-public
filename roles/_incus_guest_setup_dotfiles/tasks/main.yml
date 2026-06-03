@@ -1,7 +1,7 @@
 ---
 # Stage the guest VM's shell dotfiles host-side, in TWO variants (`user` +
 # `root`), for the incus launcher to push at `init` time. Shared by
-# `roles/incus_agents` and `roles/incus_workstations` - they differ only in the
+# `roles/incus_agents` and `roles/incus_vm` - they differ only in the
 # staging root, passed as `incus_guest_setup_dotfiles_root`.
 #
 # Renders into:

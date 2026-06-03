@@ -1,6 +1,6 @@
 ---
 # Shared host-level prep for any incus-using face role (`roles/incus_agents`,
-# future `roles/incus_workstations`). Included via `include_role:
+# future `roles/incus_vm`). Included via `include_role:
 # _incus_host_setup` from the caller. Each step is gated on a no-`become`
 # probe, so on a fully-set-up host this whole file becomes a no-op that
 # doesn't even prompt for sudo; only steps that actually need elevation

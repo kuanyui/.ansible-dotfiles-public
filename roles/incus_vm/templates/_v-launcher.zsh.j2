@@ -1,11 +1,11 @@
 #compdef {{ launcher_name }}
 # {{ ansible_managed }}
 #
-# zsh completion for `{{ launcher_name }}` (incus_workstations launcher).
+# zsh completion for `{{ launcher_name }}` (incus_vm launcher).
 # Subcommands parsed from the dispatch `case` in the launcher itself, so any
 # new subcommand added there picks up here automatically.
 
-local script="{{ incus_workstations_bin_dir }}/{{ launcher_name }}"
+local script="{{ incus_vm_bin_dir }}/{{ launcher_name }}"
 local -a subs snap_subs
 subs=(${(s.|.)"$(perl -ne 'if (/^\s*([a-zA-Z_][\w-]*(\|[a-zA-Z_][\w-]*)+)\)/) { print $1; exit }' "$script" 2>/dev/null)"})
 snap_subs=(create list restore delete help)

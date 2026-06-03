@@ -1,6 +1,6 @@
 ---
 # Internal utility role - shared host-level prep for any incus-using role
-# (`roles/incus_agents`, `roles/incus_workstations`). Each face role
+# (`roles/incus_agents`, `roles/incus_vm`). Each face role
 # `include_role`s this and supplies whatever VM-level config it needs on top.
 #
 # ---------- Storage pool config (preseed-only, first-time init) ----------

@@ -1,0 +1,10 @@
+---
+- name: "Uninstall Incus workstation launchers via `roles/incus_vm` (`incus_vm_state: absent`)"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    setup_incus_vm: true
+    incus_vm_state: absent
+  roles:
+    - incus_vm
