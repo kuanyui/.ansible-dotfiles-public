@@ -1,1 +1,5 @@
+{% if is_root | default(false) -%}
+PS1='\[\e[1;31m\]\u@\h:\W\$\[\e[m\] '
+{%- else -%}
 PS1='\[\e[1;32m\]\u@\h\[\e[m\]:\[\e[1;34m\]\W\[\e[1;33m\]\$\[\e[m\] '
+{%- endif %}

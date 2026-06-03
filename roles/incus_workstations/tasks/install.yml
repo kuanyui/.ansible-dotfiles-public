@@ -64,8 +64,9 @@
 
 # ---------- Stage VM dotfiles (same shape as `roles/incus_agents`) ----------
 # `override_os_family: Debian` because VM base image defaults to debian/13.
-# `.bashrc.j2` has no `ansible_facts` refs; `.zshrc.j2` has one Debian
-# conditional (the `apt-install-without-recommends` helper).
+# `.bashrc.j2` has no `ansible_facts` refs; `.zshrc.j2` reads `os_family` to
+# pick the per-distro min-install helper (`apt-min` on Debian, else
+# `zypper-min` / `dnf-min`), so it must be pinned to Debian for the VM.
 # TODO: when multi-distro VM support lands, parse each entry's `base_image`
 # and render per-family staging dirs.
 - name: Ensure VM dotfiles staging dir `{{ incus_workstations_root }}/vm-rootfs/home/user` exists (roles/dotfiles only creates SUB-dirs of `target_home`, not `target_home` itself)

@@ -48,6 +48,7 @@ setopt AUTO_CD    # cd to directory without cd command
 ### ============================================
 alias sz='source ~/.zshrc'
 alias ta='if tmux attach-session -t 0;then;else tmux;fi'
+alias claude-danger='claude --dangerously-skip-permissions'
 
 {{ shared_aliases_ls }}
 {{ shared_aliases_cd_shortcuts }}
@@ -83,15 +84,17 @@ function dotfiles-public-update () {
    staging `.zshrc` for VM consumption, because the VM is always
    Debian 13 even when the HOST running ansible is openSUSE / Fedora /
    etc. (without this override, the host's `os_family` would leak into
-   the VM's .zshrc and the Debian-only `apt-install-without-recommends`
-   helper below would silently disappear for non-Debian hosts).
+   the VM's .zshrc and the Debian-only `apt-min` helper below would
+   silently disappear for non-Debian hosts).
 #}
-{% if (override_os_family | default(ansible_facts['os_family'])) == 'Debian' %}
-function apt-install-without-recommends () {
-    {% if not is_root %}sudo {% endif %}apt install --no-install-recommends $@
-}
+{% set _effective_os_family = override_os_family | default(ansible_facts['os_family']) %}
+{% if _effective_os_family == 'Debian' %}
+# `apt-min`: install without recommended packages (the no-recommends shortcut).
+alias apt-min='{% if not is_root %}sudo {% endif %}apt install --no-install-recommends'
 
-function apt-install-without-recommends-diff-dry-run () {
+# `apt-min-diff-dry-run`: preview what the recommends would add, by diffing a
+# normal dry-run against a `--no-install-recommends` dry-run.
+function apt-min-diff-dry-run () {
     if [ $UID -eq 0 ]; then
         echo "Please run as non-root for GUI (meld)"
         diff --width=$COLUMNS --suppress-common-lines --side-by-side --color <(apt-get install --dry-run $@) <(apt-get install --dry-run --no-install-recommends $@)
@@ -99,6 +102,12 @@ function apt-install-without-recommends-diff-dry-run () {
         meld <(apt-get install --dry-run $@) <(apt-get install --dry-run --no-install-recommends $@)
     fi
 }
+{% elif _effective_os_family == 'Suse' %}
+# `zypper-min`: install without recommended packages (the no-recommends shortcut).
+alias zypper-min='{% if not is_root %}sudo {% endif %}zypper install --no-recommends'
+{% elif _effective_os_family == 'RedHat' %}
+# `dnf-min`: install without weak deps (dnf's equivalent of no-recommends).
+alias dnf-min='{% if not is_root %}sudo {% endif %}dnf install --setopt=install_weak_deps=False'
 {% endif %}
 ### ============================================
 ### autosuggesstions (apt install zsh-autosuggestions)

@@ -63,10 +63,11 @@
 #
 # `override_os_family: Debian` is the only fact override we need: VM is
 # always Debian 13 (per `incus_vm_defaults.base_image`), and `.zshrc.j2`
-# has exactly one `ansible_facts['os_family']` reference (the
-# `apt-install-without-recommends` helper). Without this, the helper
-# would silently disappear from the VM's `.zshrc` when the HOST is
-# Fedora / openSUSE / etc. `.bashrc.j2` has no `ansible_facts` refs at all.
+# reads `ansible_facts['os_family']` to pick the per-distro min-install
+# helper (`apt-min` on Debian, `zypper-min` / `dnf-min` elsewhere).
+# Without this, a non-Debian HOST (Fedora / openSUSE / etc.) would bake
+# its own helper into the VM's `.zshrc` instead of `apt-min`.
+# `.bashrc.j2` has no `ansible_facts` refs at all.
 - name: Ensure VM dotfiles staging dir `{{ incus_root }}/vm-rootfs/home/user` exists (roles/dotfiles only creates SUB-dirs of `target_home`, not `target_home` itself - host-side flow gets away with this because $HOME always exists)
   ansible.builtin.file:
     path: "{{ incus_root }}/vm-rootfs/home/user"
