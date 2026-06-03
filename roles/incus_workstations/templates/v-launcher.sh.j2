@@ -150,7 +150,9 @@ cmd_help() {
     cat <<EOF
 $VM_NAME - $DISPLAY_NAME (persistent Incus VM)
 
-Usage: v-$WORKSTATION_NAME <subcommand> [args]
+Usage: v-$WORKSTATION_NAME [-y|--yes] <subcommand> [args]
+
+  -y, --yes  Skip the y/N confirmation shown before a VM is created.
 
 Subcommands:
   help              Show this message
@@ -225,6 +227,38 @@ EOF
 {% endif %}
 }
 
+# Preview + y/N gate, shown ONLY when a VM is about to be CREATED (it does not
+# exist yet). `-y`/`--yes` skips it; a non-TTY without `--yes` aborts.
+_confirm_create() {
+    cat >&2 <<EOF
+
+About to CREATE a new Incus VM (it does not exist yet):
+
+  workstation:  $WORKSTATION_NAME ($DISPLAY_NAME)
+  VM name:      $VM_NAME
+  base image:   $VM_BASE_IMAGE
+  cpu/mem/disk: $VM_CPU / $VM_MEMORY / $VM_DISK
+  gui:          $([[ "$HAS_GUI" == "1" ]] && echo yes || echo no)
+  apt packages: ${APT_PACKAGES[*]:-(none)}
+  mounts:
+EOF
+{% if workstation.mounts | default([]) | length > 0 %}
+    for _m in "${MOUNTS[@]}"; do printf '    %s\n' "${_m/|/  ->  }" >&2; done
+{% else %}
+    printf '    (none)\n' >&2
+{% endif %}
+    echo >&2
+
+    [[ "$ASSUME_YES" == 1 ]] && return 0
+    if [[ ! -t 0 ]]; then
+        echo "Refusing to auto-create $VM_NAME without a TTY; re-run with --yes to confirm." >&2
+        exit 1
+    fi
+    local reply
+    read -rp "Create this VM? [y/N] " reply
+    [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Aborted; no VM created." >&2; exit 1; }
+}
+
 # Ensure the VM exists and is running: launch + attach mounts on first
 # creation, otherwise start it if stopped. Does NOT provision - callers decide.
 _ensure_vm_up() {
@@ -233,6 +267,7 @@ _ensure_vm_up() {
         _vm_running || incus start "$VM_NAME"
         _wait_vm_ready
     else
+        _confirm_create
         echo "==> Launching $VM_NAME from $VM_BASE_IMAGE ($VM_CPU CPU / $VM_MEMORY / $VM_DISK)..."
         # `user.*` tags mark this as our own Linux guest, so bulk tooling (e.g.
         # `make incus-overwrite-dotfiles-in-all-guest`) can target exactly the
@@ -464,6 +499,19 @@ EOF
 }
 
 # ---------- Dispatch ----------
+# Strip `-y`/`--yes` from anywhere in the args (this launcher has no flag
+# parser); it skips the pre-create confirmation. Everything else stays
+# positional. Empty-array expansion under `set -u` is safe on bash 4.4+.
+ASSUME_YES=0
+_args=()
+for _a in "$@"; do
+    case "$_a" in
+        -y|--yes) ASSUME_YES=1 ;;
+        *) _args+=("$_a") ;;
+    esac
+done
+set -- "${_args[@]}"
+
 sub="${1:-help}"; shift || true
 case "$sub" in
     help|env|init|overwrite-dotfiles|start|stop|shell|shell-user|shell-root|set-root-password|unset-root-password|gui|update|snapshot|delete)

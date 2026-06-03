@@ -46,12 +46,15 @@ Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
   Non-TTY aborts.
 - [x] **Removed the per-agent subcommand** (`v-<agent> <agent>`); run the agent via
   `v-<agent> shell` then the command inside. `cmd_agent` + its dispatch token gone.
-- [ ] **OPEN: agents reserved-word assert is now moot** - since the agent name is no
-  longer a dispatch token, `roles/incus_agents/tasks/main.yml`'s reserved-subcommand
-  check can't actually collide. Kept as a defensive naming guard for now; decide
-  whether to drop it.
-- [ ] Workstations init preview + `--yes` (deferred from task #2; lower value - VM
-  name is fixed, not cwd-derived).
+- [x] **Workstations init preview + `--yes`** (deferred from task #2). Added
+  `_confirm_create` (VM name, image, cpu/mem/disk, gui, apt pkgs, mounts) before
+  `incus launch`; `--yes`/`-y` stripped via a pre-dispatch arg scan (this launcher
+  has no flag parser) sets `ASSUME_YES`; non-TTY aborts. Help updated. Validated:
+  render (mounts + no-mounts) + `bash -n`.
+- [x] **Agents reserved-word assert: KEEP as a defensive guard** (decided). Since the
+  agent name is no longer a dispatch token it can't actually collide, but the check
+  is harmless and kept for naming hygiene; comment in
+  `roles/incus_agents/tasks/main.yml` says so.
 
 ## Notes / future
 
