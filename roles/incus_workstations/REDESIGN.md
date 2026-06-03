@@ -368,8 +368,11 @@ base-dev:
 
 ### 8.5 os / sys schema - **LEANING**
 
-- `os.type` = specific distro; engine derives package manager + os_family.
-  `os.image.{source,uri}` = where to fetch the disk image, decoupled from type.
+- `os.type` = tier `linux | windows` (the two-tier discriminator, schema-enforced).
+  `os.distro` = specific Linux distro (debian/ubuntu/opensuse/fedora; linux only);
+  engine derives the package manager + ansible os_family from it. `os.image.
+  {source,uri}` = where to fetch the disk image. (Renamed from a single vague
+  `os.type=<distro>`: `type` is now the tier, `distro` the specific OS.)
 - `sys.gui` (bool for now; x11/wayland is a guest-session detail, deferred).
 - `sys.ssh_server {...}` = for external / IDE-remote access; the launcher's own
   shell uses `incus exec`, so ssh is NOT needed for that. `authorized_keys` =
@@ -429,4 +432,30 @@ base-dev:
   `post_install_powershell`). The unix provisioning fields are forbidden for
   Windows and the `windows` block forbidden for Linux - ENFORCED in the JSON
   Schema (`if/then/else`).
-- **Entry point**: command `ivm`; role `incus_vm`. Sub-forms open (§8.7).
+- **Entry point**: command `ivm`; role `incus_vm`.
+
+### 8.9 Invocation, init-time naming, dir-binding - **DECIDED** (resolves the "id vs VM name" gap)
+
+The template id and the VM INSTANCE name are SEPARATE. `template_name` (required)
+is the TEMPLATE id - the `<template_name>` in `ivm init <template_name>`; the
+instance name is chosen interactively at init (below), NOT from `template_name`.
+(Field named `template_name`, not the vague `name`, to keep the two distinct.)
+
+- **Templates** live at `~/.local/share/ansible-managed/incus-vm/vm-templates/*.yaml`,
+  each with `template_name:` = its id (e.g. `template_name: claude` -> `ivm init claude`).
+- **`ivm init <template>`** (e.g. `ivm init claude`): render from the template,
+  then PROMPT for the VM name. The prefilled default is the old long
+  `<template>-<full-cwd-path>` style (slashes -> `-`); the user trims/edits it.
+  Re-prompt if too long (incus name / socket-path limit) or already taken. An
+  explicit `ivm init claude <name>` skips the prompt (still validated).
+- On create, the engine tags the VM: `user.ivm_init_at_dir=<cwd>` (+
+  `user.ivm_template=<template>`). This DECOUPLES the VM name from the path -
+  the name is now free-form (user-edited), so cwd-matching can't reuse it the
+  way old `v-claude` did; the tag does it instead.
+- **`ivm <shell|start|stop|delete>`** take NO name; they resolve by cwd ->
+  the VM whose `user.ivm_init_at_dir` == cwd. Exact match -> operate. In a SUBDIR
+  of an init'd dir -> "open the VM init'd at <parent>? [Y/n]"; N -> init flow.
+  No match -> tell the user to `ivm init <template>`.
+- Other subcommands (env / overwrite-dotfiles / shell-root / set-root-password /
+  unset-root-password / update / snapshot / gui) behave as in today's launchers.
+- **v1 scope: Linux only.** Windows / GPU passthrough / macvlan / tpm deferred.

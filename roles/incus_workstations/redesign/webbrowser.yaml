@@ -1,12 +1,13 @@
 # yaml-language-server: $schema=./vm.schema.json
-name: webbrowser
+template_name: webbrowser
 hw:
   cpu: 4
   memory: 4G
   disk: 20G
   nested_virt: false
 os:
-  type: opensuse
+  type: linux
+  distro: opensuse
   image:
     source: incus
     uri: opensuse/tumbleweed

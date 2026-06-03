@@ -1,12 +1,13 @@
 # yaml-language-server: $schema=./vm.schema.json
-name: claude-$(basename "$(pwd)")
+template_name: claude
 hw:
   cpu: 4
   memory: 8G
   disk: 30G
   nested_virt: false
 os:
-  type: debian
+  type: linux
+  distro: debian
   image:
     source: incus
     uri: debian/13

@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=./vm.schema.json
-name: win11
+template_name: windows11
 hw:
   cpu: 4
   memory: 8G

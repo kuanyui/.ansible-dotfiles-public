@@ -4,11 +4,12 @@
   "description": "One incus VM, provisioned from the HOST via `incus exec` (no ansible/python inside the guest). See REDESIGN.md.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["name", "os"],
+  "required": ["template_name", "os"],
   "properties": {
-    "name": {
+    "template_name": {
       "type": "string",
-      "description": "VM id -> `v-<name>`. May contain host-side interpolation: a fixed VM is a plain name (`firefox` -> always `v-firefox`); a per-project VM puts the cwd in the name (`claude-$(basename \"$(pwd)\")` -> `v-claude-<project>`, different per directory). The engine expands it at init, sanitizes the result to incus's instance-name rules ([a-zA-Z0-9-], no underscores), and the init existence-check reuses or creates that VM. No separate per-project flag - the name IS the mechanism."
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+      "description": "Template id - the `<template_name>` you pass to `ivm init <template_name>`. NOT the VM instance name: the instance name is chosen interactively at init (default `<template_name>-<cwd-path>`, editable) and bound to the dir via the VM's `user.ivm_init_at_dir` config."
     },
     "hw": {
       "type": "object",
@@ -38,14 +39,19 @@
     },
     "os": {
       "type": "object",
-      "description": "Guest OS: the distro (drives package manager + package names) and where to fetch the disk image.",
+      "description": "Guest OS: the tier (linux/windows), the specific Linux distro, and where to fetch the disk image.",
       "additionalProperties": false,
       "required": ["type", "image"],
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["debian", "ubuntu", "opensuse", "fedora", "windows"],
-          "description": "Specific OS. For Linux distros the engine derives the package manager (apt/zypper/dnf) + resolves `distro_package_groups` by this key. `windows` is a SEPARATE tier: the unix-only fields (`distro_packages`, `distro_package_groups`, `dotfiles`, `post_install_script`) do not apply; provisioning is via unattend.xml / cloudbase-init (a `windows`-specific block, TBD)."
+          "enum": ["linux", "windows"],
+          "description": "OS tier. `linux` = the unix provisioning path (distro_packages/dotfiles/post_install_script via incus exec); requires `distro`. `windows` = a SEPARATE tier (unattend / cloudbase-init); no `distro`, and the unix provisioning fields do not apply."
+        },
+        "distro": {
+          "type": "string",
+          "enum": ["debian", "ubuntu", "opensuse", "fedora"],
+          "description": "Specific Linux distro (linux only). The engine derives the package manager (apt/zypper/dnf) and the ansible os_family from it, and uses it as the key to resolve `distro_package_groups` - finer than os_family because debian vs ubuntu package names diverge. os_family is DERIVED, never specified by the user."
         },
         "image": {
           "type": "object",
@@ -127,7 +133,7 @@
     "distro_package_groups": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Named package bundles defined in `roles/distro_packages/defaults/main.yml` (variable `distro_packages_<name>`), referenced here by the short `<name>`. Resolved for this VM's `os.type`."
+      "description": "Named package bundles defined in `roles/distro_packages/defaults/main.yml` (variable `distro_packages_<name>`), referenced here by the short `<name>`. Resolved for this VM's `os.distro`. (Linux only.)"
     },
     "distro_packages": {
       "type": "array",
@@ -162,7 +168,7 @@
   },
   "allOf": [
     {
-      "comment": "Two tiers: a Windows VM forbids the unix provisioning fields; a non-Windows VM forbids the `windows` block.",
+      "comment": "Two tiers. windows: no unix provisioning fields, no os.distro; the `windows` block carries provisioning. linux: os.distro required, no `windows` block.",
       "if": {
         "required": ["os"],
         "properties": { "os": { "required": ["type"], "properties": { "type": { "const": "windows" } } } }
@@ -175,10 +181,12 @@
             { "required": ["dotfiles"] },
             { "required": ["post_install_script"] }
           ]
-        }
+        },
+        "properties": { "os": { "not": { "required": ["distro"] } } }
       },
       "else": {
-        "not": { "required": ["windows"] }
+        "not": { "required": ["windows"] },
+        "properties": { "os": { "required": ["distro"] } }
       }
     }
   ]
