@@ -6,6 +6,7 @@ packages_basic_tools:
     - ripgrep
     - tmux
     - stow
+
 packages_sys_tools:
   common:
     - htop
