@@ -71,12 +71,14 @@ unapply-incus-agents:  ## Uninstall incus agent launchers (reads ~/.local/share/
 resync-incus-agents-dotfiles:  ## Re-push staged dotfiles into every existing v-* VM (non-destructive; same `incus file push` the launcher runs at `init`). Assumes `make apply-incus-agents` already re-rendered the staging dir.
 	@set -e; \
 	STAGING="$$HOME/.local/share/ansible-managed/incus-agents/vm-rootfs/home/user"; \
-	if [ ! -d "$$STAGING" ]; then echo "Staging dir not found: $$STAGING -- run 'make apply-incus-agents' first" >&2; exit 1; fi; \
+	ROOT_STAGING="$$HOME/.local/share/ansible-managed/incus-agents/vm-rootfs/root"; \
+	if [ ! -d "$$STAGING" ] || [ ! -d "$$ROOT_STAGING" ]; then echo "Staging dir not found ($$STAGING / $$ROOT_STAGING) -- run 'make apply-incus-agents' first" >&2; exit 1; fi; \
 	VMS=$$(incus list '^v-' --format csv --columns n); \
 	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
 	for vm in $$VMS; do \
-	    echo "==> Re-pushing dotfiles into $$vm"; \
+	    echo "==> Re-pushing dotfiles into $$vm (user + root)"; \
 	    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$$STAGING" "$$vm/home/"; \
+	    incus file push --recursive --create-dirs --uid 0 --gid 0 "$$ROOT_STAGING" "$$vm/"; \
 	done
 
 apply-incus-workstations:  ## Install v-<workstation> Incus persistent VM launchers via `roles/incus_workstations` (bypasses `setup_incus_workstations` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.

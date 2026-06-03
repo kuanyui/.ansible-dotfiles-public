@@ -53,7 +53,7 @@ VM name = `v-<agent>-<projectname>`. Different projects get different VMs.
 | zsh completion | `~/.local/share/ansible-managed/incus-agents/zsh-completions/_v-<agent>` |
 | bash completion | `~/.local/share/ansible-managed/incus-agents/bash-completions/v-<agent>` |
 | Install manifest | `~/.local/share/ansible-managed/incus-agents/incus-apps.manifest.yml` |
-| Staged VM dotfiles | `~/.local/share/ansible-managed/incus-agents/vm-rootfs/home/user/` |
+| Staged VM dotfiles | `~/.local/share/ansible-managed/incus-agents/vm-rootfs/home/user/` (user variant) + `.../vm-rootfs/root/` (root variant) |
 
 For Incus-level paths (cached images, VM disks, pool blocks under each storage config, snapshot locations): see [Where do cached incus images... live](../_incus_host_setup/README.md#where-do-cached-incus-images-per-vm-disk-files-installer-isos-and-snapshots-live-can-the-paths-be-changed) in `_incus_host_setup` README.
 

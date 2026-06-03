@@ -261,17 +261,17 @@ _wait_vm_ready() {
 # `/home/user/user/`. `user -> /home/` resolves to `/home/user/`.
 _push_dotfiles() {
     echo "==> Pushing dotfiles into $VM_NAME /home/user + /root (overlay: ~/.bashrc, ~/.zshrc, ~/.tmux.conf)..."
+    # Two separately-rendered trees (see install.yml): the `user` variant
+    # (is_root=false) and the `root` variant (is_root=true, e.g. red prompt).
+    # incus appends the source dir's basename to the target, so `home/user ->
+    # /home/` lands at `/home/user`, and `root -> /` lands at `/root` - no
+    # /tmp+cp dance needed because the source dir is literally named `root`.
     incus file push --recursive --create-dirs --uid 1000 --gid 1000 \
         "{{ incus_root }}/vm-rootfs/home/user" \
         "$VM_NAME/home/"
-    # Give root the SAME dotfiles, so `shell-root` isn't a bare shell. incus's
-    # basename rule can't land a dir named `user` at `/root` directly, so push
-    # it into /tmp (owned by root via --uid 0) and copy the contents into /root.
-    # `cp -aT` copies INTO /root (not /root/user) and preserves root ownership.
     incus file push --recursive --create-dirs --uid 0 --gid 0 \
-        "{{ incus_root }}/vm-rootfs/home/user" \
-        "$VM_NAME/tmp/"
-    incus exec "$VM_NAME" -- bash -ec 'cp -aT /tmp/user /root && rm -rf /tmp/user'
+        "{{ incus_root }}/vm-rootfs/root" \
+        "$VM_NAME/"
 }
 
 _provision_vm() {

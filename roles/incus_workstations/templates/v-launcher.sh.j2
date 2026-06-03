@@ -49,9 +49,11 @@ MOUNTS=(
 # `init` checks this; `update` ignores it (always re-runs heavy setup).
 PROVISIONED_MARKER="/etc/.ansible-workstation-provisioned"
 
-# Path on host where dotfiles staging lives (rendered by
-# `roles/incus_workstations/tasks/install.yml` at apply time).
+# Paths on host where dotfiles staging lives (rendered by
+# `roles/incus_workstations/tasks/install.yml` at apply time). Two variants:
+# the `user` tree (is_root=false) and the `root` tree (is_root=true).
 STAGING_DIR="{{ incus_workstations_root }}/vm-rootfs/home/user"
+ROOT_STAGING_DIR="{{ incus_workstations_root }}/vm-rootfs/root"
 
 # ---------- VM lifecycle helpers ----------
 _vm_exists() { incus info "$VM_NAME" >/dev/null 2>&1; }
@@ -107,24 +109,19 @@ _ensure_user_and_shell() {
 }
 
 _push_dotfiles() {
-    if [[ ! -d "$STAGING_DIR" ]]; then
-        echo "Staging dir missing: $STAGING_DIR -- did you run 'make apply-incus-workstations'?" >&2
+    if [[ ! -d "$STAGING_DIR" || ! -d "$ROOT_STAGING_DIR" ]]; then
+        echo "Staging dir missing ($STAGING_DIR / $ROOT_STAGING_DIR) -- did you run 'make apply-incus-workstations'?" >&2
         return 1
     fi
     # `--create-dirs` is mandatory with `--recursive` + uid/gid override:
     # incus errors "Can't override UID/GID in recursive mode without -p"
-    # otherwise (it must own any directories it creates). Push the `user` dir
-    # INTO `/home/` (not `$STAGING_DIR/.` into `/home/user/`): incus appends
-    # the source basename to the target, so `src/. -> /home/user/` nests as
-    # `/home/user/user/`. `user -> /home/` resolves to the existing `/home/user`.
+    # otherwise (it must own any directories it creates). incus appends the
+    # source dir's basename to the target, so `home/user -> /home/` lands at
+    # `/home/user`, and the separately-rendered `root` tree (is_root=true, e.g.
+    # red prompt) `root -> /` lands at `/root` - no /tmp+cp dance because the
+    # source dir is literally named `root`.
     incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$STAGING_DIR" "$VM_NAME/home/"
-    # Give root the SAME dotfiles, so `shell-root` isn't a bare shell. incus's
-    # basename rule can't land a dir named `user` at `/root` directly, so push
-    # it into /tmp (owned by root via --uid 0) and copy the contents into
-    # /root. `cp -aT` copies INTO /root (not /root/user) and preserves the
-    # root ownership the push set.
-    incus file push --recursive --create-dirs --uid 0 --gid 0 "$STAGING_DIR" "$VM_NAME/tmp/"
-    incus exec "$VM_NAME" -- bash -ec 'cp -aT /tmp/user /root && rm -rf /tmp/user'
+    incus file push --recursive --create-dirs --uid 0 --gid 0 "$ROOT_STAGING_DIR" "$VM_NAME/"
 }
 
 _attach_mounts() {

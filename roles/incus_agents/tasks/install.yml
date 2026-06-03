@@ -55,34 +55,42 @@
     dest: "{{ incus_manifest_path }}"
     mode: "0644"
 
-# ---------- Stage VM dotfiles ----------
-# Render `.bashrc` / `.tmux.conf` / `.zshrc` into a host-side staging dir.
-# `v-launcher.sh` pushes this dir into the VM via `incus file push` at
-# `init` time (see `_provision_vm`). Rendered host-side once at apply
-# time - VM-side `init` is just a file copy, no per-VM templating.
+# ---------- Stage VM dotfiles (TWO variants: `user` and `root`) ----------
+# Render `.bashrc` / `.tmux.conf` / `.zshrc` into host-side staging dirs;
+# `v-launcher.sh` pushes them into the VM via `incus file push` at `init` time
+# (see `_provision_vm`). The VM's `user` and `root` are DIFFERENT identities,
+# so each gets its OWN `is_root` render - mirroring how
+# `roles/container_templates` renders per-`who` dotfiles for podman. This is
+# why `root` gets the red prompt / the `{% if is_root %}` blocks while `user`
+# does not. `_push_dotfiles` pushes `vm-rootfs/home/user` -> /home/user and
+# `vm-rootfs/root` -> /root. Rendered host-side once at apply time; VM-side
+# `init` is just a file copy.
 #
-# `override_os_family: Debian` is the only fact override we need: VM is
-# always Debian 13 (per `incus_vm_defaults.base_image`), and `.zshrc.j2`
-# reads `ansible_facts['os_family']` to pick the per-distro min-install
-# helper (`apt-min` on Debian, `zypper-min` / `dnf-min` elsewhere).
-# Without this, a non-Debian HOST (Fedora / openSUSE / etc.) would bake
-# its own helper into the VM's `.zshrc` instead of `apt-min`.
-# `.bashrc.j2` has no `ansible_facts` refs at all.
-- name: Ensure VM dotfiles staging dir `{{ incus_root }}/vm-rootfs/home/user` exists (roles/dotfiles only creates SUB-dirs of `target_home`, not `target_home` itself - host-side flow gets away with this because $HOME always exists)
+# `override_os_family: Debian` is the only fact override we need: VM is always
+# Debian 13 (per `incus_vm_defaults.base_image`), and `.zshrc.j2` reads
+# `ansible_facts['os_family']` to pick the per-distro min-install helper
+# (`apt-min` on Debian, `zypper-min` / `dnf-min` elsewhere). Without this, a
+# non-Debian HOST (Fedora / openSUSE / etc.) would bake its own helper into the
+# VM's `.zshrc` instead of `apt-min`. `.bashrc.j2` has no `ansible_facts` refs.
+- name: Ensure VM dotfiles staging dirs (`home/user` + `root`) exist under `{{ incus_root }}/vm-rootfs/` (roles/dotfiles only creates SUB-dirs of `target_home`, not `target_home` itself)
   ansible.builtin.file:
-    path: "{{ incus_root }}/vm-rootfs/home/user"
+    path: "{{ incus_root }}/vm-rootfs/{{ item }}"
     state: directory
     mode: "0755"
+  loop:
+    - home/user
+    - root
 
-- name: Stage VM dotfiles via `roles/dotfiles` into `{{ incus_root }}/vm-rootfs/home/user/`
+- name: Stage VM `user` dotfiles via `roles/dotfiles` into `{{ incus_root }}/vm-rootfs/home/user/`
   ansible.builtin.include_role:
     name: dotfiles
   vars:
     target_home: "{{ incus_root }}/vm-rootfs/home/user"
     target_user: "{{ ansible_facts['user_id'] }}"
     target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: false
 
-- name: "Stage VM `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `{{ incus_root }}/vm-rootfs/home/user/.zshrc`"
+- name: "Stage VM `user` `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `{{ incus_root }}/vm-rootfs/home/user/.zshrc`"
   ansible.builtin.include_role:
     name: zsh
     tasks_from: deploy-zsh-config.yml
@@ -91,4 +99,24 @@
     target_user: "{{ ansible_facts['user_id'] }}"
     target_group: "{{ ansible_facts['user_id'] }}"
     is_root: false
+    override_os_family: Debian
+
+- name: Stage VM `root` dotfiles via `roles/dotfiles` into `{{ incus_root }}/vm-rootfs/root/`
+  ansible.builtin.include_role:
+    name: dotfiles
+  vars:
+    target_home: "{{ incus_root }}/vm-rootfs/root"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: true
+
+- name: "Stage VM `root` `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `{{ incus_root }}/vm-rootfs/root/.zshrc`"
+  ansible.builtin.include_role:
+    name: zsh
+    tasks_from: deploy-zsh-config.yml
+  vars:
+    target_home: "{{ incus_root }}/vm-rootfs/root"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: true
     override_os_family: Debian

@@ -134,7 +134,7 @@ No automatic cross-role check exists yet (each role has its own manifest).
 | zsh completion | `~/.local/share/ansible-managed/incus-workstations/zsh-completions/_v-<name>` |
 | bash completion | `~/.local/share/ansible-managed/incus-workstations/bash-completions/v-<name>` |
 | Install manifest | `~/.local/share/ansible-managed/incus-workstations/incus-workstations.manifest.yml` |
-| Staged VM dotfiles | `~/.local/share/ansible-managed/incus-workstations/vm-rootfs/home/user/` |
+| Staged VM dotfiles | `~/.local/share/ansible-managed/incus-workstations/vm-rootfs/home/user/` (user variant) + `.../vm-rootfs/root/` (root variant) |
 | VM disk (incus default) | `/var/lib/incus/storage-pools/default/virtual-machines/v-<name>/root.img` |
 | VM snapshots (incus default) | `/var/lib/incus/storage-pools/default/virtual-machines-snapshots/v-<name>/<snap>/` |
 
