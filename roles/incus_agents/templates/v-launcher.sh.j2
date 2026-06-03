@@ -70,6 +70,7 @@ _n_mounts=0     # scalar; avoids the bash array-length form that collides
                 # with Jinja2's {# ... #} comment delimiter at render time.
 _used_p=0
 _used_mount=0
+ASSUME_YES=0    # `-y`/`--yes` skips the pre-create confirmation prompt
 
 _add_mount() {
     local arg="$1" host_part name_part host_abs existing
@@ -120,6 +121,8 @@ while [[ $# -gt 0 ]]; do
         --mount)
             [[ "$_used_p" == 1 ]] && { echo "--mount cannot be combined with -p" >&2; exit 1; }
             _used_mount=1; _add_mount "$2"; shift 2 ;;
+        -y|--yes)
+            ASSUME_YES=1; shift ;;
         --) shift; break ;;
         -*) echo "Unknown flag: $1 (try 'help')" >&2; exit 1 ;;
         *)  break ;;
@@ -155,6 +158,11 @@ Flags (override env vars; both override the launcher's cwd-based defaults):
                                          to basename(<host>). Repeatable.
                                          If omitted, defaults to \$PWD.
   -p, --project-path <path>              Single-mount alias for --mount.
+  -y, --yes                              Skip the pre-create confirmation prompt
+                                         (any command that would CREATE the VM
+                                         first shows what it will do + asks y/N;
+                                         the VM name comes from cwd, so this
+                                         guards against a forgotten 'cd').
 
 Subcommands:
   help              Show this message
@@ -348,17 +356,56 @@ _provision_vm() {
 # Ensure the VM exists and is running: launch + attach virtio-fs mounts on
 # first creation, otherwise just start it if stopped. Does NOT provision -
 # callers decide whether to provision.
+# Preview + y/N gate, shown ONLY when a VM is about to be CREATED (it does not
+# exist yet). The VM name is derived from the current directory, so this is the
+# guard against a forgotten `cd` silently spawning a VM for the wrong project.
+# `-y`/`--yes` skips it; a non-TTY without `--yes` aborts rather than auto-create.
+_confirm_create() {
+    cat >&2 <<EOF
+
+About to CREATE a new Incus VM (it does not exist yet):
+
+  current dir:  $PWD
+  agent:        $AGENT_NAME ($AGENT_DISPLAY)
+  VM name:      $VM_NAME
+  base image:   $VM_BASE_IMAGE
+  cpu/mem/disk: $VM_CPU / $VM_MEMORY / $VM_DISK
+  mounts:
+EOF
+    for _i in "${!MOUNT_HOSTS[@]}"; do
+        printf '    %s  ->  /workspaces/%s\n' "${MOUNT_HOSTS[_i]}" "${MOUNT_NAMES[_i]}" >&2
+    done
+    [[ $_n_mounts -eq 0 ]] && printf '    (none)\n' >&2
+    unset _i
+    echo >&2
+
+    [[ "$ASSUME_YES" == 1 ]] && return 0
+    if [[ ! -t 0 ]]; then
+        echo "Refusing to auto-create $VM_NAME without a TTY; re-run with --yes to confirm." >&2
+        exit 1
+    fi
+    local reply
+    read -rp "Create this VM? [y/N] " reply
+    [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Aborted; no VM created." >&2; exit 1; }
+}
+
 _ensure_vm_up() {
     if _vm_exists; then
         echo "==> VM $VM_NAME already exists; starting if stopped..."
         _vm_running || incus start "$VM_NAME"
         _wait_vm_ready
     else
+        _confirm_create
         echo "==> Launching $VM_NAME from $VM_BASE_IMAGE..."
+        # `user.*` tags mark this as our own Linux guest, so bulk tooling (e.g.
+        # `make incus-overwrite-dotfiles-in-all-guest`) can target exactly the
+        # VMs we created and skip future Windows guests.
         incus launch "$VM_BASE_IMAGE" "$VM_NAME" \
             --vm \
             --config "limits.cpu=$VM_CPU" \
             --config "limits.memory=$VM_MEMORY" \
+            --config "user.ansible-managed=true" \
+            --config "user.ansible-guest-os=linux" \
             --device "root,size=$VM_DISK"
         _wait_vm_ready
 

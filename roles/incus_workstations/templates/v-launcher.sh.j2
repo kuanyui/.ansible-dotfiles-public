@@ -234,10 +234,15 @@ _ensure_vm_up() {
         _wait_vm_ready
     else
         echo "==> Launching $VM_NAME from $VM_BASE_IMAGE ($VM_CPU CPU / $VM_MEMORY / $VM_DISK)..."
+        # `user.*` tags mark this as our own Linux guest, so bulk tooling (e.g.
+        # `make incus-overwrite-dotfiles-in-all-guest`) can target exactly the
+        # VMs we created and skip future Windows guests.
         incus launch "$VM_BASE_IMAGE" "$VM_NAME" \
             --vm \
             --config "limits.cpu=$VM_CPU" \
             --config "limits.memory=$VM_MEMORY" \
+            --config "user.ansible-managed=true" \
+            --config "user.ansible-guest-os=linux" \
             --device "root,size=$VM_DISK"
         _wait_vm_ready
         _attach_mounts

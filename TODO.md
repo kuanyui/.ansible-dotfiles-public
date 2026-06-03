@@ -7,25 +7,41 @@ Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
 ## incus launcher improvements
 
-- [~] **1. Decide launcher language (bash vs Python)** - gates #2/#3.
-  Assessment done: #1/#2/#4 are small in bash; the Python rewrite belongs to
-  the bigger `incus-workspaces` redesign (see
-  `roles/incus_workstations/REDESIGN.md` §4.6), not piecemeal now. The real
-  smell is the 11 duplicated subcommands across the two ~950-line launchers.
-  **Awaiting user's go-ahead: "bash now, Python at the big redesign".**
+- [x] **1. Decide launcher language (bash vs Python)** -> **bash now.**
+  Python rewrite deferred to the bigger `incus-workspaces` redesign (presets /
+  multi-distro / Windows; see `roles/incus_workstations/REDESIGN.md` §4.6),
+  where it pays for itself. The bash thrown away by doing #2/#3 now is ~30
+  lines; the "test twice" cost is marginal vs a premature 956-line rewrite.
 
-- [ ] **2. `init` preview + y/N confirm** [blocked: #1].
-  On first-time `v-<name> init`, print BEFORE acting: resolved project/cwd, VM
-  name, mounts, VM spec (cpu/mem/disk/image); then y/N gate. Prevents
-  "forgot to cd" mistakes. Mainly the `incus_agents` launcher (cwd-derived name).
+- [x] **2. `init` preview + y/N confirm** before creating a VM.
+  Done in the `incus_agents` launcher: `_confirm_create` shows cwd / agent / VM
+  name / image / cpu+mem+disk / mounts before `incus launch`, gated y/N; fires
+  on ANY create path (init/agent/shell). `-y`/`--yes` skips; non-TTY without
+  `--yes` aborts. Validated by rendering + `bash -n`. (Workstations launcher not
+  done - its VM name is fixed per entry, not cwd-derived, so lower value; offer.)
 
-- [ ] **3. Open an existing VM by name (with completion), no cd needed** [blocked: #1].
-  Attach to an already-created VM by name without cd-ing into its project dir;
-  shell-completion of existing VM names; sets HOME/USER/cwd env correctly so the
-  user need not hand-run `incus exec` with all the env. Scoped to our own VMs.
+- [x] **3. Open an existing VM by name (with completion), no cd needed.**
+  Done (agents): `v-<agent> -n <suffix> shell` already targets an existing VM
+  without cd (launcher sets HOME/USER/cwd env). Added zsh+bash completion of
+  `-n` with the suffixes of existing `v-<agent>-*` VMs (via `incus list`), plus
+  `-y`/`--yes` in the flag completion. Validated by `bash -n` / `zsh -n`.
+  Workstations N/A (VM name = launcher name, no cwd suffix).
 
-- [ ] **4. Makefile `incus-overwrite-dotfiles-in-all-guest`** (our own Linux guests only).
-  Re-push the staged dotfiles (user+root trees) into ALL our own Linux incus
-  guests at once. Scope to (a) only VMs we created, (b) only Linux (exclude
-  future Windows) - likely via incus `user.*` config tags set at VM-launch time
-  in the launchers. Supersedes/extends `resync-incus-agents-dotfiles`.
+- [x] **4. Makefile `incus-overwrite-dotfiles-in-all-guest`** (our own Linux guests only).
+  Done. Both launchers now tag VMs at `incus launch`:
+  `user.ansible-managed=true` + `user.ansible-guest-os=linux`. New Makefile
+  target pushes user+root staged dotfiles to all `v-*` VMs (type=VM), skips any
+  tagged `user.ansible-guest-os=windows`, treats legacy untagged as Linux.
+  Added to `.PHONY`; supersedes `resync-incus-agents-dotfiles` (left in place).
+  Validated: recipe `bash -n` (with resync as known-good baseline) + both
+  launchers render + `bash -n`.
+
+## Notes / future
+
+- Python launcher rewrite: deferred to the `incus-workspaces` redesign (see
+  `roles/incus_workstations/REDESIGN.md`). Trigger = presets / multi-distro /
+  Windows. The 11 duplicated subcommands across the two launchers get unified
+  there.
+- Runtime-unverifiable here (no incus in this env): the `root -> /` push landing
+  at `/root`, and `incus list/config get` filtering. Logic is sound; confirm on
+  a real incus host.

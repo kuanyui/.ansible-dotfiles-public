@@ -10,14 +10,22 @@ _{{ launcher_name | replace('-', '_') }}() {
     local script="{{ incus_bin_dir }}/{{ launcher_name }}"
 
     case "$prev" in
-        -n|--project-name) return ;;
+        -n|--project-name)
+            # Complete with the suffixes of EXISTING `{{ launcher_name }}-*` VMs
+            # (running or stopped), so you can attach to an already-created VM
+            # by name without `cd`-ing into its project dir.
+            local prefix="{{ launcher_name }}-"
+            local existing_project_suffixes
+            existing_project_suffixes="$(incus list "^${prefix}" --format csv --columns n 2>/dev/null | sed "s/^${prefix}//")"
+            mapfile -t COMPREPLY < <(compgen -W "$existing_project_suffixes" -- "$cur")
+            return ;;
         -p|--project-path|--mount)
             mapfile -t COMPREPLY < <(compgen -d -- "$cur")
             return ;;
     esac
 
     if [[ "$cur" == -* ]]; then
-        local flags="-n --project-name -p --project-path --mount --"
+        local flags="-n --project-name -p --project-path --mount -y --yes --"
         mapfile -t COMPREPLY < <(compgen -W "$flags" -- "$cur")
         return
     fi

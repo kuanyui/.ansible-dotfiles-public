@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus-agents apply-incus-workstations apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus-agents check-incus-workstations check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus-agents unapply-incus-workstations resync-incus-agents-dotfiles aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-agents sandbox-incus-workstations sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus-agents apply-incus-workstations apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus-agents check-incus-workstations check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus-agents unapply-incus-workstations resync-incus-agents-dotfiles incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-agents sandbox-incus-workstations sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -79,6 +79,24 @@ resync-incus-agents-dotfiles:  ## Re-push staged dotfiles into every existing v-
 	    echo "==> Re-pushing dotfiles into $$vm (user + root)"; \
 	    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$$STAGING" "$$vm/home/"; \
 	    incus file push --recursive --create-dirs --uid 0 --gid 0 "$$ROOT_STAGING" "$$vm/"; \
+	done
+
+incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all our Linux `v-*` guests. Run `apply-incus-agents` / `apply-incus-workstations` first; this only pushes, does not re-render.
+	@set -e; \
+	AGENTS="$$HOME/.local/share/ansible-managed/incus-agents/vm-rootfs"; \
+	WORKS="$$HOME/.local/share/ansible-managed/incus-workstations/vm-rootfs"; \
+	if [ -d "$$AGENTS/home/user" ] && [ -d "$$AGENTS/root" ]; then SRC="$$AGENTS"; \
+	elif [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
+	else echo "No staged dotfiles found -- run 'make apply-incus-agents' or 'make apply-incus-workstations' first" >&2; exit 1; fi; \
+	echo "Source (user+root trees are byte-identical across roles): $$SRC"; \
+	VMS=$$(incus list '^v-' --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
+	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
+	for vm in $$VMS; do \
+	    os=$$(incus config get "$$vm" user.ansible-guest-os 2>/dev/null || true); \
+	    if [ "$$os" = "windows" ]; then echo "==> Skipping $$vm (guest-os=windows)"; continue; fi; \
+	    echo "==> Re-pushing dotfiles into $$vm (user + root)"; \
+	    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$$SRC/home/user" "$$vm/home/"; \
+	    incus file push --recursive --create-dirs --uid 0 --gid 0 "$$SRC/root" "$$vm/"; \
 	done
 
 apply-incus-workstations:  ## Install v-<workstation> Incus persistent VM launchers via `roles/incus_workstations` (bypasses `setup_incus_workstations` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
