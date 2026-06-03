@@ -47,7 +47,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`dotfiles/`](roles/dotfiles/) | `.bashrc`, `.tmux.conf`, and friends. |
 | [`zsh/`](roles/zsh/) | Install zsh + plugins, deploy `.zshrc`, run `chsh`. |
 | [`emacs/`](roles/emacs/) | Install Emacs + elisp packages. |
-| [`packages/`](roles/packages/) | Frequently-used distro packages (basic / net / sys / Wayland tools). |
+| [`distro_packages/`](roles/distro_packages/) | Frequently-used distro package bundles (basic / net / sys / Wayland tools); delegates installs to `_install_distro_packages`. |
 | [`local_pkgs/`](roles/local_pkgs/) | Redirect npm / pip / pipx / cargo / go global installs from `~/.local/` into `~/.local-pkgs/<tool>/`, so XDG + ansible-managed dotfiles stay separable from language-level package state. |
 | [`podman/`](roles/podman/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |

@@ -44,7 +44,7 @@ unstow:  ## [Legacy] Remove existing stow symlinks from ~/ and /root
 apply-user:  ## Provision current user (zsh + emacs + dotfiles)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/user.yml
 
-apply-root:  ## Provision root (packages + zsh + emacs + dotfiles; needs sudo)
+apply-root:  ## Provision root (distro_packages + zsh + emacs + dotfiles; needs sudo)
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/root.yml
 
 apply-all-users:  ## Provision both current user and root (i.e. `apply-user` + `apply-root`)
@@ -168,7 +168,7 @@ SANDBOX_RUNTIME ?= crun
 sandbox-user:  ## Dry-run `apply-user` (zsh + emacs + dotfiles deploy) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) user
 
-sandbox-root:  ## Dry-run `apply-root` (packages + zsh + emacs + dotfiles, is_root=true) in a throwaway podman+systemd sandbox
+sandbox-root:  ## Dry-run `apply-root` (distro_packages + zsh + emacs + dotfiles, is_root=true) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) root
 
 sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtime> launcher install) in a throwaway podman+systemd sandbox

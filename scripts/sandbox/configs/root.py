@@ -1,14 +1,15 @@
 """Sandbox config for `playbooks/root.yml`.
 
-Provisions root with packages + zsh + emacs + dotfiles. `is_root: true` so the
+Provisions root with distro_packages + zsh + emacs + dotfiles. `is_root: true` so the
 `zsh` / `emacs` roles run their install-* sub-tasks (apt-install + `user:`
 shell change) in addition to config deployment.
 
-`packages_install_sys_tools` / `packages_install_net_tools` are disabled in
-the sandbox to keep runs fast - those install ~10 mostly-large packages
-(nethogs, tcpdump, nvtop, sysstat, ...) that aren't useful for verifying YAML
-correctness. `packages_install_basic_tools` stays on so the package-install
-code path is still exercised against a small set (git/make/ripgrep/tmux/stow).
+`distro_packages_install_sys_tools` / `distro_packages_install_net_tools` are
+disabled in the sandbox to keep runs fast - those install ~10 mostly-large
+packages (nethogs, tcpdump, nvtop, sysstat, ...) that aren't useful for
+verifying YAML correctness. `distro_packages_install_basic_tools` stays on so
+the package-install code path is still exercised against a small set
+(git/make/ripgrep/tmux/stow).
 
 emacs picks `emacs-nox` automatically because `sandbox.py` injects
 `has_gui_support=false` globally (sandbox is headless), saving the GTK deps.
@@ -33,7 +34,7 @@ from config import SandboxConfig  # noqa: E402
 
 CONFIG = SandboxConfig(
     name="root",
-    description="packages + zsh + emacs + dotfiles for root (is_root=true path).",
+    description="distro_packages + zsh + emacs + dotfiles for root (is_root=true path).",
     playbook=Path("playbooks/root.yml"),
     # Mirror every apt package the playbook itself would install, so they're
     # in the sandbox baseline BEFORE the before-snapshot. With this, the
@@ -44,7 +45,7 @@ CONFIG = SandboxConfig(
     # the new /usr/* files will appear in the diff, telling you to sync this
     # list.
     extra_packages_apt=[
-        # `packages_basic_tools.common` (roles/packages/defaults/main.yml).
+        # `distro_packages_basic_tools.common` (roles/distro_packages/defaults/main.yml).
         # sys/net/wayland are gated off in extra_ansible_vars below, so their
         # package lists aren't needed here.
         "git", "make", "ripgrep", "tmux", "stow",
@@ -62,8 +63,8 @@ CONFIG = SandboxConfig(
         "elpa-jinja2-mode", "elpa-projectile",
     ],
     extra_ansible_vars={
-        "packages_install_sys_tools": False,
-        "packages_install_net_tools": False,
-        "packages_install_wayland_tools": False,
+        "distro_packages_install_sys_tools": False,
+        "distro_packages_install_net_tools": False,
+        "distro_packages_install_wayland_tools": False,
     },
 )

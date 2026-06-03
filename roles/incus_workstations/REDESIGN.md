@@ -75,7 +75,7 @@ The repo is already a multi-distro provisioning system. The launcher's bash
 | Component | Purpose | Distros |
 | --- | --- | --- |
 | `roles/_install_distro_packages` | ansible-core multi-distro package install; takes `{Debian/Suse/RedHat: {install:[...], probe?}}`; shells `zypper --non-interactive` on Suse, `apt`/`dnf` elsewhere | Debian / Suse / RedHat |
-| `roles/packages` package groups | named bundles, each a `{common, debian, redhat}` dict (e.g. `packages_net_tools: {common: [nethogs, traceroute, ...]}`) toggled by booleans | multi via dict |
+| `roles/distro_packages` package groups (renamed from `roles/packages`; now delegates installs to `_install_distro_packages`) | named bundles, each a `{common, debian, suse, redhat}` dict (e.g. `distro_packages_net_tools: {common: [nethogs, traceroute, ...]}`) toggled by `distro_packages_install_*` booleans | Debian / Suse / RedHat |
 | `roles/zsh` `install-zsh-from-distro-repo.yml` | install zsh + plugins + chsh, os_family-aware | multi |
 | `roles/emacs` `install-emacs-from-distro-repo.yml` | install emacs + emacs packages, os_family-aware | multi |
 | `roles/dotfiles` | stage zshrc/bashrc/etc.; already included by `incus_workstations/tasks/install.yml` | - |
@@ -128,13 +128,18 @@ Install set for the host's family F = `(presets expanded for F) ∪ (raw package
 This resolves the cross-distro name divergence (`firefox-esr` vs
 `MozillaFirefox`): the divergence is encoded once, inside the preset definition.
 
-### 4.3 Reuse of `roles/packages` - **DECIDED**
+### 4.3 Reuse of `roles/distro_packages` - **DECIDED**
 
-Reuse the *convention* (`{common/debian/suse}` dict) and the *install engine*
-(`_install_distro_packages`). Do **not** make VM presets be `roles/packages`
-itself - that role is too coarse (4 host-tool bundles) and boolean-toggled,
-wrong shape for composable, app-level, per-VM presets. New preset registry,
-standing on the existing install primitive.
+Reuse the *convention* (`{common/debian/suse/redhat}` dict) and the *install
+engine* (`_install_distro_packages`). Do **not** make VM presets be
+`roles/distro_packages` itself - that role is too coarse (4 host-tool bundles)
+and boolean-toggled, wrong shape for composable, app-level, per-VM presets. New
+preset registry, standing on the existing install primitive.
+
+(Done in section 6.1: `roles/packages` was renamed to `roles/distro_packages`
+and rewired to delegate installs to `_install_distro_packages`, which fixed a
+latent ansible-core violation - the old role used `ansible.builtin.package`,
+which dispatches to `community.general.zypper` on openSUSE.)
 
 ### 4.4 Definition source of truth - **RECOMMENDED (user leaning)**
 
@@ -235,16 +240,19 @@ Ordered by independence from the open question in section 5.
 
 ### Safe now (independent of section 5)
 
-1. **Rename `roles/packages` -> `roles/distro_packages`.** Justified by CLAUDE.md
-   naming rules ("name must answer X of what" - these are distro packages, not
-   pip/npm) and aligns with `_install_distro_packages`. Mechanical but
-   cross-cutting; touches:
-   - the role directory,
-   - `playbooks/` references,
-   - `group_vars/all.yml` toggles (`packages_install_*`),
-   - in-role var names (`packages_basic_tools` -> `distro_packages_basic_tools`
-     for consistency).
-   Keep this as its own commit, separate from the VM rework.
+1. **Rename `roles/packages` -> `roles/distro_packages`. [DONE]** Justified by
+   CLAUDE.md naming rules ("name must answer X of what" - these are distro
+   packages, not pip/npm) and aligns with `_install_distro_packages`. Landed:
+   - `git mv roles/packages roles/distro_packages`,
+   - `playbooks/root.yml` role-list ref,
+   - `group_vars/all.yml` toggles (`packages_install_*` -> `distro_packages_install_*`),
+   - in-role var names (`packages_basic_tools` -> `distro_packages_basic_tools` etc.),
+   - `scripts/sandbox/configs/root.py` + `scripts/sandbox/sandbox.py` (functional + comments),
+   - docs: `README.md`, `Makefile` help, `CLAUDE.md` example.
+   Also rewired the install path to delegate to `_install_distro_packages`
+   (was `ansible.builtin.package`, which violated ansible-core-only on Suse).
+   Note: any personal `local_vars/` overrides using the old `packages_install_*`
+   names must be updated, or they will be silently ignored.
 
 2. **Document / freeze the Layer 1 vs Layer 2 split** in the current launcher so
    the boundary is explicit before any engine swap.
@@ -278,5 +286,5 @@ Ordered by independence from the open question in section 5.
 | 4.7 | OS token -> image + os_family map | OPEN (detail) |
 | 4.8 | Windows = separate provisioner tier, phased later | DECIDED |
 | 5 | preset = packages-only vs can-pull-a-role | **OPEN - upstream of all** |
-| 6.1 | Rename `packages` -> `distro_packages` | DECIDED (separate refactor) |
+| 6.1 | Rename `packages` -> `distro_packages` + delegate to `_install_distro_packages` | DONE |
 | - | Final name `incus-workstations` vs `incus-workspaces` | OPEN |

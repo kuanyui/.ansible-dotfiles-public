@@ -1,0 +1,40 @@
+---
+# Named bundles of frequently-used distro packages. Each bundle is a dict of
+# per-`os_family` overlays: `common` applies to every family, `debian` /
+# `suse` / `redhat` add family-specific extras on top. `tasks/main.yml`
+# concatenates `common + <host family overlay>` and hands the result to
+# `roles/_install_distro_packages`, the single multi-distro install engine
+# (ansible-core-only: it shells `zypper --non-interactive` on openSUSE instead
+# of `ansible.builtin.package`, which would dispatch to
+# `community.general.zypper`).
+
+distro_packages_basic_tools:
+  common:
+    - git
+    - make
+    - ripgrep
+    - tmux
+    - stow
+
+distro_packages_sys_tools:
+  common:
+    - htop
+    - iotop
+    - sysstat
+    - nvtop
+    - cpuid
+  debian:
+    - cpu-x  # not in default Fedora/RHEL repos
+  suse: []   # `common` names carry over to openSUSE; no Suse-only extra needed
+  redhat: []
+
+distro_packages_net_tools:
+  common:
+    - nethogs
+    - traceroute
+    - net-tools
+    - tcpdump
+
+distro_packages_wayland_tools:
+  common:
+    - wl-clipboard

@@ -467,7 +467,7 @@ def _ansible_playbook_argv_for(playbook: Path, ansible_vars: dict[str, Any]) -> 
     # Use the project's own `inventory.ini` (not `-i localhost,`) so ansible
     # discovers `group_vars/all.yml` via the inventory-dir lookup. An inline
     # `localhost,` inventory has no inventory-dir and no group_vars get loaded,
-    # so any role that gates on `setup_*` / `packages_install_*` defaults
+    # so any role that gates on `setup_*` / `distro_packages_install_*` defaults
     # would crash with `'<var>' is undefined`. `ansible_connection=local` is
     # set per-host in inventory.ini, so `-c local` is redundant.
     return [
