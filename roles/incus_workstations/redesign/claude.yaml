@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=./vm.schema.json
-name: claude
+name: claude-$(basename "$(pwd)")
 hw:
   cpu: 4
   memory: 8G

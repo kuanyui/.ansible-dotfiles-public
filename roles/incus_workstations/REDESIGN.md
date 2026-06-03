@@ -326,36 +326,14 @@ existing push), NOT by running roles in the VM.
 
 ### 8.2 VM definition schema (one file per VM)
 
-```yaml
-name: claude
-os:
-  type: debian              # specific distro (debian/ubuntu/opensuse/fedora); engine derives pkg mgr + os_family
-  image:
-    source: incus           # incus remote | iso path | virt-builder (TBD)
-    uri: debian/13
-hardware:
-  cpu: 4
-  memory: 8GiB
-  disk: 30GiB
-sys:
-  gui: false
-  ssh_server:
-    enabled: false
-    port: 20023
-    root_login: false
-    password_login: false
-    authorized_keys: ["~/.ssh/id_ed25519.pub"]
-mounts:
-  - cwd
-package_groups:
-  - base-dev
-packages:
-  - curl
-  - git
-  - ripgrep
-post_install_script: |
-  curl -fsSL https://claude.ai/install.sh | sh
-```
+The canonical, machine-validated schema + examples now live as FILES (single
+source of truth - the inline draft that used to sit here drifted and was
+removed):
+
+- `redesign/vm.schema.json` - JSON Schema (draft 2020-12, `additionalProperties: false`, two-tier enforced).
+- `redesign/claude.yaml`, `redesign/webbrowser.yaml`, `redesign/windows11.yaml` - examples, each validated against the schema.
+
+See §8.8 for the field-level decisions that postdate this section.
 
 ### 8.3 Three-tier "what to install" - **DECIDED**
 
@@ -398,19 +376,57 @@ base-dev:
   host pubkeys to install (renamed from `authorized_host_key`).
 - `hardware.{cpu,memory,disk}`.
 
-### 8.6 mounts - **DECIDED**
+### 8.6 mounts - **DECIDED (revised)**
 
-- Declarative only - NO shell `$(...)` in YAML (injection / unclear when+where
-  it evaluates / breaks "config is data"). A `cwd` token = mount the current dir
-  at creation -> `/workspaces/<basename-of-cwd>`. `~` expansion allowed in `host`.
-- guest paths live under `/workspaces/` (devcontainer compatibility).
-- Mounts applied ONLY at VM creation; frozen once the VM exists (matches "claude
-  defaults to cwd, unless the VM is already created").
+- Shell interpolation IS allowed in `host`/`guest`, evaluated on the HOST at
+  init relative to cwd; the expanded absolute path is what gets passed to incus:
+  `$(pwd)`, `$HOME`, `~`, relative paths (`./x`), and `$(xdg-user-dir DOWNLOAD)`
+  for XDG dirs. (Reversed the earlier "no shell" stance - this is the user's own
+  personal config, not exposed to others, so injection is moot.) NO `cwd` sugar
+  token - explicit only.
+- guest paths under `/workspaces/` (devcontainer compat); Windows uses a drive
+  path (`Z:\...`).
+- `shadow: [...]` per mount masks high-risk subpaths (`.git`, `.vscode`, `.env`)
+  with an empty mount, so an agent can't see the host's real ones.
+- Mounts applied ONLY at VM creation; frozen once the VM exists.
 
-### 8.7 Still OPEN
+### 8.7 Decisions (was "still open")
 
-- **Naming / scope**: single `v-claude` (cwd-at-creation, frozen) vs per-project
-  `v-claude-<project>` (current agents behavior). Decides whether `name` carries
-  a project dimension. **UNANSWERED.**
-- `sys.ssh_server` intended use = external / IDE access (confirm).
-- Final role name: `incus-workstations` vs `incus-workspaces`.
+- **VM identity**: DECIDED -> NO field. The VM `name` is the only mechanism, and
+  it may use host-side interpolation: a fixed VM is a plain name (`firefox` ->
+  `v-firefox`); a per-project VM puts the cwd in the name
+  (`claude-$(basename "$(pwd)")` -> `v-claude-<project>`, different per dir). The
+  engine expands + sanitizes the name at init; the existing init existence-check
+  reuses-or-creates. (Earlier `scope`/`per_project` field dropped - redundant.)
+- **`ivm` entry form**: DECIDED -> single dispatcher `ivm <name> <cmd>` (one
+  binary, no `ivm-*` shim clutter; `ivm <TAB>` completes VM names, `ivm <name>
+  <TAB>` completes subcommands). Per-name shims rejected.
+- Role rename `incus_workstations` -> `incus_vm`: DECIDED; the actual file rename
+  deferred until the engine is built (the old bash role is being replaced).
+- `sys.ssh_server` use = external / IDE-remote access: CONFIRMED.
+
+### 8.8 Field-level decisions finalized after §8 (canonical: `redesign/` files)
+
+- **Naming**: `distro_packages:` (flat, literal names for this VM's distro) +
+  `distro_package_groups:` (named bundles) - `distro_` prefix, all-underscore
+  (ansible var names forbid hyphens). Groups REUSE
+  `roles/distro_packages/defaults/main.yml` as the single registry (var
+  `distro_packages_<name>`), keyed by specific distro. (Supersedes §4.3's
+  "separate registry".)
+- **`post_install_script` runs as ROOT**; drop to the user with `su - user -c '...'`
+  / `runuser`. One root hook supports root->user->root interleaving (user bits
+  are momentary subprocesses), so there is NO separate user/root hook pair.
+  Linux only; shown in the init preview.
+- **`hw`**: `memory`/`disk` as `8G`/`30G` (engine -> incus `GiB`); `nested_virt`;
+  `secureboot` (default true); `tpm` (Win11); `gpu.mode` =
+  `none` / `virtio` (shared 3D accel via VirGL/Venus) / `passthrough` (VFIO, exclusive).
+- **`net.mode`** = `nat` (default, zero host setup) / `macvlan` (LAN IP, no host
+  bridge, host<->VM blocked) / `bridge` (LAN IP via an existing host bridge you
+  must build); `net.parent` for the latter two.
+- **`sys`**: `gui` (bool; X11/Wayland follows what you install), `timezone: host`,
+  `tmpfs: [...]` (RAM-backed paths, spare SSD), `ssh_server {...}`.
+- **Windows tier**: `os.type: windows` + a `windows:` block (`unattend`,
+  `post_install_powershell`). The unix provisioning fields are forbidden for
+  Windows and the `windows` block forbidden for Linux - ENFORCED in the JSON
+  Schema (`if/then/else`).
+- **Entry point**: command `ivm`; role `incus_vm`. Sub-forms open (§8.7).

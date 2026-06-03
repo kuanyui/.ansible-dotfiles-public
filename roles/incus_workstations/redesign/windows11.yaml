@@ -17,5 +17,9 @@ sys:
   gui: true
   timezone: host
 mounts:
-  - host: ~/Downloads
+  - host: $(xdg-user-dir DOWNLOAD)
     guest: 'Z:\Downloads'
+windows:
+  unattend: ~/incus/win11-unattend.xml
+  post_install_powershell: |
+    winget install --id Mozilla.Firefox -e --silent

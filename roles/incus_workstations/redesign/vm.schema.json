@@ -8,8 +8,7 @@
   "properties": {
     "name": {
       "type": "string",
-      "pattern": "^[a-zA-Z][a-zA-Z0-9-]*$",
-      "description": "VM / launcher id. Becomes the VM `v-<name>` and the launcher `v-<name>`. No underscores (incus instance-name rule)."
+      "description": "VM id -> `v-<name>`. May contain host-side interpolation: a fixed VM is a plain name (`firefox` -> always `v-firefox`); a per-project VM puts the cwd in the name (`claude-$(basename \"$(pwd)\")` -> `v-claude-<project>`, different per directory). The engine expands it at init, sanitizes the result to incus's instance-name rules ([a-zA-Z0-9-], no underscores), and the init existence-check reuses or creates that VM. No separate per-project flag - the name IS the mechanism."
     },
     "hw": {
       "type": "object",
@@ -143,7 +142,44 @@
     },
     "post_install_script": {
       "type": "string",
-      "description": "Shell run as ROOT inside the VM after packages install (provisioning is a root task); shown in the init preview before it runs. To act as the unprivileged user (e.g. installers that target the user's home, like claude), drop with `runuser -l user -c '...'` / `su - user -c '...'` - root switches to anyone, no password. Provision-time only (host-operator-driven via incus exec); the runtime model where `user` has no sudo is unaffected."
+      "description": "Shell run as ROOT inside the VM after packages install (provisioning is a root task); shown in the init preview before it runs. To act as the unprivileged user (e.g. installers that target the user's home, like claude), drop with `runuser -l user -c '...'` / `su - user -c '...'` - root switches to anyone, no password. Provision-time only (host-operator-driven via incus exec); the runtime model where `user` has no sudo is unaffected. Linux only."
+    },
+    "windows": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Windows-only provisioning (used when os.type=windows). The unix provisioning fields (distro_packages, distro_package_groups, dotfiles, post_install_script) do NOT apply to Windows.",
+      "properties": {
+        "unattend": {
+          "type": "string",
+          "description": "Path to a Windows answer file (unattend.xml) for unattended OOBE - automates account creation, locale, network, etc. Expanded host-side; attached at install."
+        },
+        "post_install_powershell": {
+          "type": "string",
+          "description": "PowerShell run in the guest after first boot (the Windows analog of post_install_script), e.g. `winget install ...`. Delivered via cloudbase-init / a scheduled FirstLogon command."
+        }
+      }
     }
-  }
+  },
+  "allOf": [
+    {
+      "comment": "Two tiers: a Windows VM forbids the unix provisioning fields; a non-Windows VM forbids the `windows` block.",
+      "if": {
+        "required": ["os"],
+        "properties": { "os": { "required": ["type"], "properties": { "type": { "const": "windows" } } } }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["distro_packages"] },
+            { "required": ["distro_package_groups"] },
+            { "required": ["dotfiles"] },
+            { "required": ["post_install_script"] }
+          ]
+        }
+      },
+      "else": {
+        "not": { "required": ["windows"] }
+      }
+    }
+  ]
 }

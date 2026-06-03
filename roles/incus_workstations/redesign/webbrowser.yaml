@@ -23,7 +23,7 @@ sys:
     authorized_keys:
       - ~/.ssh/id_ed25519.pub
 mounts:
-  - host: ~/Downloads
+  - host: $(xdg-user-dir DOWNLOAD)
     guest: /workspaces/Downloads
 distro_package_groups:
   - basic_tools
