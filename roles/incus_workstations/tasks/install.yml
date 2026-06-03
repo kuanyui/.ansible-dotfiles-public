@@ -62,65 +62,15 @@
     dest: "{{ incus_workstations_manifest_path }}"
     mode: "0644"
 
-# ---------- Stage VM dotfiles (TWO variants: `user` and `root`) ----------
-# Same shape as `roles/incus_agents`: render the `user` variant (is_root=false)
-# and the `root` variant (is_root=true) into separate staging dirs, then
-# `_push_dotfiles` pushes `vm-rootfs/home/user` -> /home/user and
-# `vm-rootfs/root` -> /root. `user` and `root` are different identities, so
-# each needs its own `is_root` render (e.g. root gets the red prompt / the
-# `{% if is_root %}` blocks). Mirrors how `roles/container_templates` renders
-# per-`who` dotfiles for podman.
-# `override_os_family: Debian` because VM base image defaults to debian/13;
-# `.zshrc.j2` reads `os_family` to pick the per-distro min-install helper
-# (`apt-min` on Debian, else `zypper-min` / `dnf-min`). `.bashrc.j2` has no
-# `ansible_facts` refs.
+# ---------- Stage VM dotfiles (user + root variants) ----------
+# Delegated to the shared `roles/_incus_guest_setup_dotfiles` (also used by
+# `roles/incus_agents`); it renders `vm-rootfs/home/user` (is_root=false) and
+# `vm-rootfs/root` (is_root=true) under the passed root, which the launcher's
+# `_push_dotfiles` pushes to /home/user and /root respectively.
 # TODO: when multi-distro VM support lands, parse each entry's `base_image`
-# and render per-family staging dirs.
-- name: Ensure VM dotfiles staging dirs (`home/user` + `root`) exist under `{{ incus_workstations_root }}/vm-rootfs/` (roles/dotfiles only creates SUB-dirs of `target_home`, not `target_home` itself)
-  ansible.builtin.file:
-    path: "{{ incus_workstations_root }}/vm-rootfs/{{ item }}"
-    state: directory
-    mode: "0755"
-  loop:
-    - home/user
-    - root
-
-- name: Stage VM `user` dotfiles via `roles/dotfiles` into `{{ incus_workstations_root }}/vm-rootfs/home/user/`
+# and render per-family staging dirs (the role hardcodes Debian for now).
+- name: Stage VM dotfiles (user + root variants) via `roles/_incus_guest_setup_dotfiles`
   ansible.builtin.include_role:
-    name: dotfiles
+    name: _incus_guest_setup_dotfiles
   vars:
-    target_home: "{{ incus_workstations_root }}/vm-rootfs/home/user"
-    target_user: "{{ ansible_facts['user_id'] }}"
-    target_group: "{{ ansible_facts['user_id'] }}"
-    is_root: false
-
-- name: "Stage VM `user` `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `{{ incus_workstations_root }}/vm-rootfs/home/user/.zshrc`"
-  ansible.builtin.include_role:
-    name: zsh
-    tasks_from: deploy-zsh-config.yml
-  vars:
-    target_home: "{{ incus_workstations_root }}/vm-rootfs/home/user"
-    target_user: "{{ ansible_facts['user_id'] }}"
-    target_group: "{{ ansible_facts['user_id'] }}"
-    is_root: false
-    override_os_family: Debian
-
-- name: Stage VM `root` dotfiles via `roles/dotfiles` into `{{ incus_workstations_root }}/vm-rootfs/root/`
-  ansible.builtin.include_role:
-    name: dotfiles
-  vars:
-    target_home: "{{ incus_workstations_root }}/vm-rootfs/root"
-    target_user: "{{ ansible_facts['user_id'] }}"
-    target_group: "{{ ansible_facts['user_id'] }}"
-    is_root: true
-
-- name: "Stage VM `root` `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `{{ incus_workstations_root }}/vm-rootfs/root/.zshrc`"
-  ansible.builtin.include_role:
-    name: zsh
-    tasks_from: deploy-zsh-config.yml
-  vars:
-    target_home: "{{ incus_workstations_root }}/vm-rootfs/root"
-    target_user: "{{ ansible_facts['user_id'] }}"
-    target_group: "{{ ansible_facts['user_id'] }}"
-    is_root: true
-    override_os_family: Debian
+    incus_guest_setup_dotfiles_root: "{{ incus_workstations_root }}"
