@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=./vm.schema.json
+name: claude
+hw:
+  cpu: 4
+  memory: 8G
+  disk: 30G
+  nested_virt: false
+os:
+  type: debian
+  image:
+    source: incus
+    uri: debian/13
+sys:
+  gui: false
+  timezone: host
+  tmpfs:
+    - /tmp
+    - /var/tmp
+  ssh_server:
+    enabled: false
+    port: 20023
+    root_login: false
+    password_login: false
+    authorized_keys:
+      - ~/.ssh/id_ed25519.pub
+net:
+  mode: nat
+mounts:
+  - host: $(pwd)
+    guest: /workspaces/$(basename "$(pwd)")
+    shadow:
+      - .git
+      - .vscode
+  - host: $HOME/Personal/Projects/shared-lib
+    guest: /workspaces/shared-lib
+  - host: ./secrets
+    guest: /workspaces/secrets
+    ro: true
+distro_package_groups:
+  - basic_tools
+  - base_dev
+distro_packages:
+  - curl
+  - git
+dotfiles:
+  - bash
+  - tmux
+  - zsh
+  - emacs
+post_install_script: |
+  su - user -c 'curl -fsSL https://claude.ai/install.sh | sh'

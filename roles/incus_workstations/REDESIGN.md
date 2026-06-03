@@ -285,6 +285,132 @@ Ordered by independence from the open question in section 5.
 | 4.6 | Single python engine + `v-<name>` shims | LEANING (python) |
 | 4.7 | OS token -> image + os_family map | OPEN (detail) |
 | 4.8 | Windows = separate provisioner tier, phased later | DECIDED |
-| 5 | preset = packages-only vs can-pull-a-role | **OPEN - upstream of all** |
+| 5 | preset = packages-only vs can-pull-a-role | **RESOLVED -> packages-only, no ansible in VM (see §8.1)** |
 | 6.1 | Rename `packages` -> `distro_packages` + delegate to `_install_distro_packages` | DONE |
 | - | Final name `incus-workstations` vs `incus-workspaces` | OPEN |
+| 8 | Merge `incus_agents` + `incus_workstations` into one engine | LEANING (strong) |
+| 8.1 | Provision from HOST via `incus exec`; no ansible/python in guest | DECIDED |
+| 8.3 | Three-tier install: package_groups / flat packages / post_install_script | DECIDED |
+| 8.6 | mounts: declarative `cwd` token (no shell `$(...)`), `/workspaces/` guest, frozen at creation | DECIDED |
+
+---
+
+## 8. Converged design: unified `incus-workspaces` (this session)
+
+Direction shift: **merge `incus_agents` + `incus_workstations` into one engine.**
+The two roles are ~90% identical (VM lifecycle + provisioning + the two-variant
+dotfiles staging, already shared via `_incus_guest_setup_dotfiles`). The only
+real difference is the VM identity model (per-project cwd vs fixed). "claude"
+stops being a special "agent" - it is just a VM definition whose
+`post_install_script` installs Claude Code. **There is no `agent` abstraction.**
+
+Evidence for merging: this session added the SAME y/N create gate, the SAME
+`user.*` tags, and the SAME dotfiles staging to BOTH ~500-line launchers
+separately - the duplication tax of keeping them split.
+
+### 8.1 Provisioning runs from the HOST, not inside the VM - **DECIDED (resolves §5)**
+
+§5 resolved to **packages-only + post_install hook, NO ansible in the guest.**
+Rationale: embedding ansible-core forces python into every guest, even a minimal
+one the user explicitly wants kept tiny. The host-side engine orchestrates via
+`incus exec`:
+
+- `incus launch` + attach mounts (validate `host` paths exist at init)
+- `incus exec` -> native package manager (apt/zypper/dnf) installs `packages` + expanded `package_groups`
+- `incus exec` -> run `post_install_script`
+- push the host-staged dotfiles (the user/root variants already built)
+
+Guest gets **zero ansible / zero python** unless the VM itself installs them.
+"Share the project's emacs.d etc." happens via dotfiles staging (extend the
+existing push), NOT by running roles in the VM.
+
+### 8.2 VM definition schema (one file per VM)
+
+```yaml
+name: claude
+os:
+  type: debian              # specific distro (debian/ubuntu/opensuse/fedora); engine derives pkg mgr + os_family
+  image:
+    source: incus           # incus remote | iso path | virt-builder (TBD)
+    uri: debian/13
+hardware:
+  cpu: 4
+  memory: 8GiB
+  disk: 30GiB
+sys:
+  gui: false
+  ssh_server:
+    enabled: false
+    port: 20023
+    root_login: false
+    password_login: false
+    authorized_keys: ["~/.ssh/id_ed25519.pub"]
+mounts:
+  - cwd
+package_groups:
+  - base-dev
+packages:
+  - curl
+  - git
+  - ripgrep
+post_install_script: |
+  curl -fsSL https://claude.ai/install.sh | sh
+```
+
+### 8.3 Three-tier "what to install" - **DECIDED**
+
+| Nature of the thing | Field | Why |
+| --- | --- | --- |
+| Stable, same across distros, reused by many VMs (git/make/ripgrep) | `package_groups` | worth abstracting once |
+| VM-specific or version-pinned (`python3.13`) | flat `packages:` (literal name for this VM's distro) | the VM pins ONE distro -> no matrix |
+| Precise language runtime, cross-distro (python/jdk/node) | `post_install_script` + version manager (mise/uv/sdkman/nvm/rustup) | distro repos lag/vary; this is the right tool, not a hack |
+
+The cross-distro/version name matrix only appears if pinned things are forced
+into a reusable group. A single VM's flat `packages:` never needs a matrix.
+
+### 8.4 `package_groups` registry - **DECIDED (name + location)**
+
+- Name: **`package_groups`** (aligns with the repo's existing `distro_packages`
+  "groups" vocabulary).
+- Defined centrally in ONE registry file (e.g. `package_groups.yml` beside the
+  VM definitions). VM refs by name; engine expands for the VM's distro.
+- Keyed by **specific distro** (debian/ubuntu/opensuse/...), NOT just os_family,
+  with `common` fallback - because debian vs ubuntu package names diverge.
+- Separate registry from host-level `distro_packages_*_tools` (those are
+  boolean-toggled host bundles); same `{common, <distro>...}` dict shape.
+
+```yaml
+# package_groups.yml
+base-dev:
+  common: [git, make, ripgrep, tmux]
+  debian: [build-essential]
+  ubuntu: [build-essential]
+  opensuse: [gcc, gcc-c++, make]
+```
+
+### 8.5 os / sys schema - **LEANING**
+
+- `os.type` = specific distro; engine derives package manager + os_family.
+  `os.image.{source,uri}` = where to fetch the disk image, decoupled from type.
+- `sys.gui` (bool for now; x11/wayland is a guest-session detail, deferred).
+- `sys.ssh_server {...}` = for external / IDE-remote access; the launcher's own
+  shell uses `incus exec`, so ssh is NOT needed for that. `authorized_keys` =
+  host pubkeys to install (renamed from `authorized_host_key`).
+- `hardware.{cpu,memory,disk}`.
+
+### 8.6 mounts - **DECIDED**
+
+- Declarative only - NO shell `$(...)` in YAML (injection / unclear when+where
+  it evaluates / breaks "config is data"). A `cwd` token = mount the current dir
+  at creation -> `/workspaces/<basename-of-cwd>`. `~` expansion allowed in `host`.
+- guest paths live under `/workspaces/` (devcontainer compatibility).
+- Mounts applied ONLY at VM creation; frozen once the VM exists (matches "claude
+  defaults to cwd, unless the VM is already created").
+
+### 8.7 Still OPEN
+
+- **Naming / scope**: single `v-claude` (cwd-at-creation, frozen) vs per-project
+  `v-claude-<project>` (current agents behavior). Decides whether `name` carries
+  a project dimension. **UNANSWERED.**
+- `sys.ssh_server` intended use = external / IDE access (confirm).
+- Final role name: `incus-workstations` vs `incus-workspaces`.

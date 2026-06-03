@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "incus VM definition",
+  "description": "One incus VM, provisioned from the HOST via `incus exec` (no ansible/python inside the guest). See REDESIGN.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "os"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9-]*$",
+      "description": "VM / launcher id. Becomes the VM `v-<name>` and the launcher `v-<name>`. No underscores (incus instance-name rule)."
+    },
+    "hw": {
+      "type": "object",
+      "description": "Hardware allocation. Optional; the engine supplies defaults for anything omitted.",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": { "type": "integer", "minimum": 1, "description": "vCPU count." },
+        "memory": { "type": "string", "pattern": "^[0-9]+G$", "description": "RAM in GiB, written with a `G` suffix (e.g. `8G`); the engine converts to incus `GiB`." },
+        "disk": { "type": "string", "pattern": "^[0-9]+G$", "description": "Root disk size in GiB, `G` suffix; the engine converts to incus `GiB`." },
+        "nested_virt": { "type": "boolean", "default": false, "description": "Enable nested virtualization (run KVM inside this VM)." },
+        "secureboot": { "type": "boolean", "default": true, "description": "UEFI Secure Boot. Required true for Windows 11." },
+        "tpm": { "type": "boolean", "default": false, "description": "Attach a virtual TPM 2.0 device. Required for Windows 11." },
+        "gpu": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "GPU acceleration. Optional.",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["none", "virtio", "passthrough"],
+              "default": "none",
+              "description": "`none` = software rendering (SPICE). `virtio` = virtio-gpu with 3D accel (VirGL/Venus) forwarded to the host GPU - SHARED, host keeps using it. `passthrough` = VFIO PCI passthrough - EXCLUSIVE (host loses the device); single-iGPU machines should avoid. (Intel GVT-g vGPU slicing only exists on older Intel gens.)"
+            }
+          }
+        }
+      }
+    },
+    "os": {
+      "type": "object",
+      "description": "Guest OS: the distro (drives package manager + package names) and where to fetch the disk image.",
+      "additionalProperties": false,
+      "required": ["type", "image"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["debian", "ubuntu", "opensuse", "fedora", "windows"],
+          "description": "Specific OS. For Linux distros the engine derives the package manager (apt/zypper/dnf) + resolves `distro_package_groups` by this key. `windows` is a SEPARATE tier: the unix-only fields (`distro_packages`, `distro_package_groups`, `dotfiles`, `post_install_script`) do not apply; provisioning is via unattend.xml / cloudbase-init (a `windows`-specific block, TBD)."
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "uri"],
+          "properties": {
+            "source": { "type": "string", "enum": ["incus", "iso", "virt-builder"], "description": "Where the disk image comes from." },
+            "uri": { "type": "string", "description": "Image reference for the source (e.g. `debian/13` for the incus remote, or a file path for `iso`)." }
+          }
+        }
+      }
+    },
+    "sys": {
+      "type": "object",
+      "description": "System-level guest settings. Optional.",
+      "additionalProperties": false,
+      "properties": {
+        "gui": { "type": "boolean", "default": false, "description": "Attach a SPICE display device. Whether the guest session is X11 or Wayland depends on what desktop you install, not this flag." },
+        "timezone": { "type": "string", "default": "host", "description": "Guest timezone. `host` = match the host's timezone." },
+        "tmpfs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Guest paths to back with tmpfs (RAM) to spare SSD writes, e.g. `/tmp`, `/var/tmp`. Set up inside the guest at provision time (fstab / systemd). Note: uses RAM."
+        },
+        "ssh_server": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Optional in-guest sshd, for EXTERNAL / IDE-remote access only. The launcher's own shell uses `incus exec`, which needs no ssh.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 22 },
+            "root_login": { "type": "boolean", "default": false, "description": "Permit ssh login as root." },
+            "password_login": { "type": "boolean", "default": false, "description": "Permit password auth (vs key-only)." },
+            "authorized_keys": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Host public-key file paths to install into the guest's authorized_keys."
+            }
+          }
+        }
+      }
+    },
+    "net": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Network attachment. Optional; default is NAT via incus's managed bridge (zero host setup, unlike virt-manager).",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["nat", "macvlan", "bridge"],
+          "default": "nat",
+          "description": "`nat` = incus managed bridge (incusbr0): DHCP/DNS/outbound-NAT, host<->VM works, LAN cannot reach the VM, ZERO host setup. `macvlan` = VM gets a LAN IP via the `parent` NIC, no host bridge needed, BUT host<->VM is blocked (macvlan kernel limit). `bridge` = VM on the LAN via an EXISTING host bridge (`parent`), host<->VM works - but you must create that host bridge yourself (nmcli/netplan) first."
+        },
+        "parent": {
+          "type": "string",
+          "description": "Host NIC (for `macvlan`) or existing host bridge name (for `bridge`). Unused for `nat`."
+        }
+      }
+    },
+    "mounts": {
+      "type": "array",
+      "description": "virtio-fs shares. Applied ONLY at VM creation; frozen once the VM exists.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["host", "guest"],
+        "properties": {
+          "host": { "type": "string", "description": "Host path. Shell-expanded on the HOST at init, relative to the current dir: `$(pwd)`, `$HOME`, `~`, and relative paths (`./x`) are allowed; the expanded absolute path is what gets passed to incus." },
+          "guest": { "type": "string", "description": "Path inside the VM, conventionally under `/workspaces/` (devcontainer compatibility)." },
+          "ro": { "type": "boolean", "default": false, "description": "Mount read-only." },
+          "shadow": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Subpaths relative to `guest` to mask with an empty mount, so the guest cannot see the host's real ones. High-risk things to hide from an agent: `.git`, `.vscode`, `.env`, etc."
+          }
+        }
+      }
+    },
+    "distro_package_groups": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Named package bundles defined in `roles/distro_packages/defaults/main.yml` (variable `distro_packages_<name>`), referenced here by the short `<name>`. Resolved for this VM's `os.type`."
+    },
+    "distro_packages": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Extra packages, literal names for THIS VM's distro. Flat (no per-distro dict) because `os` already pins one distro - so version-pinned names like `python3.13` go here."
+    },
+    "dotfiles": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["bash", "tmux", "zsh", "emacs"] },
+      "default": ["bash", "tmux", "zsh"],
+      "description": "Which dotfile sets to stage host-side (via each role's deploy-*-config task) and push into the VM. Config only; the program itself (e.g. emacs) must still be listed in `distro_packages`."
+    },
+    "post_install_script": {
+      "type": "string",
+      "description": "Shell run as ROOT inside the VM after packages install (provisioning is a root task); shown in the init preview before it runs. To act as the unprivileged user (e.g. installers that target the user's home, like claude), drop with `runuser -l user -c '...'` / `su - user -c '...'` - root switches to anyone, no password. Provision-time only (host-operator-driven via incus exec); the runtime model where `user` has no sudo is unaffected."
+    }
+  }
+}

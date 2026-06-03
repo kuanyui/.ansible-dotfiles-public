@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=./vm.schema.json
+name: win11
+hw:
+  cpu: 4
+  memory: 8G
+  disk: 64G
+  secureboot: true
+  tpm: true
+  gpu:
+    mode: virtio
+os:
+  type: windows
+  image:
+    source: iso
+    uri: ~/ISOs/Win11_24H2_x64.iso
+sys:
+  gui: true
+  timezone: host
+mounts:
+  - host: ~/Downloads
+    guest: 'Z:\Downloads'

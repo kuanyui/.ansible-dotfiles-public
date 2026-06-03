@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=./vm.schema.json
+name: webbrowser
+hw:
+  cpu: 4
+  memory: 4G
+  disk: 20G
+  nested_virt: false
+os:
+  type: opensuse
+  image:
+    source: incus
+    uri: opensuse/tumbleweed
+sys:
+  gui: true
+  timezone: host
+  tmpfs:
+    - /tmp
+  ssh_server:
+    enabled: false
+    port: 20023
+    root_login: false
+    password_login: false
+    authorized_keys:
+      - ~/.ssh/id_ed25519.pub
+mounts:
+  - host: ~/Downloads
+    guest: /workspaces/Downloads
+distro_package_groups:
+  - basic_tools
+distro_packages:
+  - MozillaFirefox
+  - xorg-x11-server
+  - icewm
+  - lightdm
+  - spice-vdagent
+dotfiles:
+  - bash
+  - zsh
+post_install_script: |
+  systemctl set-default graphical.target
+  mkdir -p /etc/lightdm/lightdm.conf.d
+  printf '[Seat:*]\nautologin-user=user\nautologin-session=icewm\n' > /etc/lightdm/lightdm.conf.d/autologin.conf
+  systemctl enable lightdm
