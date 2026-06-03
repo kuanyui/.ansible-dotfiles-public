@@ -19,18 +19,18 @@
           - item.agent.command is defined
           - item.agent.display_name is defined
           - item.name is defined
-          # `item.name` becomes a subcommand token in the launcher's dispatch
-          # `case` (templates/v-launcher.sh.j2). Reserved tokens collide and
-          # silently shadow the built-in subcommand - e.g. `name: init` would
-          # route `v-init init` to `cmd_agent` instead of `cmd_init`.
-          - item.name not in ['help', 'env', 'init', 'overwrite-dotfiles', 'start', 'stop', 'shell', 'shell-user', 'shell-root', 'set-root-password', 'unset-root-password', 'rma']
+          # `item.name` is the launcher name `v-<name>` (templates/v-launcher.sh.j2).
+          # The per-agent subcommand was removed (run the agent via `shell`), so
+          # `name` is NOT a dispatch token anymore; this list is now a defensive
+          # naming guard so a name never matches a built-in subcommand.
+          - item.name not in ['help', 'env', 'init', 'overwrite-dotfiles', 'start', 'stop', 'shell', 'shell-user', 'shell-root', 'set-root-password', 'unset-root-password', 'delete']
         fail_msg: |
           incus_apps entry `{{ item.name | default('<unnamed>') }}` is malformed.
           Required fields: name, agent.command, agent.display_name, AND exactly
           one of agent.install_script_url / agent.install_via_npm.
           `name` also must not be a reserved launcher subcommand: help, env, init,
           overwrite-dotfiles, start, stop, shell, shell-user, shell-root,
-          set-root-password, unset-root-password, rma (would be shadowed).
+          set-root-password, unset-root-password, delete (would be shadowed).
           Got: {{ item }}
       loop: "{{ incus_apps }}"
       loop_control:

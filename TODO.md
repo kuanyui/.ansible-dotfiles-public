@@ -36,6 +36,23 @@ Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
   Validated: recipe `bash -n` (with resync as known-good baseline) + both
   launchers render + `bash -n`.
 
+## Follow-ups done (later session)
+
+- [x] **`rma` -> `delete`** in both launchers (incus-native verb, consistent with
+  `init`/`start`/`stop`/`snapshot`; `rma`'s "all" overclaimed - base image is not
+  removed). Dispatch + help + hints + reserved lists in both `main.yml` updated.
+- [x] **`delete` asks y/N first** (destructive: config+disk+snapshots). Agents uses
+  `--yes`/`ASSUME_YES` to skip; workstations always asks (no `--yes` flag there).
+  Non-TTY aborts.
+- [x] **Removed the per-agent subcommand** (`v-<agent> <agent>`); run the agent via
+  `v-<agent> shell` then the command inside. `cmd_agent` + its dispatch token gone.
+- [ ] **OPEN: agents reserved-word assert is now moot** - since the agent name is no
+  longer a dispatch token, `roles/incus_agents/tasks/main.yml`'s reserved-subcommand
+  check can't actually collide. Kept as a defensive naming guard for now; decide
+  whether to drop it.
+- [ ] Workstations init preview + `--yes` (deferred from task #2; lower value - VM
+  name is fixed, not cwd-derived).
+
 ## Notes / future
 
 - Python launcher rewrite: deferred to the `incus-workspaces` redesign (see

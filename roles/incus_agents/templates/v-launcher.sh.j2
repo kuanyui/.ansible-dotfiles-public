@@ -158,11 +158,12 @@ Flags (override env vars; both override the launcher's cwd-based defaults):
                                          to basename(<host>). Repeatable.
                                          If omitted, defaults to \$PWD.
   -p, --project-path <path>              Single-mount alias for --mount.
-  -y, --yes                              Skip the pre-create confirmation prompt
-                                         (any command that would CREATE the VM
-                                         first shows what it will do + asks y/N;
-                                         the VM name comes from cwd, so this
-                                         guards against a forgotten 'cd').
+  -y, --yes                              Skip the y/N confirmation prompts.
+                                         CREATE (any command that would launch
+                                         the VM) and 'delete' both show
+                                         what they will do + ask y/N first; the
+                                         VM name comes from cwd, so this guards
+                                         against a forgotten 'cd'.
 
 Subcommands:
   help              Show this message
@@ -186,10 +187,12 @@ Subcommands:
                     root is reachable only via shell-root / incus exec.
   unset-root-password
                     Revert set-root-password: remove 'user' sudo + re-lock root.
-  $AGENT_NAME           Run $AGENT_DISPLAY ('$AGENT_COMMAND') inside the VM,
-                    cwd = $WORKSPACE_WORKDIR
-  rma               rm all: stop + delete the VM entirely (config + disk).
-                    Spelled rma not rm to stay far from the system 'rm'.
+  delete            Delete the VM entirely (config + disk + snapshots).
+                    Asks y/N first (--yes to skip). The base image is NOT
+                    removed - only this VM instance.
+
+To run $AGENT_DISPLAY: 'shell' into the VM and run '$AGENT_COMMAND' there
+($AGENT_DISPLAY is installed at provision time; there is no dedicated subcommand).
 
 VM lifecycle is managed per-project. Different projects get different VMs
 (named by cwd). To force a specific VM (e.g. share one across projects),
@@ -288,7 +291,7 @@ _provision_vm() {
     # don't re-apt or re-push on every launch. The marker is written LAST, so a
     # failure mid-provision (set -e aborts) leaves the VM unmarked and the next
     # launch retries. To re-push dotfiles on demand use `overwrite-dotfiles`
-    # (bypasses this gate); to rebuild from scratch, `rma` then `init`.
+    # (bypasses this gate); to rebuild from scratch, `delete` then `init`.
     local provisioned_marker=/var/lib/v-launcher-provisioned
     if incus exec "$VM_NAME" -- test -f "$provisioned_marker" 2>/dev/null; then
         return 0
@@ -432,12 +435,12 @@ cmd_init() {
         echo "==> VM $VM_NAME already exists. 'init' does NOT recreate or re-provision it."
         echo "    start / enter   : v-$AGENT_NAME shell"
         echo "    refresh dotfiles: v-$AGENT_NAME overwrite-dotfiles"
-        echo "    rebuild         : v-$AGENT_NAME rma && v-$AGENT_NAME init"
+        echo "    rebuild         : v-$AGENT_NAME delete && v-$AGENT_NAME init"
         return 0
     fi
     _ensure_vm_up     # VM absent -> launch + attach mounts
     _provision_vm     # fresh VM -> provisions (apt + user + dotfiles + agent)
-    echo "==> $VM_NAME ready. Try: v-$AGENT_NAME $AGENT_NAME"
+    echo "==> $VM_NAME ready. Try: v-$AGENT_NAME shell  (then run '$AGENT_COMMAND')"
 }
 
 cmd_overwrite_dotfiles() {
@@ -450,7 +453,30 @@ cmd_overwrite_dotfiles() {
 
 cmd_start() { _vm_exists || { echo "VM $VM_NAME does not exist; run 'init' first" >&2; exit 1; }; incus start "$VM_NAME"; _wait_vm_ready; }
 cmd_stop()  { _vm_exists && incus stop "$VM_NAME" 2>/dev/null || true; }
-cmd_rma()   { _vm_exists && incus delete -f "$VM_NAME" 2>/dev/null || true; }
+cmd_delete() {
+    _vm_exists || { echo "VM $VM_NAME does not exist; nothing to delete."; return 0; }
+    # Destructive: deletes the VM config + disk + snapshots, irreversibly. Gate
+    # on y/N (skip with -y/--yes; non-TTY without --yes aborts), same shape as
+    # the pre-create confirmation.
+    if [[ "$ASSUME_YES" != 1 ]]; then
+        cat >&2 <<EOF
+
+About to PERMANENTLY DELETE this Incus VM (config + disk + snapshots):
+
+  VM name:  $VM_NAME
+
+This cannot be undone.
+EOF
+        if [[ ! -t 0 ]]; then
+            echo "Refusing to delete $VM_NAME without a TTY; re-run with --yes to confirm." >&2
+            exit 1
+        fi
+        local reply
+        read -rp "Delete this VM? [y/N] " reply
+        [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Aborted; VM not deleted." >&2; exit 1; }
+    fi
+    incus delete --force "$VM_NAME"
+}
 
 cmd_shell_user() {
     _ensure_vm_up
@@ -518,28 +544,12 @@ cmd_unset_root_password() {
     echo "==> sudoers removed and root password re-locked; back to locked-down default."
 }
 
-cmd_agent() {
-    _ensure_vm_up
-    _provision_vm   # marker-gated: provisions the first time, then skips
-    # Need a login shell so ~/.local/bin (where curl installer drops the binary)
-    # is on PATH. `bash -lc` sources the user's bash login files.
-    incus exec --user 1000 --group 1000 --env HOME=/home/user --env USER=user --cwd "$WORKSPACE_WORKDIR" "$VM_NAME" -- \
-        bash -lc "$AGENT_COMMAND"
-}
-
 # ---------- Dispatch ----------
 sub="${1:-help}"; shift || true
 case "$sub" in
-    help|env|init|overwrite-dotfiles|start|stop|shell|shell-user|shell-root|set-root-password|unset-root-password|rma|{{ incus_app.name }})
+    help|env|init|overwrite-dotfiles|start|stop|shell|shell-user|shell-root|set-root-password|unset-root-password|delete)
         # User-facing names keep hyphens; bash function names use underscores.
-        # The agent subcommand is renamed to a fixed `cmd_agent` (vs per-agent
-        # function name) so the dispatch line above doesn't have to be edited
-        # when the agent name changes.
-        if [[ "$sub" == "{{ incus_app.name }}" ]]; then
-            cmd_agent "$@"
-        else
-            "cmd_${sub//-/_}" "$@"
-        fi
+        "cmd_${sub//-/_}" "$@"
         ;;
     *)
         echo "Unknown subcommand: $sub" >&2

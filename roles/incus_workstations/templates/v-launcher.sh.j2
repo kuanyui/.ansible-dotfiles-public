@@ -184,9 +184,9 @@ EOF
                     APT_PACKAGES, re-push dotfiles. Use after editing host
                     dotfiles + 'make apply-incus-workstations'.
   snapshot ...      Snapshot CLI: create / list / restore / delete
-  rma               rm all: stop + delete the VM (config + disk +
-                    snapshots all gone). Spelled rma not rm to stay far
-                    from the system 'rm'.
+  delete            Delete the VM entirely (config + disk + snapshots).
+                    Asks y/N first. The base image is NOT removed - only this
+                    VM instance.
 
 Config (compiled in at render time):
   base image: $VM_BASE_IMAGE
@@ -272,7 +272,7 @@ cmd_init() {
         echo "    start / enter   : v-$WORKSTATION_NAME shell"
         echo "    refresh dotfiles: v-$WORKSTATION_NAME overwrite-dotfiles"
         echo "    refresh apt+dots: v-$WORKSTATION_NAME update"
-        echo "    rebuild         : v-$WORKSTATION_NAME rma && v-$WORKSTATION_NAME init"
+        echo "    rebuild         : v-$WORKSTATION_NAME delete && v-$WORKSTATION_NAME init"
         return 0
     fi
     _ensure_vm_up     # VM absent -> launch + attach mounts
@@ -298,8 +298,27 @@ cmd_start() {
 
 cmd_stop() { _vm_exists && incus stop "$VM_NAME" 2>/dev/null || true; }
 
-cmd_rma() {
-    _vm_exists && incus delete -f "$VM_NAME" 2>/dev/null || true
+cmd_delete() {
+    _vm_exists || { echo "VM $VM_NAME does not exist; nothing to delete."; return 0; }
+    # Destructive: deletes the VM config + disk + snapshots, irreversibly. Always
+    # asks y/N (this launcher has no `--yes` flag); a non-TTY aborts rather than
+    # delete. The base image is NOT removed - only this VM instance.
+    cat >&2 <<EOF
+
+About to PERMANENTLY DELETE this Incus VM (config + disk + snapshots):
+
+  VM name:  $VM_NAME
+
+This cannot be undone.
+EOF
+    if [[ ! -t 0 ]]; then
+        echo "Refusing to delete $VM_NAME without a TTY." >&2
+        exit 1
+    fi
+    local reply
+    read -rp "Delete this VM? [y/N] " reply
+    [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Aborted; VM not deleted." >&2; exit 1; }
+    incus delete --force "$VM_NAME"
 }
 
 cmd_shell_user() {
@@ -447,7 +466,7 @@ EOF
 # ---------- Dispatch ----------
 sub="${1:-help}"; shift || true
 case "$sub" in
-    help|env|init|overwrite-dotfiles|start|stop|shell|shell-user|shell-root|set-root-password|unset-root-password|gui|update|snapshot|rma)
+    help|env|init|overwrite-dotfiles|start|stop|shell|shell-user|shell-root|set-root-password|unset-root-password|gui|update|snapshot|delete)
         # User-facing names keep hyphens; bash function names use underscores.
         "cmd_${sub//-/_}" "$@"
         ;;
