@@ -323,3 +323,26 @@ incus config device override <vm> eth0 network=incusbr0
 ```
 
 Apply to every new VM: edit the `default` profile, or create a separate profile and assign it at launch.
+
+### Clipboard: copying in a VM shell lands in my host clipboard, but pasting into a TUI (Claude Code etc.) fails - what's going on?
+
+`incus exec` (the text shell behind `v-<name> shell`) is just a byte pipe - it has **no** text-shell clipboard feature. What you see is the **terminal emulator** (Konsole / etc.), not incus.
+
+| Direction | Mechanism | Who does it |
+| --- | --- | --- |
+| Copy (VM app -> host clipboard) | App (e.g. Claude Code) emits an **OSC 52** escape (`\e]52;...`); the terminal decodes it and writes the host clipboard (KDE Klipper then shows it) | terminal emulator |
+| Paste (host clipboard -> VM app) | keyboard paste; the terminal sends the bytes down the PTY | terminal emulator |
+
+Same behavior over ssh / `tmux` (with `set-clipboard on`) / podman - it is terminal-level, not runtime-level. incus only carries the bytes.
+
+**Why paste into a full-screen TUI fails:** Claude Code (and `htop`, `vim` with `mouse=a`, ...) turns on xterm **mouse reporting**, so the terminal forwards mouse clicks to the app and its own right-click "Paste" menu stops appearing. Paste with the keyboard instead:
+
+- `Shift+Insert` or `Ctrl+Shift+V` - pastes the **clipboard** (Ctrl+C / Klipper / where OSC 52 writes)
+- `Shift`+middle-click - pastes the **primary selection** (the last mouse-highlighted text), a *different* buffer from the clipboard
+- hold `Shift` and right-click - Konsole bypasses mouse reporting while Shift is held, so the local "Paste" menu returns
+
+(Primary selection vs clipboard are two separate buffers; if a paste gives stale/wrong text, you grabbed the wrong one - `Shift+Insert` for clipboard, `Shift`+middle-click for the last mouse selection.)
+
+**GUI path is different:** `v-<name> gui` (`incus console --type=vga` + SPICE) gets real host<->guest clipboard sharing from `spice-vdagent` in the guest - that one *is* an agent-level feature, not OSC 52.
+
+**Security note:** OSC 52 lets any program that can write to your terminal **set** your host clipboard (write direction). Reading is usually blocked by the terminal. To disable it entirely, turn OSC 52 off in the terminal emulator (not in incus); the cost is that the VM app's copy no longer reaches the host clipboard.
