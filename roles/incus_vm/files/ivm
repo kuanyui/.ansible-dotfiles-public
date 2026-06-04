@@ -235,6 +235,21 @@ def instance_exists(name: str) -> bool:
     ).returncode == 0
 
 
+def prompt_with_prefill(prompt: str, prefill: str) -> str:
+    """Like input(), but pre-fills the editable line with `prefill` so the user
+    can edit it in place (readline) instead of retyping. Falls back to a
+    `[default]` suffix if readline is unavailable."""
+    try:
+        import readline
+    except ImportError:
+        return input(f"{prompt}[{prefill}] ") or prefill
+    readline.set_startup_hook(lambda: readline.insert_text(prefill))
+    try:
+        return input(prompt)
+    finally:
+        readline.set_startup_hook()
+
+
 def choose_instance_name(
     template_name: str, cwd: Path, given: str | None, *, dry_run: bool, assume_yes: bool
 ) -> str:
@@ -250,12 +265,19 @@ def choose_instance_name(
         if (err := name_error(default, dry_run=dry_run)) and not dry_run:
             die(f"default name unusable ({err}); pass an explicit name")
         return default
+    # Pre-fill the editable line with the default so the user can tweak a few
+    # chars instead of retyping; a re-prompt pre-fills the last rejected value.
+    current: str = default
     while True:
-        reply: str = input(f"VM name [{default}]: ").strip() or default
+        reply: str = prompt_with_prefill(
+            "incus VM name (the instance name, visible to all of incus e.g. `incus list`): ",
+            current,
+        ).strip() or default
         err = name_error(reply, dry_run=dry_run)
         if err is None:
             return reply
         print(f"  {err}", file=sys.stderr)
+        current = reply
 
 
 # ---------- incus command builders ----------
@@ -599,10 +621,10 @@ def confirm_create(doc: Template, name: str, cwd: Path, *, assume_yes: bool, dry
     hw: dict[str, Any] = doc.get("hw", {})
     print("", file=sys.stderr)
     print("About to CREATE a new Incus VM:", file=sys.stderr)
-    print(f"  name:     {name}", file=sys.stderr)
-    print(f"  template: {doc['template_name']}  (cwd: {cwd})", file=sys.stderr)
-    print(f"  image:    {image_ref(doc['os'])}", file=sys.stderr)
-    print(f"  hw:       cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
+    print(f"  incus VM name: {name}  (visible in `incus list`)", file=sys.stderr)
+    print(f"  template:      {doc['template_name']}  (cwd: {cwd})", file=sys.stderr)
+    print(f"  image:         {image_ref(doc['os'])}", file=sys.stderr)
+    print(f"  hw:            cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
     print("", file=sys.stderr)
     if assume_yes or dry_run:
         return
@@ -667,7 +689,7 @@ def cmd_stop(*, dry_run: bool) -> None:
 def confirm_delete(name: str, *, assume_yes: bool, dry_run: bool) -> None:
     print("", file=sys.stderr)
     print("About to PERMANENTLY DELETE this Incus VM (config + disk + snapshots):", file=sys.stderr)
-    print(f"  name:     {name}", file=sys.stderr)
+    print(f"  incus VM name: {name}", file=sys.stderr)
     print("This cannot be undone.", file=sys.stderr)
     print("", file=sys.stderr)
     if assume_yes or dry_run:
@@ -827,7 +849,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_init: argparse.ArgumentParser = sub.add_parser("init", help="create a VM from a template")
     p_init.add_argument("template", help="template id (file in templates/)")
-    p_init.add_argument("name", nargs="?", help="VM instance name (skips the prompt)")
+    p_init.add_argument("name", nargs="?",
+                        help="incus VM instance name (as shown in `incus list`); skips the prompt")
 
     for name in CWD_RESOLVED:
         sp: argparse.ArgumentParser = sub.add_parser(name, help="(cwd-resolved)")
