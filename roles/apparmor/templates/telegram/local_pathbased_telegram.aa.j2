@@ -136,6 +136,8 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected me
     owner @{HOME}/.local/share/TelegramDesktop/ rw,
     owner @{HOME}/.local/share/TelegramDesktop/** rwkl,
     owner @{HOME}/.cache/TelegramDesktop/ rw,
-    owner @{HOME}/.cache/TelegramDesktop/** rwk,
+    # `l`: Qt's qtshadercache writes with the same O_TMPFILE + linkat() pattern as tdata (see
+    # the mediate_deleted note in the header), so the link's name lookup needs `l` here too.
+    owner @{HOME}/.cache/TelegramDesktop/** rwkl,
 
 }
