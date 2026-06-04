@@ -18,3 +18,10 @@ incus_vm_state: present
 # dotfiles staging that `ivm` pushes into guests. Uninstall = `rm -rf` it.
 incus_vm_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus-vm"
 incus_vm_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+
+# `ivm` shell completion. Both dirs live inside `incus_vm_root` so uninstall's
+# `rm -rf` cleans them; they are auto-discovered by the rc globs
+# (`ansible-managed/*/zsh-completions` in .zshrc.j2, `*/bash-completions/*`
+# sourced by .bashrc.j2) - no rc edits, no XDG loader handshake.
+incus_vm_zsh_completion_dir: "{{ incus_vm_root }}/zsh-completions"
+incus_vm_bash_completion_dir: "{{ incus_vm_root }}/bash-completions"

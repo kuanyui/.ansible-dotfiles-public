@@ -20,7 +20,7 @@
         install: [python3-pyyaml, python3-jsonschema]
         probe: 'python3 -c "import yaml, jsonschema"'
 
-- name: Ensure `incus_vm_bin_dir` + `incus_vm_root` exist
+- name: Ensure `incus_vm_bin_dir` + `incus_vm_root` + completion dirs exist
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -28,6 +28,8 @@
   loop:
     - "{{ incus_vm_bin_dir }}"
     - "{{ incus_vm_root }}"
+    - "{{ incus_vm_zsh_completion_dir }}"
+    - "{{ incus_vm_bash_completion_dir }}"
 
 - name: Install the `ivm` engine to `{{ incus_vm_bin_dir }}/ivm`
   ansible.builtin.copy:
@@ -83,5 +85,18 @@
     incus_guest_setup_dotfiles_root: "{{ incus_vm_root }}"
     incus_guest_setup_dotfiles_ansible_os_families: [Debian, Suse, RedHat]
 
-# NOTE: two-level `ivm` shell completion is a later phase (IMPLEMENTATION_PLAN
-# phase 3); not installed here yet.
+# ---------- `ivm` shell completion (two levels: subcommand, then template) ----------
+# Auto-discovered by the rc globs (no rc edits): zsh via the
+# `ansible-managed/*/zsh-completions` fpath glob, bash via the
+# `ansible-managed/*/bash-completions/*` source loop.
+- name: Install `ivm` zsh completion to `{{ incus_vm_zsh_completion_dir }}/_ivm`
+  ansible.builtin.copy:
+    src: completions/_ivm
+    dest: "{{ incus_vm_zsh_completion_dir }}/_ivm"
+    mode: "0644"
+
+- name: Install `ivm` bash completion to `{{ incus_vm_bash_completion_dir }}/ivm`
+  ansible.builtin.copy:
+    src: completions/ivm.bash
+    dest: "{{ incus_vm_bash_completion_dir }}/ivm"
+    mode: "0644"

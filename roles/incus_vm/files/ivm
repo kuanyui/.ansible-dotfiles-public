@@ -534,15 +534,33 @@ def wait_ready(name: str, *, dry_run: bool) -> None:
 
 
 def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
-    """Find the VM whose user.ivm_init_at_dir == cwd."""
+    """Find the VM whose `user.ivm_init_at_dir` == cwd. If none matches exactly
+    but an ANCESTOR dir has a VM (you're in a subdir of an init'd project),
+    offer the nearest such VM - "open the VM init'd at <parent>? [Y/n]" (REDESIGN
+    §8.9)."""
     if dry_run:
         return "<vm-resolved-from-cwd>"
     out: str = capture(["incus", "list", "--format", "csv", "--columns", "n,config:user.ivm_init_at_dir"])
+    bindings: dict[str, str] = {}
     for line in out.splitlines():
         vm_name, _, init_dir = line.partition(",")
-        if init_dir == str(cwd):
-            return vm_name
-    die(f"no VM is bound to {cwd}; run `ivm init <template>` here first")
+        if init_dir:
+            bindings[init_dir] = vm_name
+    if str(cwd) in bindings:
+        return bindings[str(cwd)]
+    # `cwd.parents` is ordered nearest-ancestor first.
+    for ancestor in cwd.parents:
+        ancestor_vm: str | None = bindings.get(str(ancestor))
+        if ancestor_vm is None:
+            continue
+        if not sys.stdin.isatty():
+            die(f"no VM bound to {cwd}; nearest is '{ancestor_vm}' at {ancestor} "
+                f"- cd there, or run from a TTY to confirm")
+        reply: str = input(f"No VM bound to {cwd}. Open '{ancestor_vm}' init'd at {ancestor}? [Y/n] ")
+        if reply.strip().lower() in ("", "y", "yes"):
+            return ancestor_vm
+        die("aborted")
+    die(f"no VM is bound to {cwd} or any parent; run `ivm init <template>` here first")
 
 
 def vm_is_running(name: str) -> bool:

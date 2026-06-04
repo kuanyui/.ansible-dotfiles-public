@@ -1,0 +1,41 @@
+#compdef ivm
+# ivm zsh completion (ansible-managed by roles/incus_vm). zsh autoloads this via
+# fpath - see the `ansible-managed/*/zsh-completions` glob in roles/zsh/.zshrc.j2.
+# Two levels: subcommands, then template names for `init` / `env`.
+
+local -a _ivm_subcommands
+_ivm_subcommands=(
+  'init:create a VM from a template'
+  'shell:open a zsh shell as user (cwd-resolved)'
+  'shell-user:open a zsh shell as user'
+  'shell-root:open a zsh shell as root'
+  'start:start the cwd-bound VM'
+  'stop:stop the cwd-bound VM'
+  'delete:delete the cwd-bound VM (confirms)'
+  'env:load + print a template'\''s resolved config'
+  'overwrite-dotfiles:re-push staged dotfiles into the VM'
+  'update:upgrade all packages in the VM'
+  'set-root-password:enable in-guest sudo via a root password'
+  'unset-root-password:revert set-root-password'
+  'snapshot:incus snapshot (create/list/restore/delete)'
+  'gui:open a SPICE graphical console'
+)
+
+local _ivm_templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm}/vm-templates"
+local state
+
+_arguments -C \
+  '--root[install root holding the schema + vm-templates]:dir:_files -/' \
+  '--dry-run[print the incus commands without running them]' \
+  '(-y --yes)'{-y,--yes}'[skip confirmation / name prompts]' \
+  '1:subcommand:->subcmd' \
+  '*::args:->args'
+
+case "$state" in
+  subcmd) _describe 'ivm subcommand' _ivm_subcommands ;;
+  args)
+    case "$words[1]" in
+      init|env) compadd -- ${_ivm_templates_root}/*.yaml(N:t:r) ;;
+    esac
+    ;;
+esac

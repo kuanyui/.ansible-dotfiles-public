@@ -105,9 +105,15 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   SCHEMA fixed to reality: removed `hw.gpu` (incus has no virtio-gpu/virgl - its
   QEMU is built without virgl; passthrough needs a PCI addr + host VFIO, out of
   scope) and updated `hw.nested_virt` description. windows11.yaml lost its gpu block.
-  REMAINING phase-3: parent-dir prompt at init, two-level shell completion
-  (zsh+bash, ansible-installed). Also: staged `.zshrc` zsh-plugin source path
-  may differ per distro (verify on real box).
+  Parent-dir resolution DONE (REDESIGN 8.9): `resolve_vm_by_cwd` walks ancestors -
+  in a subdir of an init'd project it prompts "open '<vm>' init'd at <parent>? [Y/n]"
+  (non-TTY: errors with the hint). Two-level shell completion DONE (zsh `_ivm` +
+  bash `ivm`, installed to `incus-vm/{zsh,bash}-completions/`, auto-discovered by
+  the rc globs; functionally tested: subcommands, then template names for
+  init/env). PHASE 3 COMPLETE.
+  Note: the staged `.zshrc` sources the zsh plugins via `[ -f ... ]` guards, so a
+  distro with a different path (or openSUSE, which omits them) just skips them
+  gracefully - non-blocking; Debian/Fedora paths match.
 - [ ] **Phase 4 retire `incus_agents`** - migrate claude/codex to `ivm`; remove
   the old bash launchers. **Same step:** fold the now-single-consumer shared
   roles into `incus_vm` (`_incus_host_setup` -> `tasks/host_setup.yml`,
