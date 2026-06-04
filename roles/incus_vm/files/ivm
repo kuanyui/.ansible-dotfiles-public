@@ -185,6 +185,18 @@ def run(cmd: list[str], *, dry_run: bool) -> None:
         subprocess.run(cmd, check=True)
 
 
+def exec_into(cmd: list[str], *, dry_run: bool) -> None:
+    """Hand the terminal to an interactive command (a guest shell / console) by
+    REPLACING the ivm process with it (os.execvp). The command's exit status
+    becomes ivm's, so a normal `exit` (or `exit 1`) in the guest shell does NOT
+    surface as a Python CalledProcessError traceback. No `check`: the child IS
+    the foreground program, not a step to verify. Always the last thing ivm does."""
+    print("+ " + shlex.join(cmd), file=sys.stderr)
+    if dry_run:
+        return
+    os.execvp(cmd[0], cmd)
+
+
 def capture(cmd: list[str]) -> str:
     """Run a read-only command and return stdout (empty on failure)."""
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -669,7 +681,7 @@ def cmd_shell(root: Path, *, as_root: bool, dry_run: bool) -> None:
     else:
         cmd = ["incus", "exec", "--user", "1000", "--group", "1000",
                "--env", "HOME=/home/user", "--env", "USER=user", name, "--", "zsh"]
-    run(cmd, dry_run=dry_run)
+    exec_into(cmd, dry_run=dry_run)
 
 
 def cmd_start(*, dry_run: bool) -> None:
@@ -787,7 +799,7 @@ def cmd_gui(*, dry_run: bool) -> None:
     """Open a SPICE graphical console (`incus console --type=vga`)."""
     name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
     ensure_up(name, dry_run=dry_run)
-    run(["incus", "console", "--type=vga", name], dry_run=dry_run)
+    exec_into(["incus", "console", "--type=vga", name], dry_run=dry_run)
 
 
 def cmd_env(template_name: str, root: Path) -> None:
