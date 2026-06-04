@@ -21,7 +21,7 @@ distro_packages_install_basic_tools: true
 distro_packages_install_sys_tools: true
 distro_packages_install_net_tools: true
 distro_packages_install_wayland_tools: false
-setup_podman: false
+setup_podman_oci_runtimes: false
 podman_runtime: "libkrun"  # "default" | "libkrun"
 podman_runtime_scope: "user"  # "user" | "system"
 # `setup_container_apps`: install c-claude-*, c-codex-* launchers (and the

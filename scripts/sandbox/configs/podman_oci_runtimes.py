@@ -1,4 +1,4 @@
-"""Sandbox config for `playbooks/podman.yml`.
+"""Sandbox config for `playbooks/podman_oci_runtimes.yml`.
 
 Verifies the file-level outcome of the podman OCI-runtime configuration:
 deploy a managed `containers.conf` selecting libkrun as the default runtime,
@@ -31,9 +31,9 @@ DUMMY_COMMANDS_DIR = SANDBOX_DIR / "dummy_commands"
 
 
 CONFIG = SandboxConfig(
-    name="podman_runtime",
+    name="podman_oci_runtimes",
     description="`containers.conf` write under user scope when libkrun is selected (assertions stubbed).",
-    playbook=Path("playbooks/podman.yml"),
+    playbook=Path("playbooks/podman_oci_runtimes.yml"),
     dummy_commands=[
         DUMMY_COMMANDS_DIR / "crun",
         DUMMY_COMMANDS_DIR / "podman",
@@ -51,7 +51,7 @@ CONFIG = SandboxConfig(
     # the "remove managed containers.conf" branch. Verifies the file is
     # actually removed and that the role doesn't accidentally leave anything
     # behind in `~/.config/containers/`.
-    unapply_playbook=Path("playbooks/podman.yml"),
+    unapply_playbook=Path("playbooks/podman_oci_runtimes.yml"),
     unapply_ansible_vars={
         "podman_runtime": "default",
     },

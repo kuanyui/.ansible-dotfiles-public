@@ -1,5 +1,5 @@
 ---
-setup_podman: false
+setup_podman_oci_runtimes: false
 podman_runtime: "default"  # "default" (remove managed config, let distro decide) | "libkrun"
 podman_runtime_scope: "user"  # "user" or "system"
 

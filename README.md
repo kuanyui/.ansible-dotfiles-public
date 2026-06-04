@@ -21,7 +21,7 @@ playbooks/                # entry playbooks
   ├─ user.yml             # ├─ deploy dotfiles + emacs + zsh + container_apps + apparmor for current user
   ├─ root.yml             # ├─ same for root (no container_apps/apparmor)
   ├─ all.yml              # ├─ user.yml + root.yml
-  ├─ podman.yml           # ├─ dedicated entry: configure podman OCI runtime
+  ├─ podman_oci_runtimes.yml  # ├─ dedicated entry: configure podman OCI runtime(s)
   ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
   ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
   ├─ incus_vm.yml         # ├─ dedicated entry: install the `ivm` Incus VM launcher
@@ -49,7 +49,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`emacs/`](roles/emacs/) | Install Emacs + elisp packages. |
 | [`distro_packages/`](roles/distro_packages/) | Frequently-used distro package bundles (basic / net / sys / Wayland tools); delegates installs to `_install_distro_packages`. |
 | [`local_pkgs/`](roles/local_pkgs/) | Redirect npm / pip / pipx / cargo / go global installs from `~/.local/` into `~/.local-pkgs/<tool>/`, so XDG + ansible-managed dotfiles stay separable from language-level package state. |
-| [`podman/`](roles/podman/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
+| [`podman_oci_runtimes/`](roles/podman_oci_runtimes/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |
 | [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
 | [`incus_vm/`](roles/incus_vm/) | Install `ivm`: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |

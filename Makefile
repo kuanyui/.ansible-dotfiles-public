@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus-vm apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus-vm check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus-vm incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-vm sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-oci-runtimes apply-container-apps apply-incus-vm apply-apparmor unstow check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-incus-vm check-apparmor unapply-podman-oci-runtimes unapply-container-apps unapply-incus-vm incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-vm sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -50,11 +50,11 @@ apply-root:  ## Provision root (distro_packages + zsh + emacs + dotfiles; needs 
 apply-all-users:  ## Provision both current user and root (i.e. `apply-user` + `apply-root`)
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/all.yml
 
-apply-podman-runtime:  ## Provision crun + libkrun ,assert crun has `+LIBKRUN`, write `containers.conf` (optional), assert `podman info` shows krun active
-	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/podman.yml
+apply-podman-oci-runtimes:  ## Provision crun + libkrun ,assert crun has `+LIBKRUN`, write `containers.conf` (optional), assert `podman info` shows krun active
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/podman_oci_runtimes.yml
 
-unapply-podman-runtime:  ## Revert podman to distro default runtime (deletes the managed containers.conf; leaves installed libkrun packages alone)
-	$(PLAYBOOK) --diff --ask-become-pass -e podman_runtime=default $(PLAYBOOKS)/podman.yml
+unapply-podman-oci-runtimes:  ## Revert podman to distro default runtime (deletes the managed containers.conf; leaves installed libkrun packages alone)
+	$(PLAYBOOK) --diff --ask-become-pass -e podman_runtime=default $(PLAYBOOKS)/podman_oci_runtimes.yml
 
 apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local/bin/ (bypasses `setup_container_apps` gate)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps.yml
@@ -101,8 +101,8 @@ check-root:  ## Dry-run diff for root provisioning
 check-all-users:  ## Dry-run diff for both user and root (i.e. `check-user` + `check-root`)
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/all.yml
 
-check-podman-runtime:  ## Dry-run diff for podman OCI runtime config
-	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/podman.yml
+check-podman-oci-runtimes:  ## Dry-run diff for podman OCI runtime config
+	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/podman_oci_runtimes.yml
 
 check-container-apps:  ## Dry-run diff for container_apps install
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/container_apps.yml
@@ -173,8 +173,8 @@ sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtim
 sandbox-incus-vm:  ## Dry-run `apply-incus-vm` (`ivm` install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_vm
 
-sandbox-podman-runtime:  ## Dry-run `apply-podman-runtime` (containers.conf write; `crun` and `podman` are stubbed) in a throwaway podman+systemd sandbox
-	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) podman_runtime
+sandbox-podman-oci-runtimes:  ## Dry-run `apply-podman-oci-runtimes` (containers.conf write; `crun` and `podman` are stubbed) in a throwaway podman+systemd sandbox
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) podman_oci_runtimes
 
 sandbox-apparmor:  ## Dry-run `apply-apparmor` in a throwaway podman+systemd sandbox; streams diff + runs `apparmor_parser --skip-kernel-load` post-check
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) apparmor
