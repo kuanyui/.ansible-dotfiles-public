@@ -1,7 +1,7 @@
 ---
 # Remove `ivm` + this role's subdir. Does NOT delete any incus VMs:
 #   - they are deliberately persistent (snapshots, long-running state);
-#   - bulk-deleting our `v-*` / tagged VMs would be a footgun.
+#   - bulk-deleting our `ivm-*` / tagged VMs would be a footgun.
 # To remove a VM: `ivm delete` in its dir, or `incus list` + `incus delete`.
 
 - name: Remove the `ivm` binary `{{ incus_vm_bin_dir }}/ivm`

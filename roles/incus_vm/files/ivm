@@ -24,6 +24,7 @@ shell completion, windows tier.
 from __future__ import annotations
 
 import argparse
+import csv
 import getpass
 import json
 import os
@@ -259,7 +260,7 @@ def choose_instance_name(
 
 # ---------- incus command builders ----------
 
-def mem_to_gib(value: str) -> str:
+def g_to_gib(value: str) -> str:
     """`8G` -> `8GiB` (the template uses G; incus wants GiB)."""
     return value[:-1] + "GiB" if value.endswith("G") else value
 
@@ -298,7 +299,7 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
     if "cpu" in hw:
         cmd += ["--config", f"limits.cpu={hw['cpu']}"]
     if "memory" in hw:
-        cmd += ["--config", f"limits.memory={mem_to_gib(hw['memory'])}"]
+        cmd += ["--config", f"limits.memory={g_to_gib(hw['memory'])}"]
     if hw.get("secureboot") is False:  # incus VM default is on, so only emit to disable
         cmd += ["--config", "security.secureboot=false"]
     cmd += [
@@ -311,7 +312,7 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
         "--config", f"user.ivm_ansible_os_family={ansible_os_family_of(doc)}",
     ]
     if "disk" in hw:
-        cmd += ["--device", f"root,size={mem_to_gib(hw['disk'])}"]
+        cmd += ["--device", f"root,size={g_to_gib(hw['disk'])}"]
     return cmd
 
 
@@ -541,11 +542,12 @@ def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
     if dry_run:
         return "<vm-resolved-from-cwd>"
     out: str = capture(["incus", "list", "--format", "csv", "--columns", "n,config:user.ivm_init_at_dir"])
+    # csv.reader (not partition): an init_dir path can contain a comma, which
+    # incus CSV-quotes - splitting on the first comma would mis-parse it.
     bindings: dict[str, str] = {}
-    for line in out.splitlines():
-        vm_name, _, init_dir = line.partition(",")
-        if init_dir:
-            bindings[init_dir] = vm_name
+    for row in csv.reader(out.splitlines()):
+        if len(row) >= 2 and row[1]:
+            bindings[row[1]] = row[0]
     if str(cwd) in bindings:
         return bindings[str(cwd)]
     # `cwd.parents` is ordered nearest-ancestor first.
