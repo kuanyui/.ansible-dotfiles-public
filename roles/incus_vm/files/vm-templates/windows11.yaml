@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./vm.schema.json
+# yaml-language-server: $schema=../vm.schema.json
 template_name: windows11
 hw:
   cpu: 4

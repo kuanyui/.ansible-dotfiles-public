@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""ivm - incus VM launcher engine.
+
+Reads VM templates (`<root>/vm-templates/<name>.yaml`) validated against
+`<root>/vm.schema.json`, and drives incus from the HOST (no ansible/python in
+the guest). Design: roles/incus_vm/REDESIGN.md (esp. section 8) +
+roles/incus_vm/IMPLEMENTATION_PLAN.md.
+
+Phase 0 (this file): arg parsing, `env` (load + schema-validate + print), the
+`--dry-run` plumbing, and stubs for the not-yet-implemented subcommands.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, NoReturn
+
+if TYPE_CHECKING:
+    # Type-only: keep the runtime imports of yaml/jsonschema lazy (inside the
+    # functions) so a missing dep yields a clean message, not an ImportError.
+    from jsonschema.exceptions import ValidationError
+
+# A parsed VM template. Structure is enforced at runtime by jsonschema against
+# `vm.schema.json`, so the values stay `Any` rather than a duplicated TypedDict.
+Template = dict[str, Any]
+
+# Install root: schema at `<root>/vm.schema.json`, templates at
+# `<root>/vm-templates/`. Defaults to the ansible-managed location; override
+# with $IVM_ROOT or --root (used for in-repo testing: --root roles/incus_vm/files).
+DEFAULT_ROOT: Path = Path(
+    os.environ.get("IVM_ROOT", str(Path.home() / ".local/share/ansible-managed/incus-vm"))
+)
+
+# Subcommands that resolve the target VM from the cwd (no template arg). `init`
+# is the only one that takes a <template>. (Phase 0: only `env` is implemented.)
+CWD_RESOLVED: tuple[str, ...] = (
+    "shell", "shell-root", "start", "stop", "delete", "env",
+    "overwrite-dotfiles", "update", "set-root-password", "unset-root-password",
+    "snapshot", "gui",
+)
+
+
+def die(msg: str) -> NoReturn:
+    print(f"ivm: error: {msg}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def load_yaml(path: Path) -> Template:
+    try:
+        import yaml  # PyYAML (ships with ansible-core; role ensures python3-yaml)
+    except ImportError:
+        die("PyYAML not found; install python3-yaml")
+    if not path.is_file():
+        die(f"template not found: {path}")
+    loaded: Any = yaml.safe_load(path.read_text())
+    if not isinstance(loaded, dict):
+        die(f"template is not a mapping: {path}")
+    return loaded
+
+
+def validate_template(doc: Template, root: Path) -> None:
+    """Validate a template dict against vm.schema.json (draft 2020-12)."""
+    try:
+        import jsonschema
+    except ImportError:
+        die("jsonschema not found; install python3-jsonschema")
+    schema_path: Path = root / "vm.schema.json"
+    if not schema_path.is_file():
+        die(f"schema not found: {schema_path}")
+    schema: dict[str, Any] = json.loads(schema_path.read_text())
+    errors: list[ValidationError] = sorted(
+        jsonschema.Draft202012Validator(schema).iter_errors(doc),
+        key=lambda e: list(e.path),
+    )
+    if errors:
+        loc: str = "/".join(str(p) for p in errors[0].path) or "(root)"
+        die(f"template invalid at {loc}: {errors[0].message}")
+
+
+def load_and_validate(template_name: str, root: Path) -> Template:
+    doc: Template = load_yaml(root / "vm-templates" / f"{template_name}.yaml")
+    validate_template(doc, root)
+    return doc
+
+
+def cmd_env(template_name: str, root: Path) -> None:
+    """Load + validate a template and print its resolved configuration."""
+    doc: Template = load_and_validate(template_name, root)
+    os_block: dict[str, Any] = doc.get("os", {})
+    image: dict[str, Any] = os_block.get("image", {})
+    hw: dict[str, Any] = doc.get("hw", {})
+    mounts: list[dict[str, Any]] = doc.get("mounts", [])
+    print(f"template_name : {doc['template_name']}")
+    print(f"os.type       : {os_block.get('type')}")
+    if os_block.get("type") == "linux":
+        print(f"os.distro     : {os_block.get('distro')}")
+    print(f"os.image      : {image.get('source')}:{image.get('uri')}")
+    print(f"hw            : cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}")
+    for m in mounts:
+        ro: str = " (ro)" if m.get("ro") else ""
+        shadow: str = f"  shadow={m['shadow']}" if m.get("shadow") else ""
+        print(f"mount         : {m['host']} -> {m['guest']}{ro}{shadow}")
+    groups: list[str] = doc.get("distro_package_groups", [])
+    packages: list[str] = doc.get("distro_packages", [])
+    if groups:
+        print(f"pkg groups    : {', '.join(groups)}")
+    if packages:
+        print(f"packages      : {', '.join(packages)}")
+
+
+def cmd_stub(subcommand: str) -> NoReturn:
+    die(f"`{subcommand}` is not implemented yet (see IMPLEMENTATION_PLAN.md phases).")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ivm", description="incus VM launcher engine")
+    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
+                        help=f"install root (schema + vm-templates). Default: {DEFAULT_ROOT}")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the incus commands that would run, without executing")
+    parser.add_argument("-y", "--yes", action="store_true",
+                        help="skip confirmation prompts")
+    sub = parser.add_subparsers(dest="subcommand", required=True)
+
+    p_init: argparse.ArgumentParser = sub.add_parser("init", help="create a VM from a template")
+    p_init.add_argument("template", help="template id (file in vm-templates/)")
+    p_init.add_argument("name", nargs="?", help="VM instance name (skips the prompt)")
+
+    for name in CWD_RESOLVED:
+        sp: argparse.ArgumentParser = sub.add_parser(name, help="(cwd-resolved)")
+        if name == "env":
+            # Phase 0: env takes an explicit template until cwd-resolution exists.
+            sp.add_argument("template", help="template id")
+        if name == "snapshot":
+            sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
+    return parser
+
+
+def main() -> None:
+    args: argparse.Namespace = build_parser().parse_args()
+    root: Path = args.root
+    if args.subcommand == "env":
+        cmd_env(args.template, root)
+    else:
+        cmd_stub(args.subcommand)
+
+
+if __name__ == "__main__":
+    main()
