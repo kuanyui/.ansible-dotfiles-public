@@ -130,7 +130,14 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   example, the dedicated section) for `ivm`. Verified: remaining playbooks
   syntax-check, sandbox config instantiates, `make help` clean, zero functional
   refs left (only comments in the `_incus_*` roles, cleaned in Step 2).
-  STILL PENDING (Steps 2-3, can do now): fold-in + layout reorg below.
+  Step 2 DONE: folded `_incus_guest_setup_dotfiles` into
+  `roles/incus_vm/tasks/{stage_dotfiles,_stage_family}.yml` (include_role ->
+  include_tasks; vars renamed `incus_guest_setup_dotfiles_*` -> `incus_vm_dotfiles_*`).
+  KEPT `_incus_host_setup` as a `_` role (large self-contained host-daemon prep
+  w/ own defaults+template; `_` convention allows single-consumer helpers, future
+  incus face role could reuse) - cleaned its dead incus_agents comment refs.
+  Verified: incus_vm syntax-check, sandbox instantiates, mypy.
+  STILL PENDING - Step 3 (layout reorg `ivm/` nesting) below.
   **Same step:** fold the now-single-consumer shared
   roles into `incus_vm` (`_incus_host_setup` -> `tasks/host_setup.yml`,
   `_incus_guest_setup_dotfiles` -> `tasks/`), and replace

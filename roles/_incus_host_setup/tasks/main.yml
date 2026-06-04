@@ -1,7 +1,7 @@
 ---
-# Shared host-level prep for any incus-using face role (`roles/incus_agents`,
-# future `roles/incus_vm`). Included via `include_role:
-# _incus_host_setup` from the caller. Each step is gated on a no-`become`
+# Shared host-level prep for any incus-using face role (currently just
+# `roles/incus_vm`). Included via `include_role: _incus_host_setup` from the
+# caller. Each step is gated on a no-`become`
 # probe, so on a fully-set-up host this whole file becomes a no-op that
 # doesn't even prompt for sudo; only steps that actually need elevation
 # invoke `become`.
@@ -11,7 +11,7 @@
 # intentionally do NOT configure third-party repos here (Zabbly for Ubuntu,
 # COPR for RHEL/Rocky/Alma) - that conflicts with the project's
 # ansible-core-only / no-curl-pipe-sh posture. Escape hatch: each face role
-# exposes its own `*_skip_host_setup` var (e.g. `incus_agents_skip_host_setup:
+# exposes its own `*_skip_host_setup` var (e.g. `incus_vm_skip_host_setup:
 # true`) which gates the caller's `include_role: _incus_host_setup`. The
 # user then provisions `incus` manually.
 
@@ -24,8 +24,8 @@
       official repo (as of 2026-05). Supported: Fedora 43+, Debian trixie+
       (or bookworm-backports), openSUSE Tumbleweed, openSUSE Leap 15.6+.
       To run on an unsupported distro, set the calling role's
-      `*_skip_host_setup` var to true (e.g. `incus_agents_skip_host_setup:
-      true` for `roles/incus_agents`) and provision `incus` manually.
+      `*_skip_host_setup` var to true (e.g. `incus_vm_skip_host_setup: true`)
+      and provision `incus` manually.
   vars:
     _incus_supported_distributions:
       - Fedora
@@ -105,7 +105,7 @@
     msg: |
       `{{ ansible_facts['user_id'] }}` was just added to the `incus-admin` group.
       You MUST log out + back in (or `newgrp incus-admin` in this shell)
-      before `v-<agent>` launchers can talk to the incus daemon. The
+      before `ivm` can talk to the incus daemon. The
       preseed step below runs via `become: true` so this playbook is
       unaffected; only your interactive shell needs the re-login.
   when: _incus_group_add.changed

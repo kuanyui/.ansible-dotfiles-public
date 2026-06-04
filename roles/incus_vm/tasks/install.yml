@@ -73,17 +73,16 @@
       } | to_nice_json }}
 
 # ---------- Stage VM dotfiles (user + root variants, per ansible_os_family) ----------
-# Rendered host-side by the shared `roles/_incus_guest_setup_dotfiles` into
+# Rendered host-side by tasks/stage_dotfiles.yml into
 # `{{ incus_vm_root }}/vm-rootfs/<ansible_os_family>/{home/user,root}`; at init `ivm`
 # pushes the subtree matching the template's `os.distro` -> ansible_os_family (the
 # min-install helper differs: apt-min / zypper-min / dnf-min). We stage every
 # family `ivm` can target so any template's distro has its tree ready.
-- name: Stage VM dotfiles per ansible_os_family via `roles/_incus_guest_setup_dotfiles`
-  ansible.builtin.include_role:
-    name: _incus_guest_setup_dotfiles
+- name: Stage VM dotfiles per ansible_os_family (tasks/stage_dotfiles.yml)
+  ansible.builtin.include_tasks: stage_dotfiles.yml
   vars:
-    incus_guest_setup_dotfiles_root: "{{ incus_vm_root }}"
-    incus_guest_setup_dotfiles_ansible_os_families: [Debian, Suse, RedHat]
+    incus_vm_dotfiles_staging_root: "{{ incus_vm_root }}"
+    incus_vm_dotfiles_ansible_os_families: [Debian, Suse, RedHat]
 
 # ---------- `ivm` shell completion (two levels: subcommand, then template) ----------
 # Auto-discovered by the rc globs (no rc edits): zsh via the

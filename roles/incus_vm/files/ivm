@@ -507,7 +507,7 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path) -> str:
 
 def push_dotfiles_commands(ansible_os_family: str, name: str, root: Path) -> list[list[str]]:
     """Push the host-staged user/root dotfile trees (rendered at apply time by
-    roles/_incus_guest_setup_dotfiles) into the guest. The staging is keyed by
+    roles/incus_vm tasks/stage_dotfiles.yml) into the guest. The staging is keyed by
     ansible_os_family (apt-min vs zypper-min vs dnf-min differ), so pick the subtree
     matching this VM's distro (init: from the template; overwrite-dotfiles: from
     the `user.ivm_ansible_os_family` tag)."""
