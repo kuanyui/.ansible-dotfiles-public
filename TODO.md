@@ -157,6 +157,13 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
 
 ## Notes / future
 
+- [ ] **container_apps -> one engine + declarative templates** (parallel to what
+  `ivm` did to incus_agents). DESIGN written: `roles/container_apps/REDESIGN.md`.
+  Replaces the rendered `c-<tpl>-<rt>` launchers + 454-line `host-cli.sh.j2` +
+  manifest with one Python engine (working name `capp`, TBD); reuses `roles/zsh`
+  for dotfiles (kills `container_templates`'s own zshrc/bashrc.j2); folds
+  `container_templates` into the engine role. Big, separate effort. Also: `git rm
+  --cached roles/container_templates/filter_plugins/__pycache__/*.pyc` (committed cruft).
 - Python launcher rewrite: deferred to the `incus_vm` redesign (see
   `roles/incus_vm/REDESIGN.md`). Trigger = presets / multi-distro /
   Windows. The 11 duplicated subcommands across the two launchers get unified
