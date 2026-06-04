@@ -11,27 +11,6 @@
         that: incus_vm_state in ['present', 'absent']
         fail_msg: "incus_vm_state must be `present` or `absent`, got `{{ incus_vm_state }}`."
 
-    - name: Validate each `incus_vm` entry
-      ansible.builtin.assert:
-        that:
-          - item.name is defined
-          - item.apt_packages is defined
-          - item.apt_packages is sequence
-          # `item.name` becomes a subcommand token in the launcher's dispatch
-          # `case` (templates/v-launcher.sh.j2). Reserved tokens would collide
-          # and shadow the built-in subcommand.
-          - item.name not in ['help', 'env', 'init', 'overwrite-dotfiles', 'start', 'stop', 'shell', 'shell-user', 'shell-root', 'set-root-password', 'unset-root-password', 'gui', 'update', 'snapshot', 'delete']
-        fail_msg: |
-          incus_vm entry `{{ item.name | default('<unnamed>') }}` is malformed.
-          Required: `name` (string) + `apt_packages` (list, may be empty).
-          `name` also must not be a reserved launcher subcommand: help, env, init,
-          overwrite-dotfiles, start, stop, shell, shell-user, shell-root,
-          set-root-password, unset-root-password, gui, update, snapshot, delete.
-          Got: {{ item }}
-      loop: "{{ incus_vm }}"
-      loop_control:
-        label: "{{ item.name | default('<unnamed>') }}"
-
     - name: Run shared host-level prep (apt install incus + guestfs-tools, preseed init, group add) via `roles/_incus_host_setup`
       ansible.builtin.include_role:
         name: _incus_host_setup

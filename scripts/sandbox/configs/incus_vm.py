@@ -1,21 +1,18 @@
 """Sandbox config for `playbooks/incus_vm.yml`.
 
-Verifies the role-level concerns of `roles/incus_vm`: schema asserts
-pass, `v-<workstation>` launchers + completions get rendered to the right
-places, the install manifest is well-formed, and the uninstall path cleans
-them back to the pre-apply baseline.
+Verifies the role-level concerns of `roles/incus_vm`: the `ivm` engine binary,
+`vm.schema.json`, and the example `vm-templates/` get installed to the right
+places, the user/root dotfiles staging is rendered under `vm-rootfs/`, and the
+round-trip uninstall removes the binary + the role subdir back to baseline.
 
-What we deliberately DON'T test here: the launcher's actual VM lifecycle
-(incus launch / virtio-fs share / apt install / SPICE display). Doing that
-inside the sandbox would need nested KVM and a host display server, which
-is brittle and orthogonal to what this sandbox is meant to catch. The
-`incus` binary is stubbed via `dummy_commands/incus`.
+What we deliberately DON'T test here: the `ivm` runtime (incus launch / exec /
+virtio-fs / apt-in-guest), which needs nested KVM and is orthogonal to the
+install path. The `incus` binary is stubbed via `dummy_commands/incus`, and the
+host-level prep (`roles/_incus_host_setup`) is skipped.
 
-Note: with the default empty `incus_vm: []`, this sandbox renders
-zero launchers - the apply still succeeds (no entries means nothing to
-render) and the round-trip uninstall is also a clean no-op. To actually
-exercise the launcher render in the sandbox, override
-`-e incus_vm='[{...}]'` or uncomment examples in defaults.
+`python3-yaml` + `python3-jsonschema` (ivm's host deps) are pre-seeded into the
+sandbox baseline via `extra_packages_apt`, so the role's probe-gated install
+becomes a no-op and the before/after diff only shows files the role wrote.
 """
 
 from __future__ import annotations
@@ -32,11 +29,13 @@ DUMMY_COMMANDS_DIR = SANDBOX_DIR / "dummy_commands"
 
 CONFIG = SandboxConfig(
     name="incus_vm",
-    description="v-<workstation> Incus persistent VM launcher install + manifest + round-trip uninstall (incus binary stubbed; host-level daemon/group setup skipped).",
+    description="ivm engine install (binary + schema + templates + dotfiles staging) + round-trip uninstall (incus binary stubbed; host-level daemon/group setup skipped).",
     playbook=Path("playbooks/incus_vm.yml"),
     dummy_commands=[
         DUMMY_COMMANDS_DIR / "incus",
     ],
+    # ivm's host deps; pre-seeded so the role's probe-gated install is a no-op.
+    extra_packages_apt=["python3-yaml", "python3-jsonschema"],
     # Skip the shared host-level prep done by `roles/_incus_host_setup`
     # (apt install + systemd incus.service + `incus admin init`), none of
     # which work inside a rootless podman container.

@@ -137,11 +137,14 @@ def sanitize_incus_name(raw: str) -> str:
 
 
 def default_instance_name(template_name: str, cwd: Path) -> str:
+    # `ivm-` prefix so ivm-managed VMs are obvious at a glance in `incus list`.
+    # Only the auto-generated default carries it; an explicit `--name` is left
+    # untouched (the canonical "is this ours" check is the user.ivm_init_at_dir tag).
     rel: str = str(cwd)
     home: str = str(Path.home())
     if rel.startswith(home):
         rel = rel[len(home):]
-    return sanitize_incus_name(f"{template_name}-{rel}")
+    return sanitize_incus_name(f"ivm-{template_name}-{rel}")
 
 
 def name_error(name: str, *, dry_run: bool) -> str | None:

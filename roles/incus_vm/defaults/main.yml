@@ -1,115 +1,20 @@
 ---
-# `incus_vm_skip_host_setup`: skip the shared host-level prep done by
-# `roles/_incus_host_setup` (apt install incus + guestfs-tools, daemon
-# enable + start, `incus-admin` group add, `incus admin init --preseed`).
-# Only the user-space launcher render in `install.yml` runs. Used by the
-# sandbox and as an escape hatch for users who manage host-level incus
-# setup themselves. Off by default - normal `make apply-incus-vm`
-# does the host setup.
+# `incus_vm_skip_host_setup`: skip the shared host-level prep
+# (`roles/_incus_host_setup`: apt install incus + guestfs-tools, daemon
+# enable+start, `incus-admin` group add, `incus admin init --preseed`). Only the
+# user-space `ivm` install runs. Used by the sandbox / by users who manage incus
+# themselves. Off by default.
 incus_vm_skip_host_setup: false
 
-# `incus_vm_state` mirrors `container_apps_state` /
-# `incus_apps_state`:
-#   - `present` (default): render launchers, completions, install manifest.
-#   - `absent`: read manifest, remove everything it recorded. Used by
-#     `playbooks/incus_vm_uninstall.yml`.
+# `incus_vm_state`:
+#   - `present` (default): install the `ivm` engine + schema + example
+#     templates + the staged user/root dotfiles.
+#   - `absent`: remove the `ivm` binary + this role's subdir. Does NOT delete
+#     any incus VMs (those are the user's; use `ivm delete` per-VM).
 incus_vm_state: present
 
-# `roles/incus_vm`'s own subdir under the shared
-# `~/.local/share/ansible-managed/` parent (sibling of `incus_agents/` and
-# `container-apps/`). Each role owns its own subdir, so uninstall =
-# `rm -rf {{ incus_vm_root }}` cleanly without touching siblings.
-# Completions auto-discovered by `.zshrc` / `.bashrc` via the
-# `ansible-managed/*/zsh-completions` glob - no per-role rc edit needed.
+# This role's own subdir under `~/.local/share/ansible-managed/` (sibling of
+# `incus-agents/`). Holds `vm.schema.json`, `vm-templates/`, and the `vm-rootfs/`
+# dotfiles staging that `ivm` pushes into guests. Uninstall = `rm -rf` it.
 incus_vm_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus-vm"
 incus_vm_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
-incus_vm_zsh_completion_dir: "{{ incus_vm_root }}/zsh-completions"
-incus_vm_bash_completion_dir: "{{ incus_vm_root }}/bash-completions"
-incus_vm_manifest_path: "{{ incus_vm_root }}/incus-vm.manifest.yml"
-
-# Default resource allocation when an `incus_vm` entry doesn't override.
-# Heavier than `incus_agents` defaults because desktop apps + GUI session
-# expect headroom (qtcreator + g++ alone can peak at ~6 GB during a big build).
-incus_vm_defaults:
-  base_image: images:debian/13
-  cpu: 4
-  memory: 8GiB
-  disk: 30GiB
-
-# Each entry produces ONE `~/.local/bin/v-<name>` launcher backed by ONE
-# persistent Incus VM (named `v-<name>`, no per-project suffix - unlike
-# `roles/incus_agents`'s `v-<agent>-<projectname>`).
-#
-# Schema per entry:
-#   name           (required)   short id; becomes the launcher name `v-<name>`
-#                               and the VM name. Must not collide with any
-#                               `incus_apps[*].name` from `roles/incus_agents`
-#                               (both write `~/.local/bin/v-<name>`).
-#   display_name   (optional)   human-readable label shown in `help` / `env`.
-#                               Defaults to `name` if not set.
-#   base_image     (optional)   override `incus_vm_defaults.base_image`.
-#   cpu / memory / disk (optional) override resource defaults.
-#   gui            (optional)   enable the `gui` subcommand (SPICE display).
-#                               Default false. The launcher still works
-#                               headlessly (shell / update / snapshot) when
-#                               gui is false.
-#   apt_packages   (required)   list of distro packages installed inside the
-#                               VM at first `init`. Can be empty.
-#   mounts         (optional)   list of `{host, target}` virtio-fs shares.
-#                               `host` is a host path (`~` expanded);
-#                               `target` is the VM-side path (typically
-#                               `/workspaces/<something>`).
-#
-# Skeleton: all examples are commented out. Uncomment the ones you want.
-# Notes on `mounts:`:
-#   - Default = none. The VM is fully usable without any host share.
-#   - Examples below use `~/Downloads` because that's a universal, XDG-spec
-#     dir name (every Linux desktop ships it). NOT recommending project
-#     dirs here because those vary per user; add yours in your own override
-#     OR attach post-hoc via `incus config device add` (no role edit,
-#     no VM rebuild - see roles/incus_vm/README.md).
-incus_vm: []
-  # Example: Qt / C++ development environment (no default mount - you'll
-  # want to mount YOUR project dir; do it via `mounts:` here OR post-hoc
-  # `incus config device add v-qtdev proj disk source=$HOME/your/path
-  # path=/workspaces/proj shift=true`)
-  # - name: qtdev
-  #   display_name: "Qt/C++ Dev Environment"
-  #   gui: true
-  #   cpu: 8
-  #   memory: 16GiB
-  #   disk: 50GiB
-  #   apt_packages:
-  #     - qtcreator
-  #     - g++
-  #     - cmake
-  #     - gdb
-  #     - git
-  #     # Minimal DE so `incus console --type=vga` lands you in a usable
-  #     # session. Pick whichever you prefer; LXDE is the lightest.
-  #     - task-lxde-desktop
-  #     - spice-vdagent              # SPICE guest tools (clipboard / resize)
-  #
-  # Example: Telegram desktop in an isolated VM
-  # - name: tg
-  #   display_name: "Telegram Desktop"
-  #   gui: true
-  #   apt_packages:
-  #     - telegram-desktop
-  #     - task-lxde-desktop
-  #     - spice-vdagent
-  #   mounts:
-  #     - host: ~/Downloads
-  #       target: /workspaces/Downloads
-  #
-  # Example: Firefox in an isolated VM
-  # - name: firefox
-  #   display_name: "Firefox Browser (isolated)"
-  #   gui: true
-  #   apt_packages:
-  #     - firefox-esr
-  #     - task-lxde-desktop
-  #     - spice-vdagent
-  #   mounts:
-  #     - host: ~/Downloads
-  #       target: /workspaces/Downloads

@@ -1,76 +1,61 @@
 ---
-# User-space `v-<workstation>` launcher install. Host-level prep (apt incus,
-# `incus admin init`, group add) is shared with `roles/incus_agents` via
-# `roles/_incus_host_setup` and runs separately from `tasks/main.yml`.
+# Install the `ivm` engine (replaces the old per-entry bash launchers). The
+# engine reads VM templates at runtime and drives incus from the HOST; the guest
+# gets no ansible/python. See files/ivm + REDESIGN.md / IMPLEMENTATION_PLAN.md.
+# Host-level prep (apt incus, `incus admin init`, group add) is shared with
+# `roles/incus_agents` via `roles/_incus_host_setup` (run from tasks/main.yml).
 
-- name: Ensure `incus_vm_{bin,zsh_completion,bash_completion}_dir` exist
+- name: Ensure `ivm` host deps (PyYAML + jsonschema) via `roles/_install_distro_packages`
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+  vars:
+    install_distro_packages:
+      Debian:
+        install: [python3-yaml, python3-jsonschema]
+        probe: 'python3 -c "import yaml, jsonschema"'
+      Suse:
+        install: [python3-PyYAML, python3-jsonschema]
+        probe: 'python3 -c "import yaml, jsonschema"'
+      RedHat:
+        install: [python3-pyyaml, python3-jsonschema]
+        probe: 'python3 -c "import yaml, jsonschema"'
+
+- name: Ensure `incus_vm_bin_dir` + `incus_vm_root` exist
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
     mode: "0755"
   loop:
     - "{{ incus_vm_bin_dir }}"
-    - "{{ incus_vm_zsh_completion_dir }}"
-    - "{{ incus_vm_bash_completion_dir }}"
+    - "{{ incus_vm_root }}"
 
-- name: Install launcher script `{{ incus_vm_bin_dir }}/v-<name>`
-  ansible.builtin.template:
-    src: v-launcher.sh.j2
-    dest: "{{ incus_vm_bin_dir }}/v-{{ workstation.name }}"
+- name: Install the `ivm` engine to `{{ incus_vm_bin_dir }}/ivm`
+  ansible.builtin.copy:
+    src: ivm
+    dest: "{{ incus_vm_bin_dir }}/ivm"
     mode: "0755"
-  loop: "{{ incus_vm }}"
-  loop_control:
-    loop_var: workstation
-    label: "v-{{ workstation.name }}"
-  vars:
-    # Merge defaults + entry-level overrides into a single dict the template
-    # can read without `| default(...)` on every field.
-    vm_cfg: "{{ incus_vm_defaults | combine({
-      'base_image': workstation.base_image | default(incus_vm_defaults.base_image),
-      'cpu': workstation.cpu | default(incus_vm_defaults.cpu),
-      'memory': workstation.memory | default(incus_vm_defaults.memory),
-      'disk': workstation.disk | default(incus_vm_defaults.disk),
-    }) }}"
 
-- name: Install zsh completion `{{ incus_vm_zsh_completion_dir }}/_v-<name>`
-  ansible.builtin.template:
-    src: _v-launcher.zsh.j2
-    dest: "{{ incus_vm_zsh_completion_dir }}/_v-{{ workstation.name }}"
+- name: Install the VM definition schema to `{{ incus_vm_root }}/vm.schema.json`
+  ansible.builtin.copy:
+    src: vm.schema.json
+    dest: "{{ incus_vm_root }}/vm.schema.json"
     mode: "0644"
-  loop: "{{ incus_vm }}"
-  loop_control:
-    loop_var: workstation
-    label: "_v-{{ workstation.name }}"
-  vars:
-    launcher_name: "v-{{ workstation.name }}"
 
-- name: Install bash completion `{{ incus_vm_bash_completion_dir }}/v-<name>`
-  ansible.builtin.template:
-    src: _v-launcher.bash.j2
-    dest: "{{ incus_vm_bash_completion_dir }}/v-{{ workstation.name }}"
-    mode: "0644"
-  loop: "{{ incus_vm }}"
-  loop_control:
-    loop_var: workstation
-    label: "v-{{ workstation.name }}"
-  vars:
-    launcher_name: "v-{{ workstation.name }}"
-
-- name: Write install manifest `{{ incus_vm_manifest_path }}`
-  ansible.builtin.template:
-    src: manifest.yml.j2
-    dest: "{{ incus_vm_manifest_path }}"
+- name: Install the example VM templates to `{{ incus_vm_root }}/vm-templates/`
+  ansible.builtin.copy:
+    src: vm-templates/
+    dest: "{{ incus_vm_root }}/vm-templates/"
     mode: "0644"
 
 # ---------- Stage VM dotfiles (user + root variants) ----------
-# Delegated to the shared `roles/_incus_guest_setup_dotfiles` (also used by
-# `roles/incus_agents`); it renders `vm-rootfs/home/user` (is_root=false) and
-# `vm-rootfs/root` (is_root=true) under the passed root, which the launcher's
-# `_push_dotfiles` pushes to /home/user and /root respectively.
-# TODO: when multi-distro VM support lands, parse each entry's `base_image`
-# and render per-family staging dirs (the role hardcodes Debian for now).
+# Rendered host-side by the shared `roles/_incus_guest_setup_dotfiles` into
+# `{{ incus_vm_root }}/vm-rootfs/{home/user,root}`; `ivm` pushes them into the
+# guest at init. Hardcodes Debian for now (multi-distro staging is a later phase).
 - name: Stage VM dotfiles (user + root variants) via `roles/_incus_guest_setup_dotfiles`
   ansible.builtin.include_role:
     name: _incus_guest_setup_dotfiles
   vars:
     incus_guest_setup_dotfiles_root: "{{ incus_vm_root }}"
+
+# NOTE: two-level `ivm` shell completion is a later phase (IMPLEMENTATION_PLAN
+# phase 3); not installed here yet.

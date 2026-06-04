@@ -1,42 +1,15 @@
 ---
-- name: Check whether install manifest `{{ incus_vm_manifest_path }}` exists
-  ansible.builtin.stat:
-    path: "{{ incus_vm_manifest_path }}"
-  register: _incus_vm_manifest_stat
+# Remove the `ivm` engine + this role's subdir. Does NOT delete any incus VMs:
+#   - they are deliberately persistent (snapshots, long-running state);
+#   - bulk-deleting our `v-*` / tagged VMs would be a footgun.
+# To remove a VM: `ivm delete` in its dir, or `incus list` + `incus delete`.
 
-- name: Bail out early if manifest is missing
-  ansible.builtin.meta: end_play
-  when: not _incus_vm_manifest_stat.stat.exists
-
-- name: Slurp install manifest
-  ansible.builtin.slurp:
-    src: "{{ incus_vm_manifest_path }}"
-  register: _incus_vm_manifest_raw
-
-- name: Parse install manifest
-  ansible.builtin.set_fact:
-    _incus_vm_manifest: "{{ _incus_vm_manifest_raw.content | b64decode | from_yaml }}"
-
-- name: Show recorded paths before removal
-  ansible.builtin.debug:
-    var: _incus_vm_manifest
-
-# Note: we do NOT touch the actual Incus VMs created by these launchers.
-# That's the user's responsibility per-VM (`v-<name> rma`), because:
-#   1. Workstation VMs are deliberately persistent (snapshots, long-running
-#      state); blindly nuking them on `unapply` would be a footgun.
-#   2. Bulk-deleting all `v-*` VMs could clobber agents' VMs from
-#      `roles/incus_agents` (same name prefix).
-# To wipe specific VMs: `v-<name> rma` (one) or `incus list ^v- ; incus delete ...`
-# (manual review + delete).
-
-- name: Remove launchers from `~/.local/bin/` (outside `{{ incus_vm_root }}`)
+- name: Remove the `ivm` engine `{{ incus_vm_bin_dir }}/ivm`
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ incus_vm_bin_dir }}/ivm"
     state: absent
-  loop: "{{ _incus_vm_manifest.workstations | map(attribute='launcher_path') | list }}"
 
-- name: Wipe `incus_vm`'s own subdir `{{ _incus_vm_manifest.incus_vm_root | default(incus_vm_root) }}` (completions, VM dotfiles staging, manifest itself; siblings under `ansible-managed/` untouched)
+- name: Wipe `incus_vm`'s subdir `{{ incus_vm_root }}` (schema, templates, dotfiles staging; siblings under `ansible-managed/` untouched)
   ansible.builtin.file:
-    path: "{{ _incus_vm_manifest.incus_vm_root | default(incus_vm_root) }}"
+    path: "{{ incus_vm_root }}"
     state: absent
