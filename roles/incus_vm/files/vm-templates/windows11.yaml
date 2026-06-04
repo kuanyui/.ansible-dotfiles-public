@@ -6,8 +6,6 @@ hw:
   disk: 64G
   secureboot: true
   tpm: true
-  gpu:
-    mode: virtio
 os:
   type: windows
   image:

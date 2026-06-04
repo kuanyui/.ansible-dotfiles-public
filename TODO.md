@@ -96,10 +96,18 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   `gui` (`incus console --type=vga`). Unimplemented launch-config now GUARDED
   (dies loudly, no silent downgrade): `hw.gpu`!=none, `hw.tpm`, `hw.secureboot`=false,
   `hw.nested_virt`, `net.mode`!=nat.
-  REMAINING phase-3: those guarded launch-config items (need verified incus
-  config/device syntax - can't test incus here), parent-dir prompt at init,
-  two-level shell completion (zsh+bash, ansible-installed). Also: the staged
-  `.zshrc` sources zsh plugins from a path that may differ per distro (verify).
+  Launch-config tier DONE too (verified against incus docs + dry-run): init now
+  does `incus create` (stopped) -> attach devices -> `incus start` so non-
+  hotpluggable devices work; `hw.secureboot=false` (--config), `hw.tpm`
+  (vtpm device), `net` macvlan/bridge (eth0 nic, needs `net.parent`),
+  `hw.nested_virt` (host-gated: no incus config, just warns if host kernel
+  nesting looks off). Findings recorded in `roles/incus_vm/docs/incus-hardware-capabilities.md`.
+  SCHEMA fixed to reality: removed `hw.gpu` (incus has no virtio-gpu/virgl - its
+  QEMU is built without virgl; passthrough needs a PCI addr + host VFIO, out of
+  scope) and updated `hw.nested_virt` description. windows11.yaml lost its gpu block.
+  REMAINING phase-3: parent-dir prompt at init, two-level shell completion
+  (zsh+bash, ansible-installed). Also: staged `.zshrc` zsh-plugin source path
+  may differ per distro (verify on real box).
 - [ ] **Phase 4 retire `incus_agents`** - migrate claude/codex to `ivm`; remove
   the old bash launchers. **Same step:** fold the now-single-consumer shared
   roles into `incus_vm` (`_incus_host_setup` -> `tasks/host_setup.yml`,

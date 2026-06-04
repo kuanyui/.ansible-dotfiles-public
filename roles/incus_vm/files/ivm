@@ -10,12 +10,15 @@ Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`stop`/`delete`/
 `update`/`overwrite-dotfiles`/`set-root-password`/`unset-root-password`; `env`.
-Linux on Debian/Suse/RedHat families (apt/zypper/dnf), with mounts (+ `shadow`
-masking), `sys.timezone`/`sys.tmpfs`/`sys.ssh_server`, `snapshot`, `gui`.
-`--dry-run` prints every mutating command instead of running it. Remaining
-later phases, guarded so they fail loudly rather than silently downgrade:
-launch-config (hw.gpu / hw.tpm / hw.secureboot=false / hw.nested_virt / non-nat
-net), parent-dir prompt, shell completion, windows.
+Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
+attach devices (mounts + `shadow` masking, `hw.tpm`, macvlan/bridge `net`) ->
+start -> provision (`sys.timezone`/`sys.tmpfs`/`sys.ssh_server`, packages,
+`post_install_script`) -> push dotfiles. Plus `hw.secureboot=false`, `snapshot`,
+`gui`, and the lifecycle/shell subcommands. `hw.nested_virt` is host-gated (warn
+only). `--dry-run` prints every mutating command instead of running it. GPU
+(virtio/passthrough) is intentionally absent - incus can't do shared virtio-gpu
+3D; see docs/incus-hardware-capabilities.md. Still TODO: parent-dir prompt,
+shell completion, windows tier.
 """
 
 from __future__ import annotations
@@ -270,34 +273,34 @@ def image_ref(os_block: dict[str, Any]) -> str:
     die(f"image source '{source}' not supported yet (phase: iso/virt-builder/windows)")
 
 
-def assert_launch_features_supported(doc: Template) -> None:
-    """Fail loudly on launch-time hardware/network features not implemented yet
-    (incus config/device syntax not verified), so a template that requests them
-    is never silently downgraded. These are the remaining phase-3 launch-config
-    items - see IMPLEMENTATION_PLAN.md."""
-    hw: dict[str, Any] = doc.get("hw", {})
-    if hw.get("nested_virt"):
-        die("hw.nested_virt is not implemented yet (phase 3 launch-config)")
-    if hw.get("secureboot") is False:
-        die("hw.secureboot=false is not implemented yet (phase 3 launch-config); incus VMs default to on")
-    if hw.get("tpm"):
-        die("hw.tpm is not implemented yet (phase 3 launch-config)")
-    gpu_mode: str = hw.get("gpu", {}).get("mode", "none")
-    if gpu_mode != "none":
-        die(f"hw.gpu.mode={gpu_mode} is not implemented yet (phase 3 launch-config)")
-    net_mode: str = doc.get("net", {}).get("mode", "nat")
-    if net_mode != "nat":
-        die(f"net.mode={net_mode} is not implemented yet (phase 3 launch-config); only nat works")
+def warn_if_host_nesting_disabled(doc: Template) -> None:
+    """`hw.nested_virt`: incus VMs expose the host CPU (vmx/svm), so nested KVM
+    needs NO per-VM incus config - only the HOST kernel's nesting enabled. We
+    can't change a host modprobe setting, so just warn if it looks off."""
+    if not doc.get("hw", {}).get("nested_virt"):
+        return
+    for kvm_module in ("kvm_intel", "kvm_amd"):
+        nesting_param: Path = Path(f"/sys/module/{kvm_module}/parameters/nested")
+        if nesting_param.is_file() and nesting_param.read_text().strip() in ("Y", "1"):
+            return
+    print("ivm: warning: hw.nested_virt requested but the host kernel's KVM "
+          "nesting looks disabled; enable it on the HOST (e.g. "
+          "`options kvm_intel nested=1` in /etc/modprobe.d). incus itself needs "
+          "no per-VM setting.", file=sys.stderr)
 
 
-def launch_command(doc: Template, name: str, cwd: Path) -> list[str]:
-    assert_launch_features_supported(doc)
+def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
+    """`incus create` (stopped). We create-then-start (not `incus launch`) so
+    non-hotpluggable devices - tpm, and to be safe the nic - can be attached
+    before first boot (the TPM device has no VM hotplug; see extra_device_commands)."""
     hw: dict[str, Any] = doc.get("hw", {})
-    cmd: list[str] = ["incus", "launch", image_ref(doc["os"]), name, "--vm"]
+    cmd: list[str] = ["incus", "create", image_ref(doc["os"]), name, "--vm"]
     if "cpu" in hw:
         cmd += ["--config", f"limits.cpu={hw['cpu']}"]
     if "memory" in hw:
         cmd += ["--config", f"limits.memory={mem_to_gib(hw['memory'])}"]
+    if hw.get("secureboot") is False:  # incus VM default is on, so only emit to disable
+        cmd += ["--config", "security.secureboot=false"]
     cmd += [
         "--config", "user.ansible-managed=true",
         "--config", "user.ansible-guest-os=linux",
@@ -310,6 +313,25 @@ def launch_command(doc: Template, name: str, cwd: Path) -> list[str]:
     if "disk" in hw:
         cmd += ["--device", f"root,size={mem_to_gib(hw['disk'])}"]
     return cmd
+
+
+def extra_device_commands(doc: Template, name: str) -> list[list[str]]:
+    """Non-mount devices added (to the stopped VM) before first start: a virtual
+    TPM, and a macvlan/bridged NIC overriding the default NAT eth0."""
+    cmds: list[list[str]] = []
+    if doc.get("hw", {}).get("tpm"):
+        cmds.append(["incus", "config", "device", "add", name, "vtpm", "tpm"])
+    net: dict[str, Any] = doc.get("net", {})
+    net_mode: str = net.get("mode", "nat")
+    if net_mode in ("macvlan", "bridge"):
+        parent: str = net.get("parent", "")
+        if not parent:
+            host_thing: str = "NIC" if net_mode == "macvlan" else "bridge"
+            die(f"net.mode={net_mode} requires net.parent (the host {host_thing})")
+        nictype: str = "macvlan" if net_mode == "macvlan" else "bridged"
+        cmds.append(["incus", "config", "device", "add", name, "eth0", "nic",
+                     f"nictype={nictype}", f"parent={parent}"])
+    return cmds
 
 
 def shadow_mask_dir(root: Path) -> Path:
@@ -577,15 +599,19 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     if doc["os"]["type"] != "linux":
         die(f"`init` supports linux only for now; '{template_name}' is os.type={doc['os']['type']}")
     registry: dict[str, Any] = load_package_groups(root)
+    warn_if_host_nesting_disabled(doc)
     name: str = choose_instance_name(template_name, cwd, given_name,
                                      dry_run=dry_run, assume_yes=assume_yes)
     confirm_create(doc, name, cwd, assume_yes=assume_yes, dry_run=dry_run)
-    run(launch_command(doc, name, cwd), dry_run=dry_run)
-    wait_ready(name, dry_run=dry_run)
+    # create stopped, attach all devices, THEN start (so non-hotpluggable
+    # devices like the TPM are present at first boot).
+    run(create_command(doc, name, cwd), dry_run=dry_run)
     if any(mount.get("shadow") for mount in doc.get("mounts", [])):
         ensure_shadow_mask(root, dry_run=dry_run)
-    for mount_cmd in mount_commands(doc, name, cwd, root):
-        run(mount_cmd, dry_run=dry_run)
+    for device_cmd in mount_commands(doc, name, cwd, root) + extra_device_commands(doc, name):
+        run(device_cmd, dry_run=dry_run)
+    run(["incus", "start", name], dry_run=dry_run)
+    wait_ready(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd)], dry_run=dry_run)
     for push_cmd in push_dotfiles_commands(ansible_os_family_of(doc), name, root):
         run(push_cmd, dry_run=dry_run)

@@ -19,22 +19,9 @@
         "cpu": { "type": "integer", "minimum": 1, "description": "vCPU count." },
         "memory": { "type": "string", "pattern": "^[0-9]+G$", "description": "RAM in GiB, written with a `G` suffix (e.g. `8G`); the engine converts to incus `GiB`." },
         "disk": { "type": "string", "pattern": "^[0-9]+G$", "description": "Root disk size in GiB, `G` suffix; the engine converts to incus `GiB`." },
-        "nested_virt": { "type": "boolean", "default": false, "description": "Enable nested virtualization (run KVM inside this VM)." },
+        "nested_virt": { "type": "boolean", "default": false, "description": "Run nested KVM inside this VM. Host-gated, NOT a per-VM incus setting: incus VMs already expose the host CPU (vmx/svm), so this works whenever the HOST kernel has nesting on (`kvm_intel nested=1` / `kvm_amd nested=1`). `ivm` only warns if the host looks disabled - it cannot change the host's modprobe config." },
         "secureboot": { "type": "boolean", "default": true, "description": "UEFI Secure Boot. Required true for Windows 11." },
-        "tpm": { "type": "boolean", "default": false, "description": "Attach a virtual TPM 2.0 device. Required for Windows 11." },
-        "gpu": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "GPU acceleration. Optional.",
-          "properties": {
-            "mode": {
-              "type": "string",
-              "enum": ["none", "virtio", "passthrough"],
-              "default": "none",
-              "description": "`none` = software rendering (SPICE). `virtio` = virtio-gpu with 3D accel (VirGL/Venus) forwarded to the host GPU - SHARED, host keeps using it. `passthrough` = VFIO PCI passthrough - EXCLUSIVE (host loses the device); single-iGPU machines should avoid. (Intel GVT-g vGPU slicing only exists on older Intel gens.)"
-            }
-          }
-        }
+        "tpm": { "type": "boolean", "default": false, "description": "Attach a virtual TPM 2.0 device. Required for Windows 11." }
       }
     },
     "os": {
