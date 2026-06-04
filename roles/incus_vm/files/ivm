@@ -6,8 +6,10 @@ Reads VM templates (`<root>/vm-templates/<name>.yaml`) validated against
 the guest). Design: roles/incus_vm/REDESIGN.md (esp. section 8) +
 roles/incus_vm/IMPLEMENTATION_PLAN.md.
 
-Phase 0 (this file): arg parsing, `env` (load + schema-validate + print), the
-`--dry-run` plumbing, and stubs for the not-yet-implemented subcommands.
+Phase 1: `init` (name prompt -> launch -> mounts -> minimal provision -> push
+dotfiles) and `shell` (cwd-resolved), Debian only. `--dry-run` prints every
+mutating command instead of running it. Other distros / shadow / tmpfs / ssh /
+gpu / net / windows are later phases (guarded where reached).
 """
 
 from __future__ import annotations
@@ -15,7 +17,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shlex
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -28,26 +34,36 @@ if TYPE_CHECKING:
 # `vm.schema.json`, so the values stay `Any` rather than a duplicated TypedDict.
 Template = dict[str, Any]
 
-# Install root: schema at `<root>/vm.schema.json`, templates at
-# `<root>/vm-templates/`. Defaults to the ansible-managed location; override
-# with $IVM_ROOT or --root (used for in-repo testing: --root roles/incus_vm/files).
 DEFAULT_ROOT: Path = Path(
     os.environ.get("IVM_ROOT", str(Path.home() / ".local/share/ansible-managed/incus-vm"))
 )
 
-# Subcommands that resolve the target VM from the cwd (no template arg). `init`
-# is the only one that takes a <template>. (Phase 0: only `env` is implemented.)
 CWD_RESOLVED: tuple[str, ...] = (
-    "shell", "shell-root", "start", "stop", "delete", "env",
+    "shell", "shell-user", "shell-root", "start", "stop", "delete", "env",
     "overwrite-dotfiles", "update", "set-root-password", "unset-root-password",
     "snapshot", "gui",
 )
+
+# Always installed at first provision, regardless of the template's packages.
+BASELINE_PACKAGES: tuple[str, ...] = (
+    "openssh-server", "curl", "git", "ca-certificates", "sudo",
+    "zsh", "zsh-syntax-highlighting", "zsh-autosuggestions", "tmux",
+)
+
+# incus instance name: start alphanumeric, then [a-zA-Z0-9-], max 63 chars.
+INCUS_NAME_RE: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$")
+MAX_NAME_LEN: int = 63
+
+# apt-family distros (phase 1). Others raise until phase 2.
+APT_DISTROS: tuple[str, ...] = ("debian", "ubuntu")
 
 
 def die(msg: str) -> NoReturn:
     print(f"ivm: error: {msg}", file=sys.stderr)
     raise SystemExit(1)
 
+
+# ---------- template loading / validation ----------
 
 def load_yaml(path: Path) -> Template:
     try:
@@ -87,6 +103,241 @@ def load_and_validate(template_name: str, root: Path) -> Template:
     return doc
 
 
+# ---------- command execution (dry-run aware) ----------
+
+def run(cmd: list[str], *, dry_run: bool) -> None:
+    """Run a mutating command, or just print it under --dry-run."""
+    print("+ " + shlex.join(cmd), file=sys.stderr)
+    if not dry_run:
+        subprocess.run(cmd, check=True)
+
+
+def capture(cmd: list[str]) -> str:
+    """Run a read-only command and return stdout (empty on failure)."""
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.stdout if result.returncode == 0 else ""
+
+
+def sh_expand(value: str, cwd: Path) -> str:
+    """Expand a mount `host` value on the HOST, relative to cwd: handles
+    `$(pwd)`, `$(xdg-user-dir ...)`, `$HOME`, `~`, and relative paths. The user
+    authors these in their own template, so shell evaluation is intentional."""
+    out: str = capture(["bash", "-c", f'cd {shlex.quote(str(cwd))} && printf %s {value}'])
+    return out or value
+
+
+# ---------- instance name ----------
+
+def sanitize_incus_name(raw: str) -> str:
+    name: str = re.sub(r"[^a-zA-Z0-9-]+", "-", raw).strip("-")
+    name = re.sub(r"-{2,}", "-", name)
+    if name and not name[0].isalnum():
+        name = name.lstrip("-")
+    return name[:MAX_NAME_LEN]
+
+
+def default_instance_name(template_name: str, cwd: Path) -> str:
+    rel: str = str(cwd)
+    home: str = str(Path.home())
+    if rel.startswith(home):
+        rel = rel[len(home):]
+    return sanitize_incus_name(f"{template_name}-{rel}")
+
+
+def name_error(name: str, *, dry_run: bool) -> str | None:
+    """Return an error message if `name` is unusable, else None."""
+    if not INCUS_NAME_RE.match(name):
+        return f"'{name}' is not a valid incus name ([a-zA-Z0-9-], starts alnum, <=63)"
+    if not dry_run and instance_exists(name):
+        return f"a VM named '{name}' already exists"
+    return None
+
+
+def instance_exists(name: str) -> bool:
+    return subprocess.run(
+        ["incus", "info", name], capture_output=True, text=True
+    ).returncode == 0
+
+
+def choose_instance_name(
+    template_name: str, cwd: Path, given: str | None, *, dry_run: bool, assume_yes: bool
+) -> str:
+    """Pick the VM name: explicit arg, or prompt (default = long path-based),
+    re-prompting on invalid/duplicate. `--yes`/`--dry-run` take the default."""
+    default: str = default_instance_name(template_name, cwd)
+    if given is not None:
+        err: str | None = name_error(given, dry_run=dry_run)
+        if err:
+            die(err)
+        return given
+    if assume_yes or dry_run or not sys.stdin.isatty():
+        if (err := name_error(default, dry_run=dry_run)) and not dry_run:
+            die(f"default name unusable ({err}); pass an explicit name")
+        return default
+    while True:
+        reply: str = input(f"VM name [{default}]: ").strip() or default
+        err = name_error(reply, dry_run=dry_run)
+        if err is None:
+            return reply
+        print(f"  {err}", file=sys.stderr)
+
+
+# ---------- incus command builders ----------
+
+def mem_to_gib(value: str) -> str:
+    """`8G` -> `8GiB` (the template uses G; incus wants GiB)."""
+    return value[:-1] + "GiB" if value.endswith("G") else value
+
+
+def image_ref(os_block: dict[str, Any]) -> str:
+    image: dict[str, Any] = os_block.get("image", {})
+    source: str = image.get("source", "")
+    uri: str = image.get("uri", "")
+    if source == "incus":
+        return f"images:{uri}"
+    die(f"image source '{source}' not supported yet (phase: iso/virt-builder/windows)")
+
+
+def launch_command(doc: Template, name: str, cwd: Path) -> list[str]:
+    hw: dict[str, Any] = doc.get("hw", {})
+    cmd: list[str] = ["incus", "launch", image_ref(doc["os"]), name, "--vm"]
+    if "cpu" in hw:
+        cmd += ["--config", f"limits.cpu={hw['cpu']}"]
+    if "memory" in hw:
+        cmd += ["--config", f"limits.memory={mem_to_gib(hw['memory'])}"]
+    cmd += [
+        "--config", "user.ansible-managed=true",
+        "--config", "user.ansible-guest-os=linux",
+        "--config", f"user.ivm_template={doc['template_name']}",
+        "--config", f"user.ivm_init_at_dir={cwd}",
+    ]
+    if "disk" in hw:
+        cmd += ["--device", f"root,size={mem_to_gib(hw['disk'])}"]
+    return cmd
+
+
+def mount_commands(doc: Template, name: str, cwd: Path) -> list[list[str]]:
+    cmds: list[list[str]] = []
+    for index, mount in enumerate(doc.get("mounts", [])):
+        host: str = sh_expand(mount["host"], cwd)
+        guest: str = sh_expand(mount["guest"], cwd)
+        device: str = f"ivm_mount_{index}"
+        args: list[str] = [
+            "incus", "config", "device", "add", name, device, "disk",
+            f"source={host}", f"path={guest}", "shift=true",
+        ]
+        if mount.get("ro"):
+            args.append("readonly=true")
+        cmds.append(args)
+        # NOTE: `shadow` (mask subpaths) is phase 3.
+    return cmds
+
+
+def provision_script(doc: Template) -> str:
+    """Build the first-provision shell run via `incus exec` (Debian, phase 1)."""
+    distro: str = doc["os"].get("distro", "")
+    if distro not in APT_DISTROS:
+        die(f"provisioning for distro '{distro}' is phase 2 (apt-family only for now)")
+    # dedupe (baseline often overlaps the template's packages), preserve order.
+    packages: list[str] = list(dict.fromkeys(list(BASELINE_PACKAGES) + list(doc.get("distro_packages", []))))
+    # distro_package_groups resolution + post_install_script are phase 2.
+    pkgs: str = " ".join(packages)
+    return (
+        "export DEBIAN_FRONTEND=noninteractive\n"
+        "apt-get update -qq\n"
+        f"apt-get install --yes --no-install-recommends {pkgs}\n"
+        "id user >/dev/null 2>&1 || useradd --create-home --shell /bin/zsh --uid 1000 user\n"
+        "chsh --shell /bin/zsh user\n"
+        "chsh --shell /bin/zsh root\n"
+    )
+
+
+def push_dotfiles_commands(name: str, root: Path) -> list[list[str]]:
+    """Push the host-staged user/root dotfile trees (rendered at apply time by
+    roles/_incus_guest_setup_dotfiles) into the guest."""
+    staging: Path = root / "vm-rootfs"
+    return [
+        ["incus", "file", "push", "--recursive", "--create-dirs",
+         "--uid", "1000", "--gid", "1000", str(staging / "home/user"), f"{name}/home/"],
+        ["incus", "file", "push", "--recursive", "--create-dirs",
+         "--uid", "0", "--gid", "0", str(staging / "root"), f"{name}/"],
+    ]
+
+
+def wait_ready(name: str, *, dry_run: bool) -> None:
+    if dry_run:
+        print(f"+ (wait until `incus exec {name} -- true` succeeds)", file=sys.stderr)
+        return
+    deadline: float = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        if subprocess.run(["incus", "exec", name, "--", "true"],
+                          capture_output=True).returncode == 0:
+            return
+        time.sleep(1)
+    die(f"VM '{name}' did not become ready within 90s")
+
+
+def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
+    """Find the VM whose user.ivm_init_at_dir == cwd."""
+    if dry_run:
+        return "<vm-resolved-from-cwd>"
+    out: str = capture(["incus", "list", "--format", "csv", "--columns", "n,config:user.ivm_init_at_dir"])
+    for line in out.splitlines():
+        vm_name, _, init_dir = line.partition(",")
+        if init_dir == str(cwd):
+            return vm_name
+    die(f"no VM is bound to {cwd}; run `ivm init <template>` here first")
+
+
+# ---------- subcommands ----------
+
+def confirm_create(doc: Template, name: str, cwd: Path, *, assume_yes: bool, dry_run: bool) -> None:
+    hw: dict[str, Any] = doc.get("hw", {})
+    print("", file=sys.stderr)
+    print("About to CREATE a new Incus VM:", file=sys.stderr)
+    print(f"  name:     {name}", file=sys.stderr)
+    print(f"  template: {doc['template_name']}  (cwd: {cwd})", file=sys.stderr)
+    print(f"  image:    {image_ref(doc['os'])}", file=sys.stderr)
+    print(f"  hw:       cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
+    print("", file=sys.stderr)
+    if assume_yes or dry_run:
+        return
+    if not sys.stdin.isatty():
+        die(f"refusing to create {name} without a TTY; pass --yes")
+    if input("Create this VM? [y/N] ").strip().lower() not in ("y", "yes"):
+        die("aborted; no VM created")
+
+
+def cmd_init(template_name: str, given_name: str | None, root: Path, *,
+             assume_yes: bool, dry_run: bool) -> None:
+    cwd: Path = Path.cwd()
+    doc: Template = load_and_validate(template_name, root)
+    if doc["os"]["type"] != "linux":
+        die(f"`init` supports linux only for now; '{template_name}' is os.type={doc['os']['type']}")
+    name: str = choose_instance_name(template_name, cwd, given_name,
+                                     dry_run=dry_run, assume_yes=assume_yes)
+    confirm_create(doc, name, cwd, assume_yes=assume_yes, dry_run=dry_run)
+    run(launch_command(doc, name, cwd), dry_run=dry_run)
+    wait_ready(name, dry_run=dry_run)
+    for mount_cmd in mount_commands(doc, name, cwd):
+        run(mount_cmd, dry_run=dry_run)
+    run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc)], dry_run=dry_run)
+    for push_cmd in push_dotfiles_commands(name, root):
+        run(push_cmd, dry_run=dry_run)
+    print(f"==> {name} ready. Enter with: ivm shell", file=sys.stderr)
+
+
+def cmd_shell(root: Path, *, as_root: bool, dry_run: bool) -> None:
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    if as_root:
+        cmd: list[str] = ["incus", "exec", "--env", "HOME=/root", "--env", "USER=root",
+                          name, "--", "zsh"]
+    else:
+        cmd = ["incus", "exec", "--user", "1000", "--group", "1000",
+               "--env", "HOME=/home/user", "--env", "USER=user", name, "--", "zsh"]
+    run(cmd, dry_run=dry_run)
+
+
 def cmd_env(template_name: str, root: Path) -> None:
     """Load + validate a template and print its resolved configuration."""
     doc: Template = load_and_validate(template_name, root)
@@ -116,14 +367,16 @@ def cmd_stub(subcommand: str) -> NoReturn:
     die(f"`{subcommand}` is not implemented yet (see IMPLEMENTATION_PLAN.md phases).")
 
 
+# ---------- CLI ----------
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ivm", description="incus VM launcher engine")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
-                        help=f"install root (schema + vm-templates). Default: {DEFAULT_ROOT}")
+                        help=f"install root (schema + vm-templates + vm-rootfs). Default: {DEFAULT_ROOT}")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the incus commands that would run, without executing")
     parser.add_argument("-y", "--yes", action="store_true",
-                        help="skip confirmation prompts")
+                        help="skip confirmation prompts / name prompt (use the default name)")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
     p_init: argparse.ArgumentParser = sub.add_parser("init", help="create a VM from a template")
@@ -133,7 +386,6 @@ def build_parser() -> argparse.ArgumentParser:
     for name in CWD_RESOLVED:
         sp: argparse.ArgumentParser = sub.add_parser(name, help="(cwd-resolved)")
         if name == "env":
-            # Phase 0: env takes an explicit template until cwd-resolution exists.
             sp.add_argument("template", help="template id")
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
@@ -143,8 +395,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args: argparse.Namespace = build_parser().parse_args()
     root: Path = args.root
-    if args.subcommand == "env":
+    if args.subcommand == "init":
+        cmd_init(args.template, args.name, root, assume_yes=args.yes, dry_run=args.dry_run)
+    elif args.subcommand == "env":
         cmd_env(args.template, root)
+    elif args.subcommand in ("shell", "shell-user"):
+        cmd_shell(root, as_root=False, dry_run=args.dry_run)
+    elif args.subcommand == "shell-root":
+        cmd_shell(root, as_root=True, dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 
