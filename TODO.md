@@ -89,9 +89,17 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   confirm `openssh` (not `openssh-server`) is right for openSUSE sshd. Related:
   the staged `.zshrc` sources the zsh plugins from a path that may differ per
   distro - installing the package is necessary but maybe not sufficient.
-- [ ] **Phase 3 extras** - shadow mounts, `sys.tmpfs`, `ssh_server`, `hw.gpu`
-  virtio, `net` macvlan/bridge, snapshot CLI, gui (SPICE), parent-dir prompt,
-  two-level completion.
+- [~] **Phase 3 extras** - DONE (static-verified: mypy --strict + dry-run for
+  shadow/tmpfs/ssh/snapshot/gui): `mounts[].shadow` (empty-mask overlay),
+  `sys.timezone` (host or literal), `sys.tmpfs` (mount + fstab), `sys.ssh_server`
+  (sshd drop-in + authorized_keys + enable), `snapshot` (cwd-resolved passthrough),
+  `gui` (`incus console --type=vga`). Unimplemented launch-config now GUARDED
+  (dies loudly, no silent downgrade): `hw.gpu`!=none, `hw.tpm`, `hw.secureboot`=false,
+  `hw.nested_virt`, `net.mode`!=nat.
+  REMAINING phase-3: those guarded launch-config items (need verified incus
+  config/device syntax - can't test incus here), parent-dir prompt at init,
+  two-level shell completion (zsh+bash, ansible-installed). Also: the staged
+  `.zshrc` sources zsh plugins from a path that may differ per distro (verify).
 - [ ] **Phase 4 retire `incus_agents`** - migrate claude/codex to `ivm`; remove
   the old bash launchers. **Same step:** fold the now-single-consumer shared
   roles into `incus_vm` (`_incus_host_setup` -> `tasks/host_setup.yml`,

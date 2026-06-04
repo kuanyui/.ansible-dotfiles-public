@@ -10,9 +10,12 @@ Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`stop`/`delete`/
 `update`/`overwrite-dotfiles`/`set-root-password`/`unset-root-password`; `env`.
-Linux on Debian/Suse/RedHat families (apt/zypper/dnf). `--dry-run` prints every
-mutating command instead of running it. shadow mounts / tmpfs / ssh / gpu / net
-/ snapshot / gui / windows are later phases (guarded where reached).
+Linux on Debian/Suse/RedHat families (apt/zypper/dnf), with mounts (+ `shadow`
+masking), `sys.timezone`/`sys.tmpfs`/`sys.ssh_server`, `snapshot`, `gui`.
+`--dry-run` prints every mutating command instead of running it. Remaining
+later phases, guarded so they fail loudly rather than silently downgrade:
+launch-config (hw.gpu / hw.tpm / hw.secureboot=false / hw.nested_virt / non-nat
+net), parent-dir prompt, shell completion, windows.
 """
 
 from __future__ import annotations
@@ -267,7 +270,28 @@ def image_ref(os_block: dict[str, Any]) -> str:
     die(f"image source '{source}' not supported yet (phase: iso/virt-builder/windows)")
 
 
+def assert_launch_features_supported(doc: Template) -> None:
+    """Fail loudly on launch-time hardware/network features not implemented yet
+    (incus config/device syntax not verified), so a template that requests them
+    is never silently downgraded. These are the remaining phase-3 launch-config
+    items - see IMPLEMENTATION_PLAN.md."""
+    hw: dict[str, Any] = doc.get("hw", {})
+    if hw.get("nested_virt"):
+        die("hw.nested_virt is not implemented yet (phase 3 launch-config)")
+    if hw.get("secureboot") is False:
+        die("hw.secureboot=false is not implemented yet (phase 3 launch-config); incus VMs default to on")
+    if hw.get("tpm"):
+        die("hw.tpm is not implemented yet (phase 3 launch-config)")
+    gpu_mode: str = hw.get("gpu", {}).get("mode", "none")
+    if gpu_mode != "none":
+        die(f"hw.gpu.mode={gpu_mode} is not implemented yet (phase 3 launch-config)")
+    net_mode: str = doc.get("net", {}).get("mode", "nat")
+    if net_mode != "nat":
+        die(f"net.mode={net_mode} is not implemented yet (phase 3 launch-config); only nat works")
+
+
 def launch_command(doc: Template, name: str, cwd: Path) -> list[str]:
+    assert_launch_features_supported(doc)
     hw: dict[str, Any] = doc.get("hw", {})
     cmd: list[str] = ["incus", "launch", image_ref(doc["os"]), name, "--vm"]
     if "cpu" in hw:
@@ -288,8 +312,25 @@ def launch_command(doc: Template, name: str, cwd: Path) -> list[str]:
     return cmd
 
 
-def mount_commands(doc: Template, name: str, cwd: Path) -> list[list[str]]:
+def shadow_mask_dir(root: Path) -> Path:
+    """A single empty, read-only host dir mounted over each `shadow` subpath to
+    mask it. Shared across all VMs (it is always empty); lives under the install
+    root so it persists for the VM's lifetime (disk devices reference it)."""
+    return root / "shadow-mask"
+
+
+def ensure_shadow_mask(root: Path, *, dry_run: bool) -> None:
+    """Create the empty mask dir (idempotent) before mounting it over subpaths."""
+    mask: Path = shadow_mask_dir(root)
+    if dry_run:
+        print(f"+ (mkdir -p {mask})", file=sys.stderr)
+        return
+    mask.mkdir(parents=True, exist_ok=True)
+
+
+def mount_commands(doc: Template, name: str, cwd: Path, root: Path) -> list[list[str]]:
     cmds: list[list[str]] = []
+    mask: Path = shadow_mask_dir(root)
     for index, mount in enumerate(doc.get("mounts", [])):
         host: str = sh_expand(mount["host"], cwd)
         guest: str = sh_expand(mount["guest"], cwd)
@@ -301,7 +342,15 @@ def mount_commands(doc: Template, name: str, cwd: Path) -> list[list[str]]:
         if mount.get("ro"):
             args.append("readonly=true")
         cmds.append(args)
-        # NOTE: `shadow` (mask subpaths) is phase 3.
+        # `shadow`: overlay the empty mask dir (read-only) on each subpath so the
+        # guest cannot see the host's real `.git` / `.vscode` / `.env` etc.
+        for shadow_index, subpath in enumerate(mount.get("shadow", [])):
+            masked_guest_path: str = f"{guest.rstrip('/')}/{subpath}"
+            cmds.append([
+                "incus", "config", "device", "add", name,
+                f"{device}_shadow_{shadow_index}", "disk",
+                f"source={mask}", f"path={masked_guest_path}", "readonly=true",
+            ])
     return cmds
 
 
@@ -335,14 +384,91 @@ def update_packages_script(ansible_os_family: str) -> str:
     die(f"no package-manager mapping for ansible_os_family '{ansible_os_family}'")
 
 
-def provision_script(doc: Template, registry: dict[str, Any]) -> str:
+def host_timezone() -> str:
+    """The host's IANA timezone (e.g. `Asia/Taipei`), for `sys.timezone: host`."""
+    return capture(["timedatectl", "show", "--property=Timezone", "--value"]).strip()
+
+
+def timezone_provision(doc: Template) -> str:
+    """`sys.timezone`: `host` (default) copies the host's tz; else the literal."""
+    requested_timezone: str = doc.get("sys", {}).get("timezone", "host")
+    effective_timezone: str = host_timezone() if requested_timezone == "host" else requested_timezone
+    if not effective_timezone:
+        return ""
+    return f"timedatectl set-timezone {shlex.quote(effective_timezone)}\n"
+
+
+def tmpfs_provision(doc: Template) -> str:
+    """`sys.tmpfs`: back each path with tmpfs now + persist it in /etc/fstab."""
+    script: str = ""
+    for guest_tmpfs_path in doc.get("sys", {}).get("tmpfs", []):
+        quoted: str = shlex.quote(guest_tmpfs_path)
+        fstab_line: str = f"tmpfs {guest_tmpfs_path} tmpfs defaults,nosuid,nodev 0 0"
+        script += (
+            f"mkdir -p {quoted}\n"
+            f"mountpoint --quiet {quoted} || mount --types tmpfs tmpfs {quoted}\n"
+            f"grep -qsF {shlex.quote(fstab_line)} /etc/fstab || echo {shlex.quote(fstab_line)} >> /etc/fstab\n"
+        )
+    return script
+
+
+def read_authorized_keys(key_file_paths: list[str], cwd: Path) -> list[str]:
+    """Read each host public-key file (paths shell-expanded like mounts) and
+    return the non-empty key lines."""
+    keys: list[str] = []
+    for raw_path in key_file_paths:
+        key_file: Path = Path(sh_expand(raw_path, cwd))
+        if not key_file.is_file():
+            die(f"sys.ssh_server.authorized_keys: file not found: {key_file}")
+        keys += [line for line in key_file.read_text().splitlines() if line.strip()]
+    return keys
+
+
+def _authorized_keys_install(home: str, owner: str, keys: list[str]) -> str:
+    return (
+        f"install --directory --mode=700 --owner={owner} --group={owner} {home}/.ssh\n"
+        f"cat > {home}/.ssh/authorized_keys <<'IVM_EOF'\n" + "".join(k + "\n" for k in keys) + "IVM_EOF\n"
+        f"chmod 600 {home}/.ssh/authorized_keys\n"
+        f"chown {owner}:{owner} {home}/.ssh/authorized_keys\n"
+    )
+
+
+def ssh_provision(doc: Template, cwd: Path) -> str:
+    """`sys.ssh_server`: in-guest sshd drop-in + authorized_keys. sshd itself is
+    in the baseline (openssh-server / openssh)."""
+    ssh: dict[str, Any] = doc.get("sys", {}).get("ssh_server", {})
+    if not ssh.get("enabled"):
+        return ""
+    permit_root_login: str = "yes" if ssh.get("root_login") else "no"
+    password_authentication: str = "yes" if ssh.get("password_login") else "no"
+    keys: list[str] = read_authorized_keys(ssh.get("authorized_keys", []), cwd)
+    # Drop-in (modern sshd on Debian/openSUSE/Fedora reads sshd_config.d/*.conf).
+    script: str = (
+        "mkdir -p /etc/ssh/sshd_config.d\n"
+        "cat > /etc/ssh/sshd_config.d/ivm.conf <<'IVM_EOF'\n"
+        f"Port {ssh.get('port', 22)}\n"
+        f"PermitRootLogin {permit_root_login}\n"
+        f"PasswordAuthentication {password_authentication}\n"
+        "IVM_EOF\n"
+    )
+    script += _authorized_keys_install("/home/user", "user", keys)
+    if ssh.get("root_login"):
+        script += _authorized_keys_install("/root", "root", keys)
+    # service is `ssh` on Debian, `sshd` on openSUSE/Fedora.
+    script += "systemctl enable --now sshd 2>/dev/null || systemctl enable --now ssh\n"
+    return script
+
+
+def provision_script(doc: Template, registry: dict[str, Any], cwd: Path) -> str:
     """First-provision shell, run as root via `incus exec`: install packages
-    (baseline + groups + flat), create `user`, set both shells to zsh, then run
-    the template's `post_install_script` (also as root - it drops to `user` with
-    `su - user -c '...'` for user-scoped bits)."""
+    (baseline + groups + flat), set timezone + tmpfs, create `user`, set both
+    shells to zsh, configure sshd, then run the template's `post_install_script`
+    (also as root - it drops to `user` with `su - user -c '...'` for user bits)."""
     ansible_os_family: str = ansible_os_family_of(doc)
     packages: list[str] = resolve_packages(doc, registry, ansible_os_family)
     script: str = install_packages_script(ansible_os_family, packages)
+    script += timezone_provision(doc)
+    script += tmpfs_provision(doc)
     # `command -v zsh` not a hardcoded /bin/zsh: zsh lands in /usr/bin on
     # openSUSE/Fedora (usrmerge makes /bin/zsh work too, but don't rely on it).
     script += (
@@ -350,6 +476,7 @@ def provision_script(doc: Template, registry: dict[str, Any]) -> str:
         'usermod --shell "$(command -v zsh)" user\n'
         'usermod --shell "$(command -v zsh)" root\n'
     )
+    script += ssh_provision(doc, cwd)
     post_install_script: str = doc.get("post_install_script", "")
     if post_install_script:
         script += post_install_script if post_install_script.endswith("\n") else post_install_script + "\n"
@@ -455,9 +582,11 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     confirm_create(doc, name, cwd, assume_yes=assume_yes, dry_run=dry_run)
     run(launch_command(doc, name, cwd), dry_run=dry_run)
     wait_ready(name, dry_run=dry_run)
-    for mount_cmd in mount_commands(doc, name, cwd):
+    if any(mount.get("shadow") for mount in doc.get("mounts", [])):
+        ensure_shadow_mask(root, dry_run=dry_run)
+    for mount_cmd in mount_commands(doc, name, cwd, root):
         run(mount_cmd, dry_run=dry_run)
-    run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry)], dry_run=dry_run)
+    run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd)], dry_run=dry_run)
     for push_cmd in push_dotfiles_commands(ansible_os_family_of(doc), name, root):
         run(push_cmd, dry_run=dry_run)
     print(f"==> {name} ready. Enter with: ivm shell", file=sys.stderr)
@@ -576,6 +705,23 @@ def cmd_update(*, dry_run: bool) -> None:
         dry_run=dry_run)
 
 
+def cmd_snapshot(snapshot_args: list[str], *, dry_run: bool) -> None:
+    """Thin wrapper over `incus snapshot`, injecting the cwd-resolved VM as the
+    instance arg: `ivm snapshot [create|list|restore|delete|...] [snapname]` ->
+    `incus snapshot <action> <vm> [snapname]`. No args defaults to `list`."""
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    action: str = snapshot_args[0] if snapshot_args else "list"
+    rest: list[str] = snapshot_args[1:]
+    run(["incus", "snapshot", action, name, *rest], dry_run=dry_run)
+
+
+def cmd_gui(*, dry_run: bool) -> None:
+    """Open a SPICE graphical console (`incus console --type=vga`)."""
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    ensure_up(name, dry_run=dry_run)
+    run(["incus", "console", "--type=vga", name], dry_run=dry_run)
+
+
 def cmd_env(template_name: str, root: Path) -> None:
     """Load + validate a template and print its resolved configuration."""
     doc: Template = load_and_validate(template_name, root)
@@ -593,6 +739,18 @@ def cmd_env(template_name: str, root: Path) -> None:
         ro: str = " (ro)" if m.get("ro") else ""
         shadow: str = f"  shadow={m['shadow']}" if m.get("shadow") else ""
         print(f"mount         : {m['host']} -> {m['guest']}{ro}{shadow}")
+    sys_block: dict[str, Any] = doc.get("sys", {})
+    print(f"timezone      : {sys_block.get('timezone', 'host')}")
+    if sys_block.get("gui"):
+        print("gui           : SPICE (enter with `ivm gui`)")
+    if sys_block.get("tmpfs"):
+        print(f"tmpfs         : {', '.join(sys_block['tmpfs'])}")
+    ssh: dict[str, Any] = sys_block.get("ssh_server", {})
+    if ssh.get("enabled"):
+        print(f"ssh_server    : port={ssh.get('port', 22)} "
+              f"root_login={bool(ssh.get('root_login'))} "
+              f"password_login={bool(ssh.get('password_login'))}")
+    print(f"net           : {doc.get('net', {}).get('mode', 'nat')}")
     groups: list[str] = doc.get("distro_package_groups", [])
     packages: list[str] = doc.get("distro_packages", [])
     if groups:
@@ -659,6 +817,10 @@ def main() -> None:
         cmd_unset_root_password(dry_run=args.dry_run)
     elif args.subcommand == "update":
         cmd_update(dry_run=args.dry_run)
+    elif args.subcommand == "snapshot":
+        cmd_snapshot(args.snapshot_args, dry_run=args.dry_run)
+    elif args.subcommand == "gui":
+        cmd_gui(dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 
