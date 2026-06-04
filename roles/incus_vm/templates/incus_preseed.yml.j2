@@ -5,7 +5,7 @@
 #   - `incusbr0` bridge with auto IPv4/IPv6 so VMs get network out of the box
 #   - default profile attaches `eth0` -> incusbr0 + root disk -> default pool
 #
-# Storage pool: see `roles/_incus_host_setup/defaults/main.yml` for the three
+# Storage pool: see `roles/incus_vm/defaults/main.yml` for the three
 # `incus_storage_pool_{driver,source,size}` vars. `host_vars/<hostname>.yml`
 # is the typical place to override per-machine.
 config: {}

@@ -1,16 +1,12 @@
-# roles/_incus_host_setup
+# Incus host setup (storage pool, network, troubleshooting)
 
-Internal sub-role - shared host-level prep for any incus-using face role (`roles/incus_agents`, `roles/incus_vm`, future ones too). NOT a standalone playbook entry point; called via `include_role: _incus_host_setup` from each face role.
+Host-level incus daemon setup for `roles/incus_vm`, run via `tasks/host_setup.yml` (folded in from the former `_incus_host_setup` role once `incus_vm` became the sole consumer). Gated on `not incus_vm_skip_host_setup`.
 
-This README covers everything that is **independent of which face role you're using**: supported distros, what gets installed on the host, the `default` storage pool config matrix, the openSUSE+snapper btrfs trap, moving incus data around post-install, host-level inspecting / cleanup, and the network / virt-manager FAQs.
+Covers the host-level concerns - independent of any specific VM template: supported distros, what gets installed on the host, the `default` storage pool config matrix, the openSUSE+snapper btrfs trap, moving incus data around post-install, host-level inspecting / cleanup, and the network / virt-manager FAQs. For the launcher itself (templates, `ivm` subcommands), see [`roles/incus_vm/README.md`](../README.md).
 
-Face-role-specific docs:
-- LLM agent VMs (ephemeral, per `(agent, project)`): [`roles/incus_agents/README.md`](../incus_agents/README.md)
-- Persistent purpose VMs (one per use case, GUI-capable, snapshots): [`roles/incus_vm/README.md`](../incus_vm/README.md)
+## What this does on the host
 
-## What this role does on the host
-
-- Asserts host distribution is one of: Fedora 43+ / Debian trixie+ (or bookworm-backports) / openSUSE Tumbleweed / openSUSE Leap 15.6+ (those are the distros that ship `incus` in their official repo). Escape hatch per face role: `<face_role>_skip_host_setup: true`.
+- Asserts host distribution is one of: Fedora 43+ / Debian trixie+ (or bookworm-backports) / openSUSE Tumbleweed / openSUSE Leap 15.6+ (those are the distros that ship `incus` in their official repo). Escape hatch: `incus_vm_skip_host_setup: true`.
 - Installs `incus` package + `guestfs-tools` (provides `virt-builder` for GPG-verified VM disk image fetch).
 - Probes `incus.service`; starts + enables if not active.
 - Adds `$USER` to `incus-admin` group (re-login required for membership to take effect).
@@ -35,7 +31,7 @@ Backend is chosen at first-time `incus admin init`. Changing later needs a manua
 
 ## Snapshots - backend cost matrix
 
-This role does NOT auto-snapshot. Each face role exposes its own snapshot UX (agents: bare `incus snapshot` commands; workstations: launcher's built-in `v-<name> snapshot ...` wrapper). Cost depends purely on backend:
+This does NOT auto-snapshot. `ivm` exposes snapshots via `ivm snapshot create|list|restore|delete`. Cost depends purely on backend:
 
 | Backend | Snapshot cost |
 |---|---|
@@ -170,7 +166,7 @@ sudo systemctl start incus
 ## Inspecting (host-level)
 
 ```sh
-incus list                                  # all VMs across all face roles
+incus list                                  # all VMs
 incus list --columns ns,disk_usage          # disk per VM
 incus image list                            # cached images
 incus storage list                          # pools + backend
@@ -186,7 +182,7 @@ sudo du -sh /var/lib/incus/*                # raw breakdown (CAUTION: undercount
 | All unused images | wait 10 days OR lower `images.remote_cache_expiry` in preseed |
 | Nuke everything | `sudo systemctl stop incus && sudo rm -rf /var/lib/incus/* && sudo systemctl start incus` |
 
-For deleting a specific VM, use the face role's `rma` subcommand: `v-<agent> rma` (agents) or `v-<name> rma` (workstations).
+For deleting a specific VM, use `ivm delete` (from the VM's dir) or `incus delete <vm-name>`.
 
 ## Q&A
 
@@ -221,7 +217,7 @@ Two backend families behave differently on disk:
 
 Placeholders used in the cells below:
 
-- `<vm-name>` - the VM's name. Per [`roles/incus_agents`](../incus_agents/), this is `v-<agent>-<projectname>` (e.g. `v-claude-projfoo`); for [`roles/incus_vm`](../incus_vm/) it's `v-<workstation-name>` (e.g. `v-qtdev`).
+- `<vm-name>` - the VM's name. `ivm` names it `ivm-<template>-<cwd-path>` by default (e.g. `ivm-claude-...`), or whatever you pass to `ivm init <template> <name>`.
 - `<image-fingerprint>` - the SHA256 fingerprint of a cached incus image, ~64 hex chars; for `images:debian/13` it's something like `b8a3e07c1f29...` (the daemon-level cache directory `/var/lib/incus/images/<image-fingerprint>/` stores the corresponding tarball + metadata).
 - `<snap>` - whatever name you passed to `incus snapshot create <vm-name> <snap>`.
 - `<volname>` - the volume name you passed to `incus storage volume import default <iso-file> <volname> --type=iso`.
@@ -326,7 +322,7 @@ Apply to every new VM: edit the `default` profile, or create a separate profile 
 
 ### Clipboard: copying in a VM shell lands in my host clipboard, but pasting into a TUI (Claude Code etc.) fails - what's going on?
 
-`incus exec` (the text shell behind `v-<name> shell`) is just a byte pipe - it has **no** text-shell clipboard feature. What you see is the **terminal emulator** (Konsole / etc.), not incus.
+`incus exec` (the text shell behind `ivm shell`) is just a byte pipe - it has **no** text-shell clipboard feature. What you see is the **terminal emulator** (Konsole / etc.), not incus.
 
 | Direction | Mechanism | Who does it |
 | --- | --- | --- |
@@ -343,6 +339,6 @@ Same behavior over ssh / `tmux` (with `set-clipboard on`) / podman - it is termi
 
 (Primary selection vs clipboard are two separate buffers; if a paste gives stale/wrong text, you grabbed the wrong one - `Shift+Insert` for clipboard, `Shift`+middle-click for the last mouse selection.)
 
-**GUI path is different:** `v-<name> gui` (`incus console --type=vga` + SPICE) gets real host<->guest clipboard sharing from `spice-vdagent` in the guest - that one *is* an agent-level feature, not OSC 52.
+**GUI path is different:** `ivm gui` (`incus console --type=vga` + SPICE) gets real host<->guest clipboard sharing from `spice-vdagent` in the guest - that one *is* an agent-level feature, not OSC 52.
 
 **Security note:** OSC 52 lets any program that can write to your terminal **set** your host clipboard (write direction). Reading is usually blocked by the terminal. To disable it entirely, turn OSC 52 off in the terminal emulator (not in incus); the cost is that the VM app's copy no longer reaches the host clipboard.

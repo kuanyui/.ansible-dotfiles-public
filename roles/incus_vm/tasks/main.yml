@@ -11,9 +11,8 @@
         that: incus_vm_state in ['present', 'absent']
         fail_msg: "incus_vm_state must be `present` or `absent`, got `{{ incus_vm_state }}`."
 
-    - name: Run shared host-level prep (apt install incus + guestfs-tools, preseed init, group add) via `roles/_incus_host_setup`
-      ansible.builtin.include_role:
-        name: _incus_host_setup
+    - name: Run host-level prep (apt install incus + guestfs-tools, preseed init, group add) via tasks/host_setup.yml
+      ansible.builtin.include_tasks: host_setup.yml
       when:
         - incus_vm_state == 'present'
         - not (incus_vm_skip_host_setup | default(false) | bool)

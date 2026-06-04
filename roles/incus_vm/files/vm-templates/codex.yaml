@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=../vm.schema.json
-# Migrated from the `codex` agent in roles/incus_agents (npm `@openai/codex`).
+# Codex agent VM: Node.js + npm `@openai/codex`.
 template_name: codex
 hw:
   cpu: 4

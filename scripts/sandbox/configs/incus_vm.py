@@ -8,7 +8,7 @@ round-trip uninstall removes the binary + the role subdir back to baseline.
 What we deliberately DON'T test here: the `ivm` runtime (incus launch / exec /
 virtio-fs / apt-in-guest), which needs nested KVM and is orthogonal to the
 install path. The `incus` binary is stubbed via `dummy_commands/incus`, and the
-host-level prep (`roles/_incus_host_setup`) is skipped.
+host-level prep (`roles/incus_vm` tasks/host_setup.yml) is skipped.
 
 `python3-yaml` + `python3-jsonschema` (ivm's host deps) are pre-seeded into the
 sandbox baseline via `extra_packages_apt`, so the role's probe-gated install
@@ -36,7 +36,7 @@ CONFIG = SandboxConfig(
     ],
     # ivm's host deps; pre-seeded so the role's probe-gated install is a no-op.
     extra_packages_apt=["python3-yaml", "python3-jsonschema"],
-    # Skip the shared host-level prep done by `roles/_incus_host_setup`
+    # Skip the host-level prep done by `roles/incus_vm` tasks/host_setup.yml
     # (apt install + systemd incus.service + `incus admin init`), none of
     # which work inside a rootless podman container.
     extra_ansible_vars={"incus_vm_skip_host_setup": True},

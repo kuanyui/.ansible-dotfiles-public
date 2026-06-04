@@ -80,12 +80,13 @@ function dotfiles-public-update () {
 {# `override_os_family` is an OPTIONAL caller-provided override of the
    gather-time `ansible_facts['os_family']`. Host-side callers
    (`playbooks/user.yml` etc.) don't set it, so the default kicks in -
-   behavior unchanged. `roles/incus_agents` sets it to `Debian` when
-   staging `.zshrc` for VM consumption, because the VM is always
-   Debian 13 even when the HOST running ansible is openSUSE / Fedora /
-   etc. (without this override, the host's `os_family` would leak into
-   the VM's .zshrc and the Debian-only `apt-min` helper below would
-   silently disappear for non-Debian hosts).
+   behavior unchanged. `roles/incus_vm`'s dotfiles staging
+   (`tasks/_stage_family.yml`) sets it per TARGET family (Debian / Suse /
+   RedHat) when staging `.zshrc` for VM consumption, because the guest's
+   distro may differ from the HOST running ansible (e.g. openSUSE host,
+   Debian guest) - without this override the host's `os_family` would leak
+   into the VM's .zshrc and pick the wrong min-install helper
+   (`apt-min` / `zypper-min` / `dnf-min`).
 #}
 {% set _effective_os_family = override_os_family | default(ansible_facts['os_family']) %}
 {% if _effective_os_family == 'Debian' %}

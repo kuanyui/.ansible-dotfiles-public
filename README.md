@@ -52,7 +52,6 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`podman/`](roles/podman/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |
 | [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
-| [`_incus_host_setup/`](roles/_incus_host_setup/) | Internal sub-role: host-level prep (apt install `incus` + `guestfs-tools`, `incus admin init --preseed`, `incus-admin` group add). Included by `roles/incus_vm`. |
 | [`incus_vm/`](roles/incus_vm/) | Install the `ivm` engine: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
 
@@ -184,24 +183,24 @@ ivm init claude              # create a VM from the `claude` template, bound to 
 ivm shell                    # enter it (zsh); `ivm` from a subdir offers the parent's VM
 ```
 
-`make apply-incus-vm` auto-installs the `incus` package, starts + enables `incus.service`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus-admin` group. Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password. (Host-level prep lives in `roles/_incus_host_setup`.)
+`make apply-incus-vm` auto-installs the `incus` package, starts + enables `incus.service`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus-admin` group. Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password. (Host-level prep is in `roles/incus_vm` `tasks/host_setup.yml`; details in [`roles/incus_vm/docs/incus-host-setup.md`](roles/incus_vm/docs/incus-host-setup.md).)
 
 If your user was just added to `incus-admin`, **log out + back in** (or `newgrp incus-admin` in this shell) before running `ivm` — group membership only refreshes on new login.
 
-Produces `~/.local/bin/v-claude`, `~/.local/bin/v-codex` (plus completions). Subcommands mirror the `c-<tpl>-<runtime>` family:
+Produces `~/.local/bin/ivm` (plus shell completion) + example templates (`claude`, `codex`, ...). You drive it from a project dir:
 
 ```bash
 cd ~/projects/foo
-v-claude init        # launch VM, share $PWD into /workspaces/foo, install claude
-v-claude claude      # run claude inside the VM
-v-claude shell       # zsh into the VM
-v-claude stop        # shut down the VM (state preserved)
-v-claude rma         # rm all: delete the VM and its disk
+ivm init claude      # build a VM from the `claude` template (claude.yaml): shares $PWD into
+                     #   /workspaces/foo, installs Claude Code, bound to this dir
+ivm shell            # zsh into that VM (Claude Code is on PATH inside)
+ivm stop             # shut down the VM (disk state preserved)
+ivm delete           # delete the VM + its disk (asks first)
 ```
 
-VM names are derived from `cwd` exactly like `c-claude-crun` derives container names, so `~/work/foo` and `~/sandbox/foo` get separate VMs. Resource defaults (4 CPU / 4 GiB RAM / 10 GiB disk per VM) are in `roles/incus_agents/defaults/main.yml`. Cold boot is ~10-15 s; subsequent `v-claude claude` reuses the running VM.
+VM names are derived from `cwd` exactly like `c-claude-crun` derives container names, so `~/work/foo` and `~/sandbox/foo` get separate VMs (bound via the `user.ivm_init_at_dir` tag). Resource defaults come from the template's `hw:` block. Cold boot is ~10-15 s; subsequent `ivm shell` reuses the running VM.
 
-### Threat model: where `v-*` is stronger than `c-*-crun` / `c-*-krun`
+### Threat model: where `ivm` VMs are stronger than `c-*-crun` / `c-*-krun`
 
 | Boundary | `c-*-crun` | `c-*-krun` | `v-*` |
 |---|---|---|---|

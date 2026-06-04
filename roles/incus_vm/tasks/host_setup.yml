@@ -1,7 +1,7 @@
 ---
-# Shared host-level prep for any incus-using face role (currently just
-# `roles/incus_vm`). Included via `include_role: _incus_host_setup` from the
-# caller. Each step is gated on a no-`become`
+# Host-level incus daemon prep for `roles/incus_vm`. Included via
+# `include_tasks: host_setup.yml` from tasks/main.yml (gated on
+# `not incus_vm_skip_host_setup`). Each step is gated on a no-`become`
 # probe, so on a fully-set-up host this whole file becomes a no-op that
 # doesn't even prompt for sudo; only steps that actually need elevation
 # invoke `become`.
@@ -10,10 +10,9 @@
 # Only distros that ship `incus` in their OFFICIAL repo are supported. We
 # intentionally do NOT configure third-party repos here (Zabbly for Ubuntu,
 # COPR for RHEL/Rocky/Alma) - that conflicts with the project's
-# ansible-core-only / no-curl-pipe-sh posture. Escape hatch: each face role
-# exposes its own `*_skip_host_setup` var (e.g. `incus_vm_skip_host_setup:
-# true`) which gates the caller's `include_role: _incus_host_setup`. The
-# user then provisions `incus` manually.
+# ansible-core-only / no-curl-pipe-sh posture. Escape hatch:
+# `incus_vm_skip_host_setup: true` gates the `include_tasks: host_setup.yml` in
+# tasks/main.yml. The user then provisions `incus` manually.
 
 - name: Assert host distribution ships `incus` in its official repo (Fedora / Debian / openSUSE)
   ansible.builtin.assert:

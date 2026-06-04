@@ -130,12 +130,15 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   example, the dedicated section) for `ivm`. Verified: remaining playbooks
   syntax-check, sandbox config instantiates, `make help` clean, zero functional
   refs left (only comments in the `_incus_*` roles, cleaned in Step 2).
-  Step 2 DONE: folded `_incus_guest_setup_dotfiles` into
-  `roles/incus_vm/tasks/{stage_dotfiles,_stage_family}.yml` (include_role ->
-  include_tasks; vars renamed `incus_guest_setup_dotfiles_*` -> `incus_vm_dotfiles_*`).
-  KEPT `_incus_host_setup` as a `_` role (large self-contained host-daemon prep
-  w/ own defaults+template; `_` convention allows single-consumer helpers, future
-  incus face role could reuse) - cleaned its dead incus_agents comment refs.
+  Step 2 DONE: folded BOTH `_incus_*` roles into `incus_vm` (discussed: no second
+  incus consumer - ivm is a general engine, new uses are templates not roles;
+  incus containers not worth it vs podman -> docs/incus-vs-podman.md).
+  `_incus_guest_setup_dotfiles` -> `tasks/{stage_dotfiles,_stage_family}.yml`
+  (include_role -> include_tasks; vars `incus_guest_setup_dotfiles_*` -> `incus_vm_dotfiles_*`).
+  `_incus_host_setup` -> `tasks/host_setup.yml` + storage-pool vars into
+  `defaults/main.yml` + `incus_preseed.yml.j2` into `templates/` + its README ->
+  `docs/incus-host-setup.md` (348 lines preserved, refs de-agented). Both role
+  dirs deleted. Fixed all broken links (main README, incus_vm README, preseed).
   Verified: incus_vm syntax-check, sandbox instantiates, mypy.
   STILL PENDING - Step 3 (layout reorg `ivm/` nesting) below.
   **Same step:** fold the now-single-consumer shared

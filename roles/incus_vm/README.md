@@ -5,7 +5,7 @@ Persistent Incus VM launchers, one VM per purpose. For things like Qt/C++ dev en
 Different from [`roles/incus_agents`](../incus_agents/): one persistent VM per *purpose* (not per project), heavier resources, GUI-friendly, snapshot CLI baked in, apt-install happens ONCE at first `init` (not every time).
 
 > [!IMPORTANT]
-> Host-level concerns (which distros are supported, what gets installed on the host, the storage pool config matrix, CoW backends, openSUSE+snapper trap, moving the install tree, NAT vs bridge, virt-manager coexistence, `du` undercounting on loop-file pools) are all in [`roles/_incus_host_setup/README.md`](../_incus_host_setup/README.md). Those apply equally to this role and to `roles/incus_agents`.
+> Host-level concerns (which distros are supported, what gets installed on the host, the storage pool config matrix, CoW backends, openSUSE+snapper trap, moving the install tree, NAT vs bridge, virt-manager coexistence, `du` undercounting on loop-file pools) are all in [`docs/incus-host-setup.md`](docs/incus-host-setup.md).
 >
 > This file covers only what's specific to persistent workstation VMs.
 
@@ -114,7 +114,7 @@ Snapshot cost depends on the storage pool backend (set at first-time `incus admi
 | `dir` (this project's default) | full copy, slow, doubles disk per snapshot |
 | `btrfs` / `zfs` / `lvm-thin` | CoW reference, instant, near-zero space |
 
-If you'll routinely snapshot, switch the pool backend to `btrfs` / `zfs`. See [Configuring the storage pool](../_incus_host_setup/README.md#configuring-the-storage-pool) in `_incus_host_setup` README for the var matrix and how to relocate.
+If you'll routinely snapshot, switch the pool backend to `btrfs` / `zfs`. See [Configuring the storage pool](docs/incus-host-setup.md#configuring-the-storage-pool) for the var matrix and how to relocate.
 
 ## Name collision with `roles/incus_agents`
 
@@ -138,7 +138,7 @@ No automatic cross-role check exists yet (each role has its own manifest).
 | VM disk (incus default) | `/var/lib/incus/storage-pools/default/virtual-machines/v-<name>/root.img` |
 | VM snapshots (incus default) | `/var/lib/incus/storage-pools/default/virtual-machines-snapshots/v-<name>/<snap>/` |
 
-For deeper storage layout (image cache, CoW backends, openSUSE + snapper trap, moving the whole `/var/lib/incus/` tree), see [`roles/_incus_host_setup/README.md`](../_incus_host_setup/README.md). Both face roles share host-level setup via that internal role.
+For deeper storage layout (image cache, CoW backends, openSUSE + snapper trap, moving the whole `/var/lib/incus/` tree), see [`docs/incus-host-setup.md`](docs/incus-host-setup.md).
 
 ## Cleanup
 
