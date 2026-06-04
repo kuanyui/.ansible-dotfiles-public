@@ -19,6 +19,13 @@ audit deny @{HOME}/.dotfiles*/{,**} w,
 audit deny @{HOME}/.ansible*/{,**} w,
 audit deny /etc/ansible/{,**} w,
 
+# Ansible-managed launchers + app/VM data under `~/.local/share/ansible-managed/`:
+# container-apps launchers, and the `ivm` data dir (VM templates whose
+# `post_install_script` runs in the guest at init, the `.zshrc`/`.bashrc` staged
+# for push into guests, shell completions). All execution-triggering if tampered
+# with. The `ivm` binary itself is already covered by the `~/.local/bin/` rule below.
+audit deny @{HOME}/.local/share/ansible-managed/{,**} w,
+
 # Shell init files - bash
 audit deny @{HOME}/.bashrc w,
 audit deny @{HOME}/.bash_profile w,
