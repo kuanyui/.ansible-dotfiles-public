@@ -51,7 +51,7 @@
         "distro": {
           "type": "string",
           "enum": ["debian", "ubuntu", "opensuse", "fedora"],
-          "description": "Specific Linux distro (linux only). The engine derives the package manager (apt/zypper/dnf) and the ansible os_family from it, and uses it as the key to resolve `distro_package_groups` - finer than os_family because debian vs ubuntu package names diverge. os_family is DERIVED, never specified by the user."
+          "description": "Specific Linux distro (linux only). The engine derives BOTH the package manager (apt/zypper/dnf) and the ansible_os_family (Debian/Suse/RedHat) from it. `distro_package_groups` are resolved against ansible_os_family (so debian and ubuntu currently share the Debian package set). ansible_os_family is DERIVED, never specified by the user."
         },
         "image": {
           "type": "object",
@@ -133,7 +133,7 @@
     "distro_package_groups": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Named package bundles defined in `roles/distro_packages/defaults/main.yml` (variable `distro_packages_<name>`), referenced here by the short `<name>`. Resolved for this VM's `os.distro`. (Linux only.)"
+      "description": "Named package bundles defined in `roles/distro_packages/defaults/main.yml` (variable `distro_packages_<name>`), referenced here by the short `<name>`. Resolved against this VM's ansible_os_family (derived from `os.distro`): the bundle's `common` list plus its per-family overlay. (Linux only.)"
     },
     "distro_packages": {
       "type": "array",

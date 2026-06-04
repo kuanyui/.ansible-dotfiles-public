@@ -39,7 +39,6 @@ mounts:
     ro: true
 distro_package_groups:
   - basic_tools
-  - base_dev
 distro_packages:
   - curl
   - git

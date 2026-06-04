@@ -47,18 +47,41 @@
     dest: "{{ incus_vm_root }}/vm-templates/"
     mode: "0644"
 
-# ---------- Stage VM dotfiles (user + root variants, per os_family) ----------
+# ---------- Materialize the distro_packages bundle registry for `ivm` ----------
+# `ivm` runs host-side at `init` time, where ansible (and thus the
+# `distro_packages_*` vars) no longer exist. So snapshot the registry to JSON at
+# apply time; `ivm` reads it to resolve a template's `distro_package_groups` +
+# the always-on `incus_guest_baseline` into a flat per-ansible_os_family package list.
+# Single source of truth stays in `roles/distro_packages/defaults/main.yml`.
+- name: Load the `distro_packages` bundle registry (sibling role's defaults)
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../distro_packages/defaults/main.yml"
+
+- name: Render the bundle registry to `{{ incus_vm_root }}/package-groups.json`
+  ansible.builtin.copy:
+    dest: "{{ incus_vm_root }}/package-groups.json"
+    mode: "0644"
+    content: |
+      {{ {
+        'basic_tools': distro_packages_basic_tools,
+        'sys_tools': distro_packages_sys_tools,
+        'net_tools': distro_packages_net_tools,
+        'wayland_tools': distro_packages_wayland_tools,
+        'incus_guest_baseline': distro_packages_incus_guest_baseline,
+      } | to_nice_json }}
+
+# ---------- Stage VM dotfiles (user + root variants, per ansible_os_family) ----------
 # Rendered host-side by the shared `roles/_incus_guest_setup_dotfiles` into
-# `{{ incus_vm_root }}/vm-rootfs/<os_family>/{home/user,root}`; at init `ivm`
-# pushes the subtree matching the template's `os.distro` -> os_family (the
+# `{{ incus_vm_root }}/vm-rootfs/<ansible_os_family>/{home/user,root}`; at init `ivm`
+# pushes the subtree matching the template's `os.distro` -> ansible_os_family (the
 # min-install helper differs: apt-min / zypper-min / dnf-min). We stage every
 # family `ivm` can target so any template's distro has its tree ready.
-- name: Stage VM dotfiles per os_family via `roles/_incus_guest_setup_dotfiles`
+- name: Stage VM dotfiles per ansible_os_family via `roles/_incus_guest_setup_dotfiles`
   ansible.builtin.include_role:
     name: _incus_guest_setup_dotfiles
   vars:
     incus_guest_setup_dotfiles_root: "{{ incus_vm_root }}"
-    incus_guest_setup_dotfiles_os_families: [Debian, Suse, RedHat]
+    incus_guest_setup_dotfiles_ansible_os_families: [Debian, Suse, RedHat]
 
 # NOTE: two-level `ivm` shell completion is a later phase (IMPLEMENTATION_PLAN
 # phase 3); not installed here yet.

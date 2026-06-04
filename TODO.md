@@ -68,10 +68,27 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   Per-os_family dotfiles staging done (`vm-rootfs/<family>/{home/user,root}`).
   Static-verified (mypy --strict, syntax-check, dry-run); needs real incus host
   + `make sandbox-incus-vm` for end-to-end.
-- [ ] **Phase 2 lifecycle + provision depth** - start/stop/delete/overwrite-
-  dotfiles/update/env; `post_install_script` (root, `su - user`);
-  `distro_package_groups` resolution; openSUSE/Fedora provisioning (distro ->
-  pkg-mgr). NOTE: until this lands, only Debian guests are buildable.
+- [~] **Phase 2 lifecycle + provision depth** - DONE on the engine side
+  (static-verified: mypy --strict, dry-run init/env for Debian + openSUSE):
+  start/stop/delete (y/N confirm) / overwrite-dotfiles / update / env (prints
+  resolved package list) / set-root-password / unset-root-password;
+  `post_install_script` (root, author drops to `su - user`); baseline + groups +
+  flat packages resolved & deduped per ansible_os_family; openSUSE/Fedora via
+  per-family pkg-mgr (apt/zypper/dnf). Baseline is a registry bundle
+  (`distro_packages_incus_guest_baseline`); the registry is materialized to
+  `<root>/package-groups.json` at apply time (ivm has no ansible at runtime).
+  PENDING: re-run `make sandbox-incus-vm` (verify the `to_nice_json` render +
+  per-family staging) and real-incus end-to-end (esp. an openSUSE guest). No
+  Fedora template yet (dnf path written but untested).
+- [ ] **Verify baseline package names per distro on a real box** - the
+  `distro_packages_incus_guest_baseline` per-family overlays were set from web
+  search, not a live `zypper`/`dnf`. CONFIRM on Tumbleweed: are
+  `zsh-syntax-highlighting` / `zsh-autosuggestions` in the DEFAULT OSS repo? (web
+  only found them in the OBS `shells:zsh-users:*` devel project; currently
+  OMITTED from the `suse:` overlay, so openSUSE zsh runs without them). Also
+  confirm `openssh` (not `openssh-server`) is right for openSUSE sshd. Related:
+  the staged `.zshrc` sources the zsh plugins from a path that may differ per
+  distro - installing the package is necessary but maybe not sufficient.
 - [ ] **Phase 3 extras** - shadow mounts, `sys.tmpfs`, `ssh_server`, `hw.gpu`
   virtio, `net` macvlan/bridge, snapshot CLI, gui (SPICE), parent-dir prompt,
   two-level completion.

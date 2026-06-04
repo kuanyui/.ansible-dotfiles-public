@@ -38,3 +38,44 @@ distro_packages_net_tools:
 distro_packages_wayland_tools:
   common:
     - wl-clipboard
+
+# Baseline for an `ivm` guest VM (roles/incus_vm). NOT a host-toggleable bundle
+# like the ones above (no `distro_packages_install_*` switch); it is rendered
+# into `<incus_vm_root>/package-groups.json` and the `ivm` program installs it
+# on EVERY guest at first provision, regardless of the template. It is the
+# floor that makes a VM usable as an ivm guest: zsh (+ plugins) because the
+# pushed dotfiles set zsh as the login shell, `sudo` for the opt-in
+# set-root-password escalation, sshd for ssh, plus the basics.
+#
+# Per-family names are NOT all identical (verified, not assumed):
+#   - `common`: core packages, same name + in default repos on all three
+#     (curl/git/ca-certificates/sudo/zsh/tmux). High confidence; not web-checked
+#     individually as they are universally-present base packages.
+#   - sshd: Debian/Fedora ship `openssh-server`; openSUSE ships sshd in the
+#     single `openssh` package (no `openssh-server` in the default OSS repo).
+#   - zsh-syntax-highlighting / zsh-autosuggestions: in Debian + Fedora default
+#     repos (Fedora confirmed via packages.fedoraproject.org). For openSUSE they
+#     were only found in an OBS devel project (shells:zsh-users:*), NOT confirmed
+#     in the default Tumbleweed OSS repo -> deliberately OMITTED from `suse:`
+#     until verified on a real Tumbleweed box (`zypper search <name>`). Until
+#     then an openSUSE guest's zsh just runs without those two plugins.
+distro_packages_incus_guest_baseline:
+  common:
+    - curl
+    - git
+    - ca-certificates
+    - sudo
+    - zsh
+    - tmux
+  debian:
+    - openssh-server
+    - zsh-syntax-highlighting
+    - zsh-autosuggestions
+  suse:
+    - openssh   # ships sshd; `openssh-server` is not the default-repo name here
+    # zsh-syntax-highlighting / zsh-autosuggestions: see header note (unverified
+    # in default repo; add here once confirmed on Tumbleweed).
+  redhat:
+    - openssh-server
+    - zsh-syntax-highlighting
+    - zsh-autosuggestions

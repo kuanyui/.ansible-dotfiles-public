@@ -6,15 +6,19 @@ Reads VM templates (`<root>/vm-templates/<name>.yaml`) validated against
 the guest). Design: roles/incus_vm/REDESIGN.md (esp. section 8) +
 roles/incus_vm/IMPLEMENTATION_PLAN.md.
 
-Phase 1: `init` (name prompt -> launch -> mounts -> minimal provision -> push
-dotfiles) and `shell` (cwd-resolved), Debian only. `--dry-run` prints every
-mutating command instead of running it. Other distros / shadow / tmpfs / ssh /
-gpu / net / windows are later phases (guarded where reached).
+Implemented: `init` (name prompt -> launch -> mounts -> provision: install
+baseline+groups+packages, create user, run post_install_script -> push
+dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`stop`/`delete`/
+`update`/`overwrite-dotfiles`/`set-root-password`/`unset-root-password`; `env`.
+Linux on Debian/Suse/RedHat families (apt/zypper/dnf). `--dry-run` prints every
+mutating command instead of running it. shadow mounts / tmpfs / ssh / gpu / net
+/ snapshot / gui / windows are later phases (guarded where reached).
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import re
@@ -44,23 +48,22 @@ CWD_RESOLVED: tuple[str, ...] = (
     "snapshot", "gui",
 )
 
-# Always installed at first provision, regardless of the template's packages.
-BASELINE_PACKAGES: tuple[str, ...] = (
-    "openssh-server", "curl", "git", "ca-certificates", "sudo",
-    "zsh", "zsh-syntax-highlighting", "zsh-autosuggestions", "tmux",
-)
+# Installed on EVERY guest at first provision (the ivm-guest floor: zsh + login
+# shell, sudo, ssh, basics). Defined as a bundle in the distro_packages registry
+# (`distro_packages_incus_guest_baseline`) so all package names - including
+# per-family differences - live in one place; resolved from package-groups.json.
+BASELINE_GROUP: str = "incus_guest_baseline"
 
 # incus instance name: start alphanumeric, then [a-zA-Z0-9-], max 63 chars.
 INCUS_NAME_RE: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$")
 MAX_NAME_LEN: int = 63
 
-# apt-family distros (phase 1). Others raise until phase 2.
-APT_DISTROS: tuple[str, ...] = ("debian", "ubuntu")
-
-# Map a template's `os.distro` to the ansible `os_family` that the dotfiles
-# staging is keyed by (roles/_incus_guest_setup_dotfiles renders one tree per
-# family under vm-rootfs/<family>/). The min-install shell helper differs per
-# family: apt-min (Debian) / zypper-min (Suse) / dnf-min (RedHat).
+# Map a template's `os.distro` to the ansible fact `ansible_os_family` (values:
+# Debian/Suse/RedHat - NOT the distro name like `opensuse`). It keys both the
+# dotfiles staging (vm-rootfs/<Debian|Suse|RedHat>/) and the package-group
+# overlays (common + per-family) in package-groups.json. debian/ubuntu share the
+# Debian family today; if ubuntu package names ever diverge from debian, that
+# needs a finer distro-level key, not just ansible_os_family.
 DISTRO_TO_ANSIBLE_OS_FAMILY: dict[str, str] = {
     "debian": "Debian",
     "ubuntu": "Debian",
@@ -68,13 +71,19 @@ DISTRO_TO_ANSIBLE_OS_FAMILY: dict[str, str] = {
     "fedora": "RedHat",
 }
 
+# ansible_os_family -> the lowercase overlay key used inside each bundle in
+# package-groups.json (mirrors roles/distro_packages/defaults/main.yml).
+ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY: dict[str, str] = {
+    "Debian": "debian", "Suse": "suse", "RedHat": "redhat",
+}
 
-def os_family_of(doc: Template) -> str:
+
+def ansible_os_family_of(doc: Template) -> str:
     distro: str = doc["os"].get("distro", "")
     try:
         return DISTRO_TO_ANSIBLE_OS_FAMILY[distro]
     except KeyError:
-        die(f"no dotfiles os_family mapping for distro '{distro}'")
+        die(f"no dotfiles ansible_os_family mapping for distro '{distro}'")
 
 
 def die(msg: str) -> NoReturn:
@@ -120,6 +129,44 @@ def load_and_validate(template_name: str, root: Path) -> Template:
     doc: Template = load_yaml(root / "vm-templates" / f"{template_name}.yaml")
     validate_template(doc, root)
     return doc
+
+
+# ---------- distro_packages bundle registry ----------
+
+def load_package_groups(root: Path) -> dict[str, Any]:
+    """Load package-groups.json (rendered at apply time from the distro_packages
+    registry; see roles/incus_vm/tasks/install.yml)."""
+    path: Path = root / "package-groups.json"
+    if not path.is_file():
+        die(f"package-groups.json not found: {path}; re-run `make apply-incus-vm`")
+    loaded: Any = json.loads(path.read_text())
+    if not isinstance(loaded, dict):
+        die(f"package-groups.json is not a mapping: {path}")
+    return loaded
+
+
+def resolve_group(registry: dict[str, Any], group: str, ansible_os_family: str) -> list[str]:
+    """A bundle resolves to `common + <ansible_os_family overlay>` (same rule as
+    roles/distro_packages/tasks/main.yml, but for one family at a time)."""
+    entry: Any = registry.get(group)
+    if entry is None:
+        die(f"unknown distro_package_group '{group}' "
+            f"(not in package-groups.json; defined ones: {', '.join(sorted(registry))})")
+    overlay_key: str = ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY[ansible_os_family]
+    common: list[str] = list(entry.get("common", []))
+    overlay: list[str] = list(entry.get(overlay_key, []))
+    return common + overlay
+
+
+def resolve_packages(doc: Template, registry: dict[str, Any], ansible_os_family: str) -> list[str]:
+    """Flatten the always-on baseline + the template's groups + its flat
+    `distro_packages` into one install list, deduped (groups overlap the
+    baseline, e.g. git/tmux), order preserved."""
+    packages: list[str] = resolve_group(registry, BASELINE_GROUP, ansible_os_family)
+    for group in doc.get("distro_package_groups", []):
+        packages += resolve_group(registry, group, ansible_os_family)
+    packages += doc.get("distro_packages", [])
+    return list(dict.fromkeys(packages))
 
 
 # ---------- command execution (dry-run aware) ----------
@@ -232,6 +279,9 @@ def launch_command(doc: Template, name: str, cwd: Path) -> list[str]:
         "--config", "user.ansible-guest-os=linux",
         "--config", f"user.ivm_template={doc['template_name']}",
         "--config", f"user.ivm_init_at_dir={cwd}",
+        # Record the dotfiles ansible_os_family so `overwrite-dotfiles` can pick the
+        # right vm-rootfs/<family>/ subtree without re-reading the template.
+        "--config", f"user.ivm_ansible_os_family={ansible_os_family_of(doc)}",
     ]
     if "disk" in hw:
         cmd += ["--device", f"root,size={mem_to_gib(hw['disk'])}"]
@@ -255,31 +305,64 @@ def mount_commands(doc: Template, name: str, cwd: Path) -> list[list[str]]:
     return cmds
 
 
-def provision_script(doc: Template) -> str:
-    """Build the first-provision shell run via `incus exec` (Debian, phase 1)."""
-    distro: str = doc["os"].get("distro", "")
-    if distro not in APT_DISTROS:
-        die(f"provisioning for distro '{distro}' is phase 2 (apt-family only for now)")
-    # dedupe (baseline often overlaps the template's packages), preserve order.
-    packages: list[str] = list(dict.fromkeys(list(BASELINE_PACKAGES) + list(doc.get("distro_packages", []))))
-    # distro_package_groups resolution + post_install_script are phase 2.
+def install_packages_script(ansible_os_family: str, packages: list[str]) -> str:
+    """Per-family install with weak-deps/recommends OFF (the apt-min/zypper-min/
+    dnf-min policy, applied to provisioning)."""
     pkgs: str = " ".join(packages)
-    return (
-        "export DEBIAN_FRONTEND=noninteractive\n"
-        "apt-get update -qq\n"
-        f"apt-get install --yes --no-install-recommends {pkgs}\n"
-        "id user >/dev/null 2>&1 || useradd --create-home --shell /bin/zsh --uid 1000 user\n"
-        "chsh --shell /bin/zsh user\n"
-        "chsh --shell /bin/zsh root\n"
+    if ansible_os_family == "Debian":
+        return ("export DEBIAN_FRONTEND=noninteractive\n"
+                "apt-get update -qq\n"
+                f"apt-get install --yes --no-install-recommends {pkgs}\n")
+    if ansible_os_family == "Suse":
+        return ("zypper --non-interactive refresh\n"
+                f"zypper --non-interactive install --no-recommends {pkgs}\n")
+    if ansible_os_family == "RedHat":
+        return f"dnf install --assumeyes --setopt=install_weak_deps=False {pkgs}\n"
+    die(f"no package-manager mapping for ansible_os_family '{ansible_os_family}'")
+
+
+def update_packages_script(ansible_os_family: str) -> str:
+    """Per-family 'refresh metadata + upgrade all installed packages'."""
+    if ansible_os_family == "Debian":
+        return ("export DEBIAN_FRONTEND=noninteractive\n"
+                "apt-get update -qq\n"
+                "apt-get upgrade --yes\n")
+    if ansible_os_family == "Suse":
+        return ("zypper --non-interactive refresh\n"
+                "zypper --non-interactive update\n")
+    if ansible_os_family == "RedHat":
+        return "dnf upgrade --assumeyes\n"
+    die(f"no package-manager mapping for ansible_os_family '{ansible_os_family}'")
+
+
+def provision_script(doc: Template, registry: dict[str, Any]) -> str:
+    """First-provision shell, run as root via `incus exec`: install packages
+    (baseline + groups + flat), create `user`, set both shells to zsh, then run
+    the template's `post_install_script` (also as root - it drops to `user` with
+    `su - user -c '...'` for user-scoped bits)."""
+    ansible_os_family: str = ansible_os_family_of(doc)
+    packages: list[str] = resolve_packages(doc, registry, ansible_os_family)
+    script: str = install_packages_script(ansible_os_family, packages)
+    # `command -v zsh` not a hardcoded /bin/zsh: zsh lands in /usr/bin on
+    # openSUSE/Fedora (usrmerge makes /bin/zsh work too, but don't rely on it).
+    script += (
+        'id user >/dev/null 2>&1 || useradd --create-home --shell "$(command -v zsh)" --uid 1000 user\n'
+        'usermod --shell "$(command -v zsh)" user\n'
+        'usermod --shell "$(command -v zsh)" root\n'
     )
+    post_install_script: str = doc.get("post_install_script", "")
+    if post_install_script:
+        script += post_install_script if post_install_script.endswith("\n") else post_install_script + "\n"
+    return script
 
 
-def push_dotfiles_commands(doc: Template, name: str, root: Path) -> list[list[str]]:
+def push_dotfiles_commands(ansible_os_family: str, name: str, root: Path) -> list[list[str]]:
     """Push the host-staged user/root dotfile trees (rendered at apply time by
     roles/_incus_guest_setup_dotfiles) into the guest. The staging is keyed by
-    os_family (apt-min vs zypper-min vs dnf-min differ), so pick the subtree
-    matching this template's distro."""
-    staging: Path = root / "vm-rootfs" / os_family_of(doc)
+    ansible_os_family (apt-min vs zypper-min vs dnf-min differ), so pick the subtree
+    matching this VM's distro (init: from the template; overwrite-dotfiles: from
+    the `user.ivm_ansible_os_family` tag)."""
+    staging: Path = root / "vm-rootfs" / ansible_os_family
     return [
         ["incus", "file", "push", "--recursive", "--create-dirs",
          "--uid", "1000", "--gid", "1000", str(staging / "home/user"), f"{name}/home/"],
@@ -313,6 +396,34 @@ def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
     die(f"no VM is bound to {cwd}; run `ivm init <template>` here first")
 
 
+def vm_is_running(name: str) -> bool:
+    return capture(
+        ["incus", "list", name, "--format", "csv", "--columns", "s"]
+    ).strip().lower().startswith("running")
+
+
+def ensure_up(name: str, *, dry_run: bool) -> None:
+    """Start the VM if stopped, then block until it accepts `incus exec`."""
+    if dry_run:
+        print(f"+ (ensure {name} is running)", file=sys.stderr)
+        return
+    if not instance_exists(name):
+        die(f"VM '{name}' does not exist; run `ivm init <template>` here first")
+    if not vm_is_running(name):
+        run(["incus", "start", name], dry_run=dry_run)
+    wait_ready(name, dry_run=dry_run)
+
+
+def vm_ansible_os_family(name: str, *, dry_run: bool) -> str:
+    """Read the `user.ivm_ansible_os_family` tag set at init (picks the dotfiles subtree)."""
+    if dry_run:
+        return "<os-family-from-tag>"
+    family: str = capture(["incus", "config", "get", name, "user.ivm_ansible_os_family"]).strip()
+    if not family:
+        die(f"{name} has no `user.ivm_ansible_os_family` tag; re-create it with `ivm init`")
+    return family
+
+
 # ---------- subcommands ----------
 
 def confirm_create(doc: Template, name: str, cwd: Path, *, assume_yes: bool, dry_run: bool) -> None:
@@ -338,6 +449,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     doc: Template = load_and_validate(template_name, root)
     if doc["os"]["type"] != "linux":
         die(f"`init` supports linux only for now; '{template_name}' is os.type={doc['os']['type']}")
+    registry: dict[str, Any] = load_package_groups(root)
     name: str = choose_instance_name(template_name, cwd, given_name,
                                      dry_run=dry_run, assume_yes=assume_yes)
     confirm_create(doc, name, cwd, assume_yes=assume_yes, dry_run=dry_run)
@@ -345,14 +457,15 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     wait_ready(name, dry_run=dry_run)
     for mount_cmd in mount_commands(doc, name, cwd):
         run(mount_cmd, dry_run=dry_run)
-    run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc)], dry_run=dry_run)
-    for push_cmd in push_dotfiles_commands(doc, name, root):
+    run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry)], dry_run=dry_run)
+    for push_cmd in push_dotfiles_commands(ansible_os_family_of(doc), name, root):
         run(push_cmd, dry_run=dry_run)
     print(f"==> {name} ready. Enter with: ivm shell", file=sys.stderr)
 
 
 def cmd_shell(root: Path, *, as_root: bool, dry_run: bool) -> None:
     name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    ensure_up(name, dry_run=dry_run)
     if as_root:
         cmd: list[str] = ["incus", "exec", "--env", "HOME=/root", "--env", "USER=root",
                           name, "--", "zsh"]
@@ -360,6 +473,107 @@ def cmd_shell(root: Path, *, as_root: bool, dry_run: bool) -> None:
         cmd = ["incus", "exec", "--user", "1000", "--group", "1000",
                "--env", "HOME=/home/user", "--env", "USER=user", name, "--", "zsh"]
     run(cmd, dry_run=dry_run)
+
+
+def cmd_start(*, dry_run: bool) -> None:
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    ensure_up(name, dry_run=dry_run)
+    print(f"==> {name} running.", file=sys.stderr)
+
+
+def cmd_stop(*, dry_run: bool) -> None:
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    if dry_run or vm_is_running(name):
+        run(["incus", "stop", name], dry_run=dry_run)
+    else:
+        print(f"==> {name} already stopped.", file=sys.stderr)
+
+
+def confirm_delete(name: str, *, assume_yes: bool, dry_run: bool) -> None:
+    print("", file=sys.stderr)
+    print("About to PERMANENTLY DELETE this Incus VM (config + disk + snapshots):", file=sys.stderr)
+    print(f"  name:     {name}", file=sys.stderr)
+    print("This cannot be undone.", file=sys.stderr)
+    print("", file=sys.stderr)
+    if assume_yes or dry_run:
+        return
+    if not sys.stdin.isatty():
+        die(f"refusing to delete {name} without a TTY; pass --yes")
+    if input("Delete this VM? [y/N] ").strip().lower() not in ("y", "yes"):
+        die("aborted; VM not deleted")
+
+
+def cmd_delete(*, assume_yes: bool, dry_run: bool) -> None:
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    if not dry_run and not instance_exists(name):
+        print(f"==> {name} does not exist; nothing to delete.", file=sys.stderr)
+        return
+    confirm_delete(name, assume_yes=assume_yes, dry_run=dry_run)
+    run(["incus", "delete", "--force", name], dry_run=dry_run)
+
+
+def cmd_overwrite_dotfiles(root: Path, *, dry_run: bool) -> None:
+    """Re-push the host-staged dotfiles into an existing VM (no re-provision)."""
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    ensure_up(name, dry_run=dry_run)
+    for push_cmd in push_dotfiles_commands(vm_ansible_os_family(name, dry_run=dry_run), name, root):
+        run(push_cmd, dry_run=dry_run)
+    print(f"==> dotfiles re-pushed into {name} (/home/user + /root).", file=sys.stderr)
+
+
+# Opt into IN-GUEST privilege escalation. Default provisioning gives `user` NO
+# sudo; this sets root's password and enables `user` sudo gated by THAT password
+# (`Defaults:user rootpw`), so a `user` process that doesn't know it still can't
+# escalate. The operator's `shell-root` path is host-socket auth, unaffected.
+_SUDOERS_USER: str = "Defaults:user rootpw\nuser ALL=(ALL) ALL\n"
+
+
+def cmd_set_root_password(*, dry_run: bool) -> None:
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    ensure_up(name, dry_run=dry_run)
+    if dry_run:
+        print("+ (prompt for root password, then `incus exec <vm> -- chpasswd` via "
+              "stdin + write /etc/sudoers.d/user)", file=sys.stderr)
+        return
+    root_password: str = getpass.getpass(f"New root password for {name}: ")
+    if not root_password:
+        die("empty password rejected")
+    if root_password != getpass.getpass("Confirm: "):
+        die("passwords do not match")
+    # Password travels via stdin, never argv - so it is not visible in the
+    # guest's process list. `chpasswd` reads `user:password` lines.
+    subprocess.run(["incus", "exec", name, "--", "chpasswd"],
+                   input=f"root:{root_password}\n", text=True, check=True)
+    subprocess.run(
+        ["incus", "exec", name, "--", "bash", "-ec",
+         "cat > /etc/sudoers.d/user <<'EOF'\n" + _SUDOERS_USER + "EOF\n"
+         "chmod 0440 /etc/sudoers.d/user\n"
+         "visudo --check --file=/etc/sudoers.d/user"],
+        check=True)
+    print(f"==> root password set; `user` may now sudo (prompts for the root password).",
+          file=sys.stderr)
+
+
+def cmd_unset_root_password(*, dry_run: bool) -> None:
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    ensure_up(name, dry_run=dry_run)
+    run(["incus", "exec", name, "--", "bash", "-ec",
+         "rm -f /etc/sudoers.d/user\npasswd --lock root >/dev/null"], dry_run=dry_run)
+    print("==> sudoers removed and root password re-locked; back to locked-down default.",
+          file=sys.stderr)
+
+
+def cmd_update(*, dry_run: bool) -> None:
+    """Refresh metadata + upgrade all packages in the VM (per-family pkg-mgr)."""
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    ensure_up(name, dry_run=dry_run)
+    if dry_run:
+        print("+ (incus exec <vm> -- upgrade all packages via the VM's ansible_os_family "
+              "package manager [apt/zypper/dnf])", file=sys.stderr)
+        return
+    ansible_os_family: str = vm_ansible_os_family(name, dry_run=dry_run)
+    run(["incus", "exec", name, "--", "bash", "-ec", update_packages_script(ansible_os_family)],
+        dry_run=dry_run)
 
 
 def cmd_env(template_name: str, root: Path) -> None:
@@ -385,6 +599,10 @@ def cmd_env(template_name: str, root: Path) -> None:
         print(f"pkg groups    : {', '.join(groups)}")
     if packages:
         print(f"packages      : {', '.join(packages)}")
+    if os_block.get("type") == "linux":
+        ansible_os_family: str = ansible_os_family_of(doc)
+        resolved: list[str] = resolve_packages(doc, load_package_groups(root), ansible_os_family)
+        print(f"-> resolved   : ({ansible_os_family}) {' '.join(resolved)}")
 
 
 def cmd_stub(subcommand: str) -> NoReturn:
@@ -427,6 +645,20 @@ def main() -> None:
         cmd_shell(root, as_root=False, dry_run=args.dry_run)
     elif args.subcommand == "shell-root":
         cmd_shell(root, as_root=True, dry_run=args.dry_run)
+    elif args.subcommand == "start":
+        cmd_start(dry_run=args.dry_run)
+    elif args.subcommand == "stop":
+        cmd_stop(dry_run=args.dry_run)
+    elif args.subcommand == "delete":
+        cmd_delete(assume_yes=args.yes, dry_run=args.dry_run)
+    elif args.subcommand == "overwrite-dotfiles":
+        cmd_overwrite_dotfiles(root, dry_run=args.dry_run)
+    elif args.subcommand == "set-root-password":
+        cmd_set_root_password(dry_run=args.dry_run)
+    elif args.subcommand == "unset-root-password":
+        cmd_unset_root_password(dry_run=args.dry_run)
+    elif args.subcommand == "update":
+        cmd_update(dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 
