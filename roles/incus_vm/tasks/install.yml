@@ -2,8 +2,8 @@
 # Install the `ivm` engine (replaces the old per-entry bash launchers). The
 # engine reads VM templates at runtime and drives incus from the HOST; the guest
 # gets no ansible/python. See files/ivm + REDESIGN.md / IMPLEMENTATION_PLAN.md.
-# Host-level prep (apt incus, `incus admin init`, group add) is shared with
-# `roles/incus_agents` via `roles/_incus_host_setup` (run from tasks/main.yml).
+# Host-level prep (apt incus, `incus admin init`, group add) is done by
+# `roles/_incus_host_setup` (run from tasks/main.yml).
 
 - name: Ensure `ivm` host deps (PyYAML + jsonschema) via `roles/_install_distro_packages`
   ansible.builtin.include_role:

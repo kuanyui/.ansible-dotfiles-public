@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus-agents apply-incus-vm apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus-agents check-incus-vm check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus-agents unapply-incus-vm resync-incus-agents-dotfiles incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-agents sandbox-incus-vm sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-runtime apply-container-apps apply-incus-vm apply-apparmor unstow check-user check-root check-all-users check-podman-runtime check-container-apps check-incus-vm check-apparmor unapply-podman-runtime unapply-container-apps unapply-incus-vm incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-vm sandbox-podman-runtime sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -62,34 +62,13 @@ apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local
 unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/container-templates/.ansible-manifest.yml, removes everything it recorded)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps_uninstall.yml
 
-apply-incus-agents:  ## Install v-<agent> Incus VM launchers via `roles/incus_agents` (bypasses `setup_incus_agents` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
-	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_agents.yml
-
-unapply-incus-agents:  ## Uninstall incus agent launchers (reads ~/.local/share/ansible-managed/incus-agents/incus-apps.manifest.yml; leaves any existing VMs alone - delete those manually with `incus delete`)
-	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_agents_uninstall.yml
-
-resync-incus-agents-dotfiles:  ## Re-push staged dotfiles into every existing v-* VM (non-destructive; same `incus file push` the launcher runs at `init`). Assumes `make apply-incus-agents` already re-rendered the staging dir.
+incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all our managed Linux Incus guests. Run `apply-incus-vm` first; this only pushes, does not re-render. (Per-VM alternative: `ivm overwrite-dotfiles`.)
 	@set -e; \
-	STAGING="$$HOME/.local/share/ansible-managed/incus-agents/vm-rootfs/home/user"; \
-	ROOT_STAGING="$$HOME/.local/share/ansible-managed/incus-agents/vm-rootfs/root"; \
-	if [ ! -d "$$STAGING" ] || [ ! -d "$$ROOT_STAGING" ]; then echo "Staging dir not found ($$STAGING / $$ROOT_STAGING) -- run 'make apply-incus-agents' first" >&2; exit 1; fi; \
-	VMS=$$(incus list '^v-' --format csv --columns n); \
-	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
-	for vm in $$VMS; do \
-	    echo "==> Re-pushing dotfiles into $$vm (user + root)"; \
-	    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$$STAGING" "$$vm/home/"; \
-	    incus file push --recursive --create-dirs --uid 0 --gid 0 "$$ROOT_STAGING" "$$vm/"; \
-	done
-
-incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all our Linux `v-*` guests. Run `apply-incus-agents` / `apply-incus-vm` first; this only pushes, does not re-render.
-	@set -e; \
-	AGENTS="$$HOME/.local/share/ansible-managed/incus-agents/vm-rootfs/Debian"; \
 	WORKS="$$HOME/.local/share/ansible-managed/incus-vm/vm-rootfs/Debian"; \
-	if [ -d "$$AGENTS/home/user" ] && [ -d "$$AGENTS/root" ]; then SRC="$$AGENTS"; \
-	elif [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
-	else echo "No staged dotfiles found -- run 'make apply-incus-agents' or 'make apply-incus-vm' first" >&2; exit 1; fi; \
+	if [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
+	else echo "No staged dotfiles found -- run 'make apply-incus-vm' first" >&2; exit 1; fi; \
 	echo "Source (Debian tree; the only buildable guest family today): $$SRC"; \
-	VMS=$$(incus list '^v-' --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
+	VMS=$$(incus list user.ansible-managed=true --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
 	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
 	for vm in $$VMS; do \
 	    os=$$(incus config get "$$vm" user.ansible-guest-os 2>/dev/null || true); \
@@ -127,9 +106,6 @@ check-podman-runtime:  ## Dry-run diff for podman OCI runtime config
 
 check-container-apps:  ## Dry-run diff for container_apps install
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/container_apps.yml
-
-check-incus-agents:  ## Dry-run diff for incus agent launcher install
-	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_agents.yml
 
 check-incus-vm:  ## Dry-run diff for incus workstation launcher install
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_vm.yml
@@ -193,9 +169,6 @@ sandbox-root:  ## Dry-run `apply-root` (distro_packages + zsh + emacs + dotfiles
 
 sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtime> launcher install) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) container_apps
-
-sandbox-incus-agents:  ## Dry-run `apply-incus-agents` (v-<agent> launcher install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
-	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_agents
 
 sandbox-incus-vm:  ## Dry-run `apply-incus-vm` (v-<workstation> launcher install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_vm

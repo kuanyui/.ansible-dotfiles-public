@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=../vm.schema.json
+# Migrated from the `codex` agent in roles/incus_agents (npm `@openai/codex`).
+template_name: codex
+hw:
+  cpu: 4
+  memory: 4G
+  disk: 10G
+os:
+  type: linux
+  distro: debian
+  image:
+    source: incus
+    uri: debian/13
+sys:
+  timezone: host
+net:
+  mode: nat
+mounts:
+  - host: $(pwd)
+    guest: /workspaces/$(basename "$(pwd)")
+    shadow:
+      - .git
+distro_packages:
+  - nodejs
+  - npm
+post_install_script: |
+  su - user -c 'mkdir -p ~/.local/npm_global && npm config set prefix ~/.local/npm_global && npm install -g @openai/codex'

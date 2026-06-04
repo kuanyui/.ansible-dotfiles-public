@@ -114,8 +114,24 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   Note: the staged `.zshrc` sources the zsh plugins via `[ -f ... ]` guards, so a
   distro with a different path (or openSUSE, which omits them) just skips them
   gracefully - non-blocking; Debian/Fedora paths match.
-- [ ] **Phase 4 retire `incus_agents`** - migrate claude/codex to `ivm`; remove
-  the old bash launchers. **Same step:** fold the now-single-consumer shared
+- [~] **Phase 4 retire `incus_agents`** - migrate claude/codex to `ivm`; remove
+  the old bash launchers.
+  PREP DONE (non-destructive): ivm templates now cover both agents incus_agents
+  runs - `claude.yaml` (curl install) + new `codex.yaml` (apt nodejs/npm + `su -
+  user` npm install -g @openai/codex), both schema-validated. So `ivm init
+  claude` / `ivm init codex` are ready.
+  Step 1 DONE (user OK'd destructive; single-host, recoverable): retired
+  `incus_agents` - git rm the role + both playbooks + sandbox config; removed its
+  Makefile targets (apply/check/unapply/sandbox + resync-dotfiles) + .PHONY
+  tokens; dropped its branch from `incus-overwrite-dotfiles-in-all-guest` (now
+  filters guests by `user.ansible-managed` tag, not `^v-` name); removed
+  `setup_incus_agents` from group_vars; removed the incus-agents row from the
+  CLAUDE.md namespace table; rewrote the README (tree, role table, completion
+  example, the dedicated section) for `ivm`. Verified: remaining playbooks
+  syntax-check, sandbox config instantiates, `make help` clean, zero functional
+  refs left (only comments in the `_incus_*` roles, cleaned in Step 2).
+  STILL PENDING (Steps 2-3, can do now): fold-in + layout reorg below.
+  **Same step:** fold the now-single-consumer shared
   roles into `incus_vm` (`_incus_host_setup` -> `tasks/host_setup.yml`,
   `_incus_guest_setup_dotfiles` -> `tasks/`), and replace
   `make incus-overwrite-dotfiles-in-all-guest` with `ivm overwrite-dotfiles`.

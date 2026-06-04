@@ -24,10 +24,8 @@ playbooks/                # entry playbooks
   ├─ podman.yml           # ├─ dedicated entry: configure podman OCI runtime
   ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
   ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
-  ├─ incus_agents.yml     # ├─ dedicated entry: install v-<agent> Incus VM launchers (per project)
-  ├─ incus_agents_uninstall.yml  # ├─ uninstall flow (reads install manifest)
-  ├─ incus_vm.yml         # ├─ dedicated entry: install v-<name> Incus VM launchers (per purpose)
-  ├─ incus_vm_uninstall.yml      # ├─ uninstall flow (reads install manifest)
+  ├─ incus_vm.yml         # ├─ dedicated entry: install the `ivm` Incus VM launcher engine
+  ├─ incus_vm_uninstall.yml      # ├─ uninstall flow (removes the ivm engine + role subdir)
   └─ apparmor.yml         # └─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
@@ -54,9 +52,8 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`podman/`](roles/podman/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |
 | [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
-| [`_incus_host_setup/`](roles/_incus_host_setup/) | Internal sub-role: shared host-level prep (apt install `incus` + `guestfs-tools`, `incus admin init --preseed`, `incus-admin` group add). Included by every face role that drives incus. |
-| [`incus_agents/`](roles/incus_agents/) | Install `v-<agent>` launchers; one Incus KVM VM per `(agent, project)` for stronger isolation than rootless podman. |
-| [`incus_vm/`](roles/incus_vm/) | Install `v-<name>` launchers backed by one persistent Incus VM per purpose (Qt/C++ dev env, browser-in-VM, Telegram-in-VM, ...). GUI via SPICE, snapshot CLI baked in. |
+| [`_incus_host_setup/`](roles/_incus_host_setup/) | Internal sub-role: host-level prep (apt install `incus` + `guestfs-tools`, `incus admin init --preseed`, `incus-admin` group add). Included by `roles/incus_vm`. |
+| [`incus_vm/`](roles/incus_vm/) | Install the `ivm` engine: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
 
 ## Installation
@@ -148,7 +145,7 @@ Add to **`~/.zshrc`**, **before** any `compinit` call (the `fpath` change is onl
 ```zsh
 # Ansible-managed zsh completions. Each managed role drops `_<cmd>` files
 # under its own `~/.local/share/ansible-managed/<role>/zsh-completions/`
-# subdir (`container-apps/zsh-completions/_c-*`, `incus-agents/zsh-completions/_v-*`,
+# subdir (`container-apps/zsh-completions/_c-*`, `incus-vm/zsh-completions/_ivm`,
 # ...); the glob auto-discovers across all roles. `(N)` is null-glob so it's
 # safe even before any role has installed completions.
 fpath=(${HOME}/.local/share/ansible-managed/*/zsh-completions(N) $fpath)
@@ -175,21 +172,21 @@ which _c-claude-crun                           # should resolve to the completio
 c-claude-crun <TAB>                            # should list subcommands with descriptions
 ```
 
-## VM-isolated agent launchers via `roles/incus_agents`
+## VM-isolated launchers via `roles/incus_vm` (the `ivm` engine)
 
-For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/incus_agents` provides parallel `v-<agent>` launchers that spin up a full Incus KVM VM per `(agent, project)`. Each VM is a Debian minimal install with the agent native-installed inside, and the project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, giving a stronger isolation boundary than libkrun's in-process virtio-fs).
+For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/incus_vm` installs `ivm`, a launcher engine that spins up a full Incus KVM VM from a declarative YAML template. The project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, a stronger isolation boundary than libkrun's in-process virtio-fs).
 
-### Install
+You describe the VM once (OS/distro, hardware, mounts, packages, dotfiles, post-install) in a template under `~/.local/share/ansible-managed/incus-vm/vm-templates/<name>.yaml`, then:
 
 ```bash
-make apply-incus-agents
+make apply-incus-vm          # install the ivm engine + example templates
+ivm init claude              # create a VM from the `claude` template, bound to the current dir
+ivm shell                    # enter it (zsh); `ivm` from a subdir offers the parent's VM
 ```
 
-The role auto-installs the `incus` package, starts + enables `incus.service`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus-admin` group. Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password. (Host-level prep lives in `roles/_incus_host_setup` and is shared with any future incus face role.)
+`make apply-incus-vm` auto-installs the `incus` package, starts + enables `incus.service`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus-admin` group. Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password. (Host-level prep lives in `roles/_incus_host_setup`.)
 
-If your user was just added to `incus-admin`, **log out + back in** (or `newgrp incus-admin` in this shell) before running `v-<agent>` — group membership only refreshes on new login.
-
-For storage layout (where image cache / VM disks land, how the base image is reused across N VMs, how to relocate stuff off `/`), see [`roles/incus_agents/README.md`](roles/incus_agents/README.md).
+If your user was just added to `incus-admin`, **log out + back in** (or `newgrp incus-admin` in this shell) before running `ivm` — group membership only refreshes on new login.
 
 Produces `~/.local/bin/v-claude`, `~/.local/bin/v-codex` (plus completions). Subcommands mirror the `c-<tpl>-<runtime>` family:
 

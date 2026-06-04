@@ -13,9 +13,9 @@ incus_vm_skip_host_setup: false
 #     any incus VMs (those are the user's; use `ivm delete` per-VM).
 incus_vm_state: present
 
-# This role's own subdir under `~/.local/share/ansible-managed/` (sibling of
-# `incus-agents/`). Holds `vm.schema.json`, `vm-templates/`, and the `vm-rootfs/`
-# dotfiles staging that `ivm` pushes into guests. Uninstall = `rm -rf` it.
+# This role's own subdir under `~/.local/share/ansible-managed/`. Holds
+# `vm.schema.json`, `vm-templates/`, and the `vm-rootfs/` dotfiles staging that
+# `ivm` pushes into guests. Uninstall = `rm -rf` it.
 incus_vm_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus-vm"
 incus_vm_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
 
