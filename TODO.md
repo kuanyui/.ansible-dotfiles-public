@@ -98,6 +98,12 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   `_incus_guest_setup_dotfiles` -> `tasks/`), and replace
   `make incus-overwrite-dotfiles-in-all-guest` with `ivm overwrite-dotfiles`.
   (Skip the fold-in only if a new incus face role is planned that re-shares them.)
+  Also do the layout reorg here (needs staging to be ivm-only first): nest all
+  ivm data under `incus-vm/ivm/` with prefixes dropped (`ivm/template.schema.json`,
+  `ivm/templates/`, `ivm/rootfs/<family>/`, `ivm/package-groups.json`), point
+  `ivm --root` at `incus-vm/ivm`, keep `zsh-completions/` a sibling at
+  `incus-vm/zsh-completions/`. Interim names (`vm.schema.json` / `vm-templates/`
+  / `vm-rootfs/`) stay at the `incus-vm/` root until then.
 - [ ] **Stale docs** - `roles/incus_vm/README.md` + `make apply/unapply-incus-vm`
   help text still describe the OLD `v-<workstation>` launcher / manifest; rewrite
   for the `ivm` engine.
