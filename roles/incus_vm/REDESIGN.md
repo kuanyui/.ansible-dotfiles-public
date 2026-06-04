@@ -130,8 +130,7 @@ This resolves the cross-distro name divergence (`firefox-esr` vs
 
 ### 4.3 Reuse of `roles/distro_packages` - **DECIDED**
 
-Reuse the *convention* (`{common/debian/suse/redhat}` dict) and the *install
-engine* (`_install_distro_packages`). Do **not** make VM presets be
+Reuse the *convention* (`{common/debian/suse/redhat}` dict) and the *installer* (`_install_distro_packages`). Do **not** make VM presets be
 `roles/distro_packages` itself - that role is too coarse (4 host-tool bundles)
 and boolean-toggled, wrong shape for composable, app-level, per-VM presets. New
 preset registry, standing on the existing install primitive.
@@ -173,12 +172,12 @@ presets: [qtdev, firefox]   # merged (append) with base
 memory: 16GiB               # scalar override
 ```
 
-### 4.6 Engine: single python CLI vs N bash launchers - **LEANING (python)**
+### 4.6 The launcher: single python CLI vs N bash launchers - **LEANING (python)**
 
 Today each VM is a ~450-line bash script, near-identical except baked-in config.
 Adding 3 OS branches + preset composition + a radically different Windows path
 would mean maintaining that branching across N bash copies - bad. A single
-python `incus_vm` engine (one codebase, real data structures, testable,
+python `incus_vm` launcher (one codebase, real data structures, testable,
 type-annotated per CLAUDE.md) is more maintainable. The `v-<name>` ergonomics
 can be preserved with thin generated shims: `v-qtdev` -> `incus_vm --name qtdev`.
 
@@ -219,7 +218,7 @@ Windows *can* use lifecycle; the `.ps1` provisioner comes later.
 
 | Option | Implication |
 | --- | --- |
-| Packages-only | preset registry is pure data (`{debian:[], suse:[]}`); the engine resolves names and installs; **VM needs no ansible**. Simple. |
+| Packages-only | preset registry is pure data (`{debian:[], suse:[]}`); `ivm` resolves names and installs; **VM needs no ansible**. Simple. |
 | Can pull a role | `emacs`/`vscode` presets run `roles/emacs` etc., reproducing emacs.d/config; **requires running ansible inside the VM**. Powerful, heavier. |
 
 This single decision determines:
@@ -255,7 +254,7 @@ Ordered by independence from the open question in section 5.
    names must be updated, or they will be silently ignored.
 
 2. **Document / freeze the Layer 1 vs Layer 2 split** in the current launcher so
-   the boundary is explicit before any engine swap.
+   the boundary is explicit before any launcher swap.
 
 ### Blocked on section 5
 
@@ -282,13 +281,13 @@ Ordered by independence from the open question in section 5.
 | 4.3 | Reuse `_install_distro_packages` + dict convention, new preset registry | DECIDED |
 | 4.4 | YAML source of truth + schema; CLI only as convenience | RECOMMENDED |
 | 4.5 | Per-VM YAML; single-level `extends` vs defaults+presets | OPEN (fleet size) |
-| 4.6 | Single python engine + `v-<name>` shims | LEANING (python) |
+| 4.6 | Single python launcher + `v-<name>` shims | LEANING (python) |
 | 4.7 | OS token -> image + os_family map | OPEN (detail) |
 | 4.8 | Windows = separate provisioner tier, phased later | DECIDED |
 | 5 | preset = packages-only vs can-pull-a-role | **RESOLVED -> packages-only, no ansible in VM (see §8.1)** |
 | 6.1 | Rename `packages` -> `distro_packages` + delegate to `_install_distro_packages` | DONE |
 | - | Final name `incus-vm` vs `incus_vm` | OPEN |
-| 8 | Merge `incus_agents` + `incus_vm` into one engine | LEANING (strong) |
+| 8 | Merge `incus_agents` + `incus_vm` into one launcher | LEANING (strong) |
 | 8.1 | Provision from HOST via `incus exec`; no ansible/python in guest | DECIDED |
 | 8.3 | Three-tier install: package_groups / flat packages / post_install_script | DECIDED |
 | 8.6 | mounts: declarative `cwd` token (no shell `$(...)`), `/workspaces/` guest, frozen at creation | DECIDED |
@@ -297,7 +296,7 @@ Ordered by independence from the open question in section 5.
 
 ## 8. Converged design: unified `incus_vm` (this session)
 
-Direction shift: **merge `incus_agents` + `incus_vm` into one engine.**
+Direction shift: **merge `incus_agents` + `incus_vm` into one launcher.**
 The two roles are ~90% identical (VM lifecycle + provisioning + the two-variant
 dotfiles staging, already shared via `_incus_guest_setup_dotfiles`). The only
 real difference is the VM identity model (per-project cwd vs fixed). "claude"
@@ -312,7 +311,7 @@ separately - the duplication tax of keeping them split.
 
 §5 resolved to **packages-only + post_install hook, NO ansible in the guest.**
 Rationale: embedding ansible-core forces python into every guest, even a minimal
-one the user explicitly wants kept tiny. The host-side engine orchestrates via
+one the user explicitly wants kept tiny. `ivm` (host-side) orchestrates via
 `incus exec`:
 
 - `incus launch` + attach mounts (validate `host` paths exist at init)
@@ -351,7 +350,7 @@ into a reusable group. A single VM's flat `packages:` never needs a matrix.
 - Name: **`package_groups`** (aligns with the repo's existing `distro_packages`
   "groups" vocabulary).
 - Defined centrally in ONE registry file (e.g. `package_groups.yml` beside the
-  VM definitions). VM refs by name; engine expands for the VM's distro.
+  VM definitions). VM refs by name; `ivm` expands for the VM's distro.
 - Keyed by **specific distro** (debian/ubuntu/opensuse/...), NOT just os_family,
   with `common` fallback - because debian vs ubuntu package names diverge.
 - Separate registry from host-level `distro_packages_*_tools` (those are
@@ -370,7 +369,7 @@ base-dev:
 
 - `os.type` = tier `linux | windows` (the two-tier discriminator, schema-enforced).
   `os.distro` = specific Linux distro (debian/ubuntu/opensuse/fedora; linux only);
-  engine derives the package manager + ansible os_family from it. `os.image.
+  `ivm` derives the package manager + ansible os_family from it. `os.image.
   {source,uri}` = where to fetch the disk image. (Renamed from a single vague
   `os.type=<distro>`: `type` is now the tier, `distro` the specific OS.)
 - `sys.gui` (bool for now; x11/wayland is a guest-session detail, deferred).
@@ -398,14 +397,14 @@ base-dev:
 - **VM identity**: DECIDED -> NO field. The VM `name` is the only mechanism, and
   it may use host-side interpolation: a fixed VM is a plain name (`firefox` ->
   `v-firefox`); a per-project VM puts the cwd in the name
-  (`claude-$(basename "$(pwd)")` -> `v-claude-<project>`, different per dir). The
-  engine expands + sanitizes the name at init; the existing init existence-check
+  (`claude-$(basename "$(pwd)")` -> `v-claude-<project>`, different per dir). `ivm`
+  expands + sanitizes the name at init; the existing init existence-check
   reuses-or-creates. (Earlier `scope`/`per_project` field dropped - redundant.)
 - **`ivm` entry form**: DECIDED -> single dispatcher `ivm <name> <cmd>` (one
   binary, no `ivm-*` shim clutter; `ivm <TAB>` completes VM names, `ivm <name>
   <TAB>` completes subcommands). Per-name shims rejected.
 - Role rename `incus_vm` -> `incus_vm`: DECIDED; the actual file rename
-  deferred until the engine is built (the old bash role is being replaced).
+  deferred until `ivm` is built (the old bash role is being replaced).
 - `sys.ssh_server` use = external / IDE-remote access: CONFIRMED.
 
 ### 8.8 Field-level decisions finalized after §8 (canonical: `redesign/` files)
@@ -420,7 +419,7 @@ base-dev:
   / `runuser`. One root hook supports root->user->root interleaving (user bits
   are momentary subprocesses), so there is NO separate user/root hook pair.
   Linux only; shown in the init preview.
-- **`hw`**: `memory`/`disk` as `8G`/`30G` (engine -> incus `GiB`); `nested_virt`;
+- **`hw`**: `memory`/`disk` as `8G`/`30G` (`ivm` -> incus `GiB`); `nested_virt`;
   `secureboot` (default true); `tpm` (Win11); `gpu.mode` =
   `none` / `virtio` (shared 3D accel via VirGL/Venus) / `passthrough` (VFIO, exclusive).
 - **`net.mode`** = `nat` (default, zero host setup) / `macvlan` (LAN IP, no host
@@ -448,7 +447,7 @@ instance name is chosen interactively at init (below), NOT from `template_name`.
   `<template>-<full-cwd-path>` style (slashes -> `-`); the user trims/edits it.
   Re-prompt if too long (incus name / socket-path limit) or already taken. An
   explicit `ivm init claude <name>` skips the prompt (still validated).
-- On create, the engine tags the VM: `user.ivm_init_at_dir=<cwd>` (+
+- On create, `ivm` tags the VM: `user.ivm_init_at_dir=<cwd>` (+
   `user.ivm_template=<template>`). This DECOUPLES the VM name from the path -
   the name is now free-form (user-edited), so cwd-matching can't reuse it the
   way old `v-claude` did; the tag does it instead.

@@ -1,6 +1,6 @@
 ---
-# Install the `ivm` engine (replaces the old per-entry bash launchers). The
-# engine reads VM templates at runtime and drives incus from the HOST; the guest
+# Install `ivm` (the launcher; replaces the old per-entry bash launchers).
+# `ivm` reads VM templates at runtime and drives incus from the HOST; the guest
 # gets no ansible/python. See files/ivm + REDESIGN.md / IMPLEMENTATION_PLAN.md.
 # Host-level prep (apt incus, `incus admin init`, group add) is done by
 # tasks/host_setup.yml (run from tasks/main.yml).
@@ -31,7 +31,7 @@
     - "{{ incus_vm_zsh_completion_dir }}"
     - "{{ incus_vm_bash_completion_dir }}"
 
-- name: Install the `ivm` engine to `{{ incus_vm_bin_dir }}/ivm`
+- name: Install `ivm` to `{{ incus_vm_bin_dir }}/ivm`
   ansible.builtin.copy:
     src: ivm
     dest: "{{ incus_vm_bin_dir }}/ivm"

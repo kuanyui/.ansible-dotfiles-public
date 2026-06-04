@@ -1,4 +1,8 @@
 ---
+# Host-level incus daemon prep vars (see tasks/host_setup.yml). Folded in from
+# the former `_incus_host_setup` role. Loaded automatically: Ansible reads every
+# file in a role's `defaults/main/` directory.
+
 # `incus_vm_skip_host_setup`: skip the host-level prep
 # (`tasks/host_setup.yml`: apt install incus + guestfs-tools, daemon
 # enable+start, `incus-admin` group add, `incus admin init --preseed`). Only the
@@ -6,27 +10,6 @@
 # themselves. Off by default.
 incus_vm_skip_host_setup: false
 
-# `incus_vm_state`:
-#   - `present` (default): install the `ivm` engine + schema + example
-#     templates + the staged user/root dotfiles.
-#   - `absent`: remove the `ivm` binary + this role's subdir. Does NOT delete
-#     any incus VMs (those are the user's; use `ivm delete` per-VM).
-incus_vm_state: present
-
-# This role's own subdir under `~/.local/share/ansible-managed/`. Holds
-# `vm.schema.json`, `vm-templates/`, and the `vm-rootfs/` dotfiles staging that
-# `ivm` pushes into guests. Uninstall = `rm -rf` it.
-incus_vm_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus-vm"
-incus_vm_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
-
-# `ivm` shell completion. Both dirs live inside `incus_vm_root` so uninstall's
-# `rm -rf` cleans them; they are auto-discovered by the rc globs
-# (`ansible-managed/*/zsh-completions` in .zshrc.j2, `*/bash-completions/*`
-# sourced by .bashrc.j2) - no rc edits, no XDG loader handshake.
-incus_vm_zsh_completion_dir: "{{ incus_vm_root }}/zsh-completions"
-incus_vm_bash_completion_dir: "{{ incus_vm_root }}/bash-completions"
-
-# ===== incus host storage-pool config (folded in from the former _incus_host_setup role) =====
 # ---------- Storage pool config (preseed-only, first-time init) ----------
 # These three vars feed into the `default` storage_pool block of
 # `templates/incus_preseed.yml.j2`. They are EFFECTIVE ONLY at first-time

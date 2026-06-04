@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ivm - incus VM launcher engine.
+"""ivm - incus VM launcher.
 
 Reads VM templates (`<root>/vm-templates/<name>.yaml`) validated against
 `<root>/vm.schema.json`, and drives incus from the HOST (no ansible/python in
@@ -814,7 +814,7 @@ def cmd_stub(subcommand: str) -> NoReturn:
 # ---------- CLI ----------
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ivm", description="incus VM launcher engine")
+    parser = argparse.ArgumentParser(prog="ivm", description="incus VM launcher")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
                         help=f"install root (schema + vm-templates + vm-rootfs). Default: {DEFAULT_ROOT}")
     parser.add_argument("--dry-run", action="store_true",

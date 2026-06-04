@@ -1,6 +1,6 @@
 # incus containers vs podman containers - why this project uses both
 
-Why `roles/incus_vm` (the `ivm` engine) uses **incus VMs**, `roles/container_apps`
+Why `roles/incus_vm` (the `ivm` launcher) uses **incus VMs**, `roles/container_apps`
 uses **podman**, and neither should switch to "incus containers". Not a
 feature-count comparison - the two solve **different shapes** of problem.
 
@@ -28,7 +28,7 @@ is the right tool (native OCI, the registry/Dockerfile ecosystem, libkrun).
   kernel (separate kernel, standalone `virtiofsd` + `pivot_root` + seccomp) -
   wanted for agents touching source while credentials sit on the host.
 - **No separate "incus container" role.** If a lighter-than-VM incus *system
-  container* ever becomes useful, it would be a new `ivm` template/engine option
-  (e.g. `os.type: container`), still inside `roles/incus_vm` - "one engine, many
+  container* ever becomes useful, it would be a new `ivm` template option
+  (e.g. `os.type: container`), still inside `roles/incus_vm` - "one launcher, many
   templates", not a new role. This is why `incus_vm` is the *only* incus consumer
   and the former `_incus_*` helper roles were folded into it.

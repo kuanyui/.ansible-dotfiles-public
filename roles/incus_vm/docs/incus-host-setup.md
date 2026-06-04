@@ -57,7 +57,7 @@ Fixes (pick one, manual):
 
 ## Configuring the storage pool
 
-Three vars in [`defaults/main.yml`](defaults/main.yml) drive the preseed pool config. Set in `host_vars/<hostname>.yml`. Effective ONLY at first-time `incus admin init --preseed`:
+Three vars in [`defaults/main/host_setup.yml`](../defaults/main/host_setup.yml) drive the preseed pool config. Set in `host_vars/<hostname>.yml`. Effective ONLY at first-time `incus admin init --preseed`:
 
 | Var | Project default | Meaning |
 |---|---|---|
@@ -224,7 +224,7 @@ Placeholders used in the cells below:
 
 | | **btrfs loop file on `/home`**<br>(project default) | **`dir` backend on `/`**<br>(Incus built-in default) | **`dir` backend on `/data`** | **zfs loop file on `/home`** |
 |---|---|---|---|---|
-| `defaults/main.yml` config | `driver: btrfs`<br>`source: /home/incus-storage.img`<br>`size: 500GiB` | `driver: dir`<br>`source: ""`<br>`size: ""` | `driver: dir`<br>`source: /data/vm/incus`<br>`size: ""` | `driver: zfs`<br>`source: /home/incus-storage.zfs`<br>`size: 500GiB` |
+| `host_setup.yml` config | `driver: btrfs`<br>`source: /home/incus-storage.img`<br>`size: 500GiB` | `driver: dir`<br>`source: ""`<br>`size: ""` | `driver: dir`<br>`source: /data/vm/incus`<br>`size: ""` | `driver: zfs`<br>`source: /home/incus-storage.zfs`<br>`size: 500GiB` |
 | Where the actual blocks live on host | `/home/incus-storage.img` (a sparse btrfs loop file) | `/var/lib/incus/storage-pools/default/` (a real directory tree) | `/data/vm/incus/` (a real directory tree) | `/home/incus-storage.zfs` (a sparse ZFS loop file) |
 | Where you `ls` to navigate the pool | `/var/lib/incus/storage-pools/default/` (Incus mounts the loop file's btrfs FS here at daemon start) | `/var/lib/incus/storage-pools/default/` (= the storage path itself) | `/data/vm/incus/` (= the storage path itself) | `/var/lib/incus/storage-pools/default/` (Incus imports the ZFS pool as `default` and exposes it here at daemon start) |
 | Per-VM root disk | btrfs subvolume at `/var/lib/incus/storage-pools/default/virtual-machines/<vm-name>/`, CoW-cloned from the pool template. Backing blocks live inside `/home/incus-storage.img` | qcow2 file at `/var/lib/incus/storage-pools/default/virtual-machines/<vm-name>/root.img`, sparse, full copy of the cached image | qcow2 file at `/data/vm/incus/virtual-machines/<vm-name>/root.img`, sparse, full copy of the cached image | ZFS dataset named `default/virtual-machines/<vm-name>`, CoW clone of the pool template. Backing blocks live inside `/home/incus-storage.zfs` |

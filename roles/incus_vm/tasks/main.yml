@@ -17,8 +17,8 @@
         - incus_vm_state == 'present'
         - not (incus_vm_skip_host_setup | default(false) | bool)
 
-    - ansible.builtin.include_tasks: install.yml
+    - ansible.builtin.include_tasks: ivm_install.yml
       when: incus_vm_state == 'present'
 
-    - ansible.builtin.include_tasks: uninstall.yml
+    - ansible.builtin.include_tasks: ivm_uninstall.yml
       when: incus_vm_state == 'absent'

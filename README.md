@@ -24,8 +24,8 @@ playbooks/                # entry playbooks
   ├─ podman.yml           # ├─ dedicated entry: configure podman OCI runtime
   ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
   ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
-  ├─ incus_vm.yml         # ├─ dedicated entry: install the `ivm` Incus VM launcher engine
-  ├─ incus_vm_uninstall.yml      # ├─ uninstall flow (removes the ivm engine + role subdir)
+  ├─ incus_vm.yml         # ├─ dedicated entry: install the `ivm` Incus VM launcher
+  ├─ incus_vm_uninstall.yml      # ├─ uninstall flow (removes `ivm` + role subdir)
   └─ apparmor.yml         # └─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
@@ -52,7 +52,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`podman/`](roles/podman/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |
 | [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
-| [`incus_vm/`](roles/incus_vm/) | Install the `ivm` engine: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |
+| [`incus_vm/`](roles/incus_vm/) | Install `ivm`: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
 
 ## Installation
@@ -171,14 +171,14 @@ which _c-claude-crun                           # should resolve to the completio
 c-claude-crun <TAB>                            # should list subcommands with descriptions
 ```
 
-## VM-isolated launchers via `roles/incus_vm` (the `ivm` engine)
+## VM-isolated launchers via `roles/incus_vm` (the `ivm` launcher)
 
-For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/incus_vm` installs `ivm`, a launcher engine that spins up a full Incus KVM VM from a declarative YAML template. The project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, a stronger isolation boundary than libkrun's in-process virtio-fs).
+For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/incus_vm` installs `ivm`, a launcher that spins up a full Incus KVM VM from a declarative YAML template. The project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, a stronger isolation boundary than libkrun's in-process virtio-fs).
 
 You describe the VM once (OS/distro, hardware, mounts, packages, dotfiles, post-install) in a template under `~/.local/share/ansible-managed/incus-vm/vm-templates/<name>.yaml`, then:
 
 ```bash
-make apply-incus-vm          # install the ivm engine + example templates
+make apply-incus-vm          # install `ivm` + example templates
 ivm init claude              # create a VM from the `claude` template, bound to the current dir
 ivm shell                    # enter it (zsh); `ivm` from a subdir offers the parent's VM
 ```

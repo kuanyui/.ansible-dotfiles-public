@@ -13,12 +13,12 @@
     },
     "hw": {
       "type": "object",
-      "description": "Hardware allocation. Optional; the engine supplies defaults for anything omitted.",
+      "description": "Hardware allocation. Optional; `ivm` supplies defaults for anything omitted.",
       "additionalProperties": false,
       "properties": {
         "cpu": { "type": "integer", "minimum": 1, "description": "vCPU count." },
-        "memory": { "type": "string", "pattern": "^[0-9]+G$", "description": "RAM in GiB, written with a `G` suffix (e.g. `8G`); the engine converts to incus `GiB`." },
-        "disk": { "type": "string", "pattern": "^[0-9]+G$", "description": "Root disk size in GiB, `G` suffix; the engine converts to incus `GiB`." },
+        "memory": { "type": "string", "pattern": "^[0-9]+G$", "description": "RAM in GiB, written with a `G` suffix (e.g. `8G`); `ivm` converts to incus `GiB`." },
+        "disk": { "type": "string", "pattern": "^[0-9]+G$", "description": "Root disk size in GiB, `G` suffix; `ivm` converts to incus `GiB`." },
         "nested_virt": { "type": "boolean", "default": false, "description": "Run nested KVM inside this VM. Host-gated, NOT a per-VM incus setting: incus VMs already expose the host CPU (vmx/svm), so this works whenever the HOST kernel has nesting on (`kvm_intel nested=1` / `kvm_amd nested=1`). `ivm` only warns if the host looks disabled - it cannot change the host's modprobe config." },
         "secureboot": { "type": "boolean", "default": true, "description": "UEFI Secure Boot. Required true for Windows 11." },
         "tpm": { "type": "boolean", "default": false, "description": "Attach a virtual TPM 2.0 device. Required for Windows 11." }
@@ -38,7 +38,7 @@
         "distro": {
           "type": "string",
           "enum": ["debian", "ubuntu", "opensuse", "fedora"],
-          "description": "Specific Linux distro (linux only). The engine derives BOTH the package manager (apt/zypper/dnf) and the ansible_os_family (Debian/Suse/RedHat) from it. `distro_package_groups` are resolved against ansible_os_family (so debian and ubuntu currently share the Debian package set). ansible_os_family is DERIVED, never specified by the user."
+          "description": "Specific Linux distro (linux only). `ivm` derives BOTH the package manager (apt/zypper/dnf) and the ansible_os_family (Debian/Suse/RedHat) from it. `distro_package_groups` are resolved against ansible_os_family (so debian and ubuntu currently share the Debian package set). ansible_os_family is DERIVED, never specified by the user."
         },
         "image": {
           "type": "object",

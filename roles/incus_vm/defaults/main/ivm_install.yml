@@ -1,0 +1,23 @@
+---
+# `ivm` install vars - its state + where it lands (see tasks/ivm_install.yml).
+# Loaded automatically: Ansible reads every file in a role's `defaults/main/` dir.
+
+# `incus_vm_state`:
+#   - `present` (default): install `ivm` + schema + example
+#     templates + the staged user/root dotfiles.
+#   - `absent`: remove the `ivm` binary + this role's subdir. Does NOT delete
+#     any incus VMs (those are the user's; use `ivm delete` per-VM).
+incus_vm_state: present
+
+# This role's own subdir under `~/.local/share/ansible-managed/`. Holds
+# `vm.schema.json`, `vm-templates/`, and the `vm-rootfs/` dotfiles staging that
+# `ivm` pushes into guests. Uninstall = `rm -rf` it.
+incus_vm_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus-vm"
+incus_vm_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+
+# `ivm` shell completion. Both dirs live inside `incus_vm_root` so uninstall's
+# `rm -rf` cleans them; they are auto-discovered by the rc globs
+# (`ansible-managed/*/zsh-completions` in .zshrc.j2, `*/bash-completions/*`
+# sourced by .bashrc.j2) - no rc edits, no XDG loader handshake.
+incus_vm_zsh_completion_dir: "{{ incus_vm_root }}/zsh-completions"
+incus_vm_bash_completion_dir: "{{ incus_vm_root }}/bash-completions"
