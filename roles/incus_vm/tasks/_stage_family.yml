@@ -2,13 +2,13 @@
 # Stage one ansible_os_family's dotfile trees (user + root). Included once per entry in
 # `incus_vm_dotfiles_ansible_os_families` by stage_dotfiles.yml; the current family is
 # `incus_vm_dotfiles_ansible_os_family` (set as the loop_var). Renders into:
-#   {{ incus_vm_dotfiles_staging_root }}/vm-rootfs/{{ incus_vm_dotfiles_ansible_os_family }}/{home/user,root}
+#   {{ incus_vm_dotfiles_staging_root }}/rootfs/{{ incus_vm_dotfiles_ansible_os_family }}/{home/user,root}
 # `override_os_family` makes `.zshrc.j2` pick this family's min-install helper
 # (apt-min / zypper-min / dnf-min) instead of leaking the HOST's ansible_os_family.
 
 - name: "Set `_incus_vm_dotfiles_family_base` for `{{ incus_vm_dotfiles_ansible_os_family }}`"
   ansible.builtin.set_fact:
-    _incus_vm_dotfiles_family_base: "{{ incus_vm_dotfiles_staging_root }}/vm-rootfs/{{ incus_vm_dotfiles_ansible_os_family }}"
+    _incus_vm_dotfiles_family_base: "{{ incus_vm_dotfiles_staging_root }}/rootfs/{{ incus_vm_dotfiles_ansible_os_family }}"
 
 - name: "Ensure `{{ incus_vm_dotfiles_ansible_os_family }}` staging dirs (`home/user` + `root`) exist (roles/dotfiles only creates SUB-dirs of `target_home`, not `target_home` itself)"
   ansible.builtin.file:

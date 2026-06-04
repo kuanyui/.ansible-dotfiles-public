@@ -1,15 +1,15 @@
 # incus_vm (`ivm` launcher) - implementation plan
 
 Builds `ivm`, the launcher that replaces the bash launchers. Design = `REDESIGN.md`
-(esp. §8) + the schema/examples in `files/` (`vm.schema.json`, `vm-templates/`).
+(esp. §8) + the schema/examples in `files/` (`template.schema.json`, `templates/`).
 
 ## Architecture
 
 - **`ivm`** = a static Python 3 program (type-annotated; stdlib + PyYAML +
   jsonschema). Reads VM templates + the schema from fixed install paths.
 - **`roles/incus_vm`** (ansible) installs: the `ivm` binary into `~/.local/bin/`,
-  `vm.schema.json` + example templates into
-  `~/.local/share/ansible-managed/incus-vm/`, the host deps (python3-yaml,
+  `template.schema.json` + example templates into
+  `~/.local/share/ansible-managed/incus-vm/ivm/`, the host deps (python3-yaml,
   python3-jsonschema via `_install_distro_packages`), two-level shell completion,
   and the staged user/root dotfiles (via `tasks/stage_dotfiles.yml`).
 - Provisioning runs from the HOST via `incus exec`; the guest gets no
@@ -37,7 +37,7 @@ dotfile staging), both folded in from the former `_incus_*` roles;
 | **1 minimal Linux happy path (Debian)** | `ivm init <template>`: validate -> name prompt (default `<template>-<cwd-path>`, editable, length+uniqueness loop) -> `incus launch` + `user.*` tags -> attach mounts -> minimal provision (pkg install + push dotfiles) ; `ivm shell` (cwd-resolve -> `incus exec` zsh). Goal: `ivm init claude` then `ivm shell`. |
 | **2 lifecycle + provision depth** | start/stop/delete (with delete confirm), overwrite-dotfiles, update, env; `post_install_script` (root, `su - user` for user bits), baseline pkgs, `distro_package_groups` resolution; add openSUSE/Fedora (distro -> pkg-mgr + os_family map). |
 | **3 extras** | shadow mounts, `sys.tmpfs`, `ssh_server`, `hw.gpu` virtio, `net` macvlan/bridge, snapshot CLI, gui (SPICE), parent-dir prompt, two-level completion. |
-| **4 retire** | migrate claude/codex to `ivm`; retire `roles/incus_agents` + the old bash launchers. Once `incus_agents` is gone, `incus_vm` is the sole consumer of the `_incus_*` roles. DONE: folded BOTH `_incus_*` roles into `incus_vm` (no second incus consumer exists - ivm is a general launcher, new use cases are templates not roles; incus containers aren't worth it vs podman, see docs/incus-vs-podman.md). `_incus_guest_setup_dotfiles` -> `tasks/{stage_dotfiles,_stage_family}.yml` (vars renamed `incus_vm_dotfiles_*`). `_incus_host_setup` -> `tasks/host_setup.yml` + its storage-pool vars -> `defaults/main/host_setup.yml` (with the install vars in `defaults/main/ivm_install.yml`) + `incus_preseed.yml.j2` -> `templates/` + its README -> `docs/incus-host-setup.md`. Both roles deleted. `make incus-overwrite-dotfiles-in-all-guest` kept (filters by `user.ansible-managed`); `ivm overwrite-dotfiles` is the per-VM alternative. **Layout reorg (do it here, as one move - it needs the staging role to be ivm-only first):** nest all `ivm` data under `incus-vm/ivm/` and drop the now-redundant prefixes - `vm.schema.json` -> `ivm/template.schema.json`, `vm-templates/` -> `ivm/templates/`, `vm-rootfs/<family>/` -> `ivm/rootfs/<family>/`, `package-groups.json` -> `ivm/package-groups.json`; point `ivm --root` (`DEFAULT_ROOT`) at `incus-vm/ivm`; keep `zsh-completions/` as a SIBLING at `incus-vm/zsh-completions/` (the `ansible-managed/*/zsh-completions` glob matches it there). This cleanly separates completions from program data. Until then the interim names (`vm.schema.json`, `vm-templates/`, `vm-rootfs/`) stay at the `incus-vm/` root. |
+| **4 retire** | migrate claude/codex to `ivm`; retire `roles/incus_agents` + the old bash launchers. Once `incus_agents` is gone, `incus_vm` is the sole consumer of the `_incus_*` roles. DONE: folded BOTH `_incus_*` roles into `incus_vm` (no second incus consumer exists - ivm is a general launcher, new use cases are templates not roles; incus containers aren't worth it vs podman, see docs/incus-vs-podman.md). `_incus_guest_setup_dotfiles` -> `tasks/{stage_dotfiles,_stage_family}.yml` (vars renamed `incus_vm_dotfiles_*`). `_incus_host_setup` -> `tasks/host_setup.yml` + its storage-pool vars -> `defaults/main/host_setup.yml` (with the install vars in `defaults/main/ivm_install.yml`) + `incus_preseed.yml.j2` -> `templates/` + its README -> `docs/incus-host-setup.md`. Both roles deleted. `make incus-overwrite-dotfiles-in-all-guest` kept (filters by `user.ansible-managed`); `ivm overwrite-dotfiles` is the per-VM alternative. **Layout reorg DONE:** all `ivm` data nested under `incus-vm/ivm/` with the now-redundant prefixes dropped - `template.schema.json`, `templates/`, `rootfs/<family>/`, `distro-package-groups.json`; `ivm --root` (`DEFAULT_ROOT`) = `incus-vm/ivm` (ansible var `incus_vm_ivm_dir`); `{zsh,bash}-completions/` kept as SIBLINGS at `incus-vm/` (matched by the rc globs), so program data and completions are cleanly separated. |
 
 Windows = separate future tier (REDESIGN §8 / §4.8); not in this plan.
 

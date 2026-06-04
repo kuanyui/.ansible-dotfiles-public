@@ -64,7 +64,7 @@ unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/conta
 
 incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all our managed Linux Incus guests. Run `apply-incus-vm` first; this only pushes, does not re-render. (Per-VM alternative: `ivm overwrite-dotfiles`.)
 	@set -e; \
-	WORKS="$$HOME/.local/share/ansible-managed/incus-vm/vm-rootfs/Debian"; \
+	WORKS="$$HOME/.local/share/ansible-managed/incus-vm/ivm/rootfs/Debian"; \
 	if [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
 	else echo "No staged dotfiles found -- run 'make apply-incus-vm' first" >&2; exit 1; fi; \
 	echo "Source (Debian tree; the only buildable guest family today): $$SRC"; \
@@ -78,10 +78,10 @@ incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all our ma
 	    incus file push --recursive --create-dirs --uid 0 --gid 0 "$$SRC/root" "$$vm/"; \
 	done
 
-apply-incus-vm:  ## Install v-<workstation> Incus persistent VM launchers via `roles/incus_vm` (bypasses `setup_incus_vm` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
+apply-incus-vm:  ## Install the `ivm` Incus VM launcher via `roles/incus_vm` (bypasses `setup_incus_vm` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml
 
-unapply-incus-vm:  ## Uninstall incus workstation launchers (reads ~/.local/share/ansible-managed/incus-vm/incus-vm.manifest.yml; leaves any existing VMs + snapshots alone - delete those manually with `v-<name> rma` or `incus delete`).
+unapply-incus-vm:  ## Uninstall `ivm` + the role's `~/.local/share/ansible-managed/incus-vm/` subdir; leaves any existing VMs + snapshots alone - delete those with `ivm delete` or `incus delete`.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_vm_uninstall.yml
 
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). Two phases: (1) a fast Python pre-flight does `python3-jsonschema` probe/install + `personal_dirs.yml` schema-validate + colored preview + y/N confirm, all BEFORE ansible-playbook starts so you do not have to wait for ansible to spin up just to be prompted; (2) only on `y` does ansible run, with `apparmor_non_interactive=true` to skip the now-redundant in-playbook validate/preview/confirm. Asks for the BECOME password up-front (`--ask-become-pass`) because ansible's default sudo invocation uses `-n` (non-interactive) which fails without a piped password. Bypasses `setup_apparmor` gate.
@@ -170,7 +170,7 @@ sandbox-root:  ## Dry-run `apply-root` (distro_packages + zsh + emacs + dotfiles
 sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtime> launcher install) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) container_apps
 
-sandbox-incus-vm:  ## Dry-run `apply-incus-vm` (v-<workstation> launcher install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
+sandbox-incus-vm:  ## Dry-run `apply-incus-vm` (`ivm` install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_vm
 
 sandbox-podman-runtime:  ## Dry-run `apply-podman-runtime` (containers.conf write; `crun` and `podman` are stubbed) in a throwaway podman+systemd sandbox

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """ivm - incus VM launcher.
 
-Reads VM templates (`<root>/vm-templates/<name>.yaml`) validated against
-`<root>/vm.schema.json`, and drives incus from the HOST (no ansible/python in
+Reads VM templates (`<root>/templates/<name>.yaml`) validated against
+`<root>/template.schema.json`, and drives incus from the HOST (no ansible/python in
 the guest). Design: roles/incus_vm/REDESIGN.md (esp. section 8) +
 roles/incus_vm/IMPLEMENTATION_PLAN.md.
 
@@ -41,11 +41,11 @@ if TYPE_CHECKING:
     from jsonschema.exceptions import ValidationError
 
 # A parsed VM template. Structure is enforced at runtime by jsonschema against
-# `vm.schema.json`, so the values stay `Any` rather than a duplicated TypedDict.
+# `template.schema.json`, so the values stay `Any` rather than a duplicated TypedDict.
 Template = dict[str, Any]
 
 DEFAULT_ROOT: Path = Path(
-    os.environ.get("IVM_ROOT", str(Path.home() / ".local/share/ansible-managed/incus-vm"))
+    os.environ.get("IVM_ROOT", str(Path.home() / ".local/share/ansible-managed/incus-vm/ivm"))
 )
 
 CWD_RESOLVED: tuple[str, ...] = (
@@ -57,7 +57,7 @@ CWD_RESOLVED: tuple[str, ...] = (
 # Installed on EVERY guest at first provision (the ivm-guest floor: zsh + login
 # shell, sudo, ssh, basics). Defined as a bundle in the distro_packages registry
 # (`distro_packages_incus_guest_baseline`) so all package names - including
-# per-family differences - live in one place; resolved from package-groups.json.
+# per-family differences - live in one place; resolved from distro-package-groups.json.
 BASELINE_GROUP: str = "incus_guest_baseline"
 
 # incus instance name: start alphanumeric, then [a-zA-Z0-9-], max 63 chars.
@@ -66,8 +66,8 @@ MAX_NAME_LEN: int = 63
 
 # Map a template's `os.distro` to the ansible fact `ansible_os_family` (values:
 # Debian/Suse/RedHat - NOT the distro name like `opensuse`). It keys both the
-# dotfiles staging (vm-rootfs/<Debian|Suse|RedHat>/) and the package-group
-# overlays (common + per-family) in package-groups.json. debian/ubuntu share the
+# dotfiles staging (rootfs/<Debian|Suse|RedHat>/) and the package-group
+# overlays (common + per-family) in distro-package-groups.json. debian/ubuntu share the
 # Debian family today; if ubuntu package names ever diverge from debian, that
 # needs a finer distro-level key, not just ansible_os_family.
 DISTRO_TO_ANSIBLE_OS_FAMILY: dict[str, str] = {
@@ -78,7 +78,7 @@ DISTRO_TO_ANSIBLE_OS_FAMILY: dict[str, str] = {
 }
 
 # ansible_os_family -> the lowercase overlay key used inside each bundle in
-# package-groups.json (mirrors roles/distro_packages/defaults/main.yml).
+# distro-package-groups.json (mirrors roles/distro_packages/defaults/main.yml).
 ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY: dict[str, str] = {
     "Debian": "debian", "Suse": "suse", "RedHat": "redhat",
 }
@@ -113,12 +113,12 @@ def load_yaml(path: Path) -> Template:
 
 
 def validate_template(doc: Template, root: Path) -> None:
-    """Validate a template dict against vm.schema.json (draft 2020-12)."""
+    """Validate a template dict against template.schema.json (draft 2020-12)."""
     try:
         import jsonschema
     except ImportError:
         die("jsonschema not found; install python3-jsonschema")
-    schema_path: Path = root / "vm.schema.json"
+    schema_path: Path = root / "template.schema.json"
     if not schema_path.is_file():
         die(f"schema not found: {schema_path}")
     schema: dict[str, Any] = json.loads(schema_path.read_text())
@@ -132,7 +132,7 @@ def validate_template(doc: Template, root: Path) -> None:
 
 
 def load_and_validate(template_name: str, root: Path) -> Template:
-    doc: Template = load_yaml(root / "vm-templates" / f"{template_name}.yaml")
+    doc: Template = load_yaml(root / "templates" / f"{template_name}.yaml")
     validate_template(doc, root)
     return doc
 
@@ -140,14 +140,14 @@ def load_and_validate(template_name: str, root: Path) -> Template:
 # ---------- distro_packages bundle registry ----------
 
 def load_package_groups(root: Path) -> dict[str, Any]:
-    """Load package-groups.json (rendered at apply time from the distro_packages
+    """Load distro-package-groups.json (rendered at apply time from the distro_packages
     registry; see roles/incus_vm/tasks/install.yml)."""
-    path: Path = root / "package-groups.json"
+    path: Path = root / "distro-package-groups.json"
     if not path.is_file():
-        die(f"package-groups.json not found: {path}; re-run `make apply-incus-vm`")
+        die(f"distro-package-groups.json not found: {path}; re-run `make apply-incus-vm`")
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
-        die(f"package-groups.json is not a mapping: {path}")
+        die(f"distro-package-groups.json is not a mapping: {path}")
     return loaded
 
 
@@ -157,7 +157,7 @@ def resolve_group(registry: dict[str, Any], group: str, ansible_os_family: str) 
     entry: Any = registry.get(group)
     if entry is None:
         die(f"unknown distro_package_group '{group}' "
-            f"(not in package-groups.json; defined ones: {', '.join(sorted(registry))})")
+            f"(not in distro-package-groups.json; defined ones: {', '.join(sorted(registry))})")
     overlay_key: str = ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY[ansible_os_family]
     common: list[str] = list(entry.get("common", []))
     overlay: list[str] = list(entry.get(overlay_key, []))
@@ -307,7 +307,7 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
         "--config", f"user.ivm_template={doc['template_name']}",
         "--config", f"user.ivm_init_at_dir={cwd}",
         # Record the dotfiles ansible_os_family so `overwrite-dotfiles` can pick the
-        # right vm-rootfs/<family>/ subtree without re-reading the template.
+        # right rootfs/<family>/ subtree without re-reading the template.
         "--config", f"user.ivm_ansible_os_family={ansible_os_family_of(doc)}",
     ]
     if "disk" in hw:
@@ -511,7 +511,7 @@ def push_dotfiles_commands(ansible_os_family: str, name: str, root: Path) -> lis
     ansible_os_family (apt-min vs zypper-min vs dnf-min differ), so pick the subtree
     matching this VM's distro (init: from the template; overwrite-dotfiles: from
     the `user.ivm_ansible_os_family` tag)."""
-    staging: Path = root / "vm-rootfs" / ansible_os_family
+    staging: Path = root / "rootfs" / ansible_os_family
     return [
         ["incus", "file", "push", "--recursive", "--create-dirs",
          "--uid", "1000", "--gid", "1000", str(staging / "home/user"), f"{name}/home/"],
@@ -816,7 +816,7 @@ def cmd_stub(subcommand: str) -> NoReturn:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ivm", description="incus VM launcher")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
-                        help=f"install root (schema + vm-templates + vm-rootfs). Default: {DEFAULT_ROOT}")
+                        help=f"install root (schema + templates + rootfs). Default: {DEFAULT_ROOT}")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the incus commands that would run, without executing")
     parser.add_argument("-y", "--yes", action="store_true",
@@ -824,7 +824,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
     p_init: argparse.ArgumentParser = sub.add_parser("init", help="create a VM from a template")
-    p_init.add_argument("template", help="template id (file in vm-templates/)")
+    p_init.add_argument("template", help="template id (file in templates/)")
     p_init.add_argument("name", nargs="?", help="VM instance name (skips the prompt)")
 
     for name in CWD_RESOLVED:

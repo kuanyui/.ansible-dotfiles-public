@@ -175,7 +175,7 @@ c-claude-crun <TAB>                            # should list subcommands with de
 
 For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/incus_vm` installs `ivm`, a launcher that spins up a full Incus KVM VM from a declarative YAML template. The project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, a stronger isolation boundary than libkrun's in-process virtio-fs).
 
-You describe the VM once (OS/distro, hardware, mounts, packages, dotfiles, post-install) in a template under `~/.local/share/ansible-managed/incus-vm/vm-templates/<name>.yaml`, then:
+You describe the VM once (OS/distro, hardware, mounts, packages, dotfiles, post-install) in a template under `~/.local/share/ansible-managed/incus-vm/ivm/templates/<name>.yaml`, then:
 
 ```bash
 make apply-incus-vm          # install `ivm` + example templates

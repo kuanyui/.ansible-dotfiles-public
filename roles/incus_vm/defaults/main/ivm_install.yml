@@ -9,11 +9,18 @@
 #     any incus VMs (those are the user's; use `ivm delete` per-VM).
 incus_vm_state: present
 
-# This role's own subdir under `~/.local/share/ansible-managed/`. Holds
-# `vm.schema.json`, `vm-templates/`, and the `vm-rootfs/` dotfiles staging that
-# `ivm` pushes into guests. Uninstall = `rm -rf` it.
+# This role's own subdir under `~/.local/share/ansible-managed/`. Holds the
+# `ivm/` data dir (`incus_vm_ivm_dir`) + the `{zsh,bash}-completions/` dirs.
+# Uninstall = `rm -rf` it.
 incus_vm_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/incus-vm"
 incus_vm_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+
+# `ivm`'s own data root == what `ivm --root` (its DEFAULT_ROOT) points at. Holds
+# `template.schema.json`, `templates/`, `rootfs/<ansible_os_family>/` (staged
+# dotfiles), and `distro-package-groups.json`. Nested under `incus_vm_root` so the shell
+# completions stay a SIBLING (`incus-vm/{zsh,bash}-completions/`, matched by the
+# rc globs) - program data and completions kept separate.
+incus_vm_ivm_dir: "{{ incus_vm_root }}/ivm"
 
 # `ivm` shell completion. Both dirs live inside `incus_vm_root` so uninstall's
 # `rm -rf` cleans them; they are auto-discovered by the rc globs

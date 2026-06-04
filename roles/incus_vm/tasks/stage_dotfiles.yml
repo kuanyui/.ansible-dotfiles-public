@@ -9,8 +9,8 @@
 # dotfiles is the min-install helper in `.zshrc.j2`: `apt-min` vs `zypper-min`
 # / `dnf-min`). Which families to produce is controlled by
 # `incus_vm_dotfiles_ansible_os_families` (default `['Debian']`):
-#   <root>/vm-rootfs/<ansible_os_family>/home/user/   (is_root=false)
-#   <root>/vm-rootfs/<ansible_os_family>/root/        (is_root=true)
+#   <root>/rootfs/<ansible_os_family>/home/user/   (is_root=false)
+#   <root>/rootfs/<ansible_os_family>/root/        (is_root=true)
 # `ivm` pushes the subtree matching the template's `os.distro` -> ansible_os_family.
 # The push sends `<family>/home/user` -> /home/user and `<family>/root` ->
 # /root. `user` and `root` are different identities, so each needs its own
@@ -28,7 +28,7 @@
     fail_msg: >-
       `incus_vm_dotfiles_staging_root` must be set by the caller, e.g.
       `{{ incus_vm_root | default('<unset>') }}`.
-      Staging is created at `<root>/vm-rootfs/<ansible_os_family>/{home/user,root}`.
+      Staging is created at `<root>/rootfs/<ansible_os_family>/{home/user,root}`.
 
 - name: "Stage dotfiles per `incus_vm_dotfiles_ansible_os_families` entry (one tree per family)"
   ansible.builtin.include_tasks: _stage_family.yml

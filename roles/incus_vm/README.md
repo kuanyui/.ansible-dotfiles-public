@@ -1,157 +1,128 @@
 # roles/incus_vm
 
-Persistent Incus VM launchers, one VM per purpose. For things like Qt/C++ dev environment, Telegram-in-a-VM, browser-in-a-VM.
-
-Different from [`roles/incus_agents`](../incus_agents/): one persistent VM per *purpose* (not per project), heavier resources, GUI-friendly, snapshot CLI baked in, apt-install happens ONCE at first `init` (not every time).
+Installs **`ivm`** - a single Python launcher that creates and manages Incus KVM
+VMs from declarative YAML templates. One VM per project directory; the guest gets
+a full separate kernel (stronger isolation than a shared-kernel container).
 
 > [!IMPORTANT]
-> Host-level concerns (which distros are supported, what gets installed on the host, the storage pool config matrix, CoW backends, openSUSE+snapper trap, moving the install tree, NAT vs bridge, virt-manager coexistence, `du` undercounting on loop-file pools) are all in [`docs/incus-host-setup.md`](docs/incus-host-setup.md).
->
-> This file covers only what's specific to persistent workstation VMs.
+> Host-level concerns (supported distros, what gets installed on the host, the
+> storage pool config matrix, CoW backends, openSUSE+snapper trap, moving the
+> install tree, NAT vs bridge, virt-manager coexistence) are in
+> [`docs/incus-host-setup.md`](docs/incus-host-setup.md).
+> Also: [`docs/incus-hardware-capabilities.md`](docs/incus-hardware-capabilities.md)
+> (what `hw.*`/`net.*` incus can and can't do, GPU), and
+> [`docs/incus-vs-podman.md`](docs/incus-vs-podman.md) (why VMs here, not incus containers).
 
 ## Quick start
 
-1. Edit `roles/incus_vm/defaults/main.yml` and uncomment / add an entry in `incus_vm:`.
-2. `make apply-incus-vm`
-3. `v-<name> init` (heavy first-time setup, may take minutes for big apt sets)
-4. `v-<name> gui` if you set `gui: true` (opens SPICE in `virt-viewer`)
-5. `v-<name> snapshot create <snap>` before risky changes
+```bash
+make apply-incus-vm          # install `ivm` + example templates (+ host incus setup)
+cd ~/projects/foo
+ivm init claude              # build a VM from the `claude` template, bound to this dir
+ivm shell                    # zsh into it (Claude Code is on PATH inside)
+ivm snapshot create clean    # before risky changes
+ivm stop                     # shut down (disk state preserved)
+```
 
-## What's in the VM
+`ivm` reads no arguments for everyday commands - it resolves *which* VM by the
+current directory (see [VM identity](#vm-identity)).
 
-- **Base**: Debian 13 minimal (override per-entry via `base_image`)
-- **Default shell**: zsh
-- **Common apt packages** (always installed at first `init`):
-  `openssh-server`, `curl`, `git`, `ca-certificates`, `sudo`, `zsh`, `zsh-syntax-highlighting`, `zsh-autosuggestions`, `tmux`
-- **Per-entry apt packages**: whatever you put in `apt_packages:` (e.g. `qtcreator`, `task-lxde-desktop`, `spice-vdagent`, ...)
-- **Dotfiles**: `~/.bashrc`, `~/.zshrc`, `~/.tmux.conf` (same staging as `roles/incus_agents`, pushed at first `init` and on `update`)
-- **Mounts**: whatever you put in `mounts:` (host path → VM path, virtio-fs share, idmap-shifted to UID 1000)
+## Templates
 
-## Schema
+A template describes a VM once, in YAML, at
+`~/.local/share/ansible-managed/incus-vm/ivm/templates/<name>.yaml`, validated
+against `ivm/template.schema.json` (the files carry a `# yaml-language-server:
+$schema=...` modeline, so an editor with the YAML LSP shows inline field docs +
+validation). Shipped examples: `claude`, `codex`, `webbrowser`, `windows11`.
 
-Per `incus_vm[*]` entry:
+Field groups (see the schema for the full, authoritative list):
 
-| Field | Required | Default | What it does |
-|---|---|---|---|
-| `name` | yes | - | Launcher = `v-<name>`. VM = `v-<name>`. |
-| `display_name` | no | `name` | Shown in `help` / `env`. |
-| `apt_packages` | yes | - | Distro packages installed at first `init`. May be empty list. |
-| `base_image` | no | `images:debian/13` | Incus image to launch VM from. |
-| `cpu` / `memory` / `disk` | no | 4 / 8GiB / 30GiB | VM resource overrides. |
-| `gui` | no | `false` | Enable the `gui` subcommand (SPICE display). |
-| `mounts` | no | `[]` | List of `{host, target}` virtio-fs shares. |
+| Block | Keys |
+|---|---|
+| `os` | `type` (`linux`/`windows`), `distro` (debian/ubuntu/opensuse/fedora; linux), `image.{source,uri}` |
+| `hw` | `cpu`, `memory` (`8G`), `disk` (`30G`), `secureboot`, `tpm`, `nested_virt` (host-gated) |
+| `sys` | `gui`, `timezone`, `tmpfs[]`, `ssh_server.{enabled,port,root_login,password_login,authorized_keys}` |
+| `net` | `mode` (`nat`/`macvlan`/`bridge`), `parent` |
+| `mounts[]` | `host`, `guest`, `ro`, `shadow[]` (subpaths to mask, e.g. `.git`) |
+| (linux provisioning) | `distro_package_groups[]`, `distro_packages[]`, `dotfiles[]`, `post_install_script` |
+| `windows` | `unattend`, `post_install_powershell` |
 
-## Launcher subcommands
+- `distro_package_groups` reference bundles in `roles/distro_packages`
+  (`basic_tools`, `sys_tools`, ...); resolved per the VM's ansible_os_family. A
+  fixed baseline (`incus_guest_baseline`: zsh + plugins, sudo, sshd, git, ...) is
+  always installed.
+- `mounts[].host` is shell-expanded on the HOST at init (`$(pwd)`, `$HOME`, `~`,
+  relative paths).
+- GPU acceleration is intentionally absent - incus can't do shared virtio-gpu 3D;
+  see [`docs/incus-hardware-capabilities.md`](docs/incus-hardware-capabilities.md).
+
+## Subcommands
+
+`ivm <subcommand>`. Global flags: `--dry-run` (print the incus commands, run
+nothing), `-y`/`--yes` (skip prompts), `--root <dir>` (override the data root).
 
 | Subcommand | What it does |
 |---|---|
-| `help` | Show usage |
-| `env` | Show resolved config |
-| `init` | Create VM, mount shares, run first-time setup (apt + dotfiles), mark provisioned. Idempotent: subsequent runs only start the VM. |
-| `start` | Start VM if stopped |
-| `stop` | Stop VM (state preserved) |
-| `shell` | zsh into VM as `user`, cwd = `/home/user` |
-| `gui` | Open SPICE display (needs `virt-viewer` / `remote-viewer` on host). Only if `gui: true`. |
-| `update` | Force-refresh: apt update + upgrade + reinstall `apt_packages`, re-push dotfiles. Use after editing host dotfiles + re-apply. |
-| `snapshot create <name>` | Create VM snapshot |
-| `snapshot list` | List snapshots of this VM |
-| `snapshot restore <name>` | Roll VM back to snapshot |
-| `snapshot delete <name>` | Delete a snapshot |
-| `rma` | rm all: delete VM + disk + snapshots |
+| `init <template> [name]` | Create a VM from `<template>`, bound to the current dir. Prompts for the name (default `ivm-<template>-<cwd-path>`, editable) unless given; confirms before creating. |
+| `shell` / `shell-user` | zsh into the cwd-resolved VM as `user` (starts it if stopped). |
+| `shell-root` | zsh into it as `root`. |
+| `start` / `stop` | Start / stop the cwd-resolved VM. |
+| `delete` | Delete the VM + its disk + snapshots (asks first; `--yes` skips). |
+| `update` | Refresh + upgrade all packages in the VM (per-family apt/zypper/dnf). |
+| `overwrite-dotfiles` | Re-push the host-staged dotfiles into the VM (no re-provision). |
+| `set-root-password` | Opt into in-guest sudo: set root's password + `Defaults:user rootpw` sudoers. |
+| `unset-root-password` | Revert: remove the sudoers drop-in + re-lock root. |
+| `snapshot [create\|list\|restore\|delete] [name]` | Thin wrapper over `incus snapshot`, with the VM filled in. |
+| `gui` | Open a SPICE graphical console (`incus console --type=vga`; needs `virt-viewer`/`remote-viewer` on the host + a desktop + `spice-vdagent` in the guest). |
+| `env <template>` | Load + validate a template and print its resolved config (incl. the flattened package list). |
 
-## Idempotence model
+## VM identity
 
-Unlike `roles/incus_agents` (where every `v-<agent> init` re-runs apt + dotfiles push), workstations gate the heavy setup on a marker file `/etc/.ansible-workstation-provisioned` inside the VM:
+`init` tags the VM with `user.ivm_init_at_dir=<cwd>`. The cwd-resolved commands
+(`shell`, `start`, `stop`, ...) find the VM whose tag matches the current dir.
+Run one from a SUBDIR of an init'd project and `ivm` offers the nearest
+ancestor's VM (`open '<vm>' init'd at <parent>? [Y/n]`). The instance name is
+free-form (you edit it at init); resolution is by the tag, not the name.
 
-- **First `init`** : apt install + dotfiles push + create marker → ~minutes
-- **Subsequent `init`** : just `incus start` + wait → seconds
-- **`update`** : ignores marker, re-runs apt update+upgrade + re-pushes dotfiles → ~minutes
+## Provisioning model
 
-This avoids surprising re-apt every time you bring the VM up.
-
-## GUI: SPICE display
-
-`v-<name> gui` is a thin wrapper around `incus console --type=vga <VM>`. Incus will auto-spawn `virt-viewer` (preferred) or `remote-viewer` on the host. You need ONE of those installed:
-
-- Debian / Ubuntu: `sudo apt install virt-viewer`
-- Fedora: `sudo dnf install virt-viewer`
-- openSUSE: `sudo zypper install virt-viewer`
-
-Inside the VM you also need:
-- a desktop environment or window manager (e.g. `task-lxde-desktop`, `xfce4`)
-- `spice-vdagent` package (clipboard sharing, dynamic resolution)
-
-Add those to the entry's `apt_packages:` (the example entries in `defaults/main.yml` show what works).
-
-## Adding / removing mounts post-hoc
-
-The `mounts:` field in your entry is only consulted at **first-time VM creation**. Once the VM exists, edits to `mounts:` (followed by `apply-incus-vm`) only re-render the launcher script — the VM's actual attached devices are NOT touched.
-
-To add or remove mounts on an already-existing VM, talk to Incus directly. Both work on a **running** VM (no shutdown needed, no guest fstab edit needed - `incus-agent` inside the VM auto-mounts via virtio-fs):
-
-```sh
-# add a new mount (host dir -> VM /workspaces/foo)
-incus config device add v-qtdev workspace_foo disk \
-    source=$HOME/some/path \
-    path=/workspaces/foo \
-    shift=true
-
-# list what's currently attached
-incus config device list v-qtdev
-
-# remove a mount (use the device name from `device list`, NOT the path)
-incus config device remove v-qtdev workspace_foo
-```
-
-Device config is stored in Incus's database, so the mount survives `stop` / `start` cycles. The `shift=true` flag ensures host UID 1000 == VM UID 1000 (the `user` account inside the VM), so files appear with sensible ownership.
-
-## Snapshots
-
-Snapshot cost depends on the storage pool backend (set at first-time `incus admin init`):
-
-| Backend | Cost |
-|---|---|
-| `dir` (this project's default) | full copy, slow, doubles disk per snapshot |
-| `btrfs` / `zfs` / `lvm-thin` | CoW reference, instant, near-zero space |
-
-If you'll routinely snapshot, switch the pool backend to `btrfs` / `zfs`. See [Configuring the storage pool](docs/incus-host-setup.md#configuring-the-storage-pool) for the var matrix and how to relocate.
-
-## Name collision with `roles/incus_agents`
-
-Both roles drop launchers at `~/.local/bin/v-<name>`. **Don't use the same `name` in `incus_apps[*]` and `incus_vm[*]`** — the second one to apply overwrites the first one's launcher.
-
-Pick names that signal which role they belong to:
-- Agents: `claude`, `codex` (LLM agent names)
-- Workstations: `qtdev`, `tg`, `firefox`, `vlc`, `wireshark` (purpose / app names)
-
-No automatic cross-role check exists yet (each role has its own manifest).
+`ivm` drives everything from the HOST via `incus exec` - the guest gets no
+ansible/python. `init` does: `incus create` (stopped) -> attach devices (mounts +
+`shadow` masks, `hw.tpm`, macvlan/bridge nic) -> `incus start` -> provision
+(install baseline+groups+packages for the distro, set timezone + tmpfs, create
+`user`, set both shells to zsh, configure sshd, run `post_install_script` as root
+- it drops to `user` via `su - user -c '...'` for user-scoped bits) -> push the
+staged user/root dotfiles. Linux on Debian / openSUSE / Fedora.
 
 ## Where files live
 
-| What | Default path |
+| What | Path |
 |---|---|
-| Launcher script | `~/.local/bin/v-<name>` |
-| zsh completion | `~/.local/share/ansible-managed/incus-vm/zsh-completions/_v-<name>` |
-| bash completion | `~/.local/share/ansible-managed/incus-vm/bash-completions/v-<name>` |
-| Install manifest | `~/.local/share/ansible-managed/incus-vm/incus-vm.manifest.yml` |
-| Staged VM dotfiles | `~/.local/share/ansible-managed/incus-vm/vm-rootfs/home/user/` (user variant) + `.../vm-rootfs/root/` (root variant) |
-| VM disk (incus default) | `/var/lib/incus/storage-pools/default/virtual-machines/v-<name>/root.img` |
-| VM snapshots (incus default) | `/var/lib/incus/storage-pools/default/virtual-machines-snapshots/v-<name>/<snap>/` |
+| `ivm` binary | `~/.local/bin/ivm` |
+| Schema | `~/.local/share/ansible-managed/incus-vm/ivm/template.schema.json` |
+| Templates | `~/.local/share/ansible-managed/incus-vm/ivm/templates/*.yaml` |
+| Package-group snapshot | `~/.local/share/ansible-managed/incus-vm/ivm/distro-package-groups.json` |
+| Staged VM dotfiles | `~/.local/share/ansible-managed/incus-vm/ivm/rootfs/<family>/{home/user,root}/` |
+| zsh / bash completion | `~/.local/share/ansible-managed/incus-vm/{zsh,bash}-completions/` |
+| VM disk / snapshots (incus default pool) | `/var/lib/incus/storage-pools/default/virtual-machines[-snapshots]/<vm>/` |
 
-For deeper storage layout (image cache, CoW backends, openSUSE + snapper trap, moving the whole `/var/lib/incus/` tree), see [`docs/incus-host-setup.md`](docs/incus-host-setup.md).
+`ivm --root` (env `IVM_ROOT`) points at the `incus-vm/ivm/` dir; the completion
+dirs are siblings so the shell rc globs (`ansible-managed/*/{zsh,bash}-completions`)
+discover them. Storage layout details: [`docs/incus-host-setup.md`](docs/incus-host-setup.md).
 
 ## Cleanup
 
 | What | Command |
 |---|---|
-| Stop one VM | `v-<name> stop` |
-| Delete one VM (config + disk + snapshots) | `v-<name> rma` |
-| Remove launchers + manifest (leaves VMs intact) | `make unapply-incus-vm` |
-| List all workstation VMs | `incus list ^v-` (also shows agents - check by name) |
+| Delete one VM (config + disk + snapshots) | `ivm delete` (from its dir), or `incus delete <vm>` |
+| Re-push dotfiles to every managed guest | `make incus-overwrite-dotfiles-in-all-guest` |
+| Remove `ivm` + the role's subdir (leaves VMs intact) | `make unapply-incus-vm` |
+| List managed VMs | `incus list user.ansible-managed=true` |
 
-## TODOs / known limitations
+## Status / limitations
 
-- **Single-distro**: launcher's apt commands are Debian-only. If you set `base_image: images:fedora/43` or similar in an entry, the first-`init` apt step will fail. TODO: parse `base_image` at render time + emit `apt` / `dnf` / `zypper` accordingly.
-- **GUI scope**: only `incus console --type=vga` (SPICE full-VM display). No per-app Wayland / X11 forwarding yet.
-- **No cross-role name check**: agents and workstations can collide on `v-<name>`. User is responsible.
-- **Sandbox**: round-trip works with empty `incus_vm: []` (the default). For real-launcher coverage, override via `-e` or uncomment defaults examples.
+- Statically verified (mypy `--strict`, `ivm --dry-run`, `make sandbox-incus-vm`);
+  real-incus end-to-end (launch / exec / virtio-fs) needs a real incus host.
+- Windows tier (`os.type: windows`) is schema-defined but not yet implemented in
+  `init` (linux only for now).
+- No GPU acceleration (incus limitation; see hardware-capabilities doc).

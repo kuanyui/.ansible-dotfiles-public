@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../vm.schema.json
+# yaml-language-server: $schema=../template.schema.json
 # Codex agent VM: Node.js + npm `@openai/codex`.
 template_name: codex
 hw:

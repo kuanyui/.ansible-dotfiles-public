@@ -440,7 +440,7 @@ is the TEMPLATE id - the `<template_name>` in `ivm init <template_name>`; the
 instance name is chosen interactively at init (below), NOT from `template_name`.
 (Field named `template_name`, not the vague `name`, to keep the two distinct.)
 
-- **Templates** live at `~/.local/share/ansible-managed/incus-vm/vm-templates/*.yaml`,
+- **Templates** live at `~/.local/share/ansible-managed/incus-vm/ivm/templates/*.yaml`,
   each with `template_name:` = its id (e.g. `template_name: claude` -> `ivm init claude`).
 - **`ivm init <template>`** (e.g. `ivm init claude`): render from the template,
   then PROMPT for the VM name. The prefilled default is the old long

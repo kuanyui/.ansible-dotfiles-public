@@ -21,11 +21,11 @@ _ivm_subcommands=(
   'gui:open a SPICE graphical console'
 )
 
-local _ivm_templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm}/vm-templates"
+local _ivm_templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}/templates"
 local state
 
 _arguments -C \
-  '--root[install root holding the schema + vm-templates]:dir:_files -/' \
+  '--root[install root holding the template.schema.json + templates]:dir:_files -/' \
   '--dry-run[print the incus commands without running them]' \
   '(-y --yes)'{-y,--yes}'[skip confirmation / name prompts]' \
   '1:subcommand:->subcmd' \

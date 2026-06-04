@@ -1,8 +1,8 @@
 """Sandbox config for `playbooks/incus_vm.yml`.
 
 Verifies the role-level concerns of `roles/incus_vm`: the `ivm` engine binary,
-`vm.schema.json`, and the example `vm-templates/` get installed to the right
-places, the user/root dotfiles staging is rendered under `vm-rootfs/`, and the
+`template.schema.json`, and the example `templates/` get installed to the right
+places, the user/root dotfiles staging is rendered under `rootfs/`, and the
 round-trip uninstall removes the binary + the role subdir back to baseline.
 
 What we deliberately DON'T test here: the `ivm` runtime (incus launch / exec /
