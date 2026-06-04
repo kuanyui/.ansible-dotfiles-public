@@ -83,12 +83,12 @@ resync-incus-agents-dotfiles:  ## Re-push staged dotfiles into every existing v-
 
 incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all our Linux `v-*` guests. Run `apply-incus-agents` / `apply-incus-vm` first; this only pushes, does not re-render.
 	@set -e; \
-	AGENTS="$$HOME/.local/share/ansible-managed/incus-agents/vm-rootfs"; \
-	WORKS="$$HOME/.local/share/ansible-managed/incus-vm/vm-rootfs"; \
+	AGENTS="$$HOME/.local/share/ansible-managed/incus-agents/vm-rootfs/Debian"; \
+	WORKS="$$HOME/.local/share/ansible-managed/incus-vm/vm-rootfs/Debian"; \
 	if [ -d "$$AGENTS/home/user" ] && [ -d "$$AGENTS/root" ]; then SRC="$$AGENTS"; \
 	elif [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
 	else echo "No staged dotfiles found -- run 'make apply-incus-agents' or 'make apply-incus-vm' first" >&2; exit 1; fi; \
-	echo "Source (user+root trees are byte-identical across roles): $$SRC"; \
+	echo "Source (Debian tree; the only buildable guest family today): $$SRC"; \
 	VMS=$$(incus list '^v-' --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
 	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
 	for vm in $$VMS; do \

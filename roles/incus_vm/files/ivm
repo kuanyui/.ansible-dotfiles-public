@@ -57,6 +57,25 @@ MAX_NAME_LEN: int = 63
 # apt-family distros (phase 1). Others raise until phase 2.
 APT_DISTROS: tuple[str, ...] = ("debian", "ubuntu")
 
+# Map a template's `os.distro` to the ansible `os_family` that the dotfiles
+# staging is keyed by (roles/_incus_guest_setup_dotfiles renders one tree per
+# family under vm-rootfs/<family>/). The min-install shell helper differs per
+# family: apt-min (Debian) / zypper-min (Suse) / dnf-min (RedHat).
+DISTRO_TO_ANSIBLE_OS_FAMILY: dict[str, str] = {
+    "debian": "Debian",
+    "ubuntu": "Debian",
+    "opensuse": "Suse",
+    "fedora": "RedHat",
+}
+
+
+def os_family_of(doc: Template) -> str:
+    distro: str = doc["os"].get("distro", "")
+    try:
+        return DISTRO_TO_ANSIBLE_OS_FAMILY[distro]
+    except KeyError:
+        die(f"no dotfiles os_family mapping for distro '{distro}'")
+
 
 def die(msg: str) -> NoReturn:
     print(f"ivm: error: {msg}", file=sys.stderr)
@@ -255,10 +274,12 @@ def provision_script(doc: Template) -> str:
     )
 
 
-def push_dotfiles_commands(name: str, root: Path) -> list[list[str]]:
+def push_dotfiles_commands(doc: Template, name: str, root: Path) -> list[list[str]]:
     """Push the host-staged user/root dotfile trees (rendered at apply time by
-    roles/_incus_guest_setup_dotfiles) into the guest."""
-    staging: Path = root / "vm-rootfs"
+    roles/_incus_guest_setup_dotfiles) into the guest. The staging is keyed by
+    os_family (apt-min vs zypper-min vs dnf-min differ), so pick the subtree
+    matching this template's distro."""
+    staging: Path = root / "vm-rootfs" / os_family_of(doc)
     return [
         ["incus", "file", "push", "--recursive", "--create-dirs",
          "--uid", "1000", "--gid", "1000", str(staging / "home/user"), f"{name}/home/"],
@@ -325,7 +346,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     for mount_cmd in mount_commands(doc, name, cwd):
         run(mount_cmd, dry_run=dry_run)
     run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc)], dry_run=dry_run)
-    for push_cmd in push_dotfiles_commands(name, root):
+    for push_cmd in push_dotfiles_commands(doc, name, root):
         run(push_cmd, dry_run=dry_run)
     print(f"==> {name} ready. Enter with: ivm shell", file=sys.stderr)
 

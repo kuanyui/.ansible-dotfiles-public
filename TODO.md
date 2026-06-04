@@ -56,6 +56,35 @@ Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
   is harmless and kept for naming hygiene; comment in
   `roles/incus_agents/tasks/main.yml` says so.
 
+## incus_vm engine (`ivm`) - redesign
+
+Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
+
+- [x] **Phase 0 scaffold** - role installs `ivm` + schema + deps + example
+  templates; `ivm --help` / `ivm env` / `--dry-run`.
+- [x] **Phase 1 minimal Linux (Debian)** - `ivm init` (validate -> name
+  prompt -> launch + `user.*` tags -> mounts -> minimal provision -> push
+  dotfiles) + `ivm shell` (cwd-resolve). Default VM name carries `ivm-` prefix.
+  Per-os_family dotfiles staging done (`vm-rootfs/<family>/{home/user,root}`).
+  Static-verified (mypy --strict, syntax-check, dry-run); needs real incus host
+  + `make sandbox-incus-vm` for end-to-end.
+- [ ] **Phase 2 lifecycle + provision depth** - start/stop/delete/overwrite-
+  dotfiles/update/env; `post_install_script` (root, `su - user`);
+  `distro_package_groups` resolution; openSUSE/Fedora provisioning (distro ->
+  pkg-mgr). NOTE: until this lands, only Debian guests are buildable.
+- [ ] **Phase 3 extras** - shadow mounts, `sys.tmpfs`, `ssh_server`, `hw.gpu`
+  virtio, `net` macvlan/bridge, snapshot CLI, gui (SPICE), parent-dir prompt,
+  two-level completion.
+- [ ] **Phase 4 retire `incus_agents`** - migrate claude/codex to `ivm`; remove
+  the old bash launchers. **Same step:** fold the now-single-consumer shared
+  roles into `incus_vm` (`_incus_host_setup` -> `tasks/host_setup.yml`,
+  `_incus_guest_setup_dotfiles` -> `tasks/`), and replace
+  `make incus-overwrite-dotfiles-in-all-guest` with `ivm overwrite-dotfiles`.
+  (Skip the fold-in only if a new incus face role is planned that re-shares them.)
+- [ ] **Stale docs** - `roles/incus_vm/README.md` + `make apply/unapply-incus-vm`
+  help text still describe the OLD `v-<workstation>` launcher / manifest; rewrite
+  for the `ivm` engine.
+
 ## Notes / future
 
 - Python launcher rewrite: deferred to the `incus_vm` redesign (see

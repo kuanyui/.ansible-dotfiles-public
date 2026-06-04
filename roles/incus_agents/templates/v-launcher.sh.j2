@@ -277,11 +277,13 @@ _push_dotfiles() {
     # incus appends the source dir's basename to the target, so `home/user ->
     # /home/` lands at `/home/user`, and `root -> /` lands at `/root` - no
     # /tmp+cp dance needed because the source dir is literally named `root`.
+    # Staging is keyed by os_family (`roles/_incus_guest_setup_dotfiles`); these
+    # agents are always Debian, so push the `Debian/` subtree.
     incus file push --recursive --create-dirs --uid 1000 --gid 1000 \
-        "{{ incus_root }}/vm-rootfs/home/user" \
+        "{{ incus_root }}/vm-rootfs/Debian/home/user" \
         "$VM_NAME/home/"
     incus file push --recursive --create-dirs --uid 0 --gid 0 \
-        "{{ incus_root }}/vm-rootfs/root" \
+        "{{ incus_root }}/vm-rootfs/Debian/root" \
         "$VM_NAME/"
 }
 

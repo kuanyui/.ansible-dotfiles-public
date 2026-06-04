@@ -47,15 +47,18 @@
     dest: "{{ incus_vm_root }}/vm-templates/"
     mode: "0644"
 
-# ---------- Stage VM dotfiles (user + root variants) ----------
+# ---------- Stage VM dotfiles (user + root variants, per os_family) ----------
 # Rendered host-side by the shared `roles/_incus_guest_setup_dotfiles` into
-# `{{ incus_vm_root }}/vm-rootfs/{home/user,root}`; `ivm` pushes them into the
-# guest at init. Hardcodes Debian for now (multi-distro staging is a later phase).
-- name: Stage VM dotfiles (user + root variants) via `roles/_incus_guest_setup_dotfiles`
+# `{{ incus_vm_root }}/vm-rootfs/<os_family>/{home/user,root}`; at init `ivm`
+# pushes the subtree matching the template's `os.distro` -> os_family (the
+# min-install helper differs: apt-min / zypper-min / dnf-min). We stage every
+# family `ivm` can target so any template's distro has its tree ready.
+- name: Stage VM dotfiles per os_family via `roles/_incus_guest_setup_dotfiles`
   ansible.builtin.include_role:
     name: _incus_guest_setup_dotfiles
   vars:
     incus_guest_setup_dotfiles_root: "{{ incus_vm_root }}"
+    incus_guest_setup_dotfiles_os_families: [Debian, Suse, RedHat]
 
 # NOTE: two-level `ivm` shell completion is a later phase (IMPLEMENTATION_PLAN
 # phase 3); not installed here yet.

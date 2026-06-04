@@ -36,7 +36,7 @@ staging), `roles/distro_packages` (the `distro_package_groups` registry).
 | **1 minimal Linux happy path (Debian)** | `ivm init <template>`: validate -> name prompt (default `<template>-<cwd-path>`, editable, length+uniqueness loop) -> `incus launch` + `user.*` tags -> attach mounts -> minimal provision (pkg install + push dotfiles) ; `ivm shell` (cwd-resolve -> `incus exec` zsh). Goal: `ivm init claude` then `ivm shell`. |
 | **2 lifecycle + provision depth** | start/stop/delete (with delete confirm), overwrite-dotfiles, update, env; `post_install_script` (root, `su - user` for user bits), baseline pkgs, `distro_package_groups` resolution; add openSUSE/Fedora (distro -> pkg-mgr + os_family map). |
 | **3 extras** | shadow mounts, `sys.tmpfs`, `ssh_server`, `hw.gpu` virtio, `net` macvlan/bridge, snapshot CLI, gui (SPICE), parent-dir prompt, two-level completion. |
-| **4 retire** | migrate claude/codex to `ivm`; retire `roles/incus_agents` + the old bash launchers. |
+| **4 retire** | migrate claude/codex to `ivm`; retire `roles/incus_agents` + the old bash launchers. Once `incus_agents` is gone, `incus_vm` is the sole consumer of the shared `_incus_*` roles, so fold them in (the `_` prefix only earns its keep with 2+ face roles): `roles/_incus_host_setup/tasks/main.yml` -> `roles/incus_vm/tasks/host_setup.yml`; `roles/_incus_guest_setup_dotfiles/tasks/{main,_stage_family}.yml` -> `roles/incus_vm/tasks/`. Replace `make incus-overwrite-dotfiles-in-all-guest` (per-family-aware) with `ivm overwrite-dotfiles`. (Skip the fold-in only if a NEW incus face role is planned that genuinely re-shares them.) |
 
 Windows = separate future tier (REDESIGN §8 / §4.8); not in this plan.
 
