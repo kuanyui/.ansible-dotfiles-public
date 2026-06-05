@@ -9,10 +9,12 @@ _ivm_subcommands=(
   'shell:open a zsh shell as user (cwd-resolved)'
   'shell-user:open a zsh shell as user'
   'shell-root:open a zsh shell as root'
-  'start:start the cwd-bound VM'
-  'stop:stop the cwd-bound VM'
-  'delete:delete the cwd-bound VM (confirms)'
+  'start:start the target VM'
+  'reboot:restart the target VM (incus restart)'
+  'stop:stop the target VM'
+  'delete:delete the target VM (confirms)'
   'env:load + print a template'\''s resolved config'
+  'list:incus list passthrough'
   'overwrite-dotfiles:re-push staged dotfiles into the VM'
   'update:upgrade all packages in the VM'
   'set-password:set a guest account'\''s login password'
@@ -29,12 +31,14 @@ local state
 _arguments -C \
   '--root[install root holding the template.schema.json + templates]:dir:_files -/' \
   '--dry-run[print the incus commands without running them]' \
+  '--name[target an existing VM by name, ignoring cwd]:vm:->vmname' \
   '(-y --yes)'{-y,--yes}'[skip confirmation / name prompts]' \
   '1:subcommand:->subcmd' \
   '*::args:->args'
 
 case "$state" in
   subcmd) _describe 'ivm subcommand' _ivm_subcommands ;;
+  vmname) compadd -- ${(f)"$(incus list --format csv --columns n 2>/dev/null)"} ;;
   args)
     case "$words[1]" in
       init|env) compadd -- ${_ivm_templates_root}/*.yaml(N:t:r) ;;

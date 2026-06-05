@@ -8,9 +8,10 @@ roles/incus_vm/IMPLEMENTATION_PLAN.md.
 
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
-dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`stop`/`delete`/
-`update`/`overwrite-dotfiles`/`set-password`/`unset-password`/`enable-user-sudo`/
-`disable-user-sudo`; `env`.
+dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
+`delete`/`update`/`overwrite-dotfiles`/`set-password`/`unset-password`/
+`enable-user-sudo`/`disable-user-sudo`; `env`; `list` (incus list passthrough).
+VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
 attach devices (mounts + `shadow` masking, `hw.tpm`, macvlan/bridge `net`) ->
 start -> provision (`sys.timezone`/`sys.tmpfs`/`sys.ssh_server`, packages,
@@ -50,8 +51,11 @@ DEFAULT_ROOT: Path = Path(
     os.environ.get("IVM_ROOT", str(Path.home() / ".local/share/ansible-managed/incus-vm/ivm"))
 )
 
+# Subcommands that act on an EXISTING VM, resolved by cwd (`user.ivm_init_at_dir`)
+# or overridden with the global `--name`. (`init`/`env`/`list` are NOT here -
+# they don't resolve a target VM.)
 CWD_RESOLVED: tuple[str, ...] = (
-    "shell", "shell-user", "shell-root", "start", "stop", "delete", "env",
+    "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete",
     "overwrite-dotfiles", "update", "set-password", "unset-password",
     "enable-user-sudo", "disable-user-sudo", "snapshot", "gui",
 )
@@ -838,8 +842,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     print(f"==> {name} ready. Enter with: {enter_hint}", file=sys.stderr)
 
 
-def cmd_shell(root: Path, *, as_root: bool, dry_run: bool) -> None:
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+def cmd_shell(name: str, root: Path, *, as_root: bool, dry_run: bool) -> None:
     ensure_up(name, dry_run=dry_run)
     if as_root:
         cmd: list[str] = ["incus", "exec", "--env", "HOME=/root", "--env", "USER=root",
@@ -850,14 +853,18 @@ def cmd_shell(root: Path, *, as_root: bool, dry_run: bool) -> None:
     exec_into(cmd, dry_run=dry_run)
 
 
-def cmd_start(*, dry_run: bool) -> None:
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+def cmd_start(name: str, *, dry_run: bool) -> None:
     ensure_up(name, dry_run=dry_run)
     print(f"==> {name} running.", file=sys.stderr)
 
 
-def cmd_stop(*, dry_run: bool) -> None:
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+def cmd_reboot(name: str, *, dry_run: bool) -> None:
+    """`incus restart` the target VM (ivm-friendly alias; incus calls it restart)."""
+    run(["incus", "restart", name], dry_run=dry_run)
+    print(f"==> {name} rebooted.", file=sys.stderr)
+
+
+def cmd_stop(name: str, *, dry_run: bool) -> None:
     if dry_run or vm_is_running(name):
         run(["incus", "stop", name], dry_run=dry_run)
     else:
@@ -880,8 +887,7 @@ def confirm_delete(name: str, *, assume_yes: bool, dry_run: bool) -> None:
         die("aborted; VM not deleted")
 
 
-def cmd_delete(*, assume_yes: bool, dry_run: bool) -> None:
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+def cmd_delete(name: str, *, assume_yes: bool, dry_run: bool) -> None:
     if not dry_run and not instance_exists(name):
         print(f"==> {name} does not exist; nothing to delete.", file=sys.stderr)
         return
@@ -889,21 +895,19 @@ def cmd_delete(*, assume_yes: bool, dry_run: bool) -> None:
     run(["incus", "delete", "--force", name], dry_run=dry_run)
 
 
-def cmd_overwrite_dotfiles(root: Path, *, dry_run: bool) -> None:
+def cmd_overwrite_dotfiles(name: str, root: Path, *, dry_run: bool) -> None:
     """Re-push the host-staged dotfiles into an existing VM (no re-provision)."""
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
     ensure_up(name, dry_run=dry_run)
     for push_cmd in push_dotfiles_commands(vm_ansible_os_family(name, dry_run=dry_run), name, root):
         run(push_cmd, dry_run=dry_run)
     print(f"==> dotfiles re-pushed into {name} (/home/user + /root).", file=sys.stderr)
 
 
-def cmd_set_password(username: str, *, dry_run: bool) -> None:
+def cmd_set_password(name: str, username: str, *, dry_run: bool) -> None:
     """Set a login password for `<username>` in the guest (e.g. so you can log in
     on the console/TTY). Just the password - sudo is a separate opt-in
     (`enable-user-sudo`). The operator's `shell-root`/`shell` paths are host-socket
     auth and need no password."""
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
     ensure_up(name, dry_run=dry_run)
     if dry_run:
         print(f"+ (prompt for {username}'s password, then `incus exec {name} -- chpasswd` via stdin)",
@@ -921,10 +925,9 @@ def cmd_set_password(username: str, *, dry_run: bool) -> None:
     print(f"==> password set for {username} on {name}.", file=sys.stderr)
 
 
-def cmd_unset_password(username: str, *, dry_run: bool) -> None:
+def cmd_unset_password(name: str, username: str, *, dry_run: bool) -> None:
     """Lock `<username>`'s password (reverses `set-password`); the account can no
     longer log in by password."""
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
     ensure_up(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "passwd", "--lock", username], dry_run=dry_run)
     print(f"==> {username}'s password locked on {name}.", file=sys.stderr)
@@ -939,8 +942,7 @@ def cmd_unset_password(username: str, *, dry_run: bool) -> None:
 _SUDOERS_USER: str = "Defaults:user rootpw\nuser ALL=(ALL) ALL\n"
 
 
-def cmd_enable_user_sudo(*, dry_run: bool) -> None:
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+def cmd_enable_user_sudo(name: str, *, dry_run: bool) -> None:
     ensure_up(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "bash", "-ec",
          "cat > /etc/sudoers.d/user <<'EOF'\n" + _SUDOERS_USER + "EOF\n"
@@ -950,16 +952,14 @@ def cmd_enable_user_sudo(*, dry_run: bool) -> None:
           f"set one first with `ivm set-password root` if you haven't.", file=sys.stderr)
 
 
-def cmd_disable_user_sudo(*, dry_run: bool) -> None:
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+def cmd_disable_user_sudo(name: str, *, dry_run: bool) -> None:
     ensure_up(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "rm", "-f", "/etc/sudoers.d/user"], dry_run=dry_run)
     print(f"==> `user` sudo removed on {name}; back to the locked-down default.", file=sys.stderr)
 
 
-def cmd_update(*, dry_run: bool) -> None:
+def cmd_update(name: str, *, dry_run: bool) -> None:
     """Refresh metadata + upgrade all packages in the VM (per-family pkg-mgr)."""
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
     ensure_up(name, dry_run=dry_run)
     if dry_run:
         print("+ (incus exec <vm> -- upgrade all packages via the VM's ansible_os_family "
@@ -970,21 +970,25 @@ def cmd_update(*, dry_run: bool) -> None:
         dry_run=dry_run)
 
 
-def cmd_snapshot(snapshot_args: list[str], *, dry_run: bool) -> None:
-    """Thin wrapper over `incus snapshot`, injecting the cwd-resolved VM as the
-    instance arg: `ivm snapshot [create|list|restore|delete|...] [snapname]` ->
+def cmd_snapshot(name: str, snapshot_args: list[str], *, dry_run: bool) -> None:
+    """Thin wrapper over `incus snapshot`, injecting the target VM as the instance
+    arg: `ivm snapshot [create|list|restore|delete|...] [snapname]` ->
     `incus snapshot <action> <vm> [snapname]`. No args defaults to `list`."""
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
     action: str = snapshot_args[0] if snapshot_args else "list"
     rest: list[str] = snapshot_args[1:]
     run(["incus", "snapshot", action, name, *rest], dry_run=dry_run)
 
 
-def cmd_gui(*, dry_run: bool) -> None:
+def cmd_gui(name: str, *, dry_run: bool) -> None:
     """Open a SPICE graphical console (`incus console --type=vga`)."""
-    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
     ensure_up(name, dry_run=dry_run)
     exec_into(["incus", "console", "--type=vga", name], dry_run=dry_run)
+
+
+def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
+    """`incus list` passthrough (ivm-friendly alias). Extra args go to incus, e.g.
+    `ivm list --format csv`. Shows all instances; ivm VMs are `ivm-`prefixed."""
+    run(["incus", "list", *list_args], dry_run=dry_run)
 
 
 def cmd_env(template_name: str, root: Path) -> None:
@@ -1042,6 +1046,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="print the incus commands that would run, without executing")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="skip confirmation prompts / name prompt (use the default name)")
+    parser.add_argument("--name", default=None,
+                        help="target this existing VM by name, ignoring the cwd binding "
+                             "(applies to the VM-acting subcommands; not init/env/list)")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
     p_init: argparse.ArgumentParser = sub.add_parser("init", help="create a VM from a template")
@@ -1049,10 +1056,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("name", nargs="?",
                         help="incus VM instance name (as shown in `incus list`); skips the prompt")
 
+    p_env: argparse.ArgumentParser = sub.add_parser("env", help="print a template's resolved config")
+    p_env.add_argument("template", help="template id")
+
+    # No args here: `list` is a raw passthrough, so we collect everything after it
+    # via parse_known_args in main() (REMAINDER mishandles leading `--flags`).
+    sub.add_parser("list", help="`incus list` passthrough (e.g. `ivm list --format csv`)")
+
     for name in CWD_RESOLVED:
-        sp: argparse.ArgumentParser = sub.add_parser(name, help="(cwd-resolved)")
-        if name == "env":
-            sp.add_argument("template", help="template id")
+        sp: argparse.ArgumentParser = sub.add_parser(name, help="(target VM: cwd or --name)")
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name in PASSWORD_SUBCOMMANDS:
@@ -1061,38 +1073,53 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args: argparse.Namespace = build_parser().parse_args()
+    parser: argparse.ArgumentParser = build_parser()
+    args: argparse.Namespace
+    extras: list[str]
+    args, extras = parser.parse_known_args()
     root: Path = args.root
+    # init / env / list don't act on an existing VM, so they don't resolve a target.
+    if args.subcommand == "list":
+        cmd_list(extras, dry_run=args.dry_run)  # raw passthrough to `incus list`
+        return
+    if extras:  # every other subcommand is strict about unknown args
+        parser.error("unrecognized arguments: " + " ".join(extras))
     if args.subcommand == "init":
         cmd_init(args.template, args.name, root, assume_yes=args.yes, dry_run=args.dry_run)
-    elif args.subcommand == "env":
+        return
+    if args.subcommand == "env":
         cmd_env(args.template, root)
-    elif args.subcommand in ("shell", "shell-user"):
-        cmd_shell(root, as_root=False, dry_run=args.dry_run)
+        return
+    # Everything else acts on a VM: the global --name overrides the cwd binding.
+    name: str = args.name if args.name else resolve_vm_by_cwd(Path.cwd(), dry_run=args.dry_run)
+    if args.subcommand in ("shell", "shell-user"):
+        cmd_shell(name, root, as_root=False, dry_run=args.dry_run)
     elif args.subcommand == "shell-root":
-        cmd_shell(root, as_root=True, dry_run=args.dry_run)
+        cmd_shell(name, root, as_root=True, dry_run=args.dry_run)
     elif args.subcommand == "start":
-        cmd_start(dry_run=args.dry_run)
+        cmd_start(name, dry_run=args.dry_run)
+    elif args.subcommand == "reboot":
+        cmd_reboot(name, dry_run=args.dry_run)
     elif args.subcommand == "stop":
-        cmd_stop(dry_run=args.dry_run)
+        cmd_stop(name, dry_run=args.dry_run)
     elif args.subcommand == "delete":
-        cmd_delete(assume_yes=args.yes, dry_run=args.dry_run)
+        cmd_delete(name, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "overwrite-dotfiles":
-        cmd_overwrite_dotfiles(root, dry_run=args.dry_run)
+        cmd_overwrite_dotfiles(name, root, dry_run=args.dry_run)
     elif args.subcommand == "set-password":
-        cmd_set_password(args.username, dry_run=args.dry_run)
+        cmd_set_password(name, args.username, dry_run=args.dry_run)
     elif args.subcommand == "unset-password":
-        cmd_unset_password(args.username, dry_run=args.dry_run)
+        cmd_unset_password(name, args.username, dry_run=args.dry_run)
     elif args.subcommand == "enable-user-sudo":
-        cmd_enable_user_sudo(dry_run=args.dry_run)
+        cmd_enable_user_sudo(name, dry_run=args.dry_run)
     elif args.subcommand == "disable-user-sudo":
-        cmd_disable_user_sudo(dry_run=args.dry_run)
+        cmd_disable_user_sudo(name, dry_run=args.dry_run)
     elif args.subcommand == "update":
-        cmd_update(dry_run=args.dry_run)
+        cmd_update(name, dry_run=args.dry_run)
     elif args.subcommand == "snapshot":
-        cmd_snapshot(args.snapshot_args, dry_run=args.dry_run)
+        cmd_snapshot(name, args.snapshot_args, dry_run=args.dry_run)
     elif args.subcommand == "gui":
-        cmd_gui(dry_run=args.dry_run)
+        cmd_gui(name, dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 

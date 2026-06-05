@@ -5,21 +5,28 @@
 _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
-    local subcommands="init shell shell-user shell-root start stop delete env overwrite-dotfiles update set-password unset-password enable-user-sudo disable-user-sudo snapshot gui"
+    local prev="${COMP_WORDS[COMP_CWORD-1]}"
+    local subcommands="init shell shell-user shell-root start reboot stop delete env list overwrite-dotfiles update set-password unset-password enable-user-sudo disable-user-sudo snapshot gui"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}/templates"
 
-    # The subcommand is the first non-flag word after `ivm` (--root takes a value).
+    # --name / --root take a value: complete VM names after --name.
+    if [[ "$prev" == "--name" ]]; then
+        COMPREPLY=( $(compgen -W "$(incus list --format csv --columns n 2>/dev/null)" -- "$cur") )
+        return
+    fi
+
+    # The subcommand is the first non-flag word after `ivm` (--root/--name take a value).
     local i sub=""
     for (( i = 1; i < COMP_CWORD; i++ )); do
         case "${COMP_WORDS[i]}" in
-            --root) (( i++ )) ;;
+            --root|--name) (( i++ )) ;;
             -*) ;;
             *) sub="${COMP_WORDS[i]}"; break ;;
         esac
     done
 
     if [[ -z "$sub" ]]; then
-        COMPREPLY=( $(compgen -W "${subcommands} --root --dry-run --yes" -- "$cur") )
+        COMPREPLY=( $(compgen -W "${subcommands} --root --name --dry-run --yes" -- "$cur") )
         return
     fi
 

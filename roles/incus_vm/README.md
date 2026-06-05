@@ -59,14 +59,18 @@ Field groups (see the schema for the full, authoritative list):
 ## Subcommands
 
 `ivm <subcommand>`. Global flags: `--dry-run` (print the incus commands, run
-nothing), `-y`/`--yes` (skip prompts), `--root <dir>` (override the data root).
+nothing), `-y`/`--yes` (skip prompts), `--root <dir>` (override the data root),
+`--name <vm>` (target that existing VM by name, ignoring the cwd binding; applies
+to every VM-acting subcommand, not `init`/`env`/`list`).
 
 | Subcommand | What it does |
 |---|---|
 | `init <template> [name]` | Create a VM from `<template>`, bound to the current dir. Prompts for the name (default `ivm-<template>-<cwd-path>`, editable) unless given; confirms before creating. |
-| `shell` / `shell-user` | zsh into the cwd-resolved VM as `user` (starts it if stopped). |
+| `list [incus args]` | `incus list` passthrough (e.g. `ivm list --format csv`). Shows all instances; ivm VMs are `ivm-`prefixed. |
+| `shell` / `shell-user` | zsh into the target VM as `user` (starts it if stopped). |
 | `shell-root` | zsh into it as `root`. |
-| `start` / `stop` | Start / stop the cwd-resolved VM. |
+| `start` / `stop` | Start / stop the target VM. |
+| `reboot` | `incus restart` the target VM. |
 | `delete` | Delete the VM + its disk + snapshots (asks first; `--yes` skips). |
 | `update` | Refresh + upgrade all packages in the VM (per-family apt/zypper/dnf). |
 | `overwrite-dotfiles` | Re-push the host-staged dotfiles into the VM (no re-provision). |

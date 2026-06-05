@@ -213,6 +213,13 @@ First real `ivm init webbrowser` on the host surfaced these (all fixed unless no
   run the installed copy yourself (`sh <ivm-root>/setup-fcitx5-input.sh`). If the
   manual step gets annoying, promote to a dedicated `roles/fcitx5` (parallel to
   `roles/zsh`/`emacs`, added to `playbooks/user.yml`) so the host auto-configures.
+- [x] **Global `--name <vm>`** - target an existing VM by name, ignoring the cwd
+  binding (all VM-acting subcommands). Resolved once in `main()` and passed to
+  each cmd (they no longer self-resolve). zsh + bash completion of `--name`
+  values from `incus list`.
+- [x] **`ivm list` + `ivm reboot`** - `list` = raw `incus list` passthrough
+  (via `parse_known_args` so `--format` etc. reach incus; other subcommands still
+  reject unknown args); `reboot` = `incus restart` the target VM.
 - [ ] **Light-desktop apps on icewm** - add `pcmanfm-qt` + `lximage-qt` (the
   actively-maintained LXQt file manager + image viewer; GTK `pcmanfm`/`gpicview`
   are stalled/abandoned). Both in Tumbleweed OSS. DECIDE: extend `webbrowser`
@@ -222,6 +229,35 @@ First real `ivm init webbrowser` on the host surfaced these (all fixed unless no
   Fedora `+= icewm-themes` (extras; default theme already in `icewm` since F31),
   Debian has none (bundled), and ship a `~/.icewm/theme` pick so it's not ugly on
   all three (a dotfile, same spirit as the fcitx5 script).
+- [x] **GUI bare-WM autostart convention** - `ivm` installs `spice-vdagent` (for
+  `sys.gui`) but doesn't autostart it; on a bare WM (icewm, which ignores XDG
+  autostart) the template must launch `spice-vdagent &` (clipboard) + `fcitx5 -d &`
+  (IME) from the WM startup. Added spice-vdagent to webbrowser's icewm startup;
+  documented the rule in the `sys.gui` schema description. DEs (KDE/GNOME/LXQt)
+  autostart both via XDG. (Clipboard is SPICE-bidirectional once the agent runs;
+  toggle off via remote-viewer's share-clipboard pref or by not starting it.)
+- [ ] **`make` universal in `incus_guest_baseline`** - `git` is already in the
+  baseline (every guest); `make` is only in `basic_tools`. User uses `make`
+  everywhere, so add `make` to `incus_guest_baseline.common` -> every guest gets
+  git+make regardless of groups. (claude already gets make via its `basic_tools`
+  group; this just makes it baseline-universal.) Keep `make` in `basic_tools` too
+  for the HOST path (baseline is guest-only); resolve dedupes on guests. One-line
+  change - offered to do immediately.
+- [ ] **`qtdev` environment - draft the group(s) + template** - C++ dev toolchain
+  + Qt. User uses: QWidget, QtConcurrent, QtMultimedia, QML (Qt Quick). Likely a
+  GUI VM (QWidget/QML need a display). DESIGN OPEN:
+  - Split a reusable `cpp_dev` (gcc-c++/cmake/gdb/ninja/pkgconf) group from a
+    `qt_dev` (Qt6 modules) group, vs one combined group. Lean split (cpp_dev
+    reusable for non-Qt C++).
+  - Qt6 module -> openSUSE Tumbleweed `-devel` package mapping TO VERIFY (don't
+    guess): qtbase/QWidget+QtConcurrent `qt6-base-devel`, QtMultimedia
+    `qt6-multimedia-devel`, QML/Quick `qt6-declarative-devel`; build glue
+    `cmake`/`qt6-tools`. Optionally `qt-creator` IDE. Per-family (apt/dnf) names
+    diverge - verify each.
+  - Decide: define in `roles/distro_packages/defaults/main.yml` as group(s)
+    (reusable, like cjk_input) + a `qtdev.yaml` template referencing them.
+  - Note: `pcmanfm-qt`/`lximage-qt` are runtime Qt APPS (no -devel); orthogonal
+    to qtdev, classify separately (light-desktop apps item above).
 
 ## Notes / future
 
