@@ -411,6 +411,12 @@ def mount_commands(doc: Template, name: str, cwd: Path, root: Path) -> list[list
     return cmds
 
 
+# zypper is the most failure-prone of the three (mirror/metadata hiccups), so run
+# it at max verbosity (-vvv) by default - any failure is diagnosable from the init
+# log without a manual re-run.
+ZYPPER: str = "zypper -vvv --non-interactive"
+
+
 def install_packages_script(ansible_os_family: str, packages: list[str]) -> str:
     """Per-family install with weak-deps/recommends OFF (the apt-min/zypper-min/
     dnf-min policy, applied to provisioning)."""
@@ -420,8 +426,8 @@ def install_packages_script(ansible_os_family: str, packages: list[str]) -> str:
                 "apt-get update -qq\n"
                 f"apt-get install --yes --no-install-recommends {pkgs}\n")
     if ansible_os_family == "Suse":
-        return ("zypper --non-interactive refresh\n"
-                f"zypper --non-interactive install --no-recommends {pkgs}\n")
+        return (f"{ZYPPER} refresh\n"
+                f"{ZYPPER} install --no-recommends {pkgs}\n")
     if ansible_os_family == "RedHat":
         return f"dnf install --assumeyes --setopt=install_weak_deps=False {pkgs}\n"
     die(f"no package-manager mapping for ansible_os_family '{ansible_os_family}'")
@@ -434,8 +440,8 @@ def update_packages_script(ansible_os_family: str) -> str:
                 "apt-get update -qq\n"
                 "apt-get upgrade --yes\n")
     if ansible_os_family == "Suse":
-        return ("zypper --non-interactive refresh\n"
-                "zypper --non-interactive update\n")
+        return (f"{ZYPPER} refresh\n"
+                f"{ZYPPER} update\n")
     if ansible_os_family == "RedHat":
         return "dnf upgrade --assumeyes\n"
     die(f"no package-manager mapping for ansible_os_family '{ansible_os_family}'")
@@ -588,17 +594,35 @@ def push_dotfiles_commands(ansible_os_family: str, name: str, root: Path) -> lis
     ]
 
 
-def wait_ready(name: str, *, dry_run: bool) -> None:
-    if dry_run:
-        print(f"+ (wait until `incus exec {name} -- true` succeeds)", file=sys.stderr)
-        return
-    deadline: float = time.monotonic() + 90
+def wait_until(name: str, probe: str, timeout: int) -> bool:
+    """Poll `bash -c <probe>` inside the guest until it exits 0 or `timeout`s
+    elapse. Returns True on success, False on timeout."""
+    deadline: float = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if subprocess.run(["incus", "exec", name, "--", "true"],
+        if subprocess.run(["incus", "exec", name, "--", "bash", "-c", probe],
                           capture_output=True).returncode == 0:
-            return
+            return True
         time.sleep(1)
-    die(f"VM '{name}' did not become ready within 90s")
+    return False
+
+
+def wait_ready(name: str, *, dry_run: bool) -> None:
+    """Block until the guest is ready to PROVISION: (1) the incus agent answers
+    `exec`, then (2) the network is actually online. Without step 2 the very
+    first `zypper/apt refresh` races a not-yet-configured network and dies with a
+    connection error (curl 7) - the guest gets its DHCP lease a beat after the
+    agent comes up."""
+    if dry_run:
+        print(f"+ (wait until `incus exec {name}` works, then until the guest network is online)",
+              file=sys.stderr)
+        return
+    if not wait_until(name, "true", 90):
+        die(f"VM '{name}' agent did not answer `incus exec` within 90s")
+    # Network online = a default route exists AND DNS resolves. `example.com` is
+    # an IANA-reserved name (no vendor dependency), used purely as a liveness probe.
+    if not wait_until(name, "ip route show default | grep -q . && getent hosts example.com >/dev/null", 60):
+        die(f"VM '{name}' has no network connectivity after 60s (no default route or DNS); "
+            f"check the host's incus bridge (`incus network show incusbr0`: NAT + DNS).")
 
 
 def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
@@ -749,15 +773,29 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     # create stopped, attach all devices, THEN start (so non-hotpluggable
     # devices like the TPM are present at first boot).
     run(create_command(doc, name, cwd), dry_run=dry_run)
-    if any(mount.get("shadow") for mount in doc.get("mounts", [])):
-        ensure_shadow_mask(root, dry_run=dry_run)
-    for device_cmd in mount_commands(doc, name, cwd, root) + extra_device_commands(doc, name):
-        run(device_cmd, dry_run=dry_run)
-    run(["incus", "start", name], dry_run=dry_run)
-    wait_ready(name, dry_run=dry_run)
-    run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd)], dry_run=dry_run)
-    for push_cmd in push_dotfiles_commands(ansible_os_family_of(doc), name, root):
-        run(push_cmd, dry_run=dry_run)
+    # Past `incus create` anything can fail (flaky mirror mid-install, bad package
+    # name, guest not coming up). We deliberately do NOT auto-delete on failure:
+    # the cause is often a transient repo/network blip, and destroying the VM
+    # would throw away a likely-fine machine plus the chance to inspect/retry.
+    # Report cleanly (no Python traceback) with the recovery commands instead.
+    try:
+        if any(mount.get("shadow") for mount in doc.get("mounts", [])):
+            ensure_shadow_mask(root, dry_run=dry_run)
+        for device_cmd in mount_commands(doc, name, cwd, root) + extra_device_commands(doc, name):
+            run(device_cmd, dry_run=dry_run)
+        run(["incus", "start", name], dry_run=dry_run)
+        wait_ready(name, dry_run=dry_run)
+        run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd)], dry_run=dry_run)
+        for push_cmd in push_dotfiles_commands(ansible_os_family_of(doc), name, root):
+            run(push_cmd, dry_run=dry_run)
+    except subprocess.CalledProcessError as exc:
+        print("", file=sys.stderr)
+        die(f"setup of '{name}' failed at the step above (exit {exc.returncode}). "
+            f"The VM was left in place, NOT deleted (often a transient mirror/network "
+            f"blip worth retrying).\n"
+            f"  inspect: incus exec {name} -- bash\n"
+            f"  remove:  ivm delete   (from {cwd})   # or: incus delete --force {name}\n"
+            f"Resolve the cause, then `ivm delete` + `ivm init {template_name}` to rebuild.")
     print(f"==> {name} ready. Enter with: ivm shell", file=sys.stderr)
 
 
