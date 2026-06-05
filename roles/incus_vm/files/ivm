@@ -662,6 +662,60 @@ def vm_ansible_os_family(name: str, *, dry_run: bool) -> str:
 
 # ---------- subcommands ----------
 
+# ---------- confirm-prompt preview fragments ----------
+# Each `preview_*` returns the ready-to-print, label-aligned stderr lines for one
+# aspect of a VM (network / mounts / storage pool); the confirm prompts just print
+# them. Same name prefix, same `list[str]` return, same call shape - on purpose.
+
+def preview_network(doc: Template) -> list[str]:
+    """The `network:` line: NAT vs macvlan/bridge + the host<->VM consequence."""
+    net: dict[str, Any] = doc.get("net", {})
+    mode: str = net.get("mode", "nat")
+    if mode == "nat":
+        desc: str = "nat (incus managed bridge; host<->VM ok, LAN cannot reach the VM)"
+    else:
+        parent: str = net.get("parent", "(MISSING net.parent!)")
+        desc = (f"macvlan via {parent} (VM gets a LAN IP; host<->VM blocked)" if mode == "macvlan"
+                else f"bridge via {parent} (VM on the LAN through your host bridge)")
+    return [f"  network:       {desc}"]
+
+
+def preview_mounts(doc: Template, cwd: Path) -> list[str]:
+    """The `mounts:` block: one `host -> guest` line per mount (host-side
+    expansion, no incus), with ro/shadow flags; `(none)` if there are no mounts."""
+    mount_lines: list[str] = []
+    for mount in doc.get("mounts", []):
+        host: str = sh_expand(mount["host"], cwd)
+        guest: str = sh_expand(mount["guest"], cwd)
+        flags: list[str] = []
+        if mount.get("ro"):
+            flags.append("ro")
+        if mount.get("shadow"):
+            flags.append("shadow: " + ", ".join(mount["shadow"]))
+        mount_lines.append(f"    {host} -> {guest}" + (f"  ({'; '.join(flags)})" if flags else ""))
+    return ["  mounts:", *mount_lines] if mount_lines else ["  mounts:        (none)"]
+
+
+def preview_storage_pool(*, dry_run: bool) -> list[str]:
+    """The `storage pool:` line: the pool a VM lands in (the `default` profile's
+    root device pool) + its space usage. Best-effort - shows `(unknown)` if incus
+    can't report it, `(skipped)` under --dry-run; purely informational."""
+    if dry_run:
+        return ["  storage pool:  (skipped under --dry-run)"]
+    import yaml  # lazy, same as load_yaml (ships with ansible-core / python3-yaml)
+    pool: str = capture(["incus", "profile", "device", "get", "default", "root", "pool"]).strip()
+    if not pool:
+        return ["  storage pool:  (unknown - incus did not report)"]
+    # `incus storage info` is yaml; older versions nest the fields under `info:`.
+    parsed: Any = yaml.safe_load(capture(["incus", "storage", "info", pool]) or "")
+    info: dict[str, Any] = (parsed.get("info", parsed) if isinstance(parsed, dict) else {}) or {}
+    driver: str = str(info.get("driver", "")) or "?"
+    used: Any = info.get("space used")
+    total: Any = info.get("total space")
+    space: str = f"  -  {used} used / {total} total" if used and total else ""
+    return [f"  storage pool:  {pool} ({driver}){space}"]
+
+
 def confirm_create(doc: Template, name: str, cwd: Path, *, assume_yes: bool, dry_run: bool) -> None:
     hw: dict[str, Any] = doc.get("hw", {})
     print("", file=sys.stderr)
@@ -670,6 +724,8 @@ def confirm_create(doc: Template, name: str, cwd: Path, *, assume_yes: bool, dry
     print(f"  template:      {doc['template_name']}  (cwd: {cwd})", file=sys.stderr)
     print(f"  image:         {image_ref(doc['os'])}", file=sys.stderr)
     print(f"  hw:            cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
+    for line in (preview_network(doc) + preview_mounts(doc, cwd) + preview_storage_pool(dry_run=dry_run)):
+        print(line, file=sys.stderr)
     print("", file=sys.stderr)
     if assume_yes or dry_run:
         return
@@ -735,6 +791,8 @@ def confirm_delete(name: str, *, assume_yes: bool, dry_run: bool) -> None:
     print("", file=sys.stderr)
     print("About to PERMANENTLY DELETE this Incus VM (config + disk + snapshots):", file=sys.stderr)
     print(f"  incus VM name: {name}", file=sys.stderr)
+    for line in preview_storage_pool(dry_run=dry_run):
+        print(line, file=sys.stderr)
     print("This cannot be undone.", file=sys.stderr)
     print("", file=sys.stderr)
     if assume_yes or dry_run:

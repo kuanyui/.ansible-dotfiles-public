@@ -155,6 +155,25 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   doc links) and fixed the `make apply/unapply/sandbox-incus-vm` help strings
   (no more `v-<workstation>` / manifest / `rma`).
 
+## GUI + CJK package groups (ivm)
+
+- [x] **`sys.input_method: fcitx5`** - ivm writes the IM env vars
+  (`GTK_IM_MODULE`/`QT_IM_MODULE`/`XMODIFIERS`) to `/etc/environment` (X11 +
+  Wayland universal); `sys.gui` now installs `spice-vdagent` + `xdg-user-dirs`.
+  Schema field added; gui-gated. Static-verified (mypy, dry-run, schema).
+- [x] **`cjk_fonts` / `cjk_input` groups** - Noto Sans CJK (one pan-CJK font;
+  Suse uses `-jp-` variant, Debian/Fedora the combined pkg) + fcitx5 + mozc +
+  chewing + gtk/qt frontends. Per-family names diverge; Suse verified on
+  Tumbleweed.
+- [x] **`gui_x11` / `gui_wayland` groups** - X11 stack (server + startx + xauth)
+  and Xwayland-only Wayland base; WM/DE + display-manager stay per-template.
+  Names web-verified per family (default repos). `webbrowser.yaml` switched to
+  `gui_x11`. Static-verified (Suse resolution, schema).
+- [ ] **Verify `cjk_input` names on real Debian/Fedora** - Debian
+  `fcitx5-frontend-gtk4`/`-qt6` + `fcitx5-config-qt`; Fedora umbrella
+  `fcitx5-gtk`/`fcitx5-qt` (vs per-toolkit split). Set from web search, not a
+  live `apt`/`dnf`.
+
 ## Notes / future
 
 - [ ] **container_apps -> one engine + declarative templates** (parallel to what
