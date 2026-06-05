@@ -5,7 +5,7 @@
 _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
-    local subcommands="init shell shell-user shell-root start stop delete env overwrite-dotfiles update set-root-password unset-root-password snapshot gui"
+    local subcommands="init shell shell-user shell-root start stop delete env overwrite-dotfiles update set-password unset-password enable-user-sudo disable-user-sudo snapshot gui"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}/templates"
 
     # The subcommand is the first non-flag word after `ivm` (--root takes a value).
@@ -35,6 +35,9 @@ _ivm() {
                 done
             fi
             COMPREPLY=( $(compgen -W "${templates}" -- "$cur") )
+            ;;
+        set-password|unset-password)
+            COMPREPLY=( $(compgen -W "user root" -- "$cur") )
             ;;
     esac
 }

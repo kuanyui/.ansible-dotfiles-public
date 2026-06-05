@@ -165,10 +165,13 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   Suse uses `-jp-` variant, Debian/Fedora the combined pkg) + fcitx5 + mozc +
   chewing + gtk/qt frontends. Per-family names diverge; Suse verified on
   Tumbleweed.
-- [x] **`gui_x11` / `gui_wayland` groups** - X11 stack (server + startx + xauth)
-  and Xwayland-only Wayland base; WM/DE + display-manager stay per-template.
-  Names web-verified per family (default repos). `webbrowser.yaml` switched to
-  `gui_x11`. Static-verified (Suse resolution, schema).
+- [x] **`gui_x11` / `gui_wayland` groups** - X11 stack (server + startx + xauth +
+  libinput input driver) and Xwayland-only Wayland base; WM/DE + display-manager
+  stay per-template. Names web-verified per family (default repos).
+  `webbrowser.yaml` switched to `gui_x11`. Static-verified (Suse resolution,
+  schema). The libinput driver was added after a real run showed the desktop
+  rendering but the mouse not clicking (no X input device without it). Video
+  needs no package - the server's modesetting drives virtio-gpu/std-VGA.
 - [ ] **Verify `cjk_input` names on real Debian/Fedora** - Debian
   `fcitx5-frontend-gtk4`/`-qt6` + `fcitx5-config-qt`; Fedora umbrella
   `fcitx5-gtk`/`fcitx5-qt` (vs per-toolkit split). Set from web search, not a

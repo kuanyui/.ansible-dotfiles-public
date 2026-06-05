@@ -19,8 +19,9 @@ Builds `ivm`, the launcher that replaces the bash launchers. Design = `REDESIGN.
 
 - `ivm init <template>` - the only one taking a template id; interactive name
   prompt + dir-binding (REDESIGN §8.9).
-- `ivm <shell|shell-root|start|stop|delete|env|overwrite-dotfiles|update|set-root-password|unset-root-password|snapshot|gui>` -
-  resolve the VM by cwd via `user.ivm_init_at_dir`; no name arg.
+- `ivm <shell|shell-root|start|stop|delete|env|overwrite-dotfiles|update|set-password|unset-password|enable-user-sudo|disable-user-sudo|snapshot|gui>` -
+  resolve the VM by cwd via `user.ivm_init_at_dir`; no VM-name arg
+  (`set-password`/`unset-password` take a guest `<username>`).
 - Global: `--dry-run` (print the incus commands, run nothing), `--yes`.
 
 ## Reuse (do not reinvent)

@@ -9,7 +9,8 @@ roles/incus_vm/IMPLEMENTATION_PLAN.md.
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`stop`/`delete`/
-`update`/`overwrite-dotfiles`/`set-root-password`/`unset-root-password`; `env`.
+`update`/`overwrite-dotfiles`/`set-password`/`unset-password`/`enable-user-sudo`/
+`disable-user-sudo`; `env`.
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
 attach devices (mounts + `shadow` masking, `hw.tpm`, macvlan/bridge `net`) ->
 start -> provision (`sys.timezone`/`sys.tmpfs`/`sys.ssh_server`, packages,
@@ -51,9 +52,11 @@ DEFAULT_ROOT: Path = Path(
 
 CWD_RESOLVED: tuple[str, ...] = (
     "shell", "shell-user", "shell-root", "start", "stop", "delete", "env",
-    "overwrite-dotfiles", "update", "set-root-password", "unset-root-password",
-    "snapshot", "gui",
+    "overwrite-dotfiles", "update", "set-password", "unset-password",
+    "enable-user-sudo", "disable-user-sudo", "snapshot", "gui",
 )
+# Subcommands taking a positional `<username>` (set/unset a login password).
+PASSWORD_SUBCOMMANDS: tuple[str, ...] = ("set-password", "unset-password")
 
 # Installed on EVERY guest at first provision (the ivm-guest floor: zsh + login
 # shell, sudo, ssh, basics). Defined as a bundle in the distro_packages registry
@@ -872,46 +875,63 @@ def cmd_overwrite_dotfiles(root: Path, *, dry_run: bool) -> None:
     print(f"==> dotfiles re-pushed into {name} (/home/user + /root).", file=sys.stderr)
 
 
-# Opt into IN-GUEST privilege escalation. Default provisioning gives `user` NO
-# sudo; this sets root's password and enables `user` sudo gated by THAT password
-# (`Defaults:user rootpw`), so a `user` process that doesn't know it still can't
-# escalate. The operator's `shell-root` path is host-socket auth, unaffected.
-_SUDOERS_USER: str = "Defaults:user rootpw\nuser ALL=(ALL) ALL\n"
-
-
-def cmd_set_root_password(*, dry_run: bool) -> None:
+def cmd_set_password(username: str, *, dry_run: bool) -> None:
+    """Set a login password for `<username>` in the guest (e.g. so you can log in
+    on the console/TTY). Just the password - sudo is a separate opt-in
+    (`enable-user-sudo`). The operator's `shell-root`/`shell` paths are host-socket
+    auth and need no password."""
     name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
     ensure_up(name, dry_run=dry_run)
     if dry_run:
-        print("+ (prompt for root password, then `incus exec <vm> -- chpasswd` via "
-              "stdin + write /etc/sudoers.d/user)", file=sys.stderr)
+        print(f"+ (prompt for {username}'s password, then `incus exec {name} -- chpasswd` via stdin)",
+              file=sys.stderr)
         return
-    root_password: str = getpass.getpass(f"New root password for {name}: ")
-    if not root_password:
+    password: str = getpass.getpass(f"New password for {username} on {name}: ")
+    if not password:
         die("empty password rejected")
-    if root_password != getpass.getpass("Confirm: "):
+    if password != getpass.getpass("Confirm: "):
         die("passwords do not match")
     # Password travels via stdin, never argv - so it is not visible in the
-    # guest's process list. `chpasswd` reads `user:password` lines.
+    # guest's process list. `chpasswd` reads `username:password` lines.
     subprocess.run(["incus", "exec", name, "--", "chpasswd"],
-                   input=f"root:{root_password}\n", text=True, check=True)
-    subprocess.run(
-        ["incus", "exec", name, "--", "bash", "-ec",
-         "cat > /etc/sudoers.d/user <<'EOF'\n" + _SUDOERS_USER + "EOF\n"
-         "chmod 0440 /etc/sudoers.d/user\n"
-         "visudo --check --file=/etc/sudoers.d/user"],
-        check=True)
-    print(f"==> root password set; `user` may now sudo (prompts for the root password).",
-          file=sys.stderr)
+                   input=f"{username}:{password}\n", text=True, check=True)
+    print(f"==> password set for {username} on {name}.", file=sys.stderr)
 
 
-def cmd_unset_root_password(*, dry_run: bool) -> None:
+def cmd_unset_password(username: str, *, dry_run: bool) -> None:
+    """Lock `<username>`'s password (reverses `set-password`); the account can no
+    longer log in by password."""
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    ensure_up(name, dry_run=dry_run)
+    run(["incus", "exec", name, "--", "passwd", "--lock", username], dry_run=dry_run)
+    print(f"==> {username}'s password locked on {name}.", file=sys.stderr)
+
+
+# Opt into IN-GUEST privilege escalation, separate from any login password.
+# Default provisioning gives `user` NO sudo; this lets `user` sudo but gated by
+# ROOT's password (`Defaults:user rootpw`), so a `user` process that doesn't know
+# it still can't escalate. Requires root to HAVE a password (`ivm set-password
+# root`) - without it sudo is unusable. The operator's `shell-root` path is
+# host-socket auth, unaffected either way.
+_SUDOERS_USER: str = "Defaults:user rootpw\nuser ALL=(ALL) ALL\n"
+
+
+def cmd_enable_user_sudo(*, dry_run: bool) -> None:
     name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
     ensure_up(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "bash", "-ec",
-         "rm -f /etc/sudoers.d/user\npasswd --lock root >/dev/null"], dry_run=dry_run)
-    print("==> sudoers removed and root password re-locked; back to locked-down default.",
-          file=sys.stderr)
+         "cat > /etc/sudoers.d/user <<'EOF'\n" + _SUDOERS_USER + "EOF\n"
+         "chmod 0440 /etc/sudoers.d/user\n"
+         "visudo --check --file=/etc/sudoers.d/user"], dry_run=dry_run)
+    print(f"==> `user` may now sudo on {name} - it prompts for ROOT's password, so "
+          f"set one first with `ivm set-password root` if you haven't.", file=sys.stderr)
+
+
+def cmd_disable_user_sudo(*, dry_run: bool) -> None:
+    name: str = resolve_vm_by_cwd(Path.cwd(), dry_run=dry_run)
+    ensure_up(name, dry_run=dry_run)
+    run(["incus", "exec", name, "--", "rm", "-f", "/etc/sudoers.d/user"], dry_run=dry_run)
+    print(f"==> `user` sudo removed on {name}; back to the locked-down default.", file=sys.stderr)
 
 
 def cmd_update(*, dry_run: bool) -> None:
@@ -1012,6 +1032,8 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("template", help="template id")
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
+        if name in PASSWORD_SUBCOMMANDS:
+            sp.add_argument("username", help="guest account to set/lock the password for (e.g. `user`, `root`)")
     return parser
 
 
@@ -1034,10 +1056,14 @@ def main() -> None:
         cmd_delete(assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "overwrite-dotfiles":
         cmd_overwrite_dotfiles(root, dry_run=args.dry_run)
-    elif args.subcommand == "set-root-password":
-        cmd_set_root_password(dry_run=args.dry_run)
-    elif args.subcommand == "unset-root-password":
-        cmd_unset_root_password(dry_run=args.dry_run)
+    elif args.subcommand == "set-password":
+        cmd_set_password(args.username, dry_run=args.dry_run)
+    elif args.subcommand == "unset-password":
+        cmd_unset_password(args.username, dry_run=args.dry_run)
+    elif args.subcommand == "enable-user-sudo":
+        cmd_enable_user_sudo(dry_run=args.dry_run)
+    elif args.subcommand == "disable-user-sudo":
+        cmd_disable_user_sudo(dry_run=args.dry_run)
     elif args.subcommand == "update":
         cmd_update(dry_run=args.dry_run)
     elif args.subcommand == "snapshot":

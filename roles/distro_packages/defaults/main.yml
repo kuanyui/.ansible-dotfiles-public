@@ -39,21 +39,26 @@ distro_packages_wayland_tools:
   common:
     - wl-clipboard
 
-# Minimal X11 stack (server + startx + xauth) any X WM/DE needs; the WM/DE and
-# display-manager stay per-template. Names diverge per family, no shared common.
+# Minimal X11 stack any X WM/DE needs: server + startx + xauth + the libinput
+# input driver (without it X gets no mouse/keyboard events). Video needs no
+# package - the server's built-in modesetting drives virtio-gpu/std-VGA. The
+# WM/DE and display-manager stay per-template. Names diverge per family.
 distro_packages_gui_x11:
   debian:
     - xserver-xorg-core
     - xinit
     - xauth
+    - xserver-xorg-input-libinput
   suse:
     - xorg-x11-server
     - xinit
     - xauth
+    - xf86-input-libinput
   redhat:
     - xorg-x11-server-Xorg
     - xorg-x11-xinit
     - xorg-x11-xauth
+    - xorg-x11-drv-libinput
 
 # Xwayland only - the one compositor-agnostic Wayland piece (runs X apps under
 # any Wayland compositor); the compositor itself stays per-template.

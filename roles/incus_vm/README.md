@@ -70,8 +70,10 @@ nothing), `-y`/`--yes` (skip prompts), `--root <dir>` (override the data root).
 | `delete` | Delete the VM + its disk + snapshots (asks first; `--yes` skips). |
 | `update` | Refresh + upgrade all packages in the VM (per-family apt/zypper/dnf). |
 | `overwrite-dotfiles` | Re-push the host-staged dotfiles into the VM (no re-provision). |
-| `set-root-password` | Opt into in-guest sudo: set root's password + `Defaults:user rootpw` sudoers. |
-| `unset-root-password` | Revert: remove the sudoers drop-in + re-lock root. |
+| `set-password <username>` | Set a guest account's login password (e.g. `user` for console/TTY login). Password only - prompted, sent via stdin. |
+| `unset-password <username>` | Lock that account's password. |
+| `enable-user-sudo` | Opt into in-guest sudo: `user` may sudo, gated by ROOT's password (`Defaults:user rootpw`). Needs `set-password root` first. |
+| `disable-user-sudo` | Remove the sudoers drop-in (back to locked-down default). |
 | `snapshot [create\|list\|restore\|delete] [name]` | Thin wrapper over `incus snapshot`, with the VM filled in. |
 | `gui` | Open a SPICE graphical console (`incus console --type=vga`; needs `virt-viewer`/`remote-viewer` on the host + a desktop + `spice-vdagent` in the guest). |
 | `env <template>` | Load + validate a template and print its resolved config (incl. the flattened package list). |

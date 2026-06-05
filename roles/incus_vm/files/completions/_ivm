@@ -15,8 +15,10 @@ _ivm_subcommands=(
   'env:load + print a template'\''s resolved config'
   'overwrite-dotfiles:re-push staged dotfiles into the VM'
   'update:upgrade all packages in the VM'
-  'set-root-password:enable in-guest sudo via a root password'
-  'unset-root-password:revert set-root-password'
+  'set-password:set a guest account'\''s login password'
+  'unset-password:lock a guest account'\''s password'
+  'enable-user-sudo:let `user` sudo via root'\''s password'
+  'disable-user-sudo:revert enable-user-sudo'
   'snapshot:incus snapshot (create/list/restore/delete)'
   'gui:open a SPICE graphical console'
 )
@@ -36,6 +38,7 @@ case "$state" in
   args)
     case "$words[1]" in
       init|env) compadd -- ${_ivm_templates_root}/*.yaml(N:t:r) ;;
+      set-password|unset-password) compadd -- user root ;;
     esac
     ;;
 esac
