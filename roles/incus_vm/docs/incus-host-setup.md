@@ -9,7 +9,8 @@ Covers the host-level concerns - independent of any specific VM template: suppor
 - Asserts host distribution is one of: Fedora 43+ / Debian trixie+ (or bookworm-backports) / openSUSE Tumbleweed / openSUSE Leap 15.6+ (those are the distros that ship `incus` in their official repo). Escape hatch: `incus_vm_skip_host_setup: true`.
 - Installs `incus` package + `guestfs-tools` (provides `virt-builder` for GPG-verified VM disk image fetch).
 - Probes `incus.service`; starts + enables if not active.
-- Adds `$USER` to `incus-admin` group (re-login required for membership to take effect).
+- Ensures `incus-user.socket` is enabled + started (provides the lower-privilege `/run/incus/unix.socket.user` owned by group `incus`; Fedora / openSUSE ship it disabled by default - upstream-acknowledged packaging gap).
+- Adds `$USER` to the `incus` group (lower-privilege; the `incus` CLI auto-detects the user socket via `if !PathIsWritable(adminSocket) && PathIsWritable(userSocket) { ... }` in `client/connection.go`, and routes operations into a per-user project named `user-<UID>` for isolation). Removes legacy `incus-admin` membership from prior role versions (root-equivalent, no longer needed). Re-login (or `newgrp incus`) required for the new group to be active in any existing shell; the role hard-aborts on first-time add so this can't be missed silently.
 - Probes `/` filesystem type; warns about the `qcow2 + btrfs CoW` trap when defaulting to `dir` backend on a btrfs `/`.
 - Runs `incus admin init --preseed` exactly once (only if the `default` storage pool doesn't already exist).
 - On firewalld hosts (Fedora / openSUSE): moves the `incusbr0` bridge into the `trusted` zone (only if not already there). Without this, the default `public` zone DROPs DHCP and VMs never get an IPv4 lease - see [Q&A](#firewalld-hosts-vms-get-an-ipv6-address-but-no-ipv4-apt-fails-with-temporary-failure-resolving). Skipped on non-firewalld hosts (Debian + bare nftables).

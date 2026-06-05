@@ -40,10 +40,57 @@
   changed_when: false
   failed_when: false
 
-- name: Probe whether `{{ ansible_facts['user_id'] }}` is already in the `incus-admin` group
-  ansible.builtin.command: id -nG {{ ansible_facts['user_id'] }}
+# Why `incus-user.socket`: upstream Incus daemon listens on TWO sockets at once -
+# `/run/incus/unix.socket` (owned by group `incus-admin`, full daemon admin access,
+# documented by upstream as "root-equivalent for Incus") and
+# `/run/incus/unix.socket.user` (owned by group `incus`, restricted to a per-user
+# project auto-named `user-<UID>`). The `incus` CLI auto-detects: if the admin
+# socket is not writable but the user socket is, the client transparently switches
+# (verified in `client/connection.go` upstream: `if !PathIsWritable(path) &&
+# PathIsWritable(userPath) { path = userPath; projectName = "user-<UID>" }`).
+# `ivm` uses this fallback - no code change in ivm needed, the user's VMs simply
+# land in the `user-<UID>` project instead of `default`. This role therefore
+# gives the user only the `incus` group (least-privilege), and the user socket
+# must be active so that membership is meaningful. Debian's package preset
+# enables it by default; Fedora and openSUSE ship it disabled - upstream
+# maintainers have acknowledged this as a packaging gap. So this role
+# unconditionally ensures enable+start.
+- name: Probe whether `incus-user.socket` is active
+  ansible.builtin.command: systemctl is-active incus-user.socket
+  register: _incus_user_socket_check
+  changed_when: false
+  failed_when: false
+
+# IMPORTANT: `id -nG` is invoked with NO user argument on purpose. `id` has
+# two distinct modes:
+#   `id -nG`           -> prints the CALLING PROCESS's supplementary group set
+#                         (inherited from the shell ansible-playbook was forked
+#                         from, set at LOGIN time by PAM). This is what we
+#                         actually want - "does THIS shell currently have the
+#                         group active?".
+#   `id -nG <user>`    -> looks the user up via NSS and prints /etc/group state.
+#                         This is NOT what we want - it would return "in incus
+#                         group" even when the shell hasn't refreshed yet,
+#                         silently bypassing the abort gate further down and
+#                         letting `ivm` fail later with "permission denied".
+- name: Probe whether `incus` is active in THIS shell's supplementary group set (`id -nG` with no user arg reads the calling process's groups, NOT /etc/group state - this is the gate input the abort task below depends on)
+  ansible.builtin.command: id -nG
   register: _incus_groups_check
   changed_when: false
+
+# Why a separate `incus-admin` probe: previous versions of this role added the
+# user to `incus-admin` (root-equivalent) instead of `incus`. We now remove that
+# legacy membership as part of the option-B migration to least-privilege. The
+# probe reads /etc/group directly (NOT the shell-stale `id` set), because we
+# want to know "is the user CONFIGURED as a member" regardless of whether the
+# current shell has the group active yet.
+- name: Probe whether `{{ ansible_facts['user_id'] }}` is a legacy member of `incus-admin` group (will be removed as part of the switch to lower-privilege `incus` group)
+  ansible.builtin.shell:
+    cmd: |
+      getent group incus-admin 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -Fxq -- {{ ansible_facts['user_id'] | quote }}
+  register: _incus_admin_legacy_check
+  changed_when: false
+  failed_when: false
 
 # ---------- Mutation phase (become only when probe says so) ----------
 
@@ -90,24 +137,95 @@
   become: true
   when: _incus_svc_check.stdout | trim != 'active'
 
-- name: Add `{{ ansible_facts['user_id'] }}` to `incus-admin` group (only if not already a member)
+- name: Ensure `incus-user.socket` is started + enabled (the lower-privilege `incus` group socket at `/run/incus/unix.socket.user`; Fedora / openSUSE ship it disabled by default)
+  ansible.builtin.systemd:
+    name: incus-user.socket
+    state: started
+    enabled: true
+  become: true
+  when: _incus_user_socket_check.stdout | trim != 'active'
+
+- name: Add `{{ ansible_facts['user_id'] }}` to `incus` group (lower-privilege; the `incus` CLI auto-detects the `.user` socket and lands VMs in a per-user project)
   ansible.builtin.user:
     name: "{{ ansible_facts['user_id'] }}"
-    groups: incus-admin
+    groups: incus
     append: true
   become: true
-  when: "'incus-admin' not in (_incus_groups_check.stdout.split())"
+  when: "'incus' not in (_incus_groups_check.stdout.split())"
   register: _incus_group_add
 
-- name: Print re-login warning if the group was just added (group membership only takes effect in NEW shells)
-  ansible.builtin.debug:
-    msg: |
-      `{{ ansible_facts['user_id'] }}` was just added to the `incus-admin` group.
-      You MUST log out + back in (or `newgrp incus-admin` in this shell)
-      before `ivm` can talk to the incus daemon. The
-      preseed step below runs via `become: true` so this playbook is
-      unaffected; only your interactive shell needs the re-login.
-  when: _incus_group_add.changed
+- name: Remove `{{ ansible_facts['user_id'] }}` from legacy `incus-admin` group (option-B migration; the role used to add to `incus-admin` (root-equivalent for Incus); switch to least-privilege `incus` group means stale `incus-admin` membership should be cleaned up)
+  ansible.builtin.command:
+    cmd: gpasswd --delete {{ ansible_facts['user_id'] | quote }} incus-admin
+  become: true
+  when: _incus_admin_legacy_check.rc == 0
+  register: _incus_admin_remove
+
+# ---------- Hard gate: abort if `incus` is in /etc/group but not active in this shell ----------
+# Linux supplementary group membership is set at LOGIN time by PAM
+# (`pam_unix.so` -> `initgroups(3)`). `usermod -aG` (or `ansible.builtin.user`
+# with `append: true`) updates `/etc/group` but does NOT retroactively refresh
+# existing sessions / processes. So the `ansible-playbook` process - which
+# inherited its group set from the user's interactive shell at fork time -
+# will still NOT carry `incus` until the user re-logins or runs `newgrp incus`.
+#
+# The remaining tasks below all use `become: true`, so they would COMPLETE
+# successfully even without the active group. BUT after the playbook ends,
+# the user's `ivm` calls from this same shell would still fail with
+# "permission denied talking to the incus daemon socket" - a silent trap
+# where the playbook reports success but interactive use is broken.
+#
+# Why ABORT, not WARN: a warning at the end of a long playbook is easy to
+# miss in the scrollback. Aborting forces a deterministic remediation step
+# (newgrp / re-login) before any further work proceeds. On a re-run after
+# remediation, the `id -nG` probe captures the now-active group, the add
+# task, the legacy-remove task, and this abort task all evaluate their
+# `when` to false, and the role continues to incus init + firewalld as
+# normal.
+
+- name: Abort if `incus` is in /etc/group but not active in this shell's group set (login required to refresh; see `id -nG` probe above)
+  ansible.builtin.fail:
+    msg: |2
+
+      ============================================================
+       NOT AN ERROR - intentional verification gate.
+      ============================================================
+
+       Linux only refreshes a session's supplementary group set at
+       LOGIN time. The role just updated /etc/group, but THIS shell
+       (the one running ansible-playbook) was forked before that,
+       so it still has the stale pre-update group set. If we let
+       the playbook continue, the remaining tasks would run fine
+       via `become: true` and the playbook would report success -
+       but `ivm` from this shell would then silently fail with
+       "permission denied talking to the incus daemon socket".
+       So we stop HERE to force an explicit refresh.
+
+       Mutations that already completed in THIS run (no rollback):
+         * `{{ ansible_facts['user_id'] }}` added to `incus` group in /etc/group
+         * `{{ ansible_facts['user_id'] }}` removed from legacy `incus-admin` group
+           (if previously a member)
+         * `incus-user.socket` enabled + started
+
+      ============================================================
+       ACTION REQUIRED - refresh your shell, then re-run.
+      ============================================================
+
+       Pick ONE of:
+
+           newgrp incus
+
+         (recommended; refreshes THIS shell, no logout needed)
+
+         ...OR log out of your desktop session and log back in
+         ...OR reboot
+
+       Then re-run:
+
+           make apply-incus-vm
+
+      ============================================================
+  when: "'incus' not in (_incus_groups_check.stdout.split())"
 
 # ---------- Filesystem-level warning ----------
 # Warn (don't fail) when defaulting incus storage to /var/lib/incus and /
@@ -144,9 +262,11 @@
     - (_root_fs_type.stdout | trim) == 'btrfs'
 
 # ---------- Initialize incus (idempotent: skipped if `default` storage pool already exists) ----------
-# Run as root because the user we just added to `incus-admin` doesn't have
-# that group active in this shell yet (group membership only refreshes on
-# new login).
+# Run as root via `become: true` because `incus admin init` requires the
+# admin socket (`/run/incus/unix.socket`, group `incus-admin`), and we
+# intentionally do NOT add the user to `incus-admin` (the role gives the user
+# only the lower-privilege `incus` group). Root bypasses the group check, so
+# init works without needing any user-level group membership.
 
 - name: Probe whether incus is already initialized (default storage pool present)
   ansible.builtin.command:

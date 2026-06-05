@@ -5,9 +5,10 @@
 
 # `incus_vm_skip_host_setup`: skip the host-level prep
 # (`tasks/host_setup.yml`: apt install incus + guestfs-tools, daemon
-# enable+start, `incus-admin` group add, `incus admin init --preseed`). Only the
-# user-space `ivm` install runs. Used by the sandbox / by users who manage incus
-# themselves. Off by default.
+# enable+start, `incus-user.socket` enable+start, `incus` group add (lower-privilege
+# than `incus-admin`; the client auto-detects `unix.socket.user`), `incus admin
+# init --preseed`). Only the user-space `ivm` install runs. Used by the sandbox
+# / by users who manage incus themselves. Off by default.
 incus_vm_skip_host_setup: false
 
 # ---------- Storage pool config (preseed-only, first-time init) ----------
