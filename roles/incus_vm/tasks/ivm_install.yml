@@ -49,6 +49,15 @@
     dest: "{{ incus_vm_ivm_dir }}/templates/"
     mode: "0644"
 
+# Shared fcitx5 user-config setup script: `ivm` embeds + runs it in a guest with
+# `sys.input_method: fcitx5`, and you can run this same copy on the HOST
+# (`sh {{ incus_vm_ivm_dir }}/setup-fcitx5-input.sh`) - one source of truth.
+- name: Install the fcitx5 setup script to `{{ incus_vm_ivm_dir }}/setup-fcitx5-input.sh`
+  ansible.builtin.copy:
+    src: setup-fcitx5-input.sh
+    dest: "{{ incus_vm_ivm_dir }}/setup-fcitx5-input.sh"
+    mode: "0755"
+
 # ---------- Materialize the distro_packages bundle registry for `ivm` ----------
 # `ivm` runs host-side at `init` time, where ansible (and thus the
 # `distro_packages_*` vars) no longer exist. So snapshot the registry to JSON at

@@ -478,11 +478,19 @@ def tmpfs_provision(doc: Template) -> str:
     return script
 
 
-def input_method_provision(doc: Template) -> str:
+# The fcitx5 user-config setup script: the SAME idempotent script you run on the
+# host (enables keyboard-us + mozc + chewing, sets the chewing prefs). Shipped in
+# the install root by tasks/ivm_install.yml; embedded into provisioning so there's
+# one source of truth across host and guest.
+FCITX5_SETUP_SCRIPT: str = "setup-fcitx5-input.sh"
+
+
+def input_method_provision(doc: Template, root: Path) -> str:
     """`sys.input_method: fcitx5` -> the IM env vars in /etc/environment (pam_env,
     so any display-manager-started session picks them up; applies on BOTH X11 and
-    Wayland). The fcitx5 packages come via `distro_package_groups: [cjk_input]`;
-    autostart is the template's job (per-WM). Idempotent (skips lines already set)."""
+    Wayland), then run the shared `setup-fcitx5-input.sh` as `user` to seed the
+    fcitx5 config (enabled IMs + chewing prefs). The fcitx5 packages come via
+    `distro_package_groups: [cjk_input]`; autostart is the template's job (per-WM)."""
     if doc.get("sys", {}).get("input_method") != "fcitx5":
         return ""
     script: str = ""
@@ -490,6 +498,21 @@ def input_method_provision(doc: Template) -> str:
         key: str = env_line.split("=", 1)[0]
         script += (f"grep -q '^{key}=' /etc/environment 2>/dev/null "
                    f"|| echo {shlex.quote(env_line)} >> /etc/environment\n")
+    setup_path: Path = root / FCITX5_SETUP_SCRIPT
+    if not setup_path.is_file():
+        die(f"{FCITX5_SETUP_SCRIPT} not found in {root}; re-run `make apply-incus-vm`")
+    setup_body: str = setup_path.read_text()
+    if not setup_body.endswith("\n"):
+        setup_body += "\n"
+    # Drop the script in /tmp (root), then run it as `user` so it writes the
+    # config under /home/user; clean up after.
+    script += (
+        f"cat > /tmp/{FCITX5_SETUP_SCRIPT} <<'IVM_FCITX5_SETUP'\n"
+        + setup_body +
+        "IVM_FCITX5_SETUP\n"
+        f"su - user -c 'sh /tmp/{FCITX5_SETUP_SCRIPT}'\n"
+        f"rm -f /tmp/{FCITX5_SETUP_SCRIPT}\n"
+    )
     return script
 
 
@@ -540,7 +563,7 @@ def ssh_provision(doc: Template, cwd: Path) -> str:
     return script
 
 
-def provision_script(doc: Template, registry: dict[str, Any], cwd: Path) -> str:
+def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: Path) -> str:
     """First-provision shell, run as root via `incus exec`: install packages
     (baseline + groups + flat), set timezone + tmpfs, create `user`, set both
     shells to zsh, configure sshd, then run the template's `post_install_script`
@@ -574,7 +597,7 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path) -> str:
         # (a minimal icewm/lightdm session may not run this at login). It never
         # clobbers an existing dir, so a mounted ~/Downloads is kept as-is.
         script += "su - user -c 'xdg-user-dirs-update'\n"
-    script += input_method_provision(doc)
+    script += input_method_provision(doc, root)
     script += ssh_provision(doc, cwd)
     post_install_script: str = doc.get("post_install_script", "")
     if post_install_script:
@@ -789,7 +812,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
             run(device_cmd, dry_run=dry_run)
         run(["incus", "start", name], dry_run=dry_run)
         wait_ready(name, dry_run=dry_run)
-        run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd)], dry_run=dry_run)
+        run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd, root)], dry_run=dry_run)
         for push_cmd in push_dotfiles_commands(ansible_os_family_of(doc), name, root):
             run(push_cmd, dry_run=dry_run)
         if is_gui:

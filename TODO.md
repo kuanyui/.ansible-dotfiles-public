@@ -177,6 +177,52 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   `fcitx5-gtk`/`fcitx5-qt` (vs per-toolkit split). Set from web search, not a
   live `apt`/`dnf`.
 
+## ivm real-run fixes + desktop UX
+
+First real `ivm init webbrowser` on the host surfaced these (all fixed unless noted):
+
+- [x] **`init` failure: no auto-delete, no traceback** - wrap post-create steps
+  in try/except; on failure print a clean message + recovery commands (inspect /
+  remove / rebuild), leave the VM in place (transient mirror/network blips
+  shouldn't nuke a likely-fine VM).
+- [x] **`wait_ready`: also wait for network online** - provisioning was racing a
+  not-yet-configured network (zypper refresh -> curl error 7). Now waits for a
+  default route + DNS (`getent hosts example.com`) before provisioning.
+- [x] **GUI VMs reboot after provisioning** - `set-default graphical.target` +
+  enable DM only take effect on next boot, so a `sys.gui` VM rebooted into a TTY.
+  Engine now `incus restart`s gui VMs post-provision (autologin + IM env apply).
+- [x] **zypper default `-vvv`** - zypper is failure-prone; max verbosity by
+  default so failures are diagnosable from the init log (constant `ZYPPER`).
+- [x] **`init`/`delete` preview: network + mounts + storage pool** - three
+  `preview_*` helpers; storage pool best-effort from `incus storage info`.
+- [x] **`gui_x11` libinput** + **webbrowser `systemctl enable --force lightdm`**
+  (openSUSE pre-aliases display-manager.service) + **`icewm-theme-branding`**
+  (openSUSE-only theme).
+- [x] **`set-root-password` -> 4 commands** - `set-password <username>` /
+  `unset-password <username>` (login password, any account) + `enable-user-sudo`
+  / `disable-user-sudo` (the `Defaults:user rootpw` escalation, now separate).
+- [x] **fcitx5 setup as a shared script** - `setup-fcitx5-input.sh` in
+  `roles/incus_vm/files/`. SURGICAL + idempotent: `set_conf_key` sed-replaces (or
+  appends) only chewing `SelectionKey=asdfghjkl;` / `PageSize=10` /
+  `SpaceAsSelection=True`, preserving every other key; the profile
+  (keyboard-us+mozc+chewing) is written ONLY when those IMs aren't already
+  enabled, so an already-configured host profile is left untouched. mozc's binary
+  config not touched. The engine embeds + runs it as `user` in a
+  `sys.input_method: fcitx5` guest (replaced the inline profile heredoc).
+- [ ] **fcitx5 host-side wiring (deferred)** - guest is automatic; on the host you
+  run the installed copy yourself (`sh <ivm-root>/setup-fcitx5-input.sh`). If the
+  manual step gets annoying, promote to a dedicated `roles/fcitx5` (parallel to
+  `roles/zsh`/`emacs`, added to `playbooks/user.yml`) so the host auto-configures.
+- [ ] **Light-desktop apps on icewm** - add `pcmanfm-qt` + `lximage-qt` (the
+  actively-maintained LXQt file manager + image viewer; GTK `pcmanfm`/`gpicview`
+  are stalled/abandoned). Both in Tumbleweed OSS. DECIDE: extend `webbrowser`
+  into a light desktop vs a separate `desktop` template. Deferred - user is
+  trying the current setup first to see if needed.
+- [ ] **Cross-distro icewm theming** - when a non-openSUSE icewm template exists:
+  Fedora `+= icewm-themes` (extras; default theme already in `icewm` since F31),
+  Debian has none (bundled), and ship a `~/.icewm/theme` pick so it's not ugly on
+  all three (a dotfile, same spirit as the fcitx5 script).
+
 ## Notes / future
 
 - [ ] **container_apps -> one engine + declarative templates** (parallel to what

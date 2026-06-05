@@ -36,8 +36,9 @@ distro_package_groups:
 distro_packages:
   # spice-vdagent + xdg-user-dirs from `sys.gui`; fcitx5 from `cjk_input`.
   - MozillaFirefox
-  - icewm        # window manager
-  - lightdm      # display manager
+  - icewm                 # window manager
+  - icewm-theme-branding  # openSUSE-only: the openSUSE default icewm theme/background
+  - lightdm               # display manager
 dotfiles:
   - bash
   - zsh
