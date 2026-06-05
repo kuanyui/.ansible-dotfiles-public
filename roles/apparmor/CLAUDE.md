@@ -219,6 +219,15 @@ The "3rd-caller rule" above is the default for **app-specific** paths. Three ref
 - **Privilege-boundary transitions stay per-profile** even when library-determined - e.g.
   `/usr/bin/bwrap Px -> local_attachmentless_glycin,` plus its `signal (send) set=(kill)`. Each
   profile's right to spawn a more-privileged peer must be visible in that profile, not in a mixin.
+- **Existing domain mixin overrides the 3rd-caller wait.** The 3rd-caller rule above is about
+  whether to CREATE a new mixin. When an existing `local_mixin_<subsystem>.aa` already owns the
+  audited path's semantic domain (e.g. an audit hit on `gdk-pixbuf-glycin-tmp.??????` and
+  `local_mixin_glycin.aa` already exists), the new rule goes IN that mixin from day 1 - do NOT
+  inline first and "promote later". Practical test before placing a rule: `ls roles/apparmor/files/profiles/local_mixin_*.aa`
+  and check if any subsystem keyword in the audited path (`glycin`, `kio`, `xdg`, `pipewire`,
+  `vulkan`, `mesa`, ...) matches an existing mixin name. If yes - rule goes there. Rationale: inlining
+  when a domain mixin sits right there means the next profile hitting the same denial independently
+  re-inlines it, fragmenting maintenance across N profiles instead of one mixin.
 
 ## Threat-model calibration
 
