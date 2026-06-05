@@ -30,14 +30,14 @@ mounts:
     guest: /home/user/Downloads
 distro_package_groups:
   - basic_tools
+  - gui_x11     # X server + startx + xauth
   - cjk_fonts   # Noto Sans CJK (one pan-CJK font)
   - cjk_input   # fcitx5 + mozc + chewing + gtk/qt frontends
 distro_packages:
   # spice-vdagent + xdg-user-dirs from `sys.gui`; fcitx5 from `cjk_input`.
   - MozillaFirefox
-  - xorg-x11-server
-  - icewm
-  - lightdm
+  - icewm        # window manager
+  - lightdm      # display manager
 dotfiles:
   - bash
   - zsh

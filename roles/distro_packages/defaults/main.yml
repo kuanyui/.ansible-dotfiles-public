@@ -39,6 +39,32 @@ distro_packages_wayland_tools:
   common:
     - wl-clipboard
 
+# Minimal X11 stack (server + startx + xauth) any X WM/DE needs; the WM/DE and
+# display-manager stay per-template. Names diverge per family, no shared common.
+distro_packages_gui_x11:
+  debian:
+    - xserver-xorg-core
+    - xinit
+    - xauth
+  suse:
+    - xorg-x11-server
+    - xinit
+    - xauth
+  redhat:
+    - xorg-x11-server-Xorg
+    - xorg-x11-xinit
+    - xorg-x11-xauth
+
+# Xwayland only - the one compositor-agnostic Wayland piece (runs X apps under
+# any Wayland compositor); the compositor itself stays per-template.
+distro_packages_gui_wayland:
+  debian:
+    - xwayland
+  suse:
+    - xwayland
+  redhat:
+    - xorg-x11-server-Xwayland
+
 # Noto Sans CJK: one font covers all CJK; JP/TC/SC differ only in default Han
 # glyphs, not coverage. openSUSE OSS has no combined pkg, so use the JP variant.
 distro_packages_cjk_fonts:

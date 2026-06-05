@@ -69,6 +69,8 @@
         'sys_tools': distro_packages_sys_tools,
         'net_tools': distro_packages_net_tools,
         'wayland_tools': distro_packages_wayland_tools,
+        'gui_x11': distro_packages_gui_x11,
+        'gui_wayland': distro_packages_gui_wayland,
         'cjk_fonts': distro_packages_cjk_fonts,
         'cjk_input': distro_packages_cjk_input,
         'incus_guest_baseline': distro_packages_incus_guest_baseline,
