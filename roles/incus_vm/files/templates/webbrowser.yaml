@@ -12,7 +12,8 @@ os:
     source: incus
     uri: opensuse/tumbleweed
 sys:
-  gui: true
+  gui: true            # ivm installs spice-vdagent + xdg-user-dirs
+  input_method: fcitx5  # ivm writes the IM env vars to /etc/environment
   timezone: host
   tmpfs:
     - /tmp
@@ -24,16 +25,19 @@ sys:
     authorized_keys:
       - ~/.ssh/id_ed25519.pub
 mounts:
+  # Host's XDG Download -> guest ~/Downloads, where Firefox saves by default.
   - host: $(xdg-user-dir DOWNLOAD)
-    guest: /workspaces/Downloads
+    guest: /home/user/Downloads
 distro_package_groups:
   - basic_tools
+  - cjk_fonts   # Noto Sans CJK (one pan-CJK font)
+  - cjk_input   # fcitx5 + mozc + chewing + gtk/qt frontends
 distro_packages:
+  # spice-vdagent + xdg-user-dirs from `sys.gui`; fcitx5 from `cjk_input`.
   - MozillaFirefox
   - xorg-x11-server
   - icewm
   - lightdm
-  - spice-vdagent
 dotfiles:
   - bash
   - zsh
@@ -42,3 +46,5 @@ post_install_script: |
   mkdir -p /etc/lightdm/lightdm.conf.d
   printf '[Seat:*]\nautologin-user=user\nautologin-session=icewm\n' > /etc/lightdm/lightdm.conf.d/autologin.conf
   systemctl enable lightdm
+  # icewm ignores XDG autostart, so start fcitx5 from its own startup script.
+  su - user -c 'mkdir -p ~/.config/icewm && printf "#!/bin/sh\nfcitx5 -d &\n" > ~/.config/icewm/startup && chmod +x ~/.config/icewm/startup'

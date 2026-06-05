@@ -69,6 +69,8 @@
         'sys_tools': distro_packages_sys_tools,
         'net_tools': distro_packages_net_tools,
         'wayland_tools': distro_packages_wayland_tools,
+        'cjk_fonts': distro_packages_cjk_fonts,
+        'cjk_input': distro_packages_cjk_input,
         'incus_guest_baseline': distro_packages_incus_guest_baseline,
       } | to_nice_json }}
 

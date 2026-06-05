@@ -469,6 +469,21 @@ def tmpfs_provision(doc: Template) -> str:
     return script
 
 
+def input_method_provision(doc: Template) -> str:
+    """`sys.input_method: fcitx5` -> the IM env vars in /etc/environment (pam_env,
+    so any display-manager-started session picks them up; applies on BOTH X11 and
+    Wayland). The fcitx5 packages come via `distro_package_groups: [cjk_input]`;
+    autostart is the template's job (per-WM). Idempotent (skips lines already set)."""
+    if doc.get("sys", {}).get("input_method") != "fcitx5":
+        return ""
+    script: str = ""
+    for env_line in ("GTK_IM_MODULE=fcitx", "QT_IM_MODULE=fcitx", "XMODIFIERS=@im=fcitx"):
+        key: str = env_line.split("=", 1)[0]
+        script += (f"grep -q '^{key}=' /etc/environment 2>/dev/null "
+                   f"|| echo {shlex.quote(env_line)} >> /etc/environment\n")
+    return script
+
+
 def read_authorized_keys(key_file_paths: list[str], cwd: Path) -> list[str]:
     """Read each host public-key file (paths shell-expanded like mounts) and
     return the non-empty key lines."""
@@ -522,7 +537,14 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path) -> str:
     shells to zsh, configure sshd, then run the template's `post_install_script`
     (also as root - it drops to `user` with `su - user -c '...'` for user bits)."""
     ansible_os_family: str = ansible_os_family_of(doc)
+    is_gui: bool = bool(doc.get("sys", {}).get("gui"))
     packages: list[str] = resolve_packages(doc, registry, ansible_os_family)
+    if is_gui:
+        # GUI VMs: the incus-SPICE glue. `spice-vdagent` = clipboard + dynamic
+        # resolution with `ivm gui`'s SPICE console. `xdg-user-dirs` = the GTK file
+        # picker + apps' XDG lookups (`g_get_user_special_dir`) resolve ~/Downloads
+        # etc. Both same package name on Debian/openSUSE/Fedora; headless VMs skip.
+        packages = list(dict.fromkeys(packages + ["spice-vdagent", "xdg-user-dirs"]))
     script: str = install_packages_script(ansible_os_family, packages)
     script += timezone_provision(doc)
     script += tmpfs_provision(doc)
@@ -532,7 +554,18 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path) -> str:
         'id user >/dev/null 2>&1 || useradd --create-home --shell "$(command -v zsh)" --uid 1000 user\n'
         'usermod --shell "$(command -v zsh)" user\n'
         'usermod --shell "$(command -v zsh)" root\n'
+        # A mount targeting /home/user/* (e.g. an XDG dir) is attached before the
+        # VM starts, so it pre-creates /home/user root-owned and useradd then
+        # skips chowning it. Fix the home dir's ownership (NON-recursive: leave
+        # the idmapped mount contents alone).
+        'chown user:user /home/user\n'
     )
+    if is_gui:
+        # Seed ~/.config/user-dirs.dirs + ~/{Downloads,Desktop,...} now, as `user`
+        # (a minimal icewm/lightdm session may not run this at login). It never
+        # clobbers an existing dir, so a mounted ~/Downloads is kept as-is.
+        script += "su - user -c 'xdg-user-dirs-update'\n"
+    script += input_method_provision(doc)
     script += ssh_provision(doc, cwd)
     post_install_script: str = doc.get("post_install_script", "")
     if post_install_script:

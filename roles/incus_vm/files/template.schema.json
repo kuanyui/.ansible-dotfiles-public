@@ -56,7 +56,8 @@
       "description": "System-level guest settings. Optional.",
       "additionalProperties": false,
       "properties": {
-        "gui": { "type": "boolean", "default": false, "description": "Attach a SPICE display device. Whether the guest session is X11 or Wayland depends on what desktop you install, not this flag." },
+        "gui": { "type": "boolean", "default": false, "description": "Mark this a GUI/desktop VM. `ivm` then installs `spice-vdagent` (clipboard + dynamic resolution via `ivm gui`'s SPICE console) and `xdg-user-dirs` (so the GTK file picker + apps resolve ~/Downloads etc.). The desktop itself (X11 vs Wayland, WM/DE) is whatever you install via packages." },
+        "input_method": { "type": "string", "enum": ["none", "fcitx5"], "default": "none", "description": "In-guest input method framework. `fcitx5` -> `ivm` writes the IM env vars to `/etc/environment` (`GTK_IM_MODULE`/`QT_IM_MODULE`/`XMODIFIERS`, which apply on both X11 and Wayland). Install the IME packages separately via `distro_package_groups: [cjk_input]`; autostart fcitx5 in `post_install_script` for a bare WM (icewm), DEs honoring XDG autostart (KDE/GNOME/LXQt) start it themselves." },
         "timezone": { "type": "string", "default": "host", "description": "Guest timezone. `host` = match the host's timezone." },
         "tmpfs": {
           "type": "array",
@@ -107,7 +108,7 @@
         "required": ["host", "guest"],
         "properties": {
           "host": { "type": "string", "description": "Host path. Shell-expanded on the HOST at init, relative to the current dir: `$(pwd)`, `$HOME`, `~`, and relative paths (`./x`) are allowed; the expanded absolute path is what gets passed to incus." },
-          "guest": { "type": "string", "description": "Path inside the VM, conventionally under `/workspaces/` (devcontainer compatibility)." },
+          "guest": { "type": "string", "description": "Path inside the VM. Dev/agent project mounts go under `/workspaces/` (devcontainer compatibility); for a GUI app, share host XDG dirs at the guest user's own location (e.g. `/home/user/Downloads`) so apps find them by default. A mount under `/home/user/` is fine - `/home/user` is chowned to `user` at provision." },
           "ro": { "type": "boolean", "default": false, "description": "Mount read-only." },
           "shadow": {
             "type": "array",

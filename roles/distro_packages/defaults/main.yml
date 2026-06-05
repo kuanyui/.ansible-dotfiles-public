@@ -39,6 +39,42 @@ distro_packages_wayland_tools:
   common:
     - wl-clipboard
 
+# Noto Sans CJK: one font covers all CJK; JP/TC/SC differ only in default Han
+# glyphs, not coverage. openSUSE OSS has no combined pkg, so use the JP variant.
+distro_packages_cjk_fonts:
+  debian:
+    - fonts-noto-cjk
+  suse:
+    - google-noto-sans-jp-fonts
+  redhat:
+    - google-noto-sans-cjk-fonts
+
+# fcitx5 + engines (mozc=JP, chewing=TC) + GTK/Qt frontends. Needs the
+# template's `sys.input_method: fcitx5` (env vars) + autostart to take effect.
+# Frontend names diverge per family; config tool: Debian `fcitx5-config-qt` vs
+# openSUSE/Fedora `fcitx5-configtool`.
+distro_packages_cjk_input:
+  common:
+    - fcitx5
+    - fcitx5-mozc
+    - fcitx5-chewing
+  debian:
+    - fcitx5-frontend-gtk3
+    - fcitx5-frontend-gtk4
+    - fcitx5-frontend-qt5
+    - fcitx5-frontend-qt6
+    - fcitx5-config-qt
+  suse:
+    - fcitx5-gtk3
+    - fcitx5-gtk4
+    - fcitx5-qt5
+    - fcitx5-qt6
+    - fcitx5-configtool
+  redhat:
+    - fcitx5-gtk
+    - fcitx5-qt
+    - fcitx5-configtool
+
 # Baseline for an `ivm` guest VM (roles/incus_vm). NOT a host-toggleable bundle
 # like the ones above (no `distro_packages_install_*` switch); it is rendered
 # into `<incus_vm_root>/package-groups.json` and the `ivm` program installs it
