@@ -45,6 +45,7 @@ post_install_script: |
   systemctl set-default graphical.target
   mkdir -p /etc/lightdm/lightdm.conf.d
   printf '[Seat:*]\nautologin-user=user\nautologin-session=icewm\n' > /etc/lightdm/lightdm.conf.d/autologin.conf
-  systemctl enable lightdm
+  # --force: openSUSE pre-aliases display-manager.service, so a plain enable collides.
+  systemctl enable --force lightdm
   # icewm ignores XDG autostart, so start fcitx5 from its own startup script.
   su - user -c 'mkdir -p ~/.config/icewm && printf "#!/bin/sh\nfcitx5 -d &\n" > ~/.config/icewm/startup && chmod +x ~/.config/icewm/startup'

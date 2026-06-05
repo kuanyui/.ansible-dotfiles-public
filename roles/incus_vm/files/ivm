@@ -770,6 +770,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     name: str = choose_instance_name(template_name, cwd, given_name,
                                      dry_run=dry_run, assume_yes=assume_yes)
     confirm_create(doc, name, cwd, assume_yes=assume_yes, dry_run=dry_run)
+    is_gui: bool = bool(doc.get("sys", {}).get("gui"))
     # create stopped, attach all devices, THEN start (so non-hotpluggable
     # devices like the TPM are present at first boot).
     run(create_command(doc, name, cwd), dry_run=dry_run)
@@ -788,6 +789,17 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
         run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd)], dry_run=dry_run)
         for push_cmd in push_dotfiles_commands(ansible_os_family_of(doc), name, root):
             run(push_cmd, dry_run=dry_run)
+        if is_gui:
+            # Provisioning set graphical.target + enabled the display manager, but
+            # the VM was started BEFORE that, so it is still at multi-user (a TTY).
+            # Reboot so it comes up in graphical.target (autologin + the IM env vars
+            # from /etc/environment apply to the fresh session). Then wait for the
+            # agent only - the desktop needs no network to render.
+            run(["incus", "restart", name], dry_run=dry_run)
+            if dry_run:
+                print(f"+ (wait until `incus exec {name}` works again after reboot)", file=sys.stderr)
+            elif not wait_until(name, "true", 90):
+                die(f"VM '{name}' did not come back up within 90s after the GUI reboot")
     except subprocess.CalledProcessError as exc:
         print("", file=sys.stderr)
         die(f"setup of '{name}' failed at the step above (exit {exc.returncode}). "
@@ -796,7 +808,8 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
             f"  inspect: incus exec {name} -- bash\n"
             f"  remove:  ivm delete   (from {cwd})   # or: incus delete --force {name}\n"
             f"Resolve the cause, then `ivm delete` + `ivm init {template_name}` to rebuild.")
-    print(f"==> {name} ready. Enter with: ivm shell", file=sys.stderr)
+    enter_hint: str = "ivm shell" + (", or `ivm gui` for the desktop" if is_gui else "")
+    print(f"==> {name} ready. Enter with: {enter_hint}", file=sys.stderr)
 
 
 def cmd_shell(root: Path, *, as_root: bool, dry_run: bool) -> None:
