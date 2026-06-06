@@ -5,6 +5,42 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## incus_vm host install/uninstall split + per-user net gap
+
+Triggered by a real `ivm init claude` on a host using the unprivileged `incus`
+group (per-user restricted project `user-1000`). Three distinct ivm bugs already
+fixed in `files/ivm` (see that diff), then a role-structure refactor:
+
+- [x] **`shift=true` removed from VM mounts** - container-only property; rejected
+  by restricted projects, no-op for VMs. (`files/ivm` `mount_commands`.)
+- [x] **Socket-path validator** - a valid (<=63) instance name still overflowed
+  the virtiofs `AF_UNIX` sun_path (108) once the `user-1000_` prefix + longest
+  device suffix were added -> cryptic `incus start` "connect: invalid argument".
+  `files/ivm` now models the real socket path at name-pick time and rejects/
+  re-prompts (`socket_path_error`, `current_incus_project_prefix`).
+- [x] **Rename `tasks/host_setup.yml` -> `tasks/incus_host_install.yml`** (+
+  `defaults/main/host_setup.yml` -> `defaults/main/incus_host_install.yml`); all
+  refs swept (main.yml, ivm_install, preseed, docs, IMPLEMENTATION_PLAN). The var
+  `incus_vm_skip_host_setup` was left as-is (out of scope to rename).
+- [x] **Add `tasks/incus_host_uninstall.yml`** - full teardown EXCEPT distro incus
+  packages; 7 steps each gated by its own `incus_vm_uninstall_*` toggle (defaults
+  in `defaults/main/incus_host_uninstall.yml`, all false = safe no-op, no sudo).
+  Wired into `tasks/main.yml` on `incus_vm_state: absent` (gated on
+  `not incus_vm_skip_host_setup`). Storage-pool delete and incusbr0 delete are
+  SEPARATE toggles (orthogonal). Order encodes incus's referential constraints:
+  instances -> user-* projects -> incusbr0 -> default pool -> firewalld -> group
+  -> disable daemon (last). NOTE: the `default` pool can't be deleted while a
+  `user-*` project's auto default profile still pins it, hence user-projects
+  before pool. Verified: YAML parse + `ansible-playbook --syntax-check` on both
+  playbooks. NOT run against real incus (only the host can).
+- [ ] **per-user net gap (the actual root cause tonight)** - `incus_host_install`
+  only fixes `incusbr0` (default project). The unprivileged `incus` group uses
+  incus-user's auto-created `incusbr-1000`, which came up with `config: {}` (no
+  IPv4) -> VM got IPv6-only -> no default route -> provisioning aborted. Install
+  does NOT cover the per-user bridge. DECIDE how the role should handle it.
+- [ ] **ivm error msg hardcodes `incusbr0`** - misleads on unprivileged hosts
+  (bridge is `incusbr-<uid>`); make it print the VM's actual NIC/network. Offered.
+
 ## incus launcher improvements
 
 - [x] **1. Decide launcher language (bash vs Python)** -> **bash now.**

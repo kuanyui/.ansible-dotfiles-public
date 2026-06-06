@@ -1,6 +1,6 @@
 # Incus host setup (storage pool, network, troubleshooting)
 
-Host-level incus daemon setup for `roles/incus_vm`, run via `tasks/host_setup.yml` (folded in from the former `_incus_host_setup` role once `incus_vm` became the sole consumer). Gated on `not incus_vm_skip_host_setup`.
+Host-level incus daemon setup for `roles/incus_vm`, run via `tasks/incus_host_install.yml` (folded in from the former `_incus_host_setup` role once `incus_vm` became the sole consumer). Gated on `not incus_vm_skip_host_setup`. Reversed by `tasks/incus_host_uninstall.yml` on `incus_vm_state: absent` (see [Uninstall / teardown](#uninstall--teardown)).
 
 Covers the host-level concerns - independent of any specific VM template: supported distros, what gets installed on the host, the `default` storage pool config matrix, the openSUSE+snapper btrfs trap, moving incus data around post-install, host-level inspecting / cleanup, and the network / virt-manager FAQs. For the launcher itself (templates, `ivm` subcommands), see [`roles/incus_vm/README.md`](../README.md).
 
@@ -58,7 +58,7 @@ Fixes (pick one, manual):
 
 ## Configuring the storage pool
 
-Three vars in [`defaults/main/host_setup.yml`](../defaults/main/host_setup.yml) drive the preseed pool config. Set in `host_vars/<hostname>.yml`. Effective ONLY at first-time `incus admin init --preseed`:
+Three vars in [`defaults/main/incus_host_install.yml`](../defaults/main/incus_host_install.yml) drive the preseed pool config. Set in `host_vars/<hostname>.yml`. Effective ONLY at first-time `incus admin init --preseed`:
 
 | Var | Project default | Meaning |
 |---|---|---|
@@ -185,6 +185,22 @@ sudo du -sh /var/lib/incus/*                # raw breakdown (CAUTION: undercount
 
 For deleting a specific VM, use `ivm delete` (from the VM's dir) or `incus delete <vm-name>`.
 
+## Uninstall / teardown
+
+`incus_vm_state: absent` always removes the user-space `ivm` tool (`tasks/ivm_uninstall.yml`). The host-level incus layer is reversed by `tasks/incus_host_uninstall.yml`, but **every step is OFF by default** - you opt into each with an `incus_vm_uninstall_*` toggle (defined in [`defaults/main/incus_host_uninstall.yml`](../defaults/main/incus_host_uninstall.yml)). The distro `incus` / `guestfs-tools` **packages are never removed**.
+
+| Toggle (`incus_vm_uninstall_*`) | Reverses | Risk |
+|---|---|---|
+| `remove_user_from_incus_group` | the `incus` group add | reversible (re-login) |
+| `revert_firewalld_incusbr0_zone` | `incusbr0` trusted-zone | host-local, low |
+| `disable_incus_daemon_and_socket` | `incus.service` + `incus-user.socket` enable | shared: stops incus host-wide |
+| `delete_all_instances` | - | **destroys all VM disks** |
+| `delete_autocreated_user_projects` | incus-user's `user-*` projects + `incusbr-*` bridges | deletes those projects' VMs |
+| `delete_incusbr0_network` | preseed's `incusbr0` bridge | network only, no data |
+| `delete_default_storage_pool` | preseed's `default` pool | **erases pool**; needs instances + user-* projects gone first |
+
+Storage (`delete_default_storage_pool`) and network (`delete_incusbr0_network`) are split on purpose - they are orthogonal. Full teardown (keep packages) = set all seven true; the exact command is in the defaults file header.
+
 ## Q&A
 
 ### Where do cached incus images, per-VM disk files, installer ISOs, and snapshots live? Can the paths be changed?
@@ -225,7 +241,7 @@ Placeholders used in the cells below:
 
 | | **btrfs loop file on `/home`**<br>(project default) | **`dir` backend on `/`**<br>(Incus built-in default) | **`dir` backend on `/data`** | **zfs loop file on `/home`** |
 |---|---|---|---|---|
-| `host_setup.yml` config | `driver: btrfs`<br>`source: /home/incus-storage.img`<br>`size: 500GiB` | `driver: dir`<br>`source: ""`<br>`size: ""` | `driver: dir`<br>`source: /data/vm/incus`<br>`size: ""` | `driver: zfs`<br>`source: /home/incus-storage.zfs`<br>`size: 500GiB` |
+| `incus_host_install.yml` config | `driver: btrfs`<br>`source: /home/incus-storage.img`<br>`size: 500GiB` | `driver: dir`<br>`source: ""`<br>`size: ""` | `driver: dir`<br>`source: /data/vm/incus`<br>`size: ""` | `driver: zfs`<br>`source: /home/incus-storage.zfs`<br>`size: 500GiB` |
 | Where the actual blocks live on host | `/home/incus-storage.img` (a sparse btrfs loop file) | `/var/lib/incus/storage-pools/default/` (a real directory tree) | `/data/vm/incus/` (a real directory tree) | `/home/incus-storage.zfs` (a sparse ZFS loop file) |
 | Where you `ls` to navigate the pool | `/var/lib/incus/storage-pools/default/` (Incus mounts the loop file's btrfs FS here at daemon start) | `/var/lib/incus/storage-pools/default/` (= the storage path itself) | `/data/vm/incus/` (= the storage path itself) | `/var/lib/incus/storage-pools/default/` (Incus imports the ZFS pool as `default` and exposes it here at daemon start) |
 | Per-VM root disk | btrfs subvolume at `/var/lib/incus/storage-pools/default/virtual-machines/<vm-name>/`, CoW-cloned from the pool template. Backing blocks live inside `/home/incus-storage.img` | qcow2 file at `/var/lib/incus/storage-pools/default/virtual-machines/<vm-name>/root.img`, sparse, full copy of the cached image | qcow2 file at `/data/vm/incus/virtual-machines/<vm-name>/root.img`, sparse, full copy of the cached image | ZFS dataset named `default/virtual-machines/<vm-name>`, CoW clone of the pool template. Backing blocks live inside `/home/incus-storage.zfs` |

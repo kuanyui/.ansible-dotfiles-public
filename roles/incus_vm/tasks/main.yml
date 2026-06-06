@@ -11,8 +11,8 @@
         that: incus_vm_state in ['present', 'absent']
         fail_msg: "incus_vm_state must be `present` or `absent`, got `{{ incus_vm_state }}`."
 
-    - name: Run host-level prep (apt install incus + guestfs-tools, preseed init, group add) via tasks/host_setup.yml
-      ansible.builtin.include_tasks: host_setup.yml
+    - name: Run host-level prep (apt install incus + guestfs-tools, preseed init, group add) via tasks/incus_host_install.yml
+      ansible.builtin.include_tasks: incus_host_install.yml
       when:
         - incus_vm_state == 'present'
         - not (incus_vm_skip_host_setup | default(false) | bool)
@@ -20,5 +20,16 @@
     - ansible.builtin.include_tasks: ivm_install.yml
       when: incus_vm_state == 'present'
 
+    # Uninstall mirrors install in REVERSE order: drop the user-space `ivm` tool
+    # first, then optionally tear down the host-level incus layer. Each host
+    # teardown step is individually gated by an `incus_vm_uninstall_*` toggle
+    # (all default false -> safe no-op), so `absent` removes only `ivm` unless
+    # the toggles are explicitly set. Gated on `not incus_vm_skip_host_setup` to
+    # match install (a host whose incus we never set up, we never tear down).
     - ansible.builtin.include_tasks: ivm_uninstall.yml
       when: incus_vm_state == 'absent'
+
+    - ansible.builtin.include_tasks: incus_host_uninstall.yml
+      when:
+        - incus_vm_state == 'absent'
+        - not (incus_vm_skip_host_setup | default(false) | bool)

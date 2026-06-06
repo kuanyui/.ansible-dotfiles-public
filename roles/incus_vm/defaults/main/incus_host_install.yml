@@ -1,10 +1,11 @@
 ---
-# Host-level incus daemon prep vars (see tasks/host_setup.yml). Folded in from
-# the former `_incus_host_setup` role. Loaded automatically: Ansible reads every
-# file in a role's `defaults/main/` directory.
+# Host-level incus daemon prep vars (see tasks/incus_host_install.yml). Folded in
+# from the former `_incus_host_setup` role. Loaded automatically: Ansible reads
+# every file in a role's `defaults/main/` directory.
+# (Uninstall toggles live in the sibling defaults/main/incus_host_uninstall.yml.)
 
 # `incus_vm_skip_host_setup`: skip the host-level prep
-# (`tasks/host_setup.yml`: apt install incus + guestfs-tools, daemon
+# (`tasks/incus_host_install.yml`: apt install incus + guestfs-tools, daemon
 # enable+start, `incus-user.socket` enable+start, `incus` group add (lower-privilege
 # than `incus-admin`; the client auto-detects `unix.socket.user`), `incus admin
 # init --preseed`). Only the user-space `ivm` install runs. Used by the sandbox
