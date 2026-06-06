@@ -224,7 +224,7 @@
 
        Then re-run:
 
-           make apply-incus-vm
+           make incus-install
 
       ============================================================
   when: "'incus' not in (_incus_groups_check.stdout.split())"
@@ -295,7 +295,7 @@
 # with. Never clobbering an existing pool is deliberate (see the preseed `when:`),
 # but the mismatch used to be invisible: you ask for a btrfs loop file on `/home`
 # and quietly get `dir` on `/`. Detect it and WARN (we never auto-destroy data);
-# the opt-in rebuild is `make unapply-incus-host` + `make apply-incus-vm`.
+# the opt-in rebuild is `make incus-teardown-host` + `make incus-install`.
 # (lvm note: incus reports a thin-LVM pool's driver as `lvm`, so an `lvm-thin`
 # config value would warn spuriously here - harmless, and unused by the defaults.)
 
@@ -308,7 +308,7 @@
   become: true
   when: "'default,' in _incus_storage_list.stdout"
 
-- name: Warn when the existing `default` pool's backend differs from `incus_storage_pool_driver` (preseed cannot re-point an already-initialized pool; rebuild via `make unapply-incus-host` + `make apply-incus-vm`)
+- name: Warn when the existing `default` pool's backend differs from `incus_storage_pool_driver` (preseed cannot re-point an already-initialized pool; rebuild via `make incus-teardown-host` + `make incus-install`)
   ansible.builtin.debug:
     msg: |
       ============================================================
@@ -326,8 +326,8 @@
        This role never clobbers an existing pool. To REBUILD it as
        configured (DESTROYS every incus VM + the current pool):
 
-           make unapply-incus-host
-           make apply-incus-vm
+           make incus-teardown-host
+           make incus-install
       ============================================================
   vars:
     _existing_default_pool_driver: "{{ (_incus_default_pool_show.stdout | default('') | from_yaml).driver | default('', true) }}"

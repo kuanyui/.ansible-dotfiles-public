@@ -16,7 +16,7 @@ a full separate kernel (stronger isolation than a shared-kernel container).
 ## Quick start
 
 ```bash
-make apply-incus-vm          # install `ivm` + example templates (+ host incus setup)
+make incus-install          # install `ivm` + example templates (+ host incus setup)
 cd ~/projects/foo
 ivm init claude              # build a VM from the `claude` template, bound to this dir
 ivm shell                    # zsh into it (Claude Code is on PATH inside)
@@ -121,13 +121,13 @@ discover them. Storage layout details: [`docs/incus-host-setup.md`](docs/incus-h
 | What | Command |
 |---|---|
 | Delete one VM (config + disk + snapshots) | `ivm delete` (from its dir), or `incus delete <vm>` |
-| Re-push dotfiles to every managed guest | `make incus-overwrite-dotfiles-in-all-guest` |
-| Remove `ivm` + the role's subdir (leaves VMs intact) | `make unapply-incus-vm` |
+| Re-push dotfiles to every managed guest | `make incus-push-dotfiles` |
+| Remove `ivm` + the role's subdir (leaves VMs intact) | `make incus-uninstall-ivm` |
 | List managed VMs | `incus list user.ansible-managed=true` |
 
 ## Status / limitations
 
-- Statically verified (mypy `--strict`, `ivm --dry-run`, `make sandbox-incus-vm`);
+- Statically verified (mypy `--strict`, `ivm --dry-run`, `make incus-sandbox`);
   real-incus end-to-end (launch / exec / virtio-fs) needs a real incus host.
 - Windows tier (`os.type: windows`) is schema-defined but not yet implemented in
   `init` (linux only for now).

@@ -14,7 +14,7 @@ successor is referred to as `incus_vm` here; the final name is itself
 
 ## 1. What triggered this
 
-`make apply-incus-vm` produces no `~/.local/bin/v-<name>` launcher.
+`make incus-install` produces no `~/.local/bin/v-<name>` launcher.
 
 Not a bug: `roles/incus_vm/defaults/main.yml` ships
 `incus_vm: []` (empty). Launchers are rendered by a loop over that

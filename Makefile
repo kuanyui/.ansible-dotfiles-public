@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-oci-runtimes apply-container-apps apply-incus-vm apply-apparmor unstow check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-incus-vm check-apparmor unapply-podman-oci-runtimes unapply-container-apps unapply-incus-vm unapply-incus-host incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-vm sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor incus-install incus-check incus-sandbox incus-uninstall-ivm incus-teardown-host incus-push-dotfiles check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -62,11 +62,22 @@ apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local
 unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/container-templates/.ansible-manifest.yml, removes everything it recorded)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps_uninstall.yml
 
-incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all managed Incus guests (run `apply-incus-vm` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.
+apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / VSCode / etc.; bypasses `setup_apparmor` gate). Python pre-flight validates + previews + asks y/N before ansible runs. Needs sudo.
+	python3 roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py --confirm
+	$(PLAYBOOK) --diff --ask-become-pass -e apparmor_non_interactive=true $(PLAYBOOKS)/apparmor.yml
+
+### -------------------------------------------------------------------------
+### Incus (host daemon + the `ivm` VM launcher)
+### -------------------------------------------------------------------------
+
+incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). Sudo only for the host steps that actually run.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml
+
+incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (run `incus-install` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.
 	@set -e; \
 	WORKS="$$HOME/.local/share/ansible-managed/incus-vm/ivm/rootfs/Debian"; \
 	if [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
-	else echo "No staged dotfiles found -- run 'make apply-incus-vm' first" >&2; exit 1; fi; \
+	else echo "No staged dotfiles found -- run 'make incus-install' first" >&2; exit 1; fi; \
 	echo "Source (Debian tree; the only buildable guest family today): $$SRC"; \
 	VMS=$$(incus list user.ansible-managed=true --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
 	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
@@ -78,21 +89,23 @@ incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all manage
 	    incus file push --recursive --create-dirs --uid 0 --gid 0 "$$SRC/root" "$$vm/"; \
 	done
 
-apply-incus-vm:  ## Install the `ivm` Incus VM launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). Auto-installs + preseed-inits incus if missing; sudo only fires then.
-	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml
-
-unapply-incus-vm:  ## Uninstall `ivm` + its `~/.local/share/ansible-managed/incus-vm/` subdir ONLY; leaves incus daemon, pool, networks, VMs, and your `incus` group intact. Host-level teardown: `unapply-incus-host` (or `-e incus_vm_uninstall_*=true` here).
+incus-uninstall-ivm:  ## Uninstall `ivm` + its `~/.local/share/ansible-managed/incus-vm/` subdir ONLY; leaves incus daemon, pool, networks, VMs, and your `incus` group intact. Host-level teardown: `incus-teardown-host` (or `-e incus_vm_uninstall_*=true` here).
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_vm_uninstall.yml
 
-## Flags for `unapply-incus-host`: every destructive `incus_vm_uninstall_*` step except the `incus` group removal (so no re-login). Override to add more.
-INCUS_VM_HOST_TEARDOWN_FLAGS := -e incus_vm_uninstall_delete_all_instances=true -e incus_vm_uninstall_delete_autocreated_user_projects=true -e incus_vm_uninstall_delete_incusbr0_network=true -e incus_vm_uninstall_delete_default_storage_pool=true -e incus_vm_uninstall_disable_incus_daemon_and_socket=true -e incus_vm_uninstall_revert_firewalld_incusbr0_zone=true
+## Extra `-e incus_vm_uninstall_*=true` flags appended to `incus-teardown-host` (default: none). e.g. ALSO leave the `incus` group (forces a re-login):  make incus-teardown-host INCUS_VM_HOST_TEARDOWN_EXTRA="-e incus_vm_uninstall_remove_user_from_incus_group=true"
+INCUS_VM_HOST_TEARDOWN_EXTRA ?=
 
-unapply-incus-host:  ## DESTRUCTIVE host-level incus teardown: deletes ALL VMs, the `default` pool (ERASES disks), `incusbr0`, `user-*` projects + `incusbr-*` bridges, and disables the daemon. Keeps packages + your `incus` group. Needs sudo.
+## `incus-teardown-host`'s ansible flags: every destructive `incus_vm_uninstall_*` step EXCEPT `incus` group removal, plus $(INCUS_VM_HOST_TEARDOWN_EXTRA). To customize, set that var above - don't edit this line.
+INCUS_VM_HOST_TEARDOWN_FLAGS := -e incus_vm_uninstall_delete_all_instances=true -e incus_vm_uninstall_delete_autocreated_user_projects=true -e incus_vm_uninstall_delete_incusbr0_network=true -e incus_vm_uninstall_delete_default_storage_pool=true -e incus_vm_uninstall_disable_incus_daemon_and_socket=true -e incus_vm_uninstall_revert_firewalld_incusbr0_zone=true $(INCUS_VM_HOST_TEARDOWN_EXTRA)
+
+incus-teardown-host:  ## DESTRUCTIVE host-level incus teardown: deletes ALL VMs, the `default` pool (ERASES disks), `incusbr0`, `user-*` projects + `incusbr-*` bridges, and disables the daemon. Keeps packages + your `incus` group. Needs sudo.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm_uninstall.yml $(INCUS_VM_HOST_TEARDOWN_FLAGS)
 
-apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / VSCode / etc.; bypasses `setup_apparmor` gate). Python pre-flight validates + previews + asks y/N before ansible runs. Needs sudo.
-	python3 roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py --confirm
-	$(PLAYBOOK) --diff --ask-become-pass -e apparmor_non_interactive=true $(PLAYBOOKS)/apparmor.yml
+incus-check:  ## Dry-run `incus-install` (`--check --diff`).
+	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_vm.yml
+
+incus-sandbox:  ## Dry-run `incus-install` in a throwaway podman+systemd sandbox (`incus` binary stubbed).
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_vm
 
 ### -------------------------------------------------------------------------
 ### Dry-run (--check --diff)
@@ -112,9 +125,6 @@ check-podman-oci-runtimes:  ## Dry-run diff for podman OCI runtime config
 
 check-container-apps:  ## Dry-run diff for container_apps install
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/container_apps.yml
-
-check-incus-vm:  ## Dry-run diff for incus workstation launcher install
-	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_vm.yml
 
 check-apparmor:  ## Dry-run diff for AppArmor profile deployment
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/apparmor.yml
@@ -175,9 +185,6 @@ sandbox-root:  ## Dry-run `apply-root` (distro_packages + zsh + emacs + dotfiles
 
 sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtime> launcher install) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) container_apps
-
-sandbox-incus-vm:  ## Dry-run `apply-incus-vm` (`ivm` install; `incus` binary stubbed) in a throwaway podman+systemd sandbox
-	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_vm
 
 sandbox-podman-oci-runtimes:  ## Dry-run `apply-podman-oci-runtimes` (containers.conf write; `crun` and `podman` are stubbed) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) podman_oci_runtimes

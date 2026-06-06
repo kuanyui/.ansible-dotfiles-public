@@ -178,12 +178,12 @@ For workloads where a podman container's shared-kernel boundary feels too thin (
 You describe the VM once (OS/distro, hardware, mounts, packages, dotfiles, post-install) in a template under `~/.local/share/ansible-managed/incus-vm/ivm/templates/<name>.yaml`, then:
 
 ```bash
-make apply-incus-vm          # install `ivm` + example templates
+make incus-install          # install `ivm` + example templates
 ivm init claude              # create a VM from the `claude` template, bound to the current dir
 ivm shell                    # enter it (zsh); `ivm` from a subdir offers the parent's VM
 ```
 
-`make apply-incus-vm` auto-installs the `incus` package, starts + enables `incus.service` AND `incus-user.socket`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus` group (the lower-privilege user-socket group, NOT the root-equivalent `incus-admin`; the `incus` CLI auto-detects `/run/incus/unix.socket.user` and routes your operations into a per-user project `user-<UID>` for isolation). Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password. (Host-level prep is in `roles/incus_vm` `tasks/host_setup.yml`; details in [`roles/incus_vm/docs/incus-host-setup.md`](roles/incus_vm/docs/incus-host-setup.md).)
+`make incus-install` auto-installs the `incus` package, starts + enables `incus.service` AND `incus-user.socket`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus` group (the lower-privilege user-socket group, NOT the root-equivalent `incus-admin`; the `incus` CLI auto-detects `/run/incus/unix.socket.user` and routes your operations into a per-user project `user-<UID>` for isolation). Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password. (Host-level prep is in `roles/incus_vm` `tasks/host_setup.yml`; details in [`roles/incus_vm/docs/incus-host-setup.md`](roles/incus_vm/docs/incus-host-setup.md).)
 
 If your user was just added to `incus`, **log out + back in** (or `newgrp incus` in this shell) before running `ivm` - the role hard-aborts on this condition so it can't be missed, with the exact remediation steps printed; Linux only refreshes a session's supplementary group set at login time.
 

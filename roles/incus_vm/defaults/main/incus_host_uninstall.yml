@@ -13,10 +13,10 @@
 # system may use.
 #
 # FULL TEARDOWN ("reset incus to fresh-installed, keep packages"): easiest is
-#   make unapply-incus-host
+#   make incus-teardown-host
 # which runs the uninstall playbook with every destructive toggle EXCEPT group
 # removal (see INCUS_VM_HOST_TEARDOWN_FLAGS in the Makefile; add group removal or
-# customize by overriding it). `make unapply-incus-vm` is the safe one - removes
+# customize by overriding it). `make incus-uninstall-ivm` is the safe one - removes
 # only `ivm`, no toggles, no become. To set the toggles by hand instead -
 #   ansible-playbook playbooks/incus_vm_uninstall.yml --ask-become-pass \
 #     -e incus_vm_uninstall_delete_all_instances=true \
@@ -80,6 +80,6 @@ incus_vm_uninstall_delete_default_storage_pool: false
 # above is on, the teardown prints what it will do + the equivalent copy-paste
 # command and requires typing `yes` before any destructive step. Set true to skip
 # that prompt for non-interactive automation (the steps + command are still
-# logged). Default false = always confirm. The safe `unapply-incus-vm` path (all
+# logged). Default false = always confirm. The safe `incus-uninstall-ivm` path (all
 # toggles off) never prompts regardless.
 incus_vm_uninstall_assume_yes: false

@@ -33,10 +33,10 @@ fixed in `files/ivm` (see that diff), then a role-structure refactor:
   `user-*` project's auto default profile still pins it, hence user-projects
   before pool. Verified: YAML parse + `ansible-playbook --syntax-check` on both
   playbooks. NOT run against real incus (only the host can).
-- [x] **Makefile targets** - `unapply-incus-vm` help corrected (ivm-only now);
-  added `unapply-incus-host` (DESTRUCTIVE, `--ask-become-pass`, all toggles
+- [x] **Makefile targets** - `incus-uninstall-ivm` help corrected (ivm-only now);
+  added `incus-teardown-host` (DESTRUCTIVE, `--ask-become-pass`, all toggles
   except group removal) driven by overridable `INCUS_VM_HOST_TEARDOWN_FLAGS`;
-  added to `.PHONY`. Verified via `make -n unapply-incus-host` + `make help`.
+  added to `.PHONY`. Verified via `make -n incus-teardown-host` + `make help`.
 - [x] **per-user net gap (the actual root cause)** - the unprivileged `incus`
   group uses incus-user's auto-created `incusbr-<uid>`, which on this host came up
   with `config: {}` (no IPv4) -> VM got IPv6-only -> no default route ->
@@ -79,7 +79,7 @@ fixed in `files/ivm` (see that diff), then a role-structure refactor:
   `-y`/`--yes` in the flag completion. Validated by `bash -n` / `zsh -n`.
   Workstations N/A (VM name = launcher name, no cwd suffix).
 
-- [x] **4. Makefile `incus-overwrite-dotfiles-in-all-guest`** (our own Linux guests only).
+- [x] **4. Makefile `incus-push-dotfiles`** (our own Linux guests only).
   Done. Both launchers now tag VMs at `incus launch`:
   `user.ansible-managed=true` + `user.ansible-guest-os=linux`. New Makefile
   target pushes user+root staged dotfiles to all `v-*` VMs (type=VM), skips any
@@ -119,7 +119,7 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   dotfiles) + `ivm shell` (cwd-resolve). Default VM name carries `ivm-` prefix.
   Per-os_family dotfiles staging done (`vm-rootfs/<family>/{home/user,root}`).
   Static-verified (mypy --strict, syntax-check, dry-run); needs real incus host
-  + `make sandbox-incus-vm` for end-to-end.
+  + `make incus-sandbox` for end-to-end.
 - [~] **Phase 2 lifecycle + provision depth** - DONE on the engine side
   (static-verified: mypy --strict, dry-run init/env for Debian + openSUSE):
   start/stop/delete (y/N confirm) / overwrite-dotfiles / update / env (prints
@@ -129,7 +129,7 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   per-family pkg-mgr (apt/zypper/dnf). Baseline is a registry bundle
   (`distro_packages_incus_guest_baseline`); the registry is materialized to
   `<root>/package-groups.json` at apply time (ivm has no ansible at runtime).
-  PENDING: re-run `make sandbox-incus-vm` (verify the `to_nice_json` render +
+  PENDING: re-run `make incus-sandbox` (verify the `to_nice_json` render +
   per-family staging) and real-incus end-to-end (esp. an openSUSE guest). No
   Fedora template yet (dnf path written but untested).
 - [ ] **Verify baseline package names per distro on a real box** - the
@@ -175,7 +175,7 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   Step 1 DONE (user OK'd destructive; single-host, recoverable): retired
   `incus_agents` - git rm the role + both playbooks + sandbox config; removed its
   Makefile targets (apply/check/unapply/sandbox + resync-dotfiles) + .PHONY
-  tokens; dropped its branch from `incus-overwrite-dotfiles-in-all-guest` (now
+  tokens; dropped its branch from `incus-push-dotfiles` (now
   filters guests by `user.ansible-managed` tag, not `^v-` name); removed
   `setup_incus_agents` from group_vars; removed the incus-agents row from the
   CLAUDE.md namespace table; rewrote the README (tree, role table, completion
@@ -204,7 +204,7 @@ Phases tracked in `roles/incus_vm/IMPLEMENTATION_PLAN.md`; mirrored here.
   the user's host can), (b) the stale-docs item below.
 - [x] **Stale docs** - DONE: rewrote `roles/incus_vm/README.md` for `ivm`
   (templates, subcommands, VM identity, provisioning model, new file layout,
-  doc links) and fixed the `make apply/unapply/sandbox-incus-vm` help strings
+  doc links) and fixed the `make incus-*` help strings
   (no more `v-<workstation>` / manifest / `rma`).
 
 ## GUI + CJK package groups (ivm)

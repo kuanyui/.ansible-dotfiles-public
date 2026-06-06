@@ -29,7 +29,7 @@
 # Real transparency beats a scary target name: when any `incus_vm_uninstall_*`
 # toggle is on, print exactly which steps will run (each toggle's ON/off state)
 # plus the equivalent copy-paste command, then require typing `yes`. All toggles
-# off (the safe `make unapply-incus-vm` path) -> nothing here fires. Automation
+# off (the safe `make incus-uninstall-ivm` path) -> nothing here fires. Automation
 # skips the prompt with `-e incus_vm_uninstall_assume_yes=true` (steps + command
 # are still logged). A non-interactive run without that flag gives empty input,
 # so the assert fails - it refuses to destroy without an explicit `yes`.
@@ -73,7 +73,7 @@
 - name: Abort unless the confirmation was exactly `yes`
   ansible.builtin.assert:
     that: _incus_teardown_confirm.user_input | default('') | trim | lower == 'yes'
-    fail_msg: "Aborted - no incus VMs / pool / daemon were touched. (The user-space `ivm` tool was already removed by the prior step; `make apply-incus-vm` restores it.)"
+    fail_msg: "Aborted - no incus VMs / pool / daemon were touched. (The user-space `ivm` tool was already removed by the prior step; `make incus-install` restores it.)"
     success_msg: "Confirmed - proceeding with the teardown."
   when:
     - _incus_teardown_any_on | bool
