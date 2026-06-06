@@ -37,11 +37,23 @@ fixed in `files/ivm` (see that diff), then a role-structure refactor:
   added `teardown-incus-host` (DESTRUCTIVE, `--ask-become-pass`, all toggles
   except group removal) driven by overridable `INCUS_VM_HOST_TEARDOWN_FLAGS`;
   added to `.PHONY`. Verified via `make -n teardown-incus-host` + `make help`.
-- [ ] **per-user net gap (the actual root cause tonight)** - `incus_host_install`
-  only fixes `incusbr0` (default project). The unprivileged `incus` group uses
-  incus-user's auto-created `incusbr-1000`, which came up with `config: {}` (no
-  IPv4) -> VM got IPv6-only -> no default route -> provisioning aborted. Install
-  does NOT cover the per-user bridge. DECIDE how the role should handle it.
+- [x] **per-user net gap (the actual root cause)** - the unprivileged `incus`
+  group uses incus-user's auto-created `incusbr-<uid>`, which on this host came up
+  with `config: {}` (no IPv4) -> VM got IPv6-only -> no default route ->
+  provisioning aborted. ALSO: the preseed init is skipped when a `default` pool
+  already exists (its `when:` guard). This host has a hand-made `dir` `default`
+  pool (observed: ivm preview `storage pool: default (dir)`; matches branch name
+  "without manually create loop file") so the preseed's `incusbr0` was never
+  created (confirmed: `incus network list` showed only `incusbr-1000`).
+  FIX in `incus_host_install.yml`
+  (replaces the earlier "set incusbr-<uid> ipv4" attempt): (1) ensure `incusbr0`
+  exists with IPv4 NAT independently of preseed; (2) trigger `user-<uid>` project
+  creation; (3) grant it `restricted.networks.access=incusbr0[,incusbr-<uid>]`
+  and repoint the project default profile `eth0` to `incusbr0`. Routes per-user
+  VMs through the standard bridge instead of fighting the flaky auto one.
+  NON-FATAL on the per-user steps. Uninstall already reverses it
+  (`delete_incusbr0_network` + `delete_autocreated_user_projects`). Verified: YAML
+  + syntax-check; NOT run against real incus.
 - [ ] **ivm error msg hardcodes `incusbr0`** - misleads on unprivileged hosts
   (bridge is `incusbr-<uid>`); make it print the VM's actual NIC/network. Offered.
 

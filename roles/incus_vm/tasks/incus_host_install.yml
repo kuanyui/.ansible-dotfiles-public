@@ -287,6 +287,79 @@
   register: _incus_init
   changed_when: _incus_init.rc == 0
 
+# ---------- Per-user networking: route `user-<uid>` VMs through the standard incusbr0 ----------
+# Unprivileged `incus`-group users get a per-user restricted project `user-<uid>`
+# whose AUTO-created bridge `incusbr-<uid>` can come up with NO IPv4 (empty
+# config) on some hosts -> VMs get an IPv6 ULA but never a DHCPv4 lease, so
+# `ivm init` aborts in wait_ready ("no default route or DNS"). Instead of
+# fighting that flaky auto-bridge, point the user project at the standard,
+# well-tested `incusbr0` (managed bridge, IPv4 NAT + DNS).
+#
+# IMPORTANT: the `incus admin init --preseed` task above is SKIPPED whenever a
+# `default` storage pool already exists (its own `when:` guard). So on any host
+# where incus was set up outside this preseed - e.g. a `default` pool created by
+# hand with the `dir` backend - the preseed's `incusbr0` is never created. Rather
+# than ASSUME the preseed made it, ensure `incusbr0` exists here. All steps are
+# NON-FATAL where they touch the (optional) per-user project, so this never
+# breaks a non-unprivileged or already-correct host.
+
+- name: Ensure the standard `incusbr0` managed bridge exists with IPv4 NAT (preseed init is skipped on auto-initialized hosts, so incusbr0 may be missing)
+  ansible.builtin.command:
+    cmd: incus network create incusbr0 ipv4.address=auto ipv4.nat=true ipv6.address=auto
+  become: true
+  register: _incus_incusbr0_create
+  changed_when: _incus_incusbr0_create.rc == 0
+  failed_when:
+    - _incus_incusbr0_create.rc != 0
+    - "'already exists' not in _incus_incusbr0_create.stderr"
+
+- name: Trigger per-user project auto-creation (run `incus list` as `{{ ansible_facts['user_id'] }}` so `user-<uid>` + its default profile exist before we configure them)
+  ansible.builtin.command: incus list
+  changed_when: false
+  failed_when: false
+
+- name: Get the invoking user's UID (the per-user restricted project is `user-<uid>`)
+  ansible.builtin.command: id -u
+  register: _incus_user_uid
+  changed_when: false
+
+- name: Probe whether the per-user project `user-{{ _incus_user_uid.stdout | trim }}` exists (only the unprivileged `incus`-group path has one)
+  ansible.builtin.command:
+    cmd: incus project show user-{{ _incus_user_uid.stdout | trim }}
+  register: _incus_user_project_show
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Route `user-{{ _incus_user_uid.stdout | trim }}` VMs through `incusbr0` (grant `restricted.networks.access` + repoint the project default profile `eth0`; sidesteps the flaky auto-created `incusbr-<uid>`)
+  ansible.builtin.shell: |
+    set -eu
+    incus_project="user-{{ _incus_user_uid.stdout | trim }}"
+    per_user_bridge="incusbr-{{ _incus_user_uid.stdout | trim }}"
+    # Keep the per-user bridge in the access list too (if it still exists) so the
+    # profile that currently references it stays valid during the switch.
+    networks_access="incusbr0"
+    if incus network show "$per_user_bridge" >/dev/null 2>&1; then
+      networks_access="incusbr0,${per_user_bridge}"
+    fi
+    incus project set "$incus_project" restricted.networks.access="$networks_access"
+    incus --project "$incus_project" profile device set default eth0 network=incusbr0
+    echo ROUTED_VIA_INCUSBR0
+  become: true
+  when: _incus_user_project_show.rc == 0
+  register: _incus_user_net_route
+  changed_when: "'ROUTED_VIA_INCUSBR0' in _incus_user_net_route.stdout"
+  failed_when: false
+
+- name: Warn (do NOT fail) if routing `user-{{ _incus_user_uid.stdout | trim }}` through incusbr0 did not succeed
+  ansible.builtin.debug:
+    msg: >-
+      Could not route user-{{ _incus_user_uid.stdout | trim }} through incusbr0
+      (rc={{ _incus_user_net_route.rc }}). stderr: {{ _incus_user_net_route.stderr | default('') }}
+  when:
+    - _incus_user_net_route.rc is defined
+    - _incus_user_net_route.rc != 0
+
 # ---------- firewalld: trust the incusbr0 bridge (only on firewalld hosts) ----------
 # On firewalld-managed hosts (Fedora, openSUSE) the `incusbr0` bridge is NOT
 # assigned to any zone, so it falls into the default zone (usually `public`),

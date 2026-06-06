@@ -859,7 +859,13 @@ def preview_storage_pool(*, dry_run: bool) -> list[str]:
     used: Any = info.get("space used")
     total: Any = info.get("total space")
     space: str = f"  -  {used} used / {total} total" if used and total else ""
-    return [f"  storage pool:  {pool} ({driver}){space}"]
+    # `source` = where the pool's blocks actually live on the host: a dir tree
+    # (dir backend, e.g. /var/lib/incus/storage-pools/<pool>), a loop file
+    # (btrfs/zfs, e.g. /home/incus-storage.img), or a dataset/device. Empty ->
+    # incus's built-in default location. Shown so the path is never a mystery.
+    source: str = capture(["incus", "storage", "get", pool, "source"]).strip()
+    location: str = f" at {source}" if source else ""
+    return [f"  storage pool:  {pool} ({driver}){location}{space}"]
 
 
 def confirm_create(doc: Template, name: str, cwd: Path, *, assume_yes: bool, dry_run: bool) -> None:
