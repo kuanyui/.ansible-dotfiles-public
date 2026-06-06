@@ -26,9 +26,12 @@
 # membership - same reason incus_host_install.yml runs `incus admin init` as root.
 
 # ---------- Step 1: delete all instances (DESTRUCTIVE; prereq for pool delete) ----------
-# Names are NOT unique across projects, so always pass `--project`. Best-effort
-# (no `set -e` across the loops): each delete is reported via an echo marker that
-# drives `changed_when`. `incus delete --force` stops + removes a running VM.
+# Names are NOT unique across projects, so always pass `--project`. Each delete
+# echoes a marker: `DELETED_INSTANCE` drives `changed_when`; a refused delete
+# echoes `TEARDOWN_FAILED` so `failed_when` FAILS the task (a stuck instance would
+# otherwise silently block the project/pool deletes downstream). `--force` stops +
+# removes a running VM; the trailing `true` keeps the shell rc 0 so `failed_when`
+# (not a mid-loop non-zero exit) is the sole judge of success.
 
 - name: "`incus_vm_uninstall_delete_all_instances`: delete EVERY incus instance in EVERY project (`incus delete --force`; irreversibly DESTROYS all VM disks + snapshots)"
   ansible.builtin.shell: |
@@ -40,7 +43,7 @@
         if incus delete --project "$incus_project" --force "$incus_instance"; then
           echo "DELETED_INSTANCE ${incus_project}/${incus_instance}"
         else
-          echo "FAILED_INSTANCE ${incus_project}/${incus_instance}"
+          echo "TEARDOWN_FAILED ${incus_project}/${incus_instance} (instance delete)"
         fi
       done
     done
@@ -49,16 +52,24 @@
   when: incus_vm_uninstall_delete_all_instances | bool
   register: _incus_uninstall_delete_instances
   changed_when: "'DELETED_INSTANCE' in _incus_uninstall_delete_instances.stdout"
+  failed_when: "'TEARDOWN_FAILED' in _incus_uninstall_delete_instances.stdout"
 
 # ---------- Step 2: delete incus-user's auto-created per-user projects + bridges ----------
-# `user-<uid>` projects and `incusbr-<uid>` bridges are created automatically by
-# incus-user for unprivileged `incus`-group members (NOT by install), but a full
-# teardown clears them - this is what wipes a half-baked `incusbr-1000` that came
-# up with no IPv4. MUST run before Step 4: each user-* project carries an auto
-# `default` profile whose root device pins the SHARED `default` storage pool, so
-# the pool can't be deleted while any user-* project still exists.
+# `user-<uid>` projects and `incusbr-<uid>` bridges are auto-created by incus-user
+# for unprivileged `incus`-group members (NOT by install); a full teardown clears
+# them (this is what wipes a half-baked `incusbr-1000` that came up with no IPv4).
+# MUST run before Step 4: each user-* project's auto `default` profile pins the
+# SHARED `default` storage pool, so the pool can't be deleted while one survives.
+#
+# `incus project delete` is REFUSED while the project still holds anything - and a
+# failed `ivm init` leaves a CACHED IMAGE behind (it pulls `images:...` before it
+# can fail), which is exactly such a blocker. So clear each project's instances AND
+# images first. Any still-refused delete echoes `TEARDOWN_FAILED` -> the task FAILS
+# (the old silent `KEPT_PROJECT` let a surviving project keep pinning the pool, so
+# Step 4 then quietly failed too: teardown went green but `default` stayed put and
+# the next `apply` skipped preseed -> you kept the wrong backend).
 
-- name: "`incus_vm_uninstall_delete_autocreated_user_projects`: delete incus-user's `user-*` projects (+ their instances) and `incusbr-*` bridges"
+- name: "`incus_vm_uninstall_delete_autocreated_user_projects`: delete incus-user's `user-*` projects (+ their instances and cached images) and `incusbr-*` bridges"
   ansible.builtin.shell: |
     set -u
     incus project list --format csv --columns n | sed 's/ (current)$//' | while IFS= read -r incus_project; do
@@ -68,13 +79,17 @@
       esac
       incus list --project "$incus_project" --format csv --columns n | while IFS= read -r incus_instance; do
         [ -n "$incus_instance" ] || continue
-        incus delete --project "$incus_project" --force "$incus_instance" && echo "DELETED_INSTANCE ${incus_project}/${incus_instance}"
+        incus delete --project "$incus_project" --force "$incus_instance" && echo "DELETED_INSTANCE ${incus_project}/${incus_instance}" || echo "TEARDOWN_FAILED ${incus_project}/${incus_instance} (instance delete)"
       done
-      if incus project delete "$incus_project"; then echo "DELETED_PROJECT ${incus_project}"; else echo "KEPT_PROJECT ${incus_project}"; fi
+      incus image list --project "$incus_project" --format csv --columns f | while IFS= read -r incus_image_fingerprint; do
+        [ -n "$incus_image_fingerprint" ] || continue
+        incus image delete --project "$incus_project" "$incus_image_fingerprint" && echo "DELETED_IMAGE ${incus_project}/${incus_image_fingerprint}" || echo "TEARDOWN_FAILED ${incus_project}/${incus_image_fingerprint} (image delete)"
+      done
+      if incus project delete "$incus_project"; then echo "DELETED_PROJECT ${incus_project}"; else echo "TEARDOWN_FAILED ${incus_project} (project delete - still holds resources)"; fi
     done
     incus network list --format csv --columns n | while IFS= read -r incus_network; do
       case "$incus_network" in
-        incusbr-*) if incus network delete "$incus_network"; then echo "DELETED_NETWORK ${incus_network}"; else echo "KEPT_NETWORK ${incus_network}"; fi ;;
+        incusbr-*) if incus network delete "$incus_network"; then echo "DELETED_NETWORK ${incus_network}"; else echo "TEARDOWN_FAILED ${incus_network} (network delete)"; fi ;;
       esac
     done
     true
@@ -82,12 +97,13 @@
   when: incus_vm_uninstall_delete_autocreated_user_projects | bool
   register: _incus_uninstall_user_projects
   changed_when: "'DELETED_' in _incus_uninstall_user_projects.stdout"
+  failed_when: "'TEARDOWN_FAILED' in _incus_uninstall_user_projects.stdout"
 
 # ---------- Step 3: delete the `incusbr0` network (reverse of preseed's bridge) ----------
 # The default-project `default` profile pins `incusbr0` via eth0, so detach that
 # first. Orthogonal to the storage pool (Step 4) - separate toggles on purpose.
 
-- name: "`incus_vm_uninstall_delete_incusbr0_network`: detach `default` profile `eth0` + delete the `incusbr0` network"
+- name: "`incus_vm_uninstall_delete_incusbr0_network`: detach `default` profile `eth0` + delete the `incusbr0` network (FAILS loudly if the network is still in use)"
   ansible.builtin.shell: |
     set -u
     incusbr0_changed=0
@@ -95,21 +111,26 @@
       incus profile device remove default eth0 && { echo "REMOVED default/eth0"; incusbr0_changed=1; }
     fi
     if incus network show incusbr0 >/dev/null 2>&1; then
-      incus network delete incusbr0 && { echo "DELETED network incusbr0"; incusbr0_changed=1; }
+      if incus network delete incusbr0; then echo "DELETED network incusbr0"; incusbr0_changed=1; else echo "TEARDOWN_FAILED incusbr0 (network delete - still in use)"; fi
     fi
     [ "$incusbr0_changed" = 1 ] && echo "INCUSBR0_CHANGED" || echo "INCUSBR0_NOOP"
   become: true
   when: incus_vm_uninstall_delete_incusbr0_network | bool
   register: _incus_uninstall_delete_incusbr0
   changed_when: "'INCUSBR0_CHANGED' in _incus_uninstall_delete_incusbr0.stdout"
+  failed_when: "'TEARDOWN_FAILED' in _incus_uninstall_delete_incusbr0.stdout"
 
 # ---------- Step 4: delete the `default` storage pool (reverse of preseed's pool) ----------
 # DESTRUCTIVE: deleting the pool erases its contents (the btrfs/zfs loop file or
-# the dir tree = your VM disks). The default-project `default` profile pins it
-# via root, so detach that first. Fails if any instance / other-project profile /
-# custom volume still references it -> needs Steps 1-2 done.
+# the dir tree = your VM disks). The default-project `default` profile pins it via
+# root, so detach that first. `incus storage delete` is REFUSED while any instance
+# / profile (incl. a surviving user-* project's, see Step 2) / custom volume still
+# references it -> needs Steps 1-2 done. A still-refused delete echoes
+# `TEARDOWN_FAILED` so `failed_when` FAILS the task: the old behaviour returned
+# green while the pool quietly survived, so the next `apply` skipped preseed and
+# you kept the wrong backend. incus's own "in use by ..." reason is on stderr.
 
-- name: "`incus_vm_uninstall_delete_default_storage_pool`: detach `default` profile `root` + delete the `default` storage pool (erases the loop file / pool contents)"
+- name: "`incus_vm_uninstall_delete_default_storage_pool`: detach `default` profile `root` + delete the `default` storage pool (erases the loop file / pool contents; FAILS loudly if the pool is still referenced)"
   ansible.builtin.shell: |
     set -u
     pool_changed=0
@@ -117,13 +138,14 @@
       incus profile device remove default root && { echo "REMOVED default/root"; pool_changed=1; }
     fi
     if incus storage show default >/dev/null 2>&1; then
-      incus storage delete default && { echo "DELETED storage default"; pool_changed=1; }
+      if incus storage delete default; then echo "DELETED storage default"; pool_changed=1; else echo "TEARDOWN_FAILED default (storage pool still referenced - see the incus error above)"; fi
     fi
     [ "$pool_changed" = 1 ] && echo "POOL_CHANGED" || echo "POOL_NOOP"
   become: true
   when: incus_vm_uninstall_delete_default_storage_pool | bool
   register: _incus_uninstall_delete_pool
   changed_when: "'POOL_CHANGED' in _incus_uninstall_delete_pool.stdout"
+  failed_when: "'TEARDOWN_FAILED' in _incus_uninstall_delete_pool.stdout"
 
 # ---------- Step 5: revert the firewalld `incusbr0` trusted-zone change ----------
 # Mirror of install's firewalld step. `systemctl is-active firewalld` (NOT
