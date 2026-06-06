@@ -50,7 +50,7 @@ apply-root:  ## Provision root (distro_packages + zsh + emacs + dotfiles; needs 
 apply-all-users:  ## Provision both current user and root (i.e. `apply-user` + `apply-root`)
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/all.yml
 
-apply-podman-oci-runtimes:  ## Provision crun + libkrun ,assert crun has `+LIBKRUN`, write `containers.conf` (optional), assert `podman info` shows krun active
+apply-podman-oci-runtimes:  ## Provision crun + libkrun, assert crun has `+LIBKRUN`, write `containers.conf`, assert `podman info` shows krun active
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/podman_oci_runtimes.yml
 
 unapply-podman-oci-runtimes:  ## Revert podman to distro default runtime (deletes the managed containers.conf; leaves installed libkrun packages alone)
@@ -62,7 +62,7 @@ apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local
 unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/container-templates/.ansible-manifest.yml, removes everything it recorded)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps_uninstall.yml
 
-incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all our managed Linux Incus guests. Run `apply-incus-vm` first; this only pushes, does not re-render. (Per-VM alternative: `ivm overwrite-dotfiles`.)
+incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all managed Incus guests (run `apply-incus-vm` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.
 	@set -e; \
 	WORKS="$$HOME/.local/share/ansible-managed/incus-vm/ivm/rootfs/Debian"; \
 	if [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
@@ -78,19 +78,19 @@ incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all our ma
 	    incus file push --recursive --create-dirs --uid 0 --gid 0 "$$SRC/root" "$$vm/"; \
 	done
 
-apply-incus-vm:  ## Install the `ivm` Incus VM launcher via `roles/incus_vm` (bypasses `setup_incus_vm` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
+apply-incus-vm:  ## Install the `ivm` Incus VM launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). Auto-installs + preseed-inits incus if missing; sudo only fires then.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml
 
-unapply-incus-vm:  ## Uninstall `ivm` + the role's `~/.local/share/ansible-managed/incus-vm/` subdir ONLY; leaves the host incus daemon, storage pool, networks, VMs + snapshots, and your `incus` group untouched. For host-level teardown use `teardown-incus-host` (or pass `-e incus_vm_uninstall_*=true` toggles here; see roles/incus_vm/defaults/main/incus_host_uninstall.yml).
+unapply-incus-vm:  ## Uninstall `ivm` + its `~/.local/share/ansible-managed/incus-vm/` subdir ONLY; leaves incus daemon, pool, networks, VMs, and your `incus` group intact. Host-level teardown: `teardown-incus-host` (or `-e incus_vm_uninstall_*=true` here).
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_vm_uninstall.yml
 
-## Flags for `teardown-incus-host`. Default = every destructive `incus_vm_uninstall_*` step EXCEPT removing you from the `incus` group (so no re-login). Override to customize (e.g. add `-e incus_vm_uninstall_remove_user_from_incus_group=true`).
+## Flags for `teardown-incus-host`: every destructive `incus_vm_uninstall_*` step except the `incus` group removal (so no re-login). Override to add more.
 INCUS_VM_HOST_TEARDOWN_FLAGS := -e incus_vm_uninstall_delete_all_instances=true -e incus_vm_uninstall_delete_autocreated_user_projects=true -e incus_vm_uninstall_delete_incusbr0_network=true -e incus_vm_uninstall_delete_default_storage_pool=true -e incus_vm_uninstall_disable_incus_daemon_and_socket=true -e incus_vm_uninstall_revert_firewalld_incusbr0_zone=true
 
-teardown-incus-host:  ## DESTRUCTIVE host-level incus teardown via `roles/incus_vm` (`incus_vm_state: absent` + `INCUS_VM_HOST_TEARDOWN_FLAGS`): deletes ALL incus VMs, the `default` storage pool (ERASES VM disks), `incusbr0`, incus-user's `user-*` projects + `incusbr-*` bridges, and stops+disables the incus daemon. KEEPS distro packages + your `incus` group membership (no re-login). Needs `--ask-become-pass`.
+teardown-incus-host:  ## DESTRUCTIVE host-level incus teardown: deletes ALL VMs, the `default` pool (ERASES disks), `incusbr0`, `user-*` projects + `incusbr-*` bridges, and disables the daemon. Keeps packages + your `incus` group. Needs sudo.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm_uninstall.yml $(INCUS_VM_HOST_TEARDOWN_FLAGS)
 
-apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). Two phases: (1) a fast Python pre-flight does `python3-jsonschema` probe/install + `personal_dirs.yml` schema-validate + colored preview + y/N confirm, all BEFORE ansible-playbook starts so you do not have to wait for ansible to spin up just to be prompted; (2) only on `y` does ansible run, with `apparmor_non_interactive=true` to skip the now-redundant in-playbook validate/preview/confirm. Asks for the BECOME password up-front (`--ask-become-pass`) because ansible's default sudo invocation uses `-n` (non-interactive) which fails without a piped password. Bypasses `setup_apparmor` gate.
+apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / VSCode / etc.; bypasses `setup_apparmor` gate). Python pre-flight validates + previews + asks y/N before ansible runs. Needs sudo.
 	python3 roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py --confirm
 	$(PLAYBOOK) --diff --ask-become-pass -e apparmor_non_interactive=true $(PLAYBOOKS)/apparmor.yml
 
