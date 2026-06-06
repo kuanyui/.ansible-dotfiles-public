@@ -16,3 +16,8 @@ audit deny @{HOME}/.local/state/syncthing/{,**} mrwklx,
 # external reader exists; any DENIED hit here is a signal worth seeing
 # in audit log.
 audit deny @{HOME}/.local/share/klipper/{,**} mrwklx,
+# KDE Plasma Notes plasmoid (sticky-note widget) note content. Notes may hold
+# secrets (passwords, codes), so a confined app reading them is never
+# legitimate -> audit deny (sensitive target, a denied hit is a signal).
+# (Distinct from the KNotes PIM app, which uses ~/.local/share/notes/.)
+audit deny @{HOME}/.local/share/plasma_notes/{,**} mrwklx,
