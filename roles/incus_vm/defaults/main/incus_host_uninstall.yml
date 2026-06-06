@@ -12,10 +12,12 @@
 # toggle): uninstalling this role should not yank packages the rest of the
 # system may use.
 #
-# FULL TEARDOWN ("reset incus to fresh-installed, keep packages"): set all seven
-# to true. `make unapply-incus-vm` runs the uninstall playbook but passes no
-# toggles (so it removes only `ivm`) and no `--ask-become-pass`; once any toggle
-# is on you need become, so invoke the playbook directly -
+# FULL TEARDOWN ("reset incus to fresh-installed, keep packages"): easiest is
+#   make teardown-incus-host
+# which runs the uninstall playbook with every destructive toggle EXCEPT group
+# removal (see INCUS_VM_HOST_TEARDOWN_FLAGS in the Makefile; add group removal or
+# customize by overriding it). `make unapply-incus-vm` is the safe one - removes
+# only `ivm`, no toggles, no become. To set the toggles by hand instead -
 #   ansible-playbook playbooks/incus_vm_uninstall.yml --ask-become-pass \
 #     -e incus_vm_uninstall_delete_all_instances=true \
 #     -e incus_vm_uninstall_delete_autocreated_user_projects=true \

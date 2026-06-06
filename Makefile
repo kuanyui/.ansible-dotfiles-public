@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-oci-runtimes apply-container-apps apply-incus-vm apply-apparmor unstow check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-incus-vm check-apparmor unapply-podman-oci-runtimes unapply-container-apps unapply-incus-vm incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-vm sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-oci-runtimes apply-container-apps apply-incus-vm apply-apparmor unstow check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-incus-vm check-apparmor unapply-podman-oci-runtimes unapply-container-apps unapply-incus-vm teardown-incus-host incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-vm sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -81,8 +81,14 @@ incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all our ma
 apply-incus-vm:  ## Install the `ivm` Incus VM launcher via `roles/incus_vm` (bypasses `setup_incus_vm` gate). Auto-installs incus + initializes via preseed when missing; --ask-become-pass needed only when those steps actually fire.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml
 
-unapply-incus-vm:  ## Uninstall `ivm` + the role's `~/.local/share/ansible-managed/incus-vm/` subdir; leaves any existing VMs + snapshots alone - delete those with `ivm delete` or `incus delete`.
+unapply-incus-vm:  ## Uninstall `ivm` + the role's `~/.local/share/ansible-managed/incus-vm/` subdir ONLY; leaves the host incus daemon, storage pool, networks, VMs + snapshots, and your `incus` group untouched. For host-level teardown use `teardown-incus-host` (or pass `-e incus_vm_uninstall_*=true` toggles here; see roles/incus_vm/defaults/main/incus_host_uninstall.yml).
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_vm_uninstall.yml
+
+## Flags for `teardown-incus-host`. Default = every destructive `incus_vm_uninstall_*` step EXCEPT removing you from the `incus` group (so no re-login). Override to customize (e.g. add `-e incus_vm_uninstall_remove_user_from_incus_group=true`).
+INCUS_VM_HOST_TEARDOWN_FLAGS := -e incus_vm_uninstall_delete_all_instances=true -e incus_vm_uninstall_delete_autocreated_user_projects=true -e incus_vm_uninstall_delete_incusbr0_network=true -e incus_vm_uninstall_delete_default_storage_pool=true -e incus_vm_uninstall_disable_incus_daemon_and_socket=true -e incus_vm_uninstall_revert_firewalld_incusbr0_zone=true
+
+teardown-incus-host:  ## DESTRUCTIVE host-level incus teardown via `roles/incus_vm` (`incus_vm_state: absent` + `INCUS_VM_HOST_TEARDOWN_FLAGS`): deletes ALL incus VMs, the `default` storage pool (ERASES VM disks), `incusbr0`, incus-user's `user-*` projects + `incusbr-*` bridges, and stops+disables the incus daemon. KEEPS distro packages + your `incus` group membership (no re-login). Needs `--ask-become-pass`.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm_uninstall.yml $(INCUS_VM_HOST_TEARDOWN_FLAGS)
 
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / mpv / VSCode / Telegram / etc.). Two phases: (1) a fast Python pre-flight does `python3-jsonschema` probe/install + `personal_dirs.yml` schema-validate + colored preview + y/N confirm, all BEFORE ansible-playbook starts so you do not have to wait for ansible to spin up just to be prompted; (2) only on `y` does ansible run, with `apparmor_non_interactive=true` to skip the now-redundant in-playbook validate/preview/confirm. Asks for the BECOME password up-front (`--ask-become-pass`) because ansible's default sudo invocation uses `-n` (non-interactive) which fails without a piped password. Bypasses `setup_apparmor` gate.
 	python3 roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py --confirm

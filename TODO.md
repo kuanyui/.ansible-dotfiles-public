@@ -33,6 +33,10 @@ fixed in `files/ivm` (see that diff), then a role-structure refactor:
   `user-*` project's auto default profile still pins it, hence user-projects
   before pool. Verified: YAML parse + `ansible-playbook --syntax-check` on both
   playbooks. NOT run against real incus (only the host can).
+- [x] **Makefile targets** - `unapply-incus-vm` help corrected (ivm-only now);
+  added `teardown-incus-host` (DESTRUCTIVE, `--ask-become-pass`, all toggles
+  except group removal) driven by overridable `INCUS_VM_HOST_TEARDOWN_FLAGS`;
+  added to `.PHONY`. Verified via `make -n teardown-incus-host` + `make help`.
 - [ ] **per-user net gap (the actual root cause tonight)** - `incus_host_install`
   only fixes `incusbr0` (default project). The unprivileged `incus` group uses
   incus-user's auto-created `incusbr-1000`, which came up with `config: {}` (no

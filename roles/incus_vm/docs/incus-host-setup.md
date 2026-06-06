@@ -199,7 +199,11 @@ For deleting a specific VM, use `ivm delete` (from the VM's dir) or `incus delet
 | `delete_incusbr0_network` | preseed's `incusbr0` bridge | network only, no data |
 | `delete_default_storage_pool` | preseed's `default` pool | **erases pool**; needs instances + user-* projects gone first |
 
-Storage (`delete_default_storage_pool`) and network (`delete_incusbr0_network`) are split on purpose - they are orthogonal. Full teardown (keep packages) = set all seven true; the exact command is in the defaults file header.
+Storage (`delete_default_storage_pool`) and network (`delete_incusbr0_network`) are split on purpose - they are orthogonal.
+
+Convenience targets:
+- `make unapply-incus-vm` - safe; removes only `ivm` (no toggles, no sudo).
+- `make teardown-incus-host` - DESTRUCTIVE; every toggle EXCEPT group removal (deletes all VMs + pool + bridges, disables the daemon; keeps packages + your `incus` group, so no re-login). Customize via the `INCUS_VM_HOST_TEARDOWN_FLAGS` Makefile var (e.g. append `-e incus_vm_uninstall_remove_user_from_incus_group=true`).
 
 ## Q&A
 
