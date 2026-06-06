@@ -287,6 +287,55 @@
   register: _incus_init
   changed_when: _incus_init.rc == 0
 
+# ---------- Surface a pre-existing `default` pool whose backend != `incus_storage_pool_driver` ----------
+# The preseed above runs ONLY when `default` does not already exist. So on a host
+# where incus was initialized outside this role (e.g. a hand-run `incus admin init`
+# that accepted the `dir` default), the `incus_storage_pool_{driver,source,size}`
+# vars are SILENTLY ignored - the pool keeps whatever backend it was first created
+# with. Never clobbering an existing pool is deliberate (see the preseed `when:`),
+# but the mismatch used to be invisible: you ask for a btrfs loop file on `/home`
+# and quietly get `dir` on `/`. Detect it and WARN (we never auto-destroy data);
+# the opt-in rebuild is `make teardown-incus-host` + `make apply-incus-vm`.
+# (lvm note: incus reports a thin-LVM pool's driver as `lvm`, so an `lvm-thin`
+# config value would warn spuriously here - harmless, and unused by the defaults.)
+
+- name: Probe the existing `default` storage pool's `driver` (only when preseed was skipped because the pool already exists)
+  ansible.builtin.command:
+    cmd: incus storage show default
+  register: _incus_default_pool_show
+  changed_when: false
+  failed_when: false
+  become: true
+  when: "'default,' in _incus_storage_list.stdout"
+
+- name: Warn when the existing `default` pool's backend differs from `incus_storage_pool_driver` (preseed cannot re-point an already-initialized pool; rebuild via `make teardown-incus-host` + `make apply-incus-vm`)
+  ansible.builtin.debug:
+    msg: |
+      ============================================================
+       WARNING - incus `default` pool backend does NOT match config
+      ============================================================
+       incus's `default` storage pool already existed, so
+       `incus admin init --preseed` was SKIPPED and your
+       `incus_storage_pool_*` settings were NOT applied. The pool
+       keeps whatever backend it was first created with.
+
+         wanted (`incus_storage_pool_driver`): {{ incus_storage_pool_driver }}
+         actual (existing `default` pool):     {{ _existing_default_pool_driver }}
+         wanted (`incus_storage_pool_source`): {{ incus_storage_pool_source | default('(incus default location)', true) }}
+
+       This role never clobbers an existing pool. To REBUILD it as
+       configured (DESTROYS every incus VM + the current pool):
+
+           make teardown-incus-host
+           make apply-incus-vm
+      ============================================================
+  vars:
+    _existing_default_pool_driver: "{{ (_incus_default_pool_show.stdout | default('') | from_yaml).driver | default('', true) }}"
+  when:
+    - _incus_default_pool_show is not skipped
+    - _existing_default_pool_driver | length > 0
+    - _existing_default_pool_driver != incus_storage_pool_driver
+
 # ---------- Per-user networking: route `user-<uid>` VMs through the standard incusbr0 ----------
 # Unprivileged `incus`-group users get a per-user restricted project `user-<uid>`
 # whose AUTO-created bridge `incusbr-<uid>` can come up with NO IPv4 (empty
