@@ -32,11 +32,6 @@ mounts:
     shadow:
       - .git
       - .vscode
-  - host: $HOME/Personal/Projects/shared-lib
-    guest: /workspaces/shared-lib
-  - host: ./secrets
-    guest: /workspaces/secrets
-    ro: true
 distro_package_groups:
   - basic_tools
 distro_packages:
