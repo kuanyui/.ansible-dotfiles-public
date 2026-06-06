@@ -32,6 +32,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -81,6 +82,13 @@ MAX_NAME_LEN: int = 63
 # project, empty for `default`) and the longest device-name suffix both count.
 SUN_PATH_MAX: int = 108
 INCUS_DEVICES_DIR: str = "/var/lib/incus/devices"
+
+# incus daemon state root (FHS default). When a pool/loop file has an empty
+# `source`, incus used a built-in default location UNDER this dir, so the storage
+# preview reconstructs it from here: `dir` -> storage-pools/<pool>, loop-file
+# backends -> disks/<pool>.img (incus's `loopFilePath()`). If the whole tree was
+# relocated it is symlinked back to this path, so the string still resolves.
+INCUS_VAR_DIR: str = "/var/lib/incus"
 
 # Map a template's `os.distro` to the ansible fact `ansible_os_family` (values:
 # Debian/Suse/RedHat - NOT the distro name like `opensuse`). It keys both the
@@ -842,30 +850,86 @@ def preview_mounts(doc: Template, cwd: Path) -> list[str]:
     return ["  mounts:", *mount_lines] if mount_lines else ["  mounts:        (none)"]
 
 
+def human_iec_bytes(num_bytes: int) -> str:
+    """A raw byte count -> IEC string with 2 decimals (e.g. 5368709120 -> `5.00GiB`),
+    the same style `incus storage info` prints, so the loop-file line below reads
+    like the `used / total` figures next to it."""
+    size_in_current_unit: float = float(num_bytes)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB", "PiB"):
+        if size_in_current_unit < 1024.0 or unit == "PiB":
+            return f"{int(size_in_current_unit)}{unit}" if unit == "B" else f"{size_in_current_unit:.2f}{unit}"
+        size_in_current_unit /= 1024.0
+    return f"{num_bytes}B"  # unreachable (the loop always returns); satisfies the type checker
+
+
 def preview_storage_pool(*, dry_run: bool) -> list[str]:
-    """The `storage pool:` line: the pool a VM lands in (the `default` profile's
-    root device pool) + its space usage. Best-effort - shows `(unknown)` if incus
-    can't report it, `(skipped)` under --dry-run; purely informational."""
+    """The `storage pool:` block: which pool a VM lands in (the `default` profile's
+    root device pool), how full incus reports it, and - on the indented line below -
+    WHERE on the host its blocks actually live. Best-effort: `(skipped)` under
+    --dry-run, `(unknown)` if incus can't report it; purely informational."""
     if dry_run:
         return ["  storage pool:  (skipped under --dry-run)"]
     import yaml  # lazy, same as load_yaml (ships with ansible-core / python3-yaml)
-    pool: str = capture(["incus", "profile", "device", "get", "default", "root", "pool"]).strip()
-    if not pool:
+    storage_pool_name: str = capture(["incus", "profile", "device", "get", "default", "root", "pool"]).strip()
+    if not storage_pool_name:
         return ["  storage pool:  (unknown - incus did not report)"]
     # `incus storage info` is yaml; older versions nest the fields under `info:`.
-    parsed: Any = yaml.safe_load(capture(["incus", "storage", "info", pool]) or "")
+    # Its `space used`/`total space` come from a statvfs of the pool's MOUNT path
+    # (incus `genericVFSGetResources`), so they mean different things per backend -
+    # spelled out in `preview_storage_pool_location` below.
+    parsed: Any = yaml.safe_load(capture(["incus", "storage", "info", storage_pool_name]) or "")
     info: dict[str, Any] = (parsed.get("info", parsed) if isinstance(parsed, dict) else {}) or {}
-    driver: str = str(info.get("driver", "")) or "?"
-    used: Any = info.get("space used")
-    total: Any = info.get("total space")
-    space: str = f"  -  {used} used / {total} total" if used and total else ""
-    # `source` = where the pool's blocks actually live on the host: a dir tree
-    # (dir backend, e.g. /var/lib/incus/storage-pools/<pool>), a loop file
-    # (btrfs/zfs, e.g. /home/incus-storage.img), or a dataset/device. Empty ->
-    # incus's built-in default location. Shown so the path is never a mystery.
-    source: str = capture(["incus", "storage", "get", pool, "source"]).strip()
-    location: str = f" at {source}" if source else ""
-    return [f"  storage pool:  {pool} ({driver}){location}{space}"]
+    storage_pool_driver: str = str(info.get("driver", "")) or "?"
+    space_used: Any = info.get("space used")
+    space_total: Any = info.get("total space")
+    space: str = f"  -  {space_used} used / {space_total} total" if space_used and space_total else ""
+    return [
+        f"  storage pool:  {storage_pool_name} ({storage_pool_driver}){space}",
+        *preview_storage_pool_location(storage_pool_name, storage_pool_driver),
+    ]
+
+
+def preview_storage_pool_location(storage_pool_name: str, storage_pool_driver: str) -> list[str]:
+    """The indented line under `storage pool:` - where the pool's blocks live on
+    the host, and for a loop file its REAL footprint. `incus storage get <pool>
+    source` is the configured source; empty means incus used a built-in default
+    location, reconstructed per driver. Always one line, aligned under the value."""
+    value_column_indent: str = " " * 17  # line up with the `storage pool:` value column above
+    storage_pool_source: str = capture(["incus", "storage", "get", storage_pool_name, "source"]).strip()
+    if storage_pool_driver == "dir":
+        # `dir` backend: `source` IS the storage directory (a plain tree on a real
+        # filesystem; no loop file). `used / total` above is therefore that WHOLE
+        # filesystem, not just this pool - worth saying, the numbers look huge.
+        dir_tree_path: str = storage_pool_source or f"{INCUS_VAR_DIR}/storage-pools/{storage_pool_name}"
+        return [f"{value_column_indent}dir tree at {dir_tree_path}  (used/total above = its whole host filesystem)"]
+    # btrfs / zfs / lvm: `source` is a loop file, a block device, an existing
+    # subvolume, or a zfs dataset / lvm VG name. Empty -> incus auto-created a loop
+    # file at its default `loopFilePath()`. stat() classifies what it points at
+    # (needs only traverse on the parent dirs, not read on the file, so no root)
+    # and, for a loop file, yields the footprint.
+    if not storage_pool_source:
+        storage_pool_source = f"{INCUS_VAR_DIR}/disks/{storage_pool_name}.img"
+    try:
+        storage_pool_source_stat: os.stat_result = os.stat(storage_pool_source)
+    except FileNotFoundError:
+        # Not a host path at all: a zfs dataset (`tank/incus`) or lvm VG (`vg0/incus`) name.
+        return [f"{value_column_indent}{storage_pool_driver} dataset/volume: {storage_pool_source}"]
+    except OSError:
+        # A real path under a root-only dir we can't traverse unprivileged.
+        return [f"{value_column_indent}{storage_pool_driver} backing at {storage_pool_source}  (size hidden - needs root)"]
+    if stat.S_ISREG(storage_pool_source_stat.st_mode):
+        # Loop file: a sparse `.img` whose REAL host-disk use (st_blocks, the same
+        # number `du` reports) sits far below its declared size (st_size, the sparse
+        # apparent length == the pool's `total` above). That gap is the whole point
+        # of a loop file, so show both.
+        loop_file_real_bytes_on_disk: int = storage_pool_source_stat.st_blocks * 512  # POSIX: st_blocks is 512-byte units
+        loop_file_logical_size_bytes: int = storage_pool_source_stat.st_size
+        return [f"{value_column_indent}loop file at {storage_pool_source}  "
+                f"(sparse: {human_iec_bytes(loop_file_real_bytes_on_disk)} on host disk now / "
+                f"{human_iec_bytes(loop_file_logical_size_bytes)} max)"]
+    if stat.S_ISBLK(storage_pool_source_stat.st_mode):
+        return [f"{value_column_indent}{storage_pool_driver} on block device {storage_pool_source}"]
+    return [f"{value_column_indent}{storage_pool_driver} subvolume at {storage_pool_source}"]
 
 
 def confirm_create(doc: Template, name: str, cwd: Path, *, assume_yes: bool, dry_run: bool) -> None:
