@@ -72,6 +72,16 @@ BASELINE_GROUP: str = "incus_guest_baseline"
 INCUS_NAME_RE: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$")
 MAX_NAME_LEN: int = 63
 
+# A valid (<=63 char) instance name is NOT sufficient: each VM mount gets a
+# virtiofs socket at /var/lib/incus/devices/<project_>?<instance>/virtio-fs.<device>.sock
+# and that whole path must fit AF_UNIX's sun_path (108 bytes incl. NUL -> 107
+# usable chars). On overflow `incus start` dies with a cryptic "connect: invalid
+# argument", so `socket_path_error` rejects over-long names at pick time. The
+# project prefix (`user-1000_` for the unprivileged `incus` group's restricted
+# project, empty for `default`) and the longest device-name suffix both count.
+SUN_PATH_MAX: int = 108
+INCUS_DEVICES_DIR: str = "/var/lib/incus/devices"
+
 # Map a template's `os.distro` to the ansible fact `ansible_os_family` (values:
 # Debian/Suse/RedHat - NOT the distro name like `opensuse`). It keys both the
 # dotfiles staging (rootfs/<Debian|Suse|RedHat>/) and the package-group
@@ -239,11 +249,86 @@ def default_instance_name(template_name: str, cwd: Path) -> str:
     return sanitize_incus_name(f"ivm-{template_name}-{rel}")
 
 
-def name_error(name: str, *, dry_run: bool) -> str | None:
+def mount_device_name(mount_index: int) -> str:
+    return f"ivm_mount_{mount_index}"
+
+
+def shadow_device_name(mount_index: int, shadow_index: int) -> str:
+    return f"{mount_device_name(mount_index)}_shadow_{shadow_index}"
+
+
+def mount_device_names(doc: Template) -> list[str]:
+    """Every incus disk-device name `init` will create for this template's
+    mounts, in `mount_commands` order: one `ivm_mount_{i}` per mount plus one
+    `ivm_mount_{i}_shadow_{j}` per shadow subpath. Single source of truth shared
+    with `mount_commands`, so the socket-length check sees the exact names."""
+    names: list[str] = []
+    for mount_index, mount in enumerate(doc.get("mounts", [])):
+        names.append(mount_device_name(mount_index))
+        for shadow_index, _subpath in enumerate(mount.get("shadow", [])):
+            names.append(shadow_device_name(mount_index, shadow_index))
+    return names
+
+
+def current_incus_project_prefix() -> str:
+    """The `<project>_` incus prepends to a VM's on-disk device dir under
+    `/var/lib/incus/devices/`. Empty for the `default` project; `user-1000_` etc.
+    for the per-user restricted project the unprivileged `incus` group assigns.
+    `incus project get-current` is empty until you switch at least once
+    (lxc/incus#1474), and unprivileged users are auto-assigned their project
+    WITHOUT switching - so on empty, probe `user-<uid>` and use it only if that
+    project is actually visible (over-counting is the safe direction here)."""
+    incus_project: str = subprocess.run(
+        ["incus", "project", "get-current"], capture_output=True, text=True
+    ).stdout.strip()
+    if not incus_project:
+        uid_project: str = f"user-{os.getuid()}"
+        incus_project = uid_project if project_is_visible(uid_project) else "default"
+    return "" if incus_project == "default" else f"{incus_project}_"
+
+
+def project_is_visible(incus_project: str) -> bool:
+    return subprocess.run(
+        ["incus", "project", "show", incus_project], capture_output=True, text=True
+    ).returncode == 0
+
+
+def virtiofs_socket_path(incus_project_prefix: str, instance_name: str, device_name: str) -> str:
+    """Mirror incus's per-device virtiofs socket layout so its length can be
+    checked against `SUN_PATH_MAX` before the VM is created."""
+    return f"{INCUS_DEVICES_DIR}/{incus_project_prefix}{instance_name}/virtio-fs.{device_name}.sock"
+
+
+def socket_path_error(instance_name: str, doc: Template, incus_project_prefix: str) -> str | None:
+    """Error if any mount's virtiofs socket path would overflow AF_UNIX sun_path,
+    else None. Reports the overflow so the user knows how many chars to drop."""
+    longest_socket_path: str = ""
+    for device_name in mount_device_names(doc):
+        socket_path: str = virtiofs_socket_path(incus_project_prefix, instance_name, device_name)
+        if len(socket_path) > len(longest_socket_path):
+            longest_socket_path = socket_path
+    overflow_chars: int = len(longest_socket_path) - (SUN_PATH_MAX - 1)
+    if overflow_chars > 0:
+        return (
+            f"'{instance_name}' is a valid incus name but too long for the virtiofs "
+            f"socket path it produces ({len(longest_socket_path)} chars > {SUN_PATH_MAX - 1} "
+            f"AF_UNIX limit); shorten the name by >={overflow_chars} char(s). "
+            f"Longest path: {longest_socket_path}"
+        )
+    return None
+
+
+def name_error(name: str, doc: Template, *, dry_run: bool) -> str | None:
     """Return an error message if `name` is unusable, else None."""
     if not INCUS_NAME_RE.match(name):
         return f"'{name}' is not a valid incus name ([a-zA-Z0-9-], starts alnum, <=63)"
-    if not dry_run and instance_exists(name):
+    # The remaining checks query incus (current project, instance existence);
+    # `--dry-run` stays hermetic and skips them, same as before.
+    if dry_run:
+        return None
+    if (socket_err := socket_path_error(name, doc, current_incus_project_prefix())) is not None:
+        return socket_err
+    if instance_exists(name):
         return f"a VM named '{name}' already exists"
     return None
 
@@ -270,18 +355,20 @@ def prompt_with_prefill(prompt: str, prefill: str) -> str:
 
 
 def choose_instance_name(
-    template_name: str, cwd: Path, given: str | None, *, dry_run: bool, assume_yes: bool
+    template_name: str, cwd: Path, given: str | None, doc: Template,
+    *, dry_run: bool, assume_yes: bool
 ) -> str:
     """Pick the VM name: explicit arg, or prompt (default = long path-based),
-    re-prompting on invalid/duplicate. `--yes`/`--dry-run` take the default."""
+    re-prompting on invalid/duplicate/socket-path-too-long. `--yes`/`--dry-run`
+    take the default. `doc` is needed to size each mount's virtiofs socket."""
     default: str = default_instance_name(template_name, cwd)
     if given is not None:
-        err: str | None = name_error(given, dry_run=dry_run)
+        err: str | None = name_error(given, doc, dry_run=dry_run)
         if err:
             die(err)
         return given
     if assume_yes or dry_run or not sys.stdin.isatty():
-        if (err := name_error(default, dry_run=dry_run)) and not dry_run:
+        if (err := name_error(default, doc, dry_run=dry_run)) and not dry_run:
             die(f"default name unusable ({err}); pass an explicit name")
         return default
     # Pre-fill the editable line with the default so the user can tweak a few
@@ -292,7 +379,7 @@ def choose_instance_name(
             "incus VM name (the instance name, visible to all of incus e.g. `incus list`): ",
             current,
         ).strip() or default
-        err = name_error(reply, dry_run=dry_run)
+        err = name_error(reply, doc, dry_run=dry_run)
         if err is None:
             return reply
         print(f"  {err}", file=sys.stderr)
@@ -395,13 +482,18 @@ def ensure_shadow_mask(root: Path, *, dry_run: bool) -> None:
 def mount_commands(doc: Template, name: str, cwd: Path, root: Path) -> list[list[str]]:
     cmds: list[list[str]] = []
     mask: Path = shadow_mask_dir(root)
-    for index, mount in enumerate(doc.get("mounts", [])):
+    for mount_index, mount in enumerate(doc.get("mounts", [])):
         host: str = sh_expand(mount["host"], cwd)
         guest: str = sh_expand(mount["guest"], cwd)
-        device: str = f"ivm_mount_{index}"
+        device: str = mount_device_name(mount_index)
+        # NOTE: no `shift=true` here. `shift` is a container-only disk property
+        # (idmap overlay); for VMs it is a no-op, and a restricted per-user
+        # project (unprivileged `incus` group) rejects it with "The shift
+        # property cannot be used with a restricted source path". ivm only ever
+        # creates VMs (`incus create ... --vm`), so it must never be set.
         args: list[str] = [
             "incus", "config", "device", "add", name, device, "disk",
-            f"source={host}", f"path={guest}", "shift=true",
+            f"source={host}", f"path={guest}",
         ]
         if mount.get("ro"):
             args.append("readonly=true")
@@ -412,7 +504,7 @@ def mount_commands(doc: Template, name: str, cwd: Path, root: Path) -> list[list
             masked_guest_path: str = f"{guest.rstrip('/')}/{subpath}"
             cmds.append([
                 "incus", "config", "device", "add", name,
-                f"{device}_shadow_{shadow_index}", "disk",
+                shadow_device_name(mount_index, shadow_index), "disk",
                 f"source={mask}", f"path={masked_guest_path}", "readonly=true",
             ])
     return cmds
@@ -797,7 +889,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
         die(f"`init` supports linux only for now; '{template_name}' is os.type={doc['os']['type']}")
     registry: dict[str, Any] = load_package_groups(root)
     warn_if_host_nesting_disabled(doc)
-    name: str = choose_instance_name(template_name, cwd, given_name,
+    name: str = choose_instance_name(template_name, cwd, given_name, doc,
                                      dry_run=dry_run, assume_yes=assume_yes)
     confirm_create(doc, name, cwd, assume_yes=assume_yes, dry_run=dry_run)
     is_gui: bool = bool(doc.get("sys", {}).get("gui"))
