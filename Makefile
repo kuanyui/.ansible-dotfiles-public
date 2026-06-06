@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: apply-user apply-root apply-all-users apply-podman-oci-runtimes apply-container-apps apply-incus-vm apply-apparmor unstow check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-incus-vm check-apparmor unapply-podman-oci-runtimes unapply-container-apps unapply-incus-vm teardown-incus-host incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-vm sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended help
+.PHONY: apply-user apply-root apply-all-users apply-podman-oci-runtimes apply-container-apps apply-incus-vm apply-apparmor unstow check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-incus-vm check-apparmor unapply-podman-oci-runtimes unapply-container-apps unapply-incus-vm unapply-incus-host incus-overwrite-dotfiles-in-all-guest aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-incus-vm sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended help
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -81,13 +81,13 @@ incus-overwrite-dotfiles-in-all-guest:  ## Re-push staged dotfiles to all manage
 apply-incus-vm:  ## Install the `ivm` Incus VM launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). Auto-installs + preseed-inits incus if missing; sudo only fires then.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml
 
-unapply-incus-vm:  ## Uninstall `ivm` + its `~/.local/share/ansible-managed/incus-vm/` subdir ONLY; leaves incus daemon, pool, networks, VMs, and your `incus` group intact. Host-level teardown: `teardown-incus-host` (or `-e incus_vm_uninstall_*=true` here).
+unapply-incus-vm:  ## Uninstall `ivm` + its `~/.local/share/ansible-managed/incus-vm/` subdir ONLY; leaves incus daemon, pool, networks, VMs, and your `incus` group intact. Host-level teardown: `unapply-incus-host` (or `-e incus_vm_uninstall_*=true` here).
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_vm_uninstall.yml
 
-## Flags for `teardown-incus-host`: every destructive `incus_vm_uninstall_*` step except the `incus` group removal (so no re-login). Override to add more.
+## Flags for `unapply-incus-host`: every destructive `incus_vm_uninstall_*` step except the `incus` group removal (so no re-login). Override to add more.
 INCUS_VM_HOST_TEARDOWN_FLAGS := -e incus_vm_uninstall_delete_all_instances=true -e incus_vm_uninstall_delete_autocreated_user_projects=true -e incus_vm_uninstall_delete_incusbr0_network=true -e incus_vm_uninstall_delete_default_storage_pool=true -e incus_vm_uninstall_disable_incus_daemon_and_socket=true -e incus_vm_uninstall_revert_firewalld_incusbr0_zone=true
 
-teardown-incus-host:  ## DESTRUCTIVE host-level incus teardown: deletes ALL VMs, the `default` pool (ERASES disks), `incusbr0`, `user-*` projects + `incusbr-*` bridges, and disables the daemon. Keeps packages + your `incus` group. Needs sudo.
+unapply-incus-host:  ## DESTRUCTIVE host-level incus teardown: deletes ALL VMs, the `default` pool (ERASES disks), `incusbr0`, `user-*` projects + `incusbr-*` bridges, and disables the daemon. Keeps packages + your `incus` group. Needs sudo.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm_uninstall.yml $(INCUS_VM_HOST_TEARDOWN_FLAGS)
 
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / VSCode / etc.; bypasses `setup_apparmor` gate). Python pre-flight validates + previews + asks y/N before ansible runs. Needs sudo.

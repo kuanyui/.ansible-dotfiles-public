@@ -203,7 +203,7 @@ Storage (`delete_default_storage_pool`) and network (`delete_incusbr0_network`) 
 
 Convenience targets:
 - `make unapply-incus-vm` - safe; removes only `ivm` (no toggles, no sudo).
-- `make teardown-incus-host` - DESTRUCTIVE; every toggle EXCEPT group removal (deletes all VMs + pool + bridges, disables the daemon; keeps packages + your `incus` group, so no re-login). Customize via the `INCUS_VM_HOST_TEARDOWN_FLAGS` Makefile var (e.g. append `-e incus_vm_uninstall_remove_user_from_incus_group=true`).
+- `make unapply-incus-host` - DESTRUCTIVE; every toggle EXCEPT group removal (deletes all VMs + pool + bridges, disables the daemon; keeps packages + your `incus` group, so no re-login). Customize via the `INCUS_VM_HOST_TEARDOWN_FLAGS` Makefile var (e.g. append `-e incus_vm_uninstall_remove_user_from_incus_group=true`).
 
 ## Q&A
 

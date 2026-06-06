@@ -13,7 +13,7 @@
 # system may use.
 #
 # FULL TEARDOWN ("reset incus to fresh-installed, keep packages"): easiest is
-#   make teardown-incus-host
+#   make unapply-incus-host
 # which runs the uninstall playbook with every destructive toggle EXCEPT group
 # removal (see INCUS_VM_HOST_TEARDOWN_FLAGS in the Makefile; add group removal or
 # customize by overriding it). `make unapply-incus-vm` is the safe one - removes
@@ -75,3 +75,11 @@ incus_vm_uninstall_delete_incusbr0_network: false
 # Fails unless nothing references it: see DEPENDENCY above (enable
 # `delete_all_instances` + `delete_autocreated_user_projects`).
 incus_vm_uninstall_delete_default_storage_pool: false
+
+# Confirmation gate (tasks/incus_host_uninstall.yml, Step 0). When ANY toggle
+# above is on, the teardown prints what it will do + the equivalent copy-paste
+# command and requires typing `yes` before any destructive step. Set true to skip
+# that prompt for non-interactive automation (the steps + command are still
+# logged). Default false = always confirm. The safe `unapply-incus-vm` path (all
+# toggles off) never prompts regardless.
+incus_vm_uninstall_assume_yes: false

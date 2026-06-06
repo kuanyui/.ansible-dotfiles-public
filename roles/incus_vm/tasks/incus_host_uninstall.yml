@@ -25,6 +25,60 @@
 # `become: true` runs as root, which reaches the admin socket without any group
 # membership - same reason incus_host_install.yml runs `incus admin init` as root.
 
+# ---------- Step 0: confirm before ANY destructive step ----------
+# Real transparency beats a scary target name: when any `incus_vm_uninstall_*`
+# toggle is on, print exactly which steps will run (each toggle's ON/off state)
+# plus the equivalent copy-paste command, then require typing `yes`. All toggles
+# off (the safe `make unapply-incus-vm` path) -> nothing here fires. Automation
+# skips the prompt with `-e incus_vm_uninstall_assume_yes=true` (steps + command
+# are still logged). A non-interactive run without that flag gives empty input,
+# so the assert fails - it refuses to destroy without an explicit `yes`.
+
+- name: Compute whether any destructive `incus_vm_uninstall_*` toggle is enabled (gates the confirmation below)
+  ansible.builtin.set_fact:
+    _incus_teardown_any_on: "{{ (incus_vm_uninstall_delete_all_instances | bool) or (incus_vm_uninstall_delete_autocreated_user_projects | bool) or (incus_vm_uninstall_delete_incusbr0_network | bool) or (incus_vm_uninstall_delete_default_storage_pool | bool) or (incus_vm_uninstall_disable_incus_daemon_and_socket | bool) or (incus_vm_uninstall_revert_firewalld_incusbr0_zone | bool) or (incus_vm_uninstall_remove_user_from_incus_group | bool) }}"
+
+- name: Confirm before any destructive step - show the steps (checkboxes) + copy-paste command, require typing `yes`
+  ansible.builtin.pause:
+    # The whole warning lives in the prompt on purpose: `pause` prints it RAW
+    # (real line breaks), whereas `debug` would dump it as one escaped \n blob.
+    prompt: |
+
+      ============================================================
+       DESTRUCTIVE incus host teardown - these steps WILL run:
+      ============================================================
+      {% for toggle in _incus_teardown_toggles %}
+        [{{ 'x' if lookup('vars', toggle.flag, default=false) | bool else ' ' }}] {{ toggle.flag | regex_replace('^incus_vm_uninstall_', '') }}{{ ('  ->  ' + toggle.effect) if lookup('vars', toggle.flag, default=false) | bool else '' }}
+      {% endfor %}
+       Equivalent command (copy to re-run; edit the -e flags to change the set):
+         ansible-playbook playbooks/incus_vm_uninstall.yml --ask-become-pass{% for toggle in _incus_teardown_toggles if lookup('vars', toggle.flag, default=false) | bool %} -e {{ toggle.flag }}=true{% endfor %}
+
+       Steps marked [x] ERASE data and cannot be undone.
+      ============================================================
+      Type 'yes' to proceed (anything else aborts)
+  register: _incus_teardown_confirm
+  vars:
+    _incus_teardown_toggles:
+      - { flag: incus_vm_uninstall_delete_all_instances,             effect: "DELETE every incus VM in every project (disks + snapshots)" }
+      - { flag: incus_vm_uninstall_delete_autocreated_user_projects, effect: "DELETE user-* projects (+ their instances and cached images) and incusbr-* bridges" }
+      - { flag: incus_vm_uninstall_delete_incusbr0_network,          effect: "DELETE the incusbr0 bridge" }
+      - { flag: incus_vm_uninstall_delete_default_storage_pool,      effect: "ERASE the default storage pool (all VM disks / the loop file)" }
+      - { flag: incus_vm_uninstall_disable_incus_daemon_and_socket,  effect: "STOP + disable incus host-wide (affects ALL users, not just yours)" }
+      - { flag: incus_vm_uninstall_revert_firewalld_incusbr0_zone,   effect: "move incusbr0 out of the firewalld trusted zone" }
+      - { flag: incus_vm_uninstall_remove_user_from_incus_group,     effect: "remove you from the incus group (re-login to refresh)" }
+  when:
+    - _incus_teardown_any_on | bool
+    - not (incus_vm_uninstall_assume_yes | default(false) | bool)
+
+- name: Abort unless the confirmation was exactly `yes`
+  ansible.builtin.assert:
+    that: _incus_teardown_confirm.user_input | default('') | trim | lower == 'yes'
+    fail_msg: "Aborted - no incus VMs / pool / daemon were touched. (The user-space `ivm` tool was already removed by the prior step; `make apply-incus-vm` restores it.)"
+    success_msg: "Confirmed - proceeding with the teardown."
+  when:
+    - _incus_teardown_any_on | bool
+    - not (incus_vm_uninstall_assume_yes | default(false) | bool)
+
 # ---------- Step 1: delete all instances (DESTRUCTIVE; prereq for pool delete) ----------
 # Names are NOT unique across projects, so always pass `--project`. Each delete
 # echoes a marker: `DELETED_INSTANCE` drives `changed_when`; a refused delete

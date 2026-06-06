@@ -295,7 +295,7 @@
 # with. Never clobbering an existing pool is deliberate (see the preseed `when:`),
 # but the mismatch used to be invisible: you ask for a btrfs loop file on `/home`
 # and quietly get `dir` on `/`. Detect it and WARN (we never auto-destroy data);
-# the opt-in rebuild is `make teardown-incus-host` + `make apply-incus-vm`.
+# the opt-in rebuild is `make unapply-incus-host` + `make apply-incus-vm`.
 # (lvm note: incus reports a thin-LVM pool's driver as `lvm`, so an `lvm-thin`
 # config value would warn spuriously here - harmless, and unused by the defaults.)
 
@@ -308,7 +308,7 @@
   become: true
   when: "'default,' in _incus_storage_list.stdout"
 
-- name: Warn when the existing `default` pool's backend differs from `incus_storage_pool_driver` (preseed cannot re-point an already-initialized pool; rebuild via `make teardown-incus-host` + `make apply-incus-vm`)
+- name: Warn when the existing `default` pool's backend differs from `incus_storage_pool_driver` (preseed cannot re-point an already-initialized pool; rebuild via `make unapply-incus-host` + `make apply-incus-vm`)
   ansible.builtin.debug:
     msg: |
       ============================================================
@@ -326,7 +326,7 @@
        This role never clobbers an existing pool. To REBUILD it as
        configured (DESTROYS every incus VM + the current pool):
 
-           make teardown-incus-host
+           make unapply-incus-host
            make apply-incus-vm
       ============================================================
   vars:

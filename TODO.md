@@ -34,9 +34,9 @@ fixed in `files/ivm` (see that diff), then a role-structure refactor:
   before pool. Verified: YAML parse + `ansible-playbook --syntax-check` on both
   playbooks. NOT run against real incus (only the host can).
 - [x] **Makefile targets** - `unapply-incus-vm` help corrected (ivm-only now);
-  added `teardown-incus-host` (DESTRUCTIVE, `--ask-become-pass`, all toggles
+  added `unapply-incus-host` (DESTRUCTIVE, `--ask-become-pass`, all toggles
   except group removal) driven by overridable `INCUS_VM_HOST_TEARDOWN_FLAGS`;
-  added to `.PHONY`. Verified via `make -n teardown-incus-host` + `make help`.
+  added to `.PHONY`. Verified via `make -n unapply-incus-host` + `make help`.
 - [x] **per-user net gap (the actual root cause)** - the unprivileged `incus`
   group uses incus-user's auto-created `incusbr-<uid>`, which on this host came up
   with `config: {}` (no IPv4) -> VM got IPv6-only -> no default route ->
