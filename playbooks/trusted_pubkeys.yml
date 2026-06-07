@@ -1,0 +1,12 @@
+---
+- name: Pin trusted public keys for the current user via `roles/trusted_pubkeys`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    target_home: "{{ ansible_facts['env']['HOME'] }}"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    setup_trusted_pubkeys: true  # dedicated entry point - bypass the opt-in gate
+  roles:
+    - trusted_pubkeys

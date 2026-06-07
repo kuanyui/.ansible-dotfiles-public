@@ -18,15 +18,16 @@ Managed with Ansible roles, following is Ansible directory structure conventions
 
 ```sh
 playbooks/                # entry playbooks
-  ├─ user.yml             # ├─ deploy dotfiles + emacs + zsh + container_apps + apparmor for current user
-  ├─ root.yml             # ├─ same for root (no container_apps/apparmor)
+  ├─ user.yml             # ├─ deploy dotfiles + emacs + zsh + container_apps + apparmor + trusted_pubkeys for current user
+  ├─ root.yml             # ├─ same for root (no container_apps/apparmor/trusted_pubkeys)
   ├─ all.yml              # ├─ user.yml + root.yml
   ├─ podman_oci_runtimes.yml  # ├─ dedicated entry: configure podman OCI runtime(s)
   ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
   ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
   ├─ incus_vm.yml         # ├─ dedicated entry: install the `ivm` Incus VM launcher
   ├─ incus_vm_uninstall.yml      # ├─ uninstall flow (removes `ivm` + role subdir)
-  └─ apparmor.yml         # └─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
+  ├─ apparmor.yml         # ├─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
+  └─ trusted_pubkeys.yml  # └─ dedicated entry: pin GitHub/GitLab SSH host keys + Debian CD signing keys
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
 callback_plugins/         # local ansible callback plugins (profile_tasks for per-task timing)
@@ -54,6 +55,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
 | [`incus_vm/`](roles/incus_vm/) | Install `ivm`: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
+| [`trusted_pubkeys/`](roles/trusted_pubkeys/) | Pin well-known public keys for the current user (hardcoded in-repo for audit, not fetched): GitHub/GitLab SSH host keys into `~/.ssh/known_hosts` (no TOFU prompt on `git clone git@...`), plus Debian CD signing GPG keys into a dedicated keyring for verifying Debian images. |
 
 ## Installation
 

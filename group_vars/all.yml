@@ -40,3 +40,8 @@ setup_incus_vm: false
 # Chromium / VLC / mpv / VSCode / Telegram / etc.) via `roles/apparmor`. Off by
 # default because target hosts are usually VMs where these profiles don't apply.
 setup_apparmor: false
+# `setup_trusted_pubkeys`: pin well-known PUBLIC keys for the current user via
+# `roles/trusted_pubkeys` - GitHub/GitLab SSH host keys into ~/.ssh/known_hosts
+# so `git clone git@...` skips the TOFU prompt. Keys are hardcoded in-repo (not
+# fetched) for an auditable, frozen record. Off by default - opt-in per host.
+setup_trusted_pubkeys: false

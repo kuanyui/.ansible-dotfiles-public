@@ -1,0 +1,20 @@
+---
+- name: Ensure `{{ target_home }}/.ssh/` exists with mode 0700 (ssh requires this)
+  ansible.builtin.file:
+    path: "{{ target_home }}/.ssh"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0700"
+
+# `ansible.builtin.known_hosts` merges per (host, key): it keeps the user's own
+# entries and other host keys, allows multiple keys per host, and is idempotent.
+- name: Pin each forge host key into `{{ target_home }}/.ssh/known_hosts`
+  ansible.builtin.known_hosts:
+    name: "{{ item.split()[0] }}"
+    key: "{{ item }}"
+    path: "{{ target_home }}/.ssh/known_hosts"
+    state: present
+  loop: "{{ trusted_pubkeys_ssh_known_hosts_lines }}"
+  loop_control:
+    label: "{{ item.split()[:2] | join(' ') }}"

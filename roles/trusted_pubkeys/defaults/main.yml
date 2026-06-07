@@ -1,0 +1,11 @@
+---
+# Must be set by the calling playbook (see `playbooks/user.yml`).
+target_home: ""
+target_user: ""
+target_group: ""
+
+# Dedicated keyring for the pinned Debian CD signing keys, kept OUT of the user's
+# main ~/.gnupg pubring - the file itself is the "ansible-managed" boundary
+# (uninstall = delete it). Verify Debian images with:
+#   gpg --no-default-keyring --keyring <this path> --verify SHA256SUMS.sign SHA256SUMS
+trusted_pubkeys_debian_cd_keyring: "{{ target_home }}/.gnupg/ansible-trusted-debian-cd.gpg"

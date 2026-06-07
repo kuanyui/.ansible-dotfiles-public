@@ -1,0 +1,74 @@
+---
+- name: Check whether `gpg` is available (Debian CD key import needs it)
+  ansible.builtin.command:
+    cmd: gpg --version
+  register: _trusted_pubkeys_gpg_check
+  changed_when: false
+  failed_when: false
+
+- name: Warn and skip Debian CD key import when `gpg` is absent
+  ansible.builtin.debug:
+    msg: >-
+      gpg not found - skipping Debian CD signing-key import. Install gnupg
+      (e.g. `sudo apt install gnupg` / `sudo zypper install gpg2`) and re-run to
+      enable verifying Debian images.
+  when: _trusted_pubkeys_gpg_check.rc != 0
+
+- name: Import and verify Debian CD signing keys into the dedicated keyring
+  when: _trusted_pubkeys_gpg_check.rc == 0
+  block:
+    - name: Ensure `{{ target_home }}/.gnupg/` exists with mode 0700 (gpg requires this)
+      ansible.builtin.file:
+        path: "{{ target_home }}/.gnupg"
+        state: directory
+        owner: "{{ target_user }}"
+        group: "{{ target_group }}"
+        mode: "0700"
+
+    - name: Read fingerprints already in `{{ trusted_pubkeys_debian_cd_keyring }}`
+      ansible.builtin.command:
+        cmd: >-
+          gpg --no-default-keyring --keyring {{ trusted_pubkeys_debian_cd_keyring }}
+          --batch --with-colons --list-keys
+      register: _trusted_pubkeys_debian_existing
+      changed_when: false
+      failed_when: false  # a not-yet-created keyring (first run) is fine
+
+    - name: Import each pinned Debian CD key not already present
+      ansible.builtin.command:
+        cmd: >-
+          gpg --no-default-keyring --keyring {{ trusted_pubkeys_debian_cd_keyring }}
+          --batch --import {{ role_path }}/files/{{ item.file }}
+      loop: "{{ trusted_pubkeys_debian_cd_keys }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.fingerprint }})"
+      when: item.fingerprint not in _trusted_pubkeys_debian_existing.stdout
+
+    - name: Re-read the dedicated keyring after import
+      ansible.builtin.command:
+        cmd: >-
+          gpg --no-default-keyring --keyring {{ trusted_pubkeys_debian_cd_keyring }}
+          --batch --with-colons --list-keys
+      register: _trusted_pubkeys_debian_after
+      changed_when: false
+
+    # Pin integrity: fail loudly if a pinned file did not yield its expected
+    # fingerprint (wrong/tampered key material, or a failed import).
+    - name: Assert every pinned Debian CD fingerprint is present in the keyring
+      ansible.builtin.assert:
+        that: item.fingerprint in _trusted_pubkeys_debian_after.stdout
+        fail_msg: >-
+          Fingerprint {{ item.fingerprint }} ({{ item.name }}) is NOT in
+          {{ trusted_pubkeys_debian_cd_keyring }} after import - the pinned key in
+          files/{{ item.file }} may be wrong, or the import failed.
+        quiet: true
+      loop: "{{ trusted_pubkeys_debian_cd_keys }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.fingerprint }})"
+
+    - name: Show how to verify a downloaded Debian image with this keyring
+      ansible.builtin.debug:
+        msg: >-
+          Debian CD keys ready. Verify a downloaded image with:
+          gpg --no-default-keyring --keyring {{ trusted_pubkeys_debian_cd_keyring }}
+          --verify SHA256SUMS.sign SHA256SUMS

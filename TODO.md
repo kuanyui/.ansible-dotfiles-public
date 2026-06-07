@@ -379,29 +379,49 @@ pip/mypy in this env - run it on the host); NOT exercised against real incus.
   ancestor-dir branch gets the same >1 handling. Candidates shown as `name
   [template=…, STATUS]`.
 
-## trusted_pubkeys role (planned)
+## trusted_pubkeys role (built; SSH verified, GPG needs a gpg-host run-test)
 
 Auto-import a small set of well-known public keys for the CURRENT USER only (per
 request; no system-wide trust). NOTE: this is a config-style face role (writes
 standard dotfiles like `zsh`/`emacs`), NOT a tool role - so NO
-`~/.local/share/ansible-managed/` namespace subdir. Wire into `playbooks/user.yml`,
-gate `setup_trusted_pubkeys` (default false in `group_vars/all.yml`).
+`~/.local/share/ansible-managed/` namespace subdir. Wired into `playbooks/user.yml`,
+gated by `setup_trusted_pubkeys` (default false in `group_vars/all.yml`).
 
 The user lumped two DIFFERENT key types - they serve different purposes and land
 in different places; keep them separate:
 
-- [ ] **SSH host keys (GitHub, GitLab) -> `~/.ssh/known_hosts`** - so `git clone
-  git@github.com:...` over SSH doesn't TOFU-prompt. PIN these (see the RESOLVED
-  decision below). Verified current GitHub fingerprints (docs page): Ed25519
-  `SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`, ECDSA
-  `SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM`, RSA
-  `SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s` (DSA being retired). Full
-  `known_hosts` key lines also at `https://api.github.com/meta` (`ssh_keys`);
-  GitLab via its host-keys doc.
-- [ ] **GPG signing keys (Debian CD/install-media signing) -> user GnuPG keyring**
-  (`gpg --import` into `~/.gnupg`) - to verify downloaded Debian ISOs
-  (`SHA256SUMS` + detached `SHA256SUMS.sign`). This is NOT `apt` repo trust
-  (`/etc/apt/...` = system-wide, out of scope per "user only").
+- [x] **SSH host keys (GitHub, GitLab) -> `~/.ssh/known_hosts`** - DONE + verified.
+  `roles/trusted_pubkeys` built: pinned full key lines in `vars/main.yml`, applied
+  per (host,key) via `ansible.builtin.known_hosts` (core module; merges without
+  clobbering the user's own entries, allows multiple keys per host, idempotent).
+  All 6 keys pinned (GitHub + GitLab x ed25519/ecdsa/rsa); fingerprints verified
+  2026-06-08 against published values (GitHub docs + `api.github.com/meta` cross-
+  check; GitLab docs). Verified end-to-end on a throwaway `target_home`: syntax-
+  check, run1 changed / run2 changed=0 (idempotent), gating works for boolean AND
+  string inputs, `.ssh`=0700 / `known_hosts`=0644, `ssh-keygen -lf` of the installed
+  file matches the pinned fingerprints. NOT yet run on the user's real host.
+- [x] **GPG signing keys (Debian CD/install-media signing) -> DEDICATED keyring**
+  - DONE (built). User chose a dedicated keyring (option A) over the main `~/.gnupg`
+  pubring: `~/.gnupg/ansible-trusted-debian-cd.gpg` (`trusted_pubkeys_debian_cd_keyring`
+  in defaults) - the file IS the ansible-managed marker, uninstall = `rm` it. Verify
+  a Debian image: `gpg --no-default-keyring --keyring <that> --verify SHA256SUMS.sign
+  SHA256SUMS`. 3 keys pinned armored in `files/` (`988021A964E6EA7D` +
+  `DA87E80D6294BE9B` "Debian CD signing key", `42468F4009EA8AC3` "Debian Testing CDs
+  Automatic Signing Key"); manifest + source URL (debian.org/CD/verify) in
+  `vars/main.yml`. `tasks/import_debian_cd_keys.yml`: detect `gpg` (visible warn +
+  skip if absent), import-if-fingerprint-absent, then ASSERT each expected fpr is in
+  the keyring (apply-time pin integrity, fails loudly). BUILD-TIME VERIFY despite no
+  sandbox gpg: wrote a pure-Python OpenPGP v4 fingerprint checker - all 3 pinned keys'
+  computed fpr == expected, structure confirmed (UID + self-sig + subkey). Keys are
+  full keyserver.ubuntu.com dumps (complete/functional; minimal keys.openpgp.org
+  exports were UID-stripped -> gpg would reject, so rejected that source).
+- [x] **Dedicated entry + Makefile targets** - `playbooks/trusted_pubkeys.yml` (sets
+  `target_*` like `user.yml` + `setup_trusted_pubkeys: true` to bypass the gate) plus
+  `make apply-trusted-pubkeys` / `make check-trusted-pubkeys` (parity with the
+  apply-/check- pattern of apparmor/container_apps); added to `.PHONY` + the README
+  playbook tree. Verified: `make -n` both, `make help` lists them, syntax-check, and
+  the dedicated playbook is idempotent (run2 changed=0). No `sandbox-trusted-pubkeys`
+  yet (deferred; role already locally verified - add if a sandbox dry-run is wanted).
 - [x] **DECIDED: PIN the keys (hardcode in-repo) - this is the user's intent, for
   audit.** Correct call: they're PUBLIC (no secret to leak, committing is fine -
   the CLAUDE.md path/secret rules don't apply) and pinning gives INTEGRITY -
@@ -413,8 +433,17 @@ in different places; keep them separate:
   ECDSA/Ed25519 never; Debian CD keys roll per stable release and are ADDITIVE (old
   keys still verify old ISOs). Treat a rotation as a deliberate reviewed pin-bump;
   the loud SSH "HOST IDENTIFICATION CHANGED" failure is the wanted signal.
-- [ ] **Idempotency** - dedupe `known_hosts` entries (don't append on every run);
-  `gpg --import` is already idempotent. Print what's imported (transparency rule).
+- [ ] **Run-test the GPG path on a gpg-equipped host** - the Claude Code sandbox has
+  NO gpg, so only the gpg-ABSENT branch was exercised here (warn + skip cleanly; SSH
+  unaffected; `failed=0`). On a real host confirm: import into the dedicated keyring,
+  the fingerprint asserts pass, and an actual `gpg --no-default-keyring --keyring
+  ~/.gnupg/ansible-trusted-debian-cd.gpg --verify SHA256SUMS.sign SHA256SUMS` of a
+  downloaded Debian image succeeds. Then re-run to confirm idempotency (import skipped
+  when fingerprints already present).
+- [x] **Idempotency (SSH)** - DONE: the `known_hosts` module is idempotent
+  (verified run2 changed=0) and merges without clobbering the user's own entries;
+  the disabled path prints a visible skip-debug (transparency rule). GPG-import
+  idempotency lands with the GPG part (`gpg --import` is naturally idempotent).
 
 ## firefox_tunes role (planned)
 
@@ -552,31 +581,34 @@ an imperative `ivm provision`. Phased.
   `zsh -n`, and `_ivm_unit_names` actually emitting `basic_tools claude codex ...`.
   NOT run against real incus (host only).
 
-- [ ] **Phase 2: groups/composite registry + emacs (pkg + config)** - some units
-  span KINDS: `emacs` = distro pkg `emacs` PLUS its `.emacs.d` config. Needs a
-  thin **groups registry** consumed ONLY by `ivm provision` (NOT forced into
-  templates - templates keep their explicit per-kind lists; this is the layer the
-  user said not to push into templates) that bundles across kinds + can `include`:
+- [ ] **Phase 2: make `ivm provision emacs` also drop the emacs config files** -
+  installing emacs usefully = the `emacs` PACKAGE + your `~/.emacs.d` config files.
+  Today `ivm provision <name>` knows only two kinds of name: a package group
+  (`roles/distro_packages`) or an install script (`roles/thirdparty_software`).
+  emacs needs a third - a set of CONFIG FILES - and one name (`emacs`) has to mean
+  "package + config files" together. Work:
+  1. Stage the emacs config files on their own, stored ONCE: the `.el` files are
+     the same on every distro, so do NOT copy them per-distro like the shell
+     dotfiles (those only split per-distro for the `apt-min`/`zypper-min` line in
+     `.zshrc`). Put them somewhere like `<ivm-root>/config-files/emacs/`.
+     `roles/emacs` already has a "deploy the config" task
+     (`deploy-emacs-config.yml`), same shape as zsh's, so it plugs into staging.
+  2. Teach `ivm` to push ONE named set of config files into a running VM. Today it
+     only pushes ALL the dotfiles, once, at `init` - there is no "push just the
+     emacs files later".
+  3. A small list file: a name -> the packages and config-file sets it pulls in, so
+     `ivm provision emacs` knows what `emacs` means. e.g.:
 
-  ```yaml
-  emacs:  { distro_packages: [emacs], config: [emacs] }   # config key name TBD
-  qtdev:  { distro_groups: [cpp_dev, qt_dev] }
-  devbox: { include: [qtdev, emacs, claude] }
-  ```
+     ```yaml
+     emacs: { packages: [emacs], config_files: [emacs] }   # package + ~/.emacs.d
+     qtdev: { packages: [cpp_dev, qt_dev] }                # just two package groups
+     ```
 
-  emacs config MUST stage **family-AGNOSTIC, once** - elisp is distro-independent;
-  staging the `*.el` pile under each `rootfs/<family>/` would duplicate junk
-  across Debian/Suse/RedHat (the per-family split exists ONLY for the shell
-  dotfiles' `apt-min`/`zypper-min` line). So add a family-neutral set dir (e.g.
-  `<root>/config-sets/emacs/...`) beside the per-family `rootfs/<family>/`.
-  `roles/emacs` already splits `install-emacs-from-distro-repo.yml` +
-  `deploy-emacs-config.yml`, so the config payload slots into staging the same way
-  `_stage_family.yml` includes `roles/zsh deploy-zsh-config`. `ivm` gains a
-  "push one config set" path. This finally WIRES UP the currently-DEAD template
-  `dotfiles[]` field (ivm never reads it today - confirmed) or replaces it with
-  the groups `config:` kind. DEFER the registry name (`groups` vs `profiles` -
-  avoid clashing with `distro_package_groups` + incus profiles) + the config key
-  name until built.
+     (Maybe later: a name standing for several names, e.g. `devbox` = qtdev + emacs
+     + claude.) This finally uses the template's `dotfiles:` field, which `ivm`
+     ignores today.
+  Exact file + field names: decide when building, don't invent now. Bigger than
+  1a/1b because it changes how dotfiles are staged + adds a push-one-set step.
 
 - [ ] **`cpp_dev` + `qt_dev` distro bundles** - the `qtdev` item under "ivm
   real-run fixes + desktop UX" becomes two `distro_packages` bundles (Qt6 + C++
