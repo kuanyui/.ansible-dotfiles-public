@@ -11,6 +11,7 @@
 # Standard deny baselines
 #include <abstractions/local_mixin_deny_persistent_attack>
 #include <abstractions/local_mixin_deny_keyrings>
+#include <abstractions/local_mixin_deny_probably_credentials>
 #include <abstractions/local_mixin_deny_browser_config>
 #include <abstractions/local_mixin_deny_mounted_external_media>
 #include <abstractions/local_mixin_deny_personal_dirs>

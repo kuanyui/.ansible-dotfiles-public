@@ -42,6 +42,8 @@ apparmor_static_abstractions:
     dest: abstractions/local_mixin_deny_machine_id
   - src: local_mixin_deny_keyrings.aa
     dest: abstractions/local_mixin_deny_keyrings
+  - src: local_mixin_deny_probably_credentials.aa
+    dest: abstractions/local_mixin_deny_probably_credentials
   - src: local_mixin_deny_persistent_attack.aa
     dest: abstractions/local_mixin_deny_persistent_attack
   - src: local_mixin_gpu.aa
