@@ -32,12 +32,13 @@ import json
 import os
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, NoReturn
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, NoReturn, TextIO
 
 if TYPE_CHECKING:
     # Type-only: keep the runtime imports of yaml/jsonschema lazy (inside the
@@ -77,7 +78,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "enable-user-sudo": "let `user` sudo, gated by root's password",
     "disable-user-sudo": "revert enable-user-sudo (remove the sudoers drop-in)",
     "snapshot": "`incus snapshot` wrapper (create/list/restore/delete/rename/show)",
-    "gui": "open a SPICE graphical console",
+    "gui": "open a SPICE graphical console, detached from the shell",
     "info": "show the VM's live state (status/image/hw/network/mounts/storage)",
 }
 # Subcommands taking a positional `<username>` (set/unset a login password).
@@ -128,6 +129,23 @@ DISTRO_TO_ANSIBLE_OS_FAMILY: dict[str, str] = {
 ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY: dict[str, str] = {
     "Debian": "debian", "Suse": "suse", "RedHat": "redhat",
 }
+
+# VM instance names get lost in ivm's output (the `+ incus ...` echoes, previews,
+# `==>` status lines). Color them bold-cyan so they stand out, but ONLY when the
+# target stream is a TTY and NO_COLOR is unset - redirected/piped output (and a
+# `--dry-run` captured to a file) must stay plain. Gating is per-stream because
+# ivm prints names to BOTH stderr (status/previews) and stdout (`info`).
+VM_NAME_COLOR: str = "\033[1;36m"  # bold cyan
+COLOR_RESET: str = "\033[0m"
+
+
+def colorize_vm_name(name: str, *, stream: TextIO = sys.stderr) -> str:
+    """Wrap a VM name in color for human-facing output on `stream` (default
+    stderr; pass `sys.stdout` for names printed there). No-op when `stream` is not
+    a TTY or `NO_COLOR` is set, so the escape codes never reach a file/pipe."""
+    if os.environ.get("NO_COLOR") or not stream.isatty():
+        return name
+    return f"{VM_NAME_COLOR}{name}{COLOR_RESET}"
 
 
 def ansible_os_family_of(doc: Template) -> str:
@@ -775,34 +793,94 @@ def wait_ready(name: str, *, dry_run: bool) -> None:
             f"check the host's incus bridge (`incus network show incusbr0`: NAT + DNS).")
 
 
+class VmBinding(NamedTuple):
+    """One ivm VM as the cwd resolver sees it: its name plus the fields needed to
+    tell several apart when they share an init dir (status + source template)."""
+    name: str
+    status: str
+    template: str
+    init_at_dir: str
+
+
+def list_vm_bindings() -> list[VmBinding]:
+    """Every VM carrying a `user.ivm_init_at_dir` tag, with the columns the
+    resolver needs. A LIST (not a dict keyed by init dir) so multiple VMs sharing
+    one cwd are all kept, not silently collapsed to the last one incus lists."""
+    out: str = capture(["incus", "list", "--format", "csv", "--columns",
+                        "n,s,config:user.ivm_template,config:user.ivm_init_at_dir"])
+    # csv.reader (not str.partition): an init-dir path can contain a comma, which
+    # incus CSV-quotes - splitting on commas by hand would mis-parse it.
+    bindings: list[VmBinding] = []
+    for row in csv.reader(out.splitlines()):
+        if len(row) >= 4 and row[3]:
+            bindings.append(VmBinding(name=row[0], status=row[1], template=row[2], init_at_dir=row[3]))
+    return bindings
+
+
+def describe_candidate(binding: VmBinding) -> str:
+    """A candidate line for the picker / ambiguity error: the colored name plus
+    the template and status that tell otherwise-cryptic names apart."""
+    return (f"{colorize_vm_name(binding.name)} "
+            f"[template={binding.template or '?'}, {binding.status or '?'}]")
+
+
+def choose_vm_from_candidates(candidates: list[VmBinding], *, intro: str) -> str:
+    """TTY numbered picker over >1 candidate VMs (caller guarantees a TTY; the
+    non-TTY path dies with the list instead, so scripted use stays predictable)."""
+    print(intro, file=sys.stderr)
+    for index, binding in enumerate(candidates, start=1):
+        print(f"  {index}) {describe_candidate(binding)}", file=sys.stderr)
+    while True:
+        reply: str = input(f"Pick a VM [1-{len(candidates)}]: ").strip()
+        if reply.isdigit() and 1 <= int(reply) <= len(candidates):
+            return candidates[int(reply) - 1].name
+        print(f"  enter a number 1-{len(candidates)}", file=sys.stderr)
+
+
+def die_ambiguous(candidates: list[VmBinding], bound_dir: Path) -> NoReturn:
+    """No TTY to pick interactively: list the candidates and require `--name`."""
+    listing: str = "\n".join(f"  - {describe_candidate(candidate)}" for candidate in candidates)
+    die(f"{len(candidates)} VMs are bound to {bound_dir}; pass `--name <vm>` to pick one "
+        f"(no TTY to choose interactively):\n{listing}")
+
+
 def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
-    """Find the VM whose `user.ivm_init_at_dir` == cwd. If none matches exactly
-    but an ANCESTOR dir has a VM (you're in a subdir of an init'd project),
-    offer the nearest such VM - "open the VM init'd at <parent>? [Y/n]" (REDESIGN
-    §8.9)."""
+    """Resolve the VM bound to `cwd` via `user.ivm_init_at_dir`. Exactly one match
+    -> use it. Several at the same cwd (made via explicit `ivm init <tpl> <name>`
+    or different templates) -> TTY: numbered picker; non-TTY: die listing them +
+    require `--name` (keeps scripted use predictable). No match at cwd -> walk
+    ancestors and offer the nearest dir that has any (REDESIGN 8.9), with the same
+    >1 handling there."""
     if dry_run:
         return "<vm-resolved-from-cwd>"
-    out: str = capture(["incus", "list", "--format", "csv", "--columns", "n,config:user.ivm_init_at_dir"])
-    # csv.reader (not partition): an init_dir path can contain a comma, which
-    # incus CSV-quotes - splitting on the first comma would mis-parse it.
-    bindings: dict[str, str] = {}
-    for row in csv.reader(out.splitlines()):
-        if len(row) >= 2 and row[1]:
-            bindings[row[1]] = row[0]
-    if str(cwd) in bindings:
-        return bindings[str(cwd)]
-    # `cwd.parents` is ordered nearest-ancestor first.
+    bindings: list[VmBinding] = list_vm_bindings()
+    here: list[VmBinding] = [b for b in bindings if b.init_at_dir == str(cwd)]
+    if len(here) == 1:
+        return here[0].name
+    if len(here) > 1:
+        if not sys.stdin.isatty():
+            die_ambiguous(here, cwd)
+        return choose_vm_from_candidates(here, intro=f"Multiple VMs are bound to {cwd}:")
+    # No exact match: `cwd.parents` is ordered nearest-ancestor first - offer the
+    # nearest ancestor dir that has any binding(s).
     for ancestor in cwd.parents:
-        ancestor_vm: str | None = bindings.get(str(ancestor))
-        if ancestor_vm is None:
+        at_ancestor: list[VmBinding] = [b for b in bindings if b.init_at_dir == str(ancestor)]
+        if not at_ancestor:
             continue
         if not sys.stdin.isatty():
-            die(f"no VM bound to {cwd}; nearest is '{ancestor_vm}' at {ancestor} "
-                f"- cd there, or run from a TTY to confirm")
-        reply: str = input(f"No VM bound to {cwd}. Open '{ancestor_vm}' init'd at {ancestor}? [Y/n] ")
-        if reply.strip().lower() in ("", "y", "yes"):
-            return ancestor_vm
-        die("aborted")
+            if len(at_ancestor) == 1:
+                die(f"no VM bound to {cwd}; nearest is '{at_ancestor[0].name}' at {ancestor} "
+                    f"- cd there, or run from a TTY to confirm")
+            die_ambiguous(at_ancestor, ancestor)
+        if len(at_ancestor) == 1:
+            reply: str = input(f"No VM bound to {cwd}. Open "
+                               f"'{colorize_vm_name(at_ancestor[0].name, stream=sys.stdout)}' "
+                               f"init'd at {ancestor}? [Y/n] ")
+            if reply.strip().lower() in ("", "y", "yes"):
+                return at_ancestor[0].name
+            die("aborted")
+        return choose_vm_from_candidates(
+            at_ancestor, intro=f"No VM bound to {cwd}; VMs init'd at ancestor {ancestor}:")
     die(f"no VM is bound to {cwd} or any parent; run `ivm init <template>` here first")
 
 
@@ -1002,7 +1080,7 @@ def confirm_create(doc: Template, name: str, cwd: Path, root: Path, *, assume_ye
     hw: dict[str, Any] = doc.get("hw", {})
     print("", file=sys.stderr)
     print("About to CREATE a new Incus VM:", file=sys.stderr)
-    print(f"  incus VM name: {name}  (visible in `incus list`)", file=sys.stderr)
+    print(f"  incus VM name: {colorize_vm_name(name)}  (visible in `incus list`)", file=sys.stderr)
     print(f"  template:      {doc['template_name']}  (cwd: {cwd})", file=sys.stderr)
     print(f"  image:         {image_ref(doc['os'])}", file=sys.stderr)
     print(f"  hw:            cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
@@ -1072,7 +1150,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
             f"  remove:  ivm delete   (from {cwd})   # or: incus delete --force {name}\n"
             f"Resolve the cause, then `ivm delete` + `ivm init {template_name}` to rebuild.")
     enter_hint: str = "ivm shell" + (", or `ivm gui` for the desktop" if is_gui else "")
-    print(f"==> {name} ready. Enter with: {enter_hint}", file=sys.stderr)
+    print(f"==> {colorize_vm_name(name)} ready. Enter with: {enter_hint}", file=sys.stderr)
 
 
 def cmd_shell(name: str, root: Path, *, as_root: bool, dry_run: bool) -> None:
@@ -1092,13 +1170,13 @@ def cmd_shell(name: str, root: Path, *, as_root: bool, dry_run: bool) -> None:
 def cmd_start(name: str, *, dry_run: bool) -> None:
     """Start the target VM and wait until it is ready (no-op if already running)."""
     ensure_up(name, dry_run=dry_run)
-    print(f"==> {name} running.", file=sys.stderr)
+    print(f"==> {colorize_vm_name(name)} running.", file=sys.stderr)
 
 
 def cmd_reboot(name: str, *, dry_run: bool) -> None:
     """`incus restart` the target VM (ivm-friendly alias; incus calls it restart)."""
     run(["incus", "restart", name], dry_run=dry_run)
-    print(f"==> {name} rebooted.", file=sys.stderr)
+    print(f"==> {colorize_vm_name(name)} rebooted.", file=sys.stderr)
 
 
 def cmd_stop(name: str, *, dry_run: bool) -> None:
@@ -1107,13 +1185,13 @@ def cmd_stop(name: str, *, dry_run: bool) -> None:
     if dry_run or vm_is_running(name):
         run(["incus", "stop", name], dry_run=dry_run)
     else:
-        print(f"==> {name} already stopped.", file=sys.stderr)
+        print(f"==> {colorize_vm_name(name)} already stopped.", file=sys.stderr)
 
 
 def confirm_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> None:
     print("", file=sys.stderr)
     print("About to PERMANENTLY DELETE this Incus VM (config + disk + snapshots):", file=sys.stderr)
-    print(f"  incus VM name: {name}", file=sys.stderr)
+    print(f"  incus VM name: {colorize_vm_name(name)}", file=sys.stderr)
     for line in preview_storage_pool(root, dry_run=dry_run):
         print(line, file=sys.stderr)
     print("This cannot be undone.", file=sys.stderr)
@@ -1131,7 +1209,7 @@ def cmd_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> Non
     --force`). Confirms first (showing the storage pool) unless `--yes`; no-op if the
     VM does not exist."""
     if not dry_run and not instance_exists(name):
-        print(f"==> {name} does not exist; nothing to delete.", file=sys.stderr)
+        print(f"==> {colorize_vm_name(name)} does not exist; nothing to delete.", file=sys.stderr)
         return
     confirm_delete(name, root, assume_yes=assume_yes, dry_run=dry_run)
     run(["incus", "delete", "--force", name], dry_run=dry_run)
@@ -1142,7 +1220,7 @@ def cmd_overwrite_dotfiles(name: str, root: Path, *, dry_run: bool) -> None:
     ensure_up(name, dry_run=dry_run)
     for push_cmd in push_dotfiles_commands(vm_ansible_os_family(name, dry_run=dry_run), name, root):
         run(push_cmd, dry_run=dry_run)
-    print(f"==> dotfiles re-pushed into {name} (/home/user + /root).", file=sys.stderr)
+    print(f"==> dotfiles re-pushed into {colorize_vm_name(name)} (/home/user + /root).", file=sys.stderr)
 
 
 def cmd_set_password(name: str, username: str, *, dry_run: bool) -> None:
@@ -1164,7 +1242,7 @@ def cmd_set_password(name: str, username: str, *, dry_run: bool) -> None:
     # guest's process list. `chpasswd` reads `username:password` lines.
     subprocess.run(["incus", "exec", name, "--", "chpasswd"],
                    input=f"{username}:{password}\n", text=True, check=True)
-    print(f"==> password set for {username} on {name}.", file=sys.stderr)
+    print(f"==> password set for {username} on {colorize_vm_name(name)}.", file=sys.stderr)
 
 
 def cmd_unset_password(name: str, username: str, *, dry_run: bool) -> None:
@@ -1172,7 +1250,7 @@ def cmd_unset_password(name: str, username: str, *, dry_run: bool) -> None:
     longer log in by password."""
     ensure_up(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "passwd", "--lock", username], dry_run=dry_run)
-    print(f"==> {username}'s password locked on {name}.", file=sys.stderr)
+    print(f"==> {username}'s password locked on {colorize_vm_name(name)}.", file=sys.stderr)
 
 
 # Opt into IN-GUEST privilege escalation, separate from any login password.
@@ -1193,7 +1271,7 @@ def cmd_enable_user_sudo(name: str, *, dry_run: bool) -> None:
          "cat > /etc/sudoers.d/user <<'EOF'\n" + _SUDOERS_USER + "EOF\n"
          "chmod 0440 /etc/sudoers.d/user\n"
          "visudo --check --file=/etc/sudoers.d/user"], dry_run=dry_run)
-    print(f"==> `user` may now sudo on {name} - it prompts for ROOT's password, so "
+    print(f"==> `user` may now sudo on {colorize_vm_name(name)} - it prompts for ROOT's password, so "
           f"set one first with `ivm set-password root` if you haven't.", file=sys.stderr)
 
 
@@ -1202,7 +1280,7 @@ def cmd_disable_user_sudo(name: str, *, dry_run: bool) -> None:
     the locked-down default where `user` cannot sudo)."""
     ensure_up(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "rm", "-f", "/etc/sudoers.d/user"], dry_run=dry_run)
-    print(f"==> `user` sudo removed on {name}; back to the locked-down default.", file=sys.stderr)
+    print(f"==> `user` sudo removed on {colorize_vm_name(name)}; back to the locked-down default.", file=sys.stderr)
 
 
 def cmd_update(name: str, *, dry_run: bool) -> None:
@@ -1227,9 +1305,36 @@ def cmd_snapshot(name: str, snapshot_args: list[str], *, dry_run: bool) -> None:
 
 
 def cmd_gui(name: str, *, dry_run: bool) -> None:
-    """Open a SPICE graphical console (`incus console --type=vga`)."""
+    """Open the VM's SPICE graphical console (`incus console --type=vga`) DETACHED
+    from the calling shell: spawn it in its own session with stdin/stdout/stderr
+    silenced, so ivm returns at once and you can close the terminal without
+    killing the GUI. (incus console itself stays alive managing the SPICE socket
+    until the viewer closes - cmd/incus/console.go vga() - so it must be detached,
+    not merely backgrounded.)"""
     ensure_up(name, dry_run=dry_run)
-    exec_into(["incus", "console", "--type=vga", name], dry_run=dry_run)
+    cmd: list[str] = ["incus", "console", "--type=vga", name]
+    print("+ " + shlex.join(cmd) + "  (detached: own session, output silenced)", file=sys.stderr)
+    if dry_run:
+        return
+    # `incus console --type=vga` auto-launches remote-viewer, else spicy. If
+    # NEITHER is installed it does NOT fail - it prints a socket path and hangs
+    # waiting for a connection (console.go vga(), "neither could be found").
+    # Detached + silenced, that would be an invisible stuck process with no
+    # window, so refuse loudly here instead (mirrors incus's own viewer probe).
+    if shutil.which("remote-viewer") is None and shutil.which("spicy") is None:
+        die("no SPICE viewer found - install remote-viewer (virt-viewer) or spicy "
+            "(spice-gtk), then retry `ivm gui`. To debug without one, run yourself: "
+            f"incus console --type=vga {name}")
+    # Detach: start_new_session=True puts it in its own session (no controlling
+    # terminal), so closing this shell does NOT SIGHUP it; stdin/stdout/stderr to
+    # /dev/null keeps console noise off the shell. The vga path needs no TTY (only
+    # the text console sets raw mode), so a /dev/null stdin is safe.
+    subprocess.Popen(
+        cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, start_new_session=True,
+    )
+    print(f"==> GUI console launched for {colorize_vm_name(name)} "
+          f"(detached - close this terminal anytime).", file=sys.stderr)
 
 
 def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
@@ -1297,7 +1402,7 @@ def cmd_info(name: str, root: Path) -> None:
     network: str = (eth0_device.get("network")
                     or f"{eth0_device.get('nictype', '')} {eth0_device.get('parent', '')}".strip()
                     or "?")
-    print(f"VM: {name}")
+    print(f"VM: {colorize_vm_name(name, stream=sys.stdout)}")
     print(f"  status:        {status}")
     print(f"  image:         {image}")
     print(f"  hw:            cpu={config.get('limits.cpu', '?')} "

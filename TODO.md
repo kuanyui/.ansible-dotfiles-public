@@ -319,6 +319,66 @@ First real `ivm init webbrowser` on the host surfaced these (all fixed unless no
   - Note: `pcmanfm-qt`/`lximage-qt` are runtime Qt APPS (no -devel); orthogonal
     to qtdev, classify separately (light-desktop apps item above).
 
+## ivm CLI/UX polish
+
+Surfaced using `ivm` interactively. All DONE (notes per item). Static checks:
+`py_compile` + a focused unit harness (importlib-loaded `ivm`, stubbed
+incus/tty/input - 23 cases) + CLI dry-run smoke. `mypy --strict` NOT run (no
+pip/mypy in this env - run it on the host); NOT exercised against real incus.
+
+- [x] **Color the VM name in `ivm` output** - the instance name is hard to pick
+  out of the stderr wall (`+ incus ...` echoes, confirm previews, `==> <name>
+  ready/running`, `info`, the cwd-resolve prompts). Colorize the name everywhere
+  ivm prints it, via ONE helper (e.g. `colorize_vm_name`) called at each print
+  site - don't scatter raw escape codes. Gate on `sys.stdout.isatty()` + honor
+  `NO_COLOR` so piped / non-TTY output stays plain (same TTY-gating spirit as
+  `resolve_vm_by_cwd` / `confirm_*`).
+  **DONE:** `colorize_vm_name(name, *, stream=sys.stderr)` (bold-cyan) + consts
+  `VM_NAME_COLOR`/`COLOR_RESET`; gated `os.environ.get("NO_COLOR")` +
+  `stream.isatty()`, per-stream (stderr default; `info` passes `sys.stdout`). 13
+  call sites (confirm name field, every `==>` status line, `info`, resolve prompts
+  + the selector listing); raw `+ incus ...` echoes left plain (copy-pasteable).
+
+- [x] **`ivm gui` should detach from the calling shell by default** - `cmd_gui`
+  (`files/ivm:1229`) currently does `exec_into(["incus", "console", "--type=vga",
+  name])`, which `os.execvp`-replaces ivm with a FOREGROUND process tied to the
+  terminal: closing the terminal kills the GUI and its stdout/stderr clutters the
+  shell. Make gui launch detached - own session, stdout/stderr to `/dev/null` -
+  so the terminal can be closed safely (likely `subprocess.Popen(...,
+  start_new_session=True, stdout=DEVNULL, stderr=DEVNULL)` instead of
+  `exec_into`). VERIFY FIRST (per CLAUDE.md, web the incus docs): what `incus
+  console --type=vga` actually spawns - does it fork a SPICE viewer and return,
+  or stay attached? - that decides the right detach mechanism. Consider a
+  `--attach`/foreground escape hatch.
+  **DONE:** `cmd_gui` now `subprocess.Popen(start_new_session=True,
+  stdin/stdout/stderr=DEVNULL)` instead of `exec_into`. Web-checked
+  `cmd/incus/console.go vga()`: viewer is remote-viewer else spicy, and with
+  NEITHER it does NOT error - it prints a socket path and HANGS; so a
+  `shutil.which` pre-flight dies loudly (install hint) rather than leave an
+  invisible stuck process. vga needs no TTY (only text console sets raw mode), so
+  DEVNULL stdin is safe. No `--attach` (YAGNI; die msg points at `incus console
+  --type=vga <vm>` to debug). README + `gui` help blurb updated.
+
+- [x] **Multi-VM-per-cwd selector** - multiple VMs CAN bind to one cwd: explicit
+  `ivm init <tpl> <name>`, or different templates - both get tagged
+  `user.ivm_init_at_dir=<cwd>` by `create_command` (`files/ivm:465`). But
+  `resolve_vm_by_cwd` (`files/ivm:778`) builds a dict keyed by init_dir, so >1
+  match SILENTLY collapses to the last in incus's CSV order - `ivm
+  shell`/`info`/every cwd-resolved subcommand picks an ARBITRARY VM with no
+  warning. Fix (one function): collect ALL matches as a list; ==1 -> use it; >1
+  -> TTY: print a numbered menu to pick, non-TTY: `die` listing the candidates +
+  require `--name` (keeps non-interactive predictable). Apply the same >1
+  handling to the ancestor-dir branch (`files/ivm:795`). List each candidate with
+  `user.ivm_template` + status, not just the name (names alone are cryptic). Only
+  escape hatch today is the global `--name <vm>` (`main:1401`).
+  **DONE:** `list_vm_bindings()` returns a `list[VmBinding]` (NamedTuple
+  name/status/template/init_at_dir) from `incus list --columns
+  n,s,config:user.ivm_template,config:user.ivm_init_at_dir` - no more last-wins
+  dict. ==1 at cwd -> use it; >1 -> TTY `choose_vm_from_candidates` numbered
+  picker / non-TTY `die_ambiguous` (lists candidates, requires `--name`);
+  ancestor-dir branch gets the same >1 handling. Candidates shown as `name
+  [template=…, STATUS]`.
+
 ## Notes / future
 
 - [ ] **container_apps -> one engine + declarative templates** (parallel to what

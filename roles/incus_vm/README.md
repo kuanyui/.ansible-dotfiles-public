@@ -80,7 +80,7 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 | `enable-user-sudo` | Opt into in-guest sudo: `user` may sudo, gated by ROOT's password (`Defaults:user rootpw`). Needs `set-password root` first. |
 | `disable-user-sudo` | Remove the sudoers drop-in (back to locked-down default). |
 | `snapshot [create\|list\|restore\|delete] [name]` | Thin wrapper over `incus snapshot`, with the VM filled in. |
-| `gui` | Open a SPICE graphical console (`incus console --type=vga`; needs `virt-viewer`/`remote-viewer` on the host + a desktop + `spice-vdagent` in the guest). |
+| `gui` | Open the VM's SPICE graphical console (`incus console --type=vga`), **detached** from the shell so you can close the terminal without killing it. Needs `remote-viewer` (virt-viewer) or `spicy` (spice-gtk) on the host + a desktop + `spice-vdagent` in the guest. |
 | `env <template>` | Load + validate a template and print its resolved config (incl. the flattened package list). |
 
 ## VM identity
