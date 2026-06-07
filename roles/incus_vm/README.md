@@ -11,7 +11,8 @@ a full separate kernel (stronger isolation than a shared-kernel container).
 > [`docs/incus-host-setup.md`](docs/incus-host-setup.md).
 > Also: [`docs/incus-hardware-capabilities.md`](docs/incus-hardware-capabilities.md)
 > (what `hw.*`/`net.*` incus can and can't do, GPU), and
-> [`docs/incus-vs-podman.md`](docs/incus-vs-podman.md) (why VMs here, not incus containers).
+> [`docs/incus-vs-podman.md`](docs/incus-vs-podman.md) (why VMs here, not incus containers),
+> and [`docs/ivm-vs-quickemu.md`](docs/ivm-vs-quickemu.md) (how `ivm` compares to quickemu).
 
 ## Quick start
 
