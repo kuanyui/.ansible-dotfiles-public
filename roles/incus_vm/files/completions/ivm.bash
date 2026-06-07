@@ -6,7 +6,7 @@ _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init shell shell-user shell-root start reboot stop delete env list overwrite-dotfiles update set-password unset-password enable-user-sudo disable-user-sudo snapshot gui"
+    local subcommands="init shell shell-user shell-root start reboot stop delete env list info overwrite-dotfiles update set-password unset-password enable-user-sudo disable-user-sudo snapshot gui"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}/templates"
 
     # --name / --root take a value: complete VM names after --name.

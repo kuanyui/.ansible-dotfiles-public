@@ -10,7 +10,7 @@ Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 `delete`/`update`/`overwrite-dotfiles`/`set-password`/`unset-password`/
-`enable-user-sudo`/`disable-user-sudo`; `env`; `list` (incus list passthrough).
+`enable-user-sudo`/`disable-user-sudo`; `env`; `info` (storage pool); `list` (incus list passthrough).
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
 attach devices (mounts + `shadow` masking, `hw.tpm`, macvlan/bridge `net`) ->
@@ -862,7 +862,53 @@ def human_iec_bytes(num_bytes: int) -> str:
     return f"{num_bytes}B"  # unreachable (the loop always returns); satisfies the type checker
 
 
-def preview_storage_pool(*, dry_run: bool) -> list[str]:
+def read_storage_info(root: Path) -> dict[str, Any] | None:
+    """The role records the storage pool layout (driver, the loop `.img` it built,
+    mount point, size) to `<root>/storage-info.json` at install. ivm reads it as the
+    AUTHORITATIVE location: the unprivileged `incus`-group user can't see incus's own
+    pool config (it's admin-only -> `config: {}`), so without this the path is
+    unknowable to them. None if absent/unreadable -> fall back to probing incus."""
+    try:
+        parsed: Any = json.loads((root / "storage-info.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def storage_location_lines(root: Path, storage_pool_name: str, storage_pool_driver: str) -> list[str]:
+    """The indented location line under `storage pool:`. Prefer the role-recorded
+    `storage-info.json` (works for the unprivileged user); else probe incus + the
+    host filesystem (`preview_storage_pool_location`)."""
+    recorded: dict[str, Any] | None = read_storage_info(root)
+    if recorded is None:
+        return preview_storage_pool_location(storage_pool_name, storage_pool_driver)
+    value_column_indent: str = " " * 17
+    if recorded.get("build_loop") and recorded.get("loop_file"):
+        # The role built a btrfs loop file (e.g. on `/home`) and mounted it: show the
+        # real `.img` + its sparse on-disk footprint (`stat` needs no root - metadata
+        # via parent-dir traversal) + where it's mounted.
+        loop_file: str = recorded["loop_file"]
+        mountpoint: str = recorded.get("mountpoint") or ""
+        try:
+            loop_stat: os.stat_result = os.stat(loop_file)
+            usage: str = (f"  (sparse: {human_iec_bytes(loop_stat.st_blocks * 512)} on disk now / "
+                          f"{human_iec_bytes(loop_stat.st_size)} max)")
+        except OSError:
+            usage = ""
+        mount_note: str = f"  -> mounted at {mountpoint}" if mountpoint else ""
+        return [f"{value_column_indent}loop file at {loop_file}{usage}{mount_note}"]
+    recorded_source: str = recorded.get("source") or ""
+    if recorded_source:
+        if storage_pool_driver == "dir":
+            return [f"{value_column_indent}dir tree at {recorded_source}  (used/total above = its whole host filesystem)"]
+        return [f"{value_column_indent}{storage_pool_driver} at {recorded_source}"]
+    # Empty source: incus made the pool at its OWN default location (on `/`).
+    if storage_pool_driver == "dir":
+        return [f"{value_column_indent}dir tree at {INCUS_VAR_DIR}/storage-pools/{storage_pool_name}  (used/total above = its whole host filesystem)"]
+    return [f"{value_column_indent}incus-managed loop at {INCUS_VAR_DIR}/disks/{storage_pool_name}.img  (on /)"]
+
+
+def preview_storage_pool(root: Path, *, dry_run: bool) -> list[str]:
     """The `storage pool:` block: which pool a VM lands in (the `default` profile's
     root device pool), how full incus reports it, and - on the indented line below -
     WHERE on the host its blocks actually live. Best-effort: `(skipped)` under
@@ -885,7 +931,7 @@ def preview_storage_pool(*, dry_run: bool) -> list[str]:
     space: str = f"  -  {space_used} used / {space_total} total" if space_used and space_total else ""
     return [
         f"  storage pool:  {storage_pool_name} ({storage_pool_driver}){space}",
-        *preview_storage_pool_location(storage_pool_name, storage_pool_driver),
+        *storage_location_lines(root, storage_pool_name, storage_pool_driver),
     ]
 
 
@@ -932,7 +978,7 @@ def preview_storage_pool_location(storage_pool_name: str, storage_pool_driver: s
     return [f"{value_column_indent}{storage_pool_driver} subvolume at {storage_pool_source}"]
 
 
-def confirm_create(doc: Template, name: str, cwd: Path, *, assume_yes: bool, dry_run: bool) -> None:
+def confirm_create(doc: Template, name: str, cwd: Path, root: Path, *, assume_yes: bool, dry_run: bool) -> None:
     hw: dict[str, Any] = doc.get("hw", {})
     print("", file=sys.stderr)
     print("About to CREATE a new Incus VM:", file=sys.stderr)
@@ -940,7 +986,7 @@ def confirm_create(doc: Template, name: str, cwd: Path, *, assume_yes: bool, dry
     print(f"  template:      {doc['template_name']}  (cwd: {cwd})", file=sys.stderr)
     print(f"  image:         {image_ref(doc['os'])}", file=sys.stderr)
     print(f"  hw:            cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
-    for line in (preview_network(doc) + preview_mounts(doc, cwd) + preview_storage_pool(dry_run=dry_run)):
+    for line in (preview_network(doc) + preview_mounts(doc, cwd) + preview_storage_pool(root, dry_run=dry_run)):
         print(line, file=sys.stderr)
     print("", file=sys.stderr)
     if assume_yes or dry_run:
@@ -961,7 +1007,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     warn_if_host_nesting_disabled(doc)
     name: str = choose_instance_name(template_name, cwd, given_name, doc,
                                      dry_run=dry_run, assume_yes=assume_yes)
-    confirm_create(doc, name, cwd, assume_yes=assume_yes, dry_run=dry_run)
+    confirm_create(doc, name, cwd, root, assume_yes=assume_yes, dry_run=dry_run)
     is_gui: bool = bool(doc.get("sys", {}).get("gui"))
     # create stopped, attach all devices, THEN start (so non-hotpluggable
     # devices like the TPM are present at first boot).
@@ -1033,11 +1079,11 @@ def cmd_stop(name: str, *, dry_run: bool) -> None:
         print(f"==> {name} already stopped.", file=sys.stderr)
 
 
-def confirm_delete(name: str, *, assume_yes: bool, dry_run: bool) -> None:
+def confirm_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> None:
     print("", file=sys.stderr)
     print("About to PERMANENTLY DELETE this Incus VM (config + disk + snapshots):", file=sys.stderr)
     print(f"  incus VM name: {name}", file=sys.stderr)
-    for line in preview_storage_pool(dry_run=dry_run):
+    for line in preview_storage_pool(root, dry_run=dry_run):
         print(line, file=sys.stderr)
     print("This cannot be undone.", file=sys.stderr)
     print("", file=sys.stderr)
@@ -1049,11 +1095,11 @@ def confirm_delete(name: str, *, assume_yes: bool, dry_run: bool) -> None:
         die("aborted; VM not deleted")
 
 
-def cmd_delete(name: str, *, assume_yes: bool, dry_run: bool) -> None:
+def cmd_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> None:
     if not dry_run and not instance_exists(name):
         print(f"==> {name} does not exist; nothing to delete.", file=sys.stderr)
         return
-    confirm_delete(name, assume_yes=assume_yes, dry_run=dry_run)
+    confirm_delete(name, root, assume_yes=assume_yes, dry_run=dry_run)
     run(["incus", "delete", "--force", name], dry_run=dry_run)
 
 
@@ -1194,6 +1240,15 @@ def cmd_env(template_name: str, root: Path) -> None:
         print(f"-> resolved   : ({ansible_os_family}) {' '.join(resolved)}")
 
 
+def cmd_info(root: Path) -> None:
+    """`ivm info`: show the incus storage pool - backend, where VM disks physically
+    live (same lines the init/delete prompts show, incl. the `.img` loop file +
+    usage), and how full it is. Read-only; needs no init/delete to inspect."""
+    print("incus storage (where VM disks physically live):")
+    for line in preview_storage_pool(root, dry_run=False):
+        print(line)
+
+
 def cmd_stub(subcommand: str) -> NoReturn:
     die(f"`{subcommand}` is not implemented yet (see IMPLEMENTATION_PLAN.md phases).")
 
@@ -1225,6 +1280,8 @@ def build_parser() -> argparse.ArgumentParser:
     # via parse_known_args in main() (REMAINDER mishandles leading `--flags`).
     sub.add_parser("list", help="`incus list` passthrough (e.g. `ivm list --format csv`)")
 
+    sub.add_parser("info", help="show the incus storage pool (backend, on-disk location, usage)")
+
     for name in CWD_RESOLVED:
         sp: argparse.ArgumentParser = sub.add_parser(name, help="(target VM: cwd or --name)")
         if name == "snapshot":
@@ -1252,6 +1309,9 @@ def main() -> None:
     if args.subcommand == "env":
         cmd_env(args.template, root)
         return
+    if args.subcommand == "info":
+        cmd_info(root)
+        return
     # Everything else acts on a VM: the global --name overrides the cwd binding.
     name: str = args.name if args.name else resolve_vm_by_cwd(Path.cwd(), dry_run=args.dry_run)
     if args.subcommand in ("shell", "shell-user"):
@@ -1265,7 +1325,7 @@ def main() -> None:
     elif args.subcommand == "stop":
         cmd_stop(name, dry_run=args.dry_run)
     elif args.subcommand == "delete":
-        cmd_delete(name, assume_yes=args.yes, dry_run=args.dry_run)
+        cmd_delete(name, root, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "overwrite-dotfiles":
         cmd_overwrite_dotfiles(name, root, dry_run=args.dry_run)
     elif args.subcommand == "set-password":

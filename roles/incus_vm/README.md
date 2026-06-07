@@ -67,6 +67,7 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 |---|---|
 | `init <template> [name]` | Create a VM from `<template>`, bound to the current dir. Prompts for the name (default `ivm-<template>-<cwd-path>`, editable) unless given; confirms before creating. |
 | `list [incus args]` | `incus list` passthrough (e.g. `ivm list --format csv`). Shows all instances; ivm VMs are `ivm-`prefixed. |
+| `info` | Show the incus storage pool: backend + where VM disks physically live (the loop `.img` + its sparse usage, or the dir/path) + how full it is. Read-only; no init/delete needed. |
 | `shell` / `shell-user` | zsh into the target VM as `user` (starts it if stopped). |
 | `shell-root` | zsh into it as `root`. |
 | `start` / `stop` | Start / stop the target VM. |

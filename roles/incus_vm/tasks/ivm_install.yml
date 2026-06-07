@@ -49,6 +49,26 @@
     dest: "{{ incus_vm_ivm_dir }}/templates/"
     mode: "0644"
 
+# Record the storage pool layout so `ivm info` + the create/delete preview can show
+# the REAL on-disk path - the unprivileged `incus`-group user can't read incus's own
+# pool config (admin-only), so ivm reads this instead. Written only when the role
+# set up the host (`not incus_vm_skip_host_setup`); `_incus_pool_build_loop` /
+# `_incus_effective_pool_source` are facts from tasks/incus_host_install.yml.
+- name: Record the storage pool layout to `{{ incus_vm_ivm_dir }}/storage-info.json` (so `ivm info` shows the real `.img` / path even to the unprivileged user)
+  ansible.builtin.copy:
+    dest: "{{ incus_vm_ivm_dir }}/storage-info.json"
+    mode: "0644"
+    content: |
+      {{ {
+           'driver': incus_storage_pool_driver,
+           'build_loop': (_incus_pool_build_loop | default(false) | bool),
+           'loop_file': (incus_storage_pool_source if (_incus_pool_build_loop | default(false) | bool) else ''),
+           'mountpoint': (incus_storage_pool_loop_mountpoint if (_incus_pool_build_loop | default(false) | bool) else ''),
+           'source': (_incus_effective_pool_source | default(incus_storage_pool_source)),
+           'size': incus_storage_pool_size,
+         } | to_nice_json }}
+  when: not (incus_vm_skip_host_setup | default(false) | bool)
+
 # Shared fcitx5 user-config setup script: `ivm` embeds + runs it in a guest with
 # `sys.input_method: fcitx5`, and you can run this same copy on the HOST
 # (`sh {{ incus_vm_ivm_dir }}/setup-fcitx5-input.sh`) - one source of truth.

@@ -15,6 +15,7 @@ _ivm_subcommands=(
   'delete:delete the target VM (confirms)'
   'env:load + print a template'\''s resolved config'
   'list:incus list passthrough'
+  'info:show the incus storage pool (backend, on-disk location, usage)'
   'overwrite-dotfiles:re-push staged dotfiles into the VM'
   'update:upgrade all packages in the VM'
   'set-password:set a guest account'\''s login password'
