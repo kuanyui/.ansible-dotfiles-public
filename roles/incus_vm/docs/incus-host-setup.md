@@ -68,21 +68,20 @@ Three vars in [`defaults/main/incus_host_install.yml`](../defaults/main/incus_ho
 
 ### Source semantics per driver
 
-This is the key section: **the same `source:` value means different things for different `driver:` values**. Picking `btrfs` does NOT automatically mean a loop file - it's just one of three forms Incus accepts. Per [Incus's official btrfs / zfs / lvm reference](https://linuxcontainers.org/incus/docs/main/reference/storage_btrfs/):
+This is the key section, and where the project originally got it wrong. **incus only CREATES a loop file at its own fixed path `/var/lib/incus/disks/<pool>.img` (on `/`), and only when `source:` is EMPTY.** A custom file path is NOT "make a loop file here". (Verified in the incus source: `driver_btrfs.go` / `driver_zfs.go`, `Create()`.)
 
-| Driver | Valid `source:` forms | What Incus does with it |
+| `driver:` | `source:` | What incus does |
 |---|---|---|
-| `dir` | Empty | Falls back to default location `/var/lib/incus/storage-pools/default/` (a directory on `/`) |
-| `dir` | Path to an existing directory | Uses that directory directly to store VM disks (qcow2 files), snapshots, custom volumes |
-| `btrfs` | Path to an existing btrfs subvolume (the host has a real btrfs filesystem somewhere) | Uses the subvolume directly, no formatting. CoW comes from the underlying btrfs FS. **No `size:` needed.** |
-| `btrfs` | Path to an existing block device (e.g. `/dev/nvme0n1p3`) | Runs `mkfs.btrfs` on the block device, mounts it under `/var/lib/incus/storage-pools/default/`. CoW native. **No `size:` needed** (size = device size). |
-| `btrfs` | Path to a file that doesn't exist yet (e.g. `/home/incus-storage.img`) | Creates the file as sparse, attaches via the loop driver (`/dev/loop<N>`), runs `mkfs.btrfs` inside. **`size:` IS REQUIRED** (determines the loop file's declared size). |
-| `zfs` | Name of an existing ZFS dataset (no leading `/`, e.g. `tank/incus`) | Uses the dataset directly. CoW native. **No `size:` needed.** |
-| `zfs` | Path to an existing block device | Creates a new ZFS pool on it. **No `size:` needed.** |
-| `zfs` | Path to a file that doesn't exist yet | Creates a loop file ZFS pool. **`size:` IS REQUIRED.** |
-| `lvm-thin` | Name of an existing LVM thin pool (format: `<volume-group>/<thinpool>`) | Uses the thin pool. Requires LVM thin pool to be already created on the host. **No `size:` needed.** |
+| `btrfs` / `zfs` / `lvm` | **empty** (+ `size:`) | **The only incus-made loop file:** sparse `.img` at `/var/lib/incus/disks/<pool>.img` **on `/`** (btrfs FS / file-vdev zpool / LVM PV inside). For a big `/home`, relocate `/var/lib/incus` first → [Move everything](#move-everything-image-cache--pool--db). |
+| `dir` | empty, or a dir path | VM disks in `/var/lib/incus/storage-pools/default/` (on `/`), or in that dir. |
+| `btrfs` | existing **btrfs subvolume** path | Uses it (CoW from that FS). No `size:`. |
+| `zfs` | existing **dataset** name (`tank/incus`, no leading `/`) | Uses it. No `size:`. |
+| `lvm` | existing **VG / thin-pool** name | Uses it. |
+| `btrfs` / `zfs` | a **block device** (`/dev/...`) | `mkfs.btrfs` / `zpool create` on it. No `size:`. |
+| `btrfs` | ⚠️ a **plain file path** (`/home/x.img`) | **NOT a loop file** → incus runs `btrfs subvolume create <path>` → FAILS (`Inappropriate ioctl`) unless that path is already on btrfs. |
+| `zfs` | ⚠️ a plain file path | **Rejected** at validation. |
 
-So "I want CoW" does NOT force you into a loop file. Loop file is just the most portable option when the host has no dedicated CoW filesystem / partition / device for Incus to use.
+So CoW storage on a big `/home` needs ONE of: **(a)** relocate `/var/lib/incus` to `/home`, then empty `source:`; **(b)** `source:` = an existing btrfs subvolume / zfs dataset / block device you set up on `/home`; **(c)** `dir` driver (no CoW). There is **no** "make a loop file at `/home/x.img`" form - that was the bug behind the `Inappropriate ioctl` failure.
 
 ### Why `btrfs` loop file on `/home` as the project default?
 

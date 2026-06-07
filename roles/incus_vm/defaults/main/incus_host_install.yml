@@ -79,41 +79,39 @@ incus_storage_pool_driver: btrfs
 #   - `dir`:    A directory path; Incus drops VM root.img files inside.
 #               Empty -> Incus default `/var/lib/incus/storage-pools/default/`.
 #
-#   - `btrfs`:  THREE valid forms:
-#               (a) Path to an existing btrfs SUBVOLUME (e.g. `/srv/incus` if
-#                   `/srv` is a btrfs subvolume). No size needed. No loop file.
-#               (b) Path to an existing BLOCK DEVICE (e.g. `/dev/nvme0n1p3`).
-#                   Incus runs `mkfs.btrfs` on it. No size needed. No loop file.
-#               (c) Path to a FILE that doesn't exist yet (e.g.
-#                   `/home/incus-storage.img`). Incus creates it as a sparse
-#                   file, loop-mounts it, and `mkfs.btrfs` inside. REQUIRES
-#                   `incus_storage_pool_size`. This is the project default
-#                   because most target hosts (small btrfs `/`, big ext4 `/home`)
-#                   can't use (a) or (b) without repartitioning.
+#   - `btrfs`:  (a) EMPTY source (+ `incus_storage_pool_size`) -> the ONLY
+#                   incus-CREATED loop file: a sparse `.img` at
+#                   `/var/lib/incus/disks/<pool>.img` (on `/`), btrfs inside. For a
+#                   big `/home`, relocate `/var/lib/incus` first (docs/incus-host-setup.md).
+#               (b) Existing btrfs SUBVOLUME path. No size, no loop file.
+#               (c) Existing BLOCK DEVICE. `mkfs.btrfs` on it. No size.
+#               (!) A plain file path that doesn't exist (e.g. `/home/incus-storage.img`)
+#                   does NOT make a loop file - incus runs `btrfs subvolume create`
+#                   on it and FAILS on non-btrfs `/home` ("Inappropriate ioctl").
 #
-#   - `zfs`:    THREE valid forms, parallel to btrfs:
-#               (a) Name of an existing ZFS dataset (NO leading `/`,
-#                   e.g. `tank/incus`).
-#               (b) Path to a block device. New ZFS pool created on it.
-#               (c) Path to a file that doesn't exist yet -> loop file ZFS
-#                   pool. REQUIRES `incus_storage_pool_size`.
+#   - `zfs`:    (a) EMPTY source (+ size) -> file-vdev zpool loop at the default
+#                   path (on `/`). (b) Existing dataset name (no leading `/`).
+#                   (c) Block device. (!) A plain file path is REJECTED at validation.
 #
-#   - `lvm-thin`: Name of an existing LVM thin pool (format
-#               `<volume-group>/<thinpool>`, NO leading `/`). The thin pool
-#               must already be created on the host.
+#   - `lvm-thin`: Name of an existing LVM thin pool (`<vg>/<thinpool>`, no leading
+#               `/`), already created on the host.
 #
+# Project default: a btrfs loop file on `/home`. incus itself can ONLY create a
+# loop file at `/var/lib/incus/disks/` (on `/`), so the ROLE builds this one: when
+# `driver` is `btrfs`, this `source` is a `.img` file path (existing or not), and a
+# `size` is set, the role `truncate`s + `mkfs.btrfs`-es the file and loop-mounts it
+# (via /etc/fstab) at `incus_storage_pool_loop_mountpoint`, then points the pool at
+# that mount. Put the `.img` on whatever big disk you want. Other forms still work
+# unchanged: empty (incus's own loop on `/`), an existing btrfs subvolume / zfs
+# dataset / block device, or `dir` driver + a directory (no CoW).
 incus_storage_pool_source: /home/incus-storage.img
 
-# `incus_storage_pool_size`: required ONLY when `incus_storage_pool_source`
-# points at a file path that doesn't exist yet (i.e. you want Incus to
-# CREATE a sparse loop file). Incus then creates the loop file with this
-# declared apparent size; actual disk usage starts near zero and grows
-# as VMs write.
-#
-# Leave EMPTY for every other form:
-#   - dir backend (always)
-#   - btrfs / zfs / lvm-thin pointing at an existing subvolume / dataset / LV
-#   - btrfs / zfs pointing at an existing block device (size = device size)
-#
-# Sizes accept `GiB` / `TiB` (binary), e.g. `500GiB`, `2TiB`.
+# Where the role loop-mounts the btrfs `.img` above (only used when it builds a loop
+# file). Just a mount point on `/` - the real blocks live in the `.img` on its disk.
+incus_storage_pool_loop_mountpoint: /var/lib/incus-storage
+
+# `incus_storage_pool_size`: the loop file's declared size - used both by the role's
+# `.img` build (when `source` is a file path) and by incus's own empty-source loop.
+# Sparse: actual disk use starts near zero and grows. Leave EMPTY for an existing
+# subvolume / dataset / block device / dir. Sizes: `GiB` / `TiB`, e.g. `500GiB`.
 incus_storage_pool_size: 500GiB

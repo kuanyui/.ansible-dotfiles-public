@@ -263,6 +263,104 @@
     - _root_fs_type is defined
     - (_root_fs_type.stdout | trim) == 'btrfs'
 
+# ---------- btrfs loop file on a custom disk (the role builds it; incus won't) ----------
+# incus only ever CREATES a btrfs loop file at its OWN `/var/lib/incus/disks/<pool>.img`
+# (on `/`). To put a CoW loop on another disk (the project's `/home` goal), the role
+# makes it: when the pool is `btrfs` and `incus_storage_pool_source` is a `.img` path
+# (a regular file, or one that doesn't exist yet) with a `size`, we `truncate` +
+# `mkfs.btrfs` the file and loop-mount it (via /etc/fstab) at
+# `incus_storage_pool_loop_mountpoint`, then hand incus that mount (an existing btrfs
+# FS, which incus accepts). Idempotent + reboot-persistent; never re-`mkfs`-es an
+# already-formatted file, so a teardown+reinstall cycle reuses the same `.img`.
+
+- name: Probe `incus_storage_pool_source` (absent / a regular file -> role builds a btrfs loop there; a dir / block device -> incus uses it directly)
+  ansible.builtin.stat:
+    path: "{{ incus_storage_pool_source }}"
+  register: _incus_pool_source_stat
+  when:
+    - incus_storage_pool_driver == 'btrfs'
+    - incus_storage_pool_source | length > 0
+    - incus_storage_pool_size | length > 0
+
+- name: Set `_incus_pool_build_loop` (true = role creates + loop-mounts a btrfs `.img` at `incus_storage_pool_source`)
+  ansible.builtin.set_fact:
+    _incus_pool_build_loop: >-
+      {{ (incus_storage_pool_driver == 'btrfs')
+         and (incus_storage_pool_source | length > 0)
+         and (incus_storage_pool_size | length > 0)
+         and (_incus_pool_source_stat.stat is defined)
+         and ((not _incus_pool_source_stat.stat.exists) or (_incus_pool_source_stat.stat.isreg | default(false))) }}
+
+- name: Install `btrfs-progs` for `mkfs.btrfs` (only when the role must build a btrfs loop file)
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+  vars:
+    install_distro_packages:
+      Debian:
+        install: [btrfs-progs]
+        probe: command -v mkfs.btrfs
+      Suse:
+        install: [btrfsprogs]
+        probe: command -v mkfs.btrfs
+      RedHat:
+        install: [btrfs-progs]
+        probe: command -v mkfs.btrfs
+  when: _incus_pool_build_loop | bool
+
+- name: Create the sparse btrfs loop file `{{ incus_storage_pool_source }}` (size `{{ incus_storage_pool_size }}`; sparse, ~0 on disk until VMs write)
+  ansible.builtin.command:
+    cmd: "truncate --size={{ incus_storage_pool_size | regex_replace('iB$', '') }} {{ incus_storage_pool_source }}"
+    creates: "{{ incus_storage_pool_source }}"
+  become: true
+  when: _incus_pool_build_loop | bool
+
+- name: Probe the loop file's filesystem so the role never re-`mkfs`-es an already-formatted `{{ incus_storage_pool_source }}`
+  ansible.builtin.command:
+    cmd: "blkid --output value --match-tag TYPE {{ incus_storage_pool_source }}"
+  register: _incus_loop_blkid
+  changed_when: false
+  failed_when: false
+  become: true
+  when: _incus_pool_build_loop | bool
+
+- name: "`mkfs.btrfs` the loop file `{{ incus_storage_pool_source }}` (only when it has no filesystem yet)"
+  ansible.builtin.command:
+    cmd: "mkfs.btrfs {{ incus_storage_pool_source }}"
+  become: true
+  when:
+    - _incus_pool_build_loop | bool
+    - (_incus_loop_blkid.stdout | default('') | trim) | length == 0
+
+- name: Ensure the loop mount point `{{ incus_storage_pool_loop_mountpoint }}` exists
+  ansible.builtin.file:
+    path: "{{ incus_storage_pool_loop_mountpoint }}"
+    state: directory
+    mode: "0711"
+  become: true
+  when: _incus_pool_build_loop | bool
+
+- name: Add the /etc/fstab loop mount `{{ incus_storage_pool_source }}` -> `{{ incus_storage_pool_loop_mountpoint }}` (`nofail` so a missing disk never blocks boot)
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '\s{{ incus_storage_pool_loop_mountpoint | regex_escape }}\s'
+    line: "{{ incus_storage_pool_source }} {{ incus_storage_pool_loop_mountpoint }} btrfs loop,nofail,noatime 0 0"
+    state: present
+  become: true
+  when: _incus_pool_build_loop | bool
+
+- name: Mount `{{ incus_storage_pool_loop_mountpoint }}` now if not already mounted
+  ansible.builtin.shell:
+    cmd: "if mountpoint -q {{ incus_storage_pool_loop_mountpoint }}; then echo ALREADY_MOUNTED; else mount {{ incus_storage_pool_loop_mountpoint }} && echo MOUNTED_NOW; fi"
+  become: true
+  register: _incus_loop_mount
+  changed_when: "'MOUNTED_NOW' in _incus_loop_mount.stdout"
+  when: _incus_pool_build_loop | bool
+
+- name: Compute the effective pool `source`/`size` for the preseed (the loop mount + no size when the role built a loop; else the raw config)
+  ansible.builtin.set_fact:
+    _incus_effective_pool_source: "{{ incus_storage_pool_loop_mountpoint if (_incus_pool_build_loop | default(false) | bool) else incus_storage_pool_source }}"
+    _incus_effective_pool_size: "{{ '' if (_incus_pool_build_loop | default(false) | bool) else incus_storage_pool_size }}"
+
 # ---------- Initialize incus (idempotent: skipped if `default` storage pool already exists) ----------
 # Run as root via `become: true` because `incus admin init` requires the
 # admin socket (`/run/incus/unix.socket`, group `incus-admin`), and we
