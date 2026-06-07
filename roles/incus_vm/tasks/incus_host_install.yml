@@ -276,6 +276,12 @@
 - name: Probe `incus_storage_pool_source` (absent / a regular file -> role builds a btrfs loop there; a dir / block device -> incus uses it directly)
   ansible.builtin.stat:
     path: "{{ incus_storage_pool_source }}"
+    # MUST stay off: `source` can be a 500GiB loop `.img`, and the default sha1
+    # checksum READS THE WHOLE FILE -> 100% CPU, effectively hangs on every re-run
+    # once the file exists. We only use `.exists` / `.isreg`, which need none of these.
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
   register: _incus_pool_source_stat
   when:
     - incus_storage_pool_driver == 'btrfs'
