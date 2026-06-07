@@ -9,7 +9,7 @@ roles/incus_vm/IMPLEMENTATION_PLAN.md.
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
-`delete`/`update`/`overwrite-dotfiles`/`set-password`/`unset-password`/
+`delete`/`update`/`provision`/`overwrite-dotfiles`/`set-password`/`unset-password`/
 `enable-user-sudo`/`disable-user-sudo`/`info` (target VM status/hw/mounts/storage); `env`; `list` (incus list passthrough).
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
@@ -58,7 +58,7 @@ DEFAULT_ROOT: Path = Path(
 # they don't resolve a target VM.)
 CWD_RESOLVED: tuple[str, ...] = (
     "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete",
-    "overwrite-dotfiles", "update", "set-password", "unset-password",
+    "overwrite-dotfiles", "update", "provision", "set-password", "unset-password",
     "enable-user-sudo", "disable-user-sudo", "snapshot", "gui", "info",
 )
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
@@ -73,6 +73,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "delete": "delete the VM + disk + snapshots (confirms; `--yes` skips)",
     "overwrite-dotfiles": "re-push the host-staged dotfiles into the VM (no re-provision)",
     "update": "refresh + upgrade all packages in the VM",
+    "provision": "install distro bundle(s) / thirdparty recipe(s) onto the VM",
     "set-password": "set a guest account's login password",
     "unset-password": "lock a guest account's password",
     "enable-user-sudo": "let `user` sudo, gated by root's password",
@@ -718,15 +719,15 @@ def ssh_provision(doc: Template, cwd: Path) -> str:
 
 
 def resolve_thirdparty_software(
-    doc: Template, registry: dict[str, Any], ansible_os_family: str
+    names: list[str], registry: dict[str, Any], ansible_os_family: str
 ) -> list[dict[str, Any]]:
-    """Resolve the template's `thirdparty_software` names against the registry into
+    """Resolve `thirdparty_software` recipe names against the registry into
     `{name, already_installed?, install_script}` recipes for THIS VM's family.
     OVERRIDE (not additive like distro groups): the family's entry if defined, else
-    `common`."""
+    `common`. Shared by `init` (the template's list) and `provision` (CLI args)."""
     overlay_key: str = ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY[ansible_os_family]
     recipes: list[dict[str, Any]] = []
-    for name in doc.get("thirdparty_software", []):
+    for name in names:
         entry: Any = registry.get(name)
         if entry is None:
             die(f"unknown thirdparty_software '{name}' (not in thirdparty-software.json; "
@@ -813,7 +814,7 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: P
     thirdparty_names: list[str] = doc.get("thirdparty_software", [])
     if thirdparty_names:
         script += thirdparty_install_script(
-            resolve_thirdparty_software(doc, load_thirdparty_software(root), ansible_os_family)
+            resolve_thirdparty_software(thirdparty_names, load_thirdparty_software(root), ansible_os_family)
         )
     post_install_script: str = doc.get("post_install_script", "")
     if post_install_script:
@@ -1377,6 +1378,50 @@ def cmd_update(name: str, *, dry_run: bool) -> None:
         dry_run=dry_run)
 
 
+def cmd_provision(name: str, unit_names: list[str], root: Path, *, dry_run: bool) -> None:
+    """Install named units onto an EXISTING VM - the post-`init` "add more software"
+    path. Each name is a `distro_package_groups` bundle OR a `thirdparty_software`
+    recipe, resolved against the two materialized registries: distro bundles install
+    via the VM's package manager, thirdparty recipes run their (probe-guarded) script
+    as root. Idempotent - re-running skips already-present packages/recipes. Target is
+    the cwd-bound VM or `--name`, like the other VM subcommands."""
+    ensure_up(name, dry_run=dry_run)
+    distro_registry: dict[str, Any] = load_package_groups(root)
+    thirdparty_registry: dict[str, Any] = load_thirdparty_software(root)
+    distro_bundles: list[str] = []
+    thirdparty_names: list[str] = []
+    for unit in unit_names:
+        if unit in distro_registry:
+            distro_bundles.append(unit)
+        elif unit in thirdparty_registry:
+            thirdparty_names.append(unit)
+        else:
+            die(f"unknown unit '{unit}' - not a distro_package_groups bundle nor a "
+                f"thirdparty_software recipe.\n"
+                f"  distro bundles:      {', '.join(sorted(distro_registry))}\n"
+                f"  thirdparty software: {', '.join(sorted(thirdparty_registry))}")
+    if dry_run:
+        print(f"+ (incus exec {name} -- install distro bundles {distro_bundles or '[]'} "
+              f"+ thirdparty {thirdparty_names or '[]'}, resolved per the VM's ansible_os_family)",
+              file=sys.stderr)
+        return
+    ansible_os_family: str = vm_ansible_os_family(name, dry_run=dry_run)
+    script: str = ""
+    if distro_bundles:
+        packages: list[str] = []
+        for bundle in distro_bundles:
+            packages += resolve_group(distro_registry, bundle, ansible_os_family)
+        packages = list(dict.fromkeys(packages))
+        if packages:
+            script += install_packages_script(ansible_os_family, packages)
+    if thirdparty_names:
+        script += thirdparty_install_script(
+            resolve_thirdparty_software(thirdparty_names, thirdparty_registry, ansible_os_family)
+        )
+    run(["incus", "exec", name, "--", "bash", "-ec", script], dry_run=dry_run)
+    print(f"==> provisioned {', '.join(unit_names)} into {colorize_vm_name(name)}.", file=sys.stderr)
+
+
 def cmd_snapshot(name: str, snapshot_args: list[str], *, dry_run: bool) -> None:
     """Thin wrapper over `incus snapshot`, injecting the target VM as the instance
     arg: `ivm snapshot [create|list|restore|delete|...] [snapname]` ->
@@ -1521,7 +1566,7 @@ def cmd_stub(subcommand: str) -> NoReturn:
 CWD_RESOLVED_HANDLER: dict[str, Callable[..., None]] = {
     "shell": cmd_shell, "shell-user": cmd_shell, "shell-root": cmd_shell,
     "start": cmd_start, "reboot": cmd_reboot, "stop": cmd_stop, "delete": cmd_delete,
-    "overwrite-dotfiles": cmd_overwrite_dotfiles, "update": cmd_update,
+    "overwrite-dotfiles": cmd_overwrite_dotfiles, "update": cmd_update, "provision": cmd_provision,
     "set-password": cmd_set_password, "unset-password": cmd_unset_password,
     "enable-user-sudo": cmd_enable_user_sudo, "disable-user-sudo": cmd_disable_user_sudo,
     "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info,
@@ -1566,6 +1611,9 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name in PASSWORD_SUBCOMMANDS:
             sp.add_argument("username", help="guest account to set/lock the password for (e.g. `user`, `root`)")
+        if name == "provision":
+            sp.add_argument("names", nargs="+",
+                            help="unit(s) to install: a distro_package_groups bundle or a thirdparty_software recipe")
     return parser
 
 
@@ -1613,6 +1661,8 @@ def main() -> None:
         cmd_disable_user_sudo(name, dry_run=args.dry_run)
     elif args.subcommand == "update":
         cmd_update(name, dry_run=args.dry_run)
+    elif args.subcommand == "provision":
+        cmd_provision(name, args.names, root, dry_run=args.dry_run)
     elif args.subcommand == "snapshot":
         cmd_snapshot(name, args.snapshot_args, dry_run=args.dry_run)
     elif args.subcommand == "gui":

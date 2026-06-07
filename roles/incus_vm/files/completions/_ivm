@@ -1,8 +1,9 @@
 #compdef ivm
 # ivm zsh completion (ansible-managed by roles/incus_vm). zsh autoloads this via
 # fpath - see the `ansible-managed/*/zsh-completions` glob in roles/zsh/.zshrc.j2.
-# Two levels: subcommands, then their args - template names for `init`/`env`,
-# `snapshot` actions + existing snapshot names, `user`/`root` for set-/unset-password.
+# Two levels: subcommands, then their args - template names for `init`/`env`, unit
+# names for `provision`, `snapshot` actions + existing snapshot names, `user`/`root`
+# for set-/unset-password.
 
 local -a _ivm_subcommands
 _ivm_subcommands=(
@@ -19,6 +20,7 @@ _ivm_subcommands=(
   'info:target VM info - status, image, hw, network, mounts, storage (cwd or --name)'
   'overwrite-dotfiles:re-push staged dotfiles into the VM'
   'update:upgrade all packages in the VM'
+  'provision:install distro bundle(s) / thirdparty recipe(s) onto the VM'
   'set-password:set a guest account'\''s login password'
   'unset-password:lock a guest account'\''s password'
   'enable-user-sudo:let `user` sudo via root'\''s password'
@@ -26,6 +28,23 @@ _ivm_subcommands=(
   'snapshot:incus snapshot (create/list/restore/delete/rename/show)'
   'gui:open a SPICE graphical console'
 )
+
+# All installable unit names for `provision`: keys of the materialized distro-bundle
+# + thirdparty-recipe registries (python3 is an ivm dependency, so always present).
+_ivm_unit_names() {
+  local _ivm_data_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}"
+  python3 - "$_ivm_data_root" 2>/dev/null <<'PY'
+import json, os, sys
+root = sys.argv[1]
+for f in ("distro-package-groups.json", "thirdparty-software.json"):
+    p = os.path.join(root, f)
+    if os.path.exists(p):
+        try:
+            print("\n".join(json.load(open(p))))
+        except Exception:
+            pass
+PY
+}
 
 local _ivm_templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}/templates"
 local state
@@ -44,6 +63,7 @@ case "$state" in
   args)
     case "$words[1]" in
       init|env) compadd -- ${_ivm_templates_root}/*.yaml(N:t:r) ;;
+      provision) compadd -- ${(f)"$(_ivm_unit_names)"} ;;
       set-password|unset-password) compadd -- user root ;;
       snapshot)
         # `$words` here: 1=snapshot, then the action, then a snapshot name. Flags may

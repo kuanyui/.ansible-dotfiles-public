@@ -1,12 +1,30 @@
 # ivm bash completion (ansible-managed by roles/incus_vm). bashrc sources every
 # file under `~/.local/share/ansible-managed/*/bash-completions/` - see
 # roles/dotfiles/.bashrc.j2. Two levels: subcommands, then their args - template
-# names for `init`/`env`, `snapshot` actions + snapshot names, `user`/`root`.
+# names for `init`/`env`, unit names for `provision`, `snapshot` actions + snapshot
+# names, `user`/`root`.
+# All installable unit names for `provision`: keys of the materialized distro-bundle
+# + thirdparty-recipe registries (python3 is an ivm dependency, so always present).
+_ivm_unit_names() {
+    local root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}"
+    python3 - "$root" 2>/dev/null <<'PY'
+import json, os, sys
+root = sys.argv[1]
+for f in ("distro-package-groups.json", "thirdparty-software.json"):
+    p = os.path.join(root, f)
+    if os.path.exists(p):
+        try:
+            print("\n".join(json.load(open(p))))
+        except Exception:
+            pass
+PY
+}
+
 _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init shell shell-user shell-root start reboot stop delete env list info overwrite-dotfiles update set-password unset-password enable-user-sudo disable-user-sudo snapshot gui"
+    local subcommands="init shell shell-user shell-root start reboot stop delete env list info overwrite-dotfiles update provision set-password unset-password enable-user-sudo disable-user-sudo snapshot gui"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}/templates"
 
     # --name / --root take a value: complete VM names after --name.
@@ -45,6 +63,9 @@ _ivm() {
             ;;
         set-password|unset-password)
             COMPREPLY=( $(compgen -W "user root" -- "$cur") )
+            ;;
+        provision)
+            COMPREPLY=( $(compgen -W "$(_ivm_unit_names)" -- "$cur") )
             ;;
         snapshot)
             # After `snapshot`: an action, then (for restore/delete/rename/show) an

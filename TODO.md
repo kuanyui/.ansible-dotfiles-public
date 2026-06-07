@@ -527,7 +527,7 @@ an imperative `ivm provision`. Phased.
   role defaults AND the `ivm_install.yml` render dict (explicit, like the distro
   bundles).
 
-- [ ] **Phase 1b: `ivm provision <name...>`** - install named units onto an
+- [x] **Phase 1b: `ivm provision <name...>`** - install named units onto an
   EXISTING VM (cwd-resolved or `--name`), so software can be added after `init`.
   Phase 1 resolves each name against `distro_packages` bundles + `thirdparty_
   software` entries DIRECTLY - **no new "groups" registry needed yet** (that's
@@ -538,6 +538,19 @@ an imperative `ivm provision`. Phased.
   with incus's own `profile` concept; `provision` ties to ivm's existing
   provisioning step and is unambiguous (`add`/`setup` were the alternatives, easy
   rename if reconsidered).
+  **DONE:** `cmd_provision` (added to `CWD_RESOLVED` + handler + a `provision`
+  subparser with `names` nargs=+ + main dispatch): classifies each name as a
+  `distro_packages` bundle or a `thirdparty_software` recipe, resolves per the VM's
+  `user.ivm_ansible_os_family` tag, builds ONE root script (distro install +
+  probe-guarded thirdparty) run via `incus exec`; unknown name dies listing both
+  registries. `resolve_thirdparty_software` refactored to take a names list (now
+  shared by `init` + `provision`). zsh `_ivm` + bash `ivm.bash`: `provision`
+  subcommand + unit-name completion via `_ivm_unit_names` (python3 reads the two
+  registry JSON keys from `$IVM_ROOT`, heredoc). Verified: `mypy --strict` 0,
+  py_compile, `ivm provision --help`, dry-run (classify + unknown-dies), 5 unit
+  checks (distro+thirdparty script / thirdparty-only / unknown dies), `bash -n` +
+  `zsh -n`, and `_ivm_unit_names` actually emitting `basic_tools claude codex ...`.
+  NOT run against real incus (host only).
 
 - [ ] **Phase 2: groups/composite registry + emacs (pkg + config)** - some units
   span KINDS: `emacs` = distro pkg `emacs` PLUS its `.emacs.d` config. Needs a
