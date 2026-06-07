@@ -76,7 +76,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "unset-password": "lock a guest account's password",
     "enable-user-sudo": "let `user` sudo, gated by root's password",
     "disable-user-sudo": "revert enable-user-sudo (remove the sudoers drop-in)",
-    "snapshot": "`incus snapshot` wrapper (create/list/restore/delete)",
+    "snapshot": "`incus snapshot` wrapper (create/list/restore/delete/rename/show)",
     "gui": "open a SPICE graphical console",
     "info": "show the VM's live state (status/image/hw/network/mounts/storage)",
 }

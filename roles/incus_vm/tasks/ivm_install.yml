@@ -117,7 +117,7 @@
     incus_vm_dotfiles_staging_root: "{{ incus_vm_ivm_dir }}"
     incus_vm_dotfiles_ansible_os_families: [Debian, Suse, RedHat]
 
-# ---------- `ivm` shell completion (two levels: subcommand, then template) ----------
+# ---------- `ivm` shell completion (subcommands, then their args) ----------
 # Auto-discovered by the rc globs (no rc edits): zsh via the
 # `ansible-managed/*/zsh-completions` fpath glob, bash via the
 # `ansible-managed/*/bash-completions/*` source loop.

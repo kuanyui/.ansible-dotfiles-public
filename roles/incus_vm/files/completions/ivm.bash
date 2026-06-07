@@ -1,7 +1,7 @@
 # ivm bash completion (ansible-managed by roles/incus_vm). bashrc sources every
 # file under `~/.local/share/ansible-managed/*/bash-completions/` - see
-# roles/dotfiles/.bashrc.j2. Two levels: subcommands, then template names for
-# `init` / `env`.
+# roles/dotfiles/.bashrc.j2. Two levels: subcommands, then their args - template
+# names for `init`/`env`, `snapshot` actions + snapshot names, `user`/`root`.
 _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
@@ -45,6 +45,45 @@ _ivm() {
             ;;
         set-password|unset-password)
             COMPREPLY=( $(compgen -W "user root" -- "$cur") )
+            ;;
+        snapshot)
+            # After `snapshot`: an action, then (for restore/delete/rename/show) an
+            # EXISTING snapshot name. `i` indexes the `snapshot` word; flags may sit
+            # between, so skip them. Mirrors `ivm snapshot <action> [snapname]`.
+            local snapshot_action="" snapshot_action_index=-1 word_index
+            for (( word_index = i + 1; word_index < COMP_CWORD; word_index++ )); do
+                [[ "${COMP_WORDS[word_index]}" == -* ]] && continue
+                snapshot_action="${COMP_WORDS[word_index]}"
+                snapshot_action_index=$word_index
+                break
+            done
+            if [[ -z "$snapshot_action" ]]; then
+                COMPREPLY=( $(compgen -W "create list restore delete rename show" -- "$cur") )
+            else
+                # Count non-flag positional args already given after the action: only
+                # the FIRST one is an existing snapshot name (rename's 2nd arg is new).
+                local snapshot_positional=0
+                for (( word_index = snapshot_action_index + 1; word_index < COMP_CWORD; word_index++ )); do
+                    [[ "${COMP_WORDS[word_index]}" == -* ]] || (( snapshot_positional++ ))
+                done
+                case "$snapshot_action" in
+                    restore|delete|rename|show)
+                        if (( snapshot_positional == 0 )); then
+                            # Target VM: --name wins, else the VM bound to $PWD via the
+                            # user.ivm_init_at_dir tag (exact-cwd match, no ancestor walk).
+                            local snapshot_vm="" name_index
+                            for (( name_index = 1; name_index < COMP_CWORD; name_index++ )); do
+                                if [[ "${COMP_WORDS[name_index]}" == "--name" ]]; then
+                                    snapshot_vm="${COMP_WORDS[name_index+1]}"
+                                    break
+                                fi
+                            done
+                            [[ -z "$snapshot_vm" ]] && snapshot_vm="$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)"
+                            [[ -n "$snapshot_vm" ]] && COMPREPLY=( $(compgen -W "$(incus snapshot list "$snapshot_vm" --format csv --columns n 2>/dev/null)" -- "$cur") )
+                        fi
+                        ;;
+                esac
+            fi
             ;;
     esac
 }

@@ -269,6 +269,14 @@ First real `ivm init webbrowser` on the host surfaced these (all fixed unless no
   binding (all VM-acting subcommands). Resolved once in `main()` and passed to
   each cmd (they no longer self-resolve). zsh + bash completion of `--name`
   values from `incus list`.
+- [x] **`snapshot` sub-action completion** - zsh `_ivm` + bash `ivm` now complete a
+  THIRD level under `snapshot`: the `incus snapshot` actions (create/list/restore/
+  delete/rename/show), then for restore/delete/rename/show the target VM's EXISTING
+  snapshot names (`incus snapshot list`; VM resolved by `--name`, else `incus list
+  user.ivm_init_at_dir=$PWD`). create's name slot + rename's 2nd arg correctly offer
+  nothing. Also fixed the stale `(create/list/restore/delete)` blurbs (`_ivm` describe
+  + `ivm` `CWD_RESOLVED_HELP`) to add rename/show. Functionally tested: bash via a
+  stubbed `incus` (10 cases), zsh via a real interactive-TAB `zsh/zpty` harness.
 - [x] **`ivm list` + `ivm reboot`** - `list` = raw `incus list` passthrough
   (via `parse_known_args` so `--format` etc. reach incus; other subcommands still
   reject unknown args); `reboot` = `incus restart` the target VM.
