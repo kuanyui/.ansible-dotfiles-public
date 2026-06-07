@@ -10,13 +10,20 @@ _ivm_unit_names() {
     python3 - "$root" 2>/dev/null <<'PY'
 import json, os, sys
 root = sys.argv[1]
+names = []
 for f in ("distro-package-groups.json", "thirdparty-software.json"):
     p = os.path.join(root, f)
     if os.path.exists(p):
         try:
-            print("\n".join(json.load(open(p))))
+            names += list(json.load(open(p)))
         except Exception:
             pass
+cfg = os.path.join(root, "config-files")
+if os.path.isdir(cfg):
+    names += sorted(os.listdir(cfg))
+# A name can be in two registries (e.g. `emacs` is a package bundle AND a config
+# set) - dedupe so it is offered once, order preserved.
+print("\n".join(dict.fromkeys(names)))
 PY
 }
 

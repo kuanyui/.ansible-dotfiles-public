@@ -39,6 +39,14 @@ distro_packages_wayland_tools:
   common:
     - wl-clipboard
 
+# The emacs PACKAGE only. Its `~/.emacs.d` config is a SEPARATE config-file set that
+# `ivm` stages once and pushes (see roles/incus_vm) - so `ivm provision emacs` =
+# this package + that config set. `emacs` is the package name in all three families'
+# default repos.
+distro_packages_emacs:
+  common:
+    - emacs
+
 # Minimal X11 stack any X WM/DE needs: server + startx + xauth + the libinput
 # input driver (without it X gets no mouse/keyboard events). Video needs no
 # package - the server's built-in modesetting drives virtio-gpu/std-VGA. The

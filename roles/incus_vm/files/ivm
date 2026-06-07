@@ -837,6 +837,25 @@ def push_dotfiles_commands(ansible_os_family: str, name: str, root: Path) -> lis
     ]
 
 
+def config_sets_dir(root: Path) -> Path:
+    """Where apply-time staging puts each pushable config-file set (one subdir per
+    set, e.g. `emacs/.emacs.d`). Distro-independent - staged ONCE, unlike the
+    per-family shell dotfiles in `rootfs/<family>/`."""
+    return root / "config-files"
+
+
+def push_config_set_commands(set_name: str, name: str, root: Path) -> list[list[str]]:
+    """Push one staged config-file set into the guest's /home/user. Each top-level
+    entry under `config-files/<set>/` (e.g. `.emacs.d`) lands directly in /home/user,
+    owned by `user` (uid/gid 1000) - mirrors push_dotfiles_commands."""
+    set_dir: Path = config_sets_dir(root) / set_name
+    return [
+        ["incus", "file", "push", "--recursive", "--create-dirs",
+         "--uid", "1000", "--gid", "1000", str(entry), f"{name}/home/user/"]
+        for entry in sorted(set_dir.iterdir())
+    ]
+
+
 def wait_until(name: str, probe: str, timeout: int) -> bool:
     """Poll `bash -c <probe>` inside the guest until it exits 0 or `timeout`s
     elapse. Returns True on success, False on timeout."""
@@ -1380,29 +1399,40 @@ def cmd_update(name: str, *, dry_run: bool) -> None:
 
 def cmd_provision(name: str, unit_names: list[str], root: Path, *, dry_run: bool) -> None:
     """Install named units onto an EXISTING VM - the post-`init` "add more software"
-    path. Each name is a `distro_package_groups` bundle OR a `thirdparty_software`
-    recipe, resolved against the two materialized registries: distro bundles install
-    via the VM's package manager, thirdparty recipes run their (probe-guarded) script
-    as root. Idempotent - re-running skips already-present packages/recipes. Target is
-    the cwd-bound VM or `--name`, like the other VM subcommands."""
+    path. A name can be a `distro_package_groups` bundle, a `thirdparty_software`
+    recipe, AND/OR a config-file set - all that match are applied (e.g. `emacs` is
+    BOTH the `emacs` package bundle AND the `~/.emacs.d` config set, so both happen).
+    Distro bundles install via the VM's package manager, thirdparty recipes run their
+    (probe-guarded) script as root, config sets are pushed into /home/user.
+    Idempotent. Target is the cwd-bound VM or `--name`, like the other VM subcommands."""
     ensure_up(name, dry_run=dry_run)
     distro_registry: dict[str, Any] = load_package_groups(root)
     thirdparty_registry: dict[str, Any] = load_thirdparty_software(root)
+    config_root: Path = config_sets_dir(root)
     distro_bundles: list[str] = []
     thirdparty_names: list[str] = []
+    config_sets: list[str] = []
     for unit in unit_names:
+        matched: bool = False
         if unit in distro_registry:
             distro_bundles.append(unit)
-        elif unit in thirdparty_registry:
+            matched = True
+        if unit in thirdparty_registry:
             thirdparty_names.append(unit)
-        else:
-            die(f"unknown unit '{unit}' - not a distro_package_groups bundle nor a "
-                f"thirdparty_software recipe.\n"
+            matched = True
+        if (config_root / unit).is_dir():
+            config_sets.append(unit)
+            matched = True
+        if not matched:
+            available_sets: list[str] = sorted(p.name for p in config_root.iterdir()) if config_root.is_dir() else []
+            die(f"unknown unit '{unit}' - not a distro_package_groups bundle, a "
+                f"thirdparty_software recipe, nor a config-file set.\n"
                 f"  distro bundles:      {', '.join(sorted(distro_registry))}\n"
-                f"  thirdparty software: {', '.join(sorted(thirdparty_registry))}")
+                f"  thirdparty software: {', '.join(sorted(thirdparty_registry))}\n"
+                f"  config sets:         {', '.join(available_sets)}")
     if dry_run:
-        print(f"+ (incus exec {name} -- install distro bundles {distro_bundles or '[]'} "
-              f"+ thirdparty {thirdparty_names or '[]'}, resolved per the VM's ansible_os_family)",
+        print(f"+ (incus exec {name} -- install distro bundles {distro_bundles or '[]'} + "
+              f"thirdparty {thirdparty_names or '[]'}; push config sets {config_sets or '[]'})",
               file=sys.stderr)
         return
     ansible_os_family: str = vm_ansible_os_family(name, dry_run=dry_run)
@@ -1418,7 +1448,11 @@ def cmd_provision(name: str, unit_names: list[str], root: Path, *, dry_run: bool
         script += thirdparty_install_script(
             resolve_thirdparty_software(thirdparty_names, thirdparty_registry, ansible_os_family)
         )
-    run(["incus", "exec", name, "--", "bash", "-ec", script], dry_run=dry_run)
+    if script:
+        run(["incus", "exec", name, "--", "bash", "-ec", script], dry_run=dry_run)
+    for set_name in config_sets:
+        for push_cmd in push_config_set_commands(set_name, name, root):
+            run(push_cmd, dry_run=dry_run)
     print(f"==> provisioned {', '.join(unit_names)} into {colorize_vm_name(name)}.", file=sys.stderr)
 
 

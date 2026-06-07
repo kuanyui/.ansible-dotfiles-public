@@ -103,6 +103,7 @@
         'cjk_fonts': distro_packages_cjk_fonts,
         'cjk_input': distro_packages_cjk_input,
         'incus_guest_baseline': distro_packages_incus_guest_baseline,
+        'emacs': distro_packages_emacs,
       } | to_nice_json }}
 
 # ---------- Materialize the thirdparty_software recipe registry for `ivm` ----------
@@ -136,6 +137,28 @@
   vars:
     incus_vm_dotfiles_staging_root: "{{ incus_vm_ivm_dir }}"
     incus_vm_dotfiles_ansible_os_families: [Debian, Suse, RedHat]
+
+# ---------- Stage emacs config ONCE (distro-independent; NOT per-family) ----------
+# The shell dotfiles are staged per ansible_os_family (because `.zshrc`'s min-install
+# helper differs: apt-min/zypper-min/dnf-min). The emacs `.el` files are IDENTICAL on
+# every distro, so stage ONE copy under config-files/emacs/ (no per-family duplication).
+# `ivm` pushes it into a guest's ~/.emacs.d when the `emacs` config set is provisioned
+# (`ivm provision emacs`). `user` variant only (is_root=false) - emacs is used as `user`.
+- name: Ensure `{{ incus_vm_ivm_dir }}/config-files/emacs` exists (single, distro-independent emacs config tree)
+  ansible.builtin.file:
+    path: "{{ incus_vm_ivm_dir }}/config-files/emacs"
+    state: directory
+    mode: "0755"
+
+- name: "Stage emacs config into `{{ incus_vm_ivm_dir }}/config-files/emacs/.emacs.d` (via `roles/emacs deploy-emacs-config.yml`)"
+  ansible.builtin.include_role:
+    name: emacs
+    tasks_from: deploy-emacs-config.yml
+  vars:
+    target_home: "{{ incus_vm_ivm_dir }}/config-files/emacs"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: false
 
 # ---------- `ivm` shell completion (subcommands, then their args) ----------
 # Auto-discovered by the rc globs (no rc edits): zsh via the

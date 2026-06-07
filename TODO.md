@@ -599,7 +599,7 @@ an imperative `ivm provision`. Phased.
   `zsh -n`, and `_ivm_unit_names` actually emitting `basic_tools claude codex ...`.
   NOT run against real incus (host only).
 
-- [ ] **Phase 2: make `ivm provision emacs` also drop the emacs config files** -
+- [x] **Phase 2: make `ivm provision emacs` also drop the emacs config files** -
   installing emacs usefully = the `emacs` PACKAGE + your `~/.emacs.d` config files.
   Today `ivm provision <name>` knows only two kinds of name: a package group
   (`roles/distro_packages`) or an install script (`roles/thirdparty_software`).
@@ -627,6 +627,29 @@ an imperative `ivm provision`. Phased.
      ignores today.
   Exact file + field names: decide when building, don't invent now. Bigger than
   1a/1b because it changes how dotfiles are staged + adds a push-one-set step.
+  **DONE:** `distro_packages_emacs:{common:[emacs]}` bundle; `ivm_install.yml`
+  stages the emacs config ONCE (not per-family) into `config-files/emacs/.emacs.d/`
+  via `roles/emacs deploy-emacs-config.yml` (user, is_root=false) + adds `emacs` to
+  the rendered `distro-package-groups.json`. `ivm`: `config_sets_dir` +
+  `push_config_set_commands` (`incus file push --recursive --uid 1000` each
+  top-level entry -> /home/user, mirrors push_dotfiles); `cmd_provision` rewritten
+  to MULTI-MATCH - a name applies as a distro bundle AND/OR thirdparty recipe AND/OR
+  config set, so `emacs` = install the `emacs` package + push `~/.emacs.d`; unknown
+  lists all three. zsh+bash completion lists config-set names too (deduped - `emacs`
+  is in two registries). DESIGN decided: `config-files/<set>/` FOLDERS are the list
+  (no new JSON registry); "one name = package + config" = the same name in two
+  registries (multi-match), no separate mapping file. Verified: `mypy --strict` 0,
+  py_compile, `bash -n`/`zsh -n`; REAL `ansible-playbook` staged
+  `config-files/emacs/.emacs.d/{init.el,lisps}` (single copy); the REAL INSTALLED
+  `ivm provision --dry-run` against the REAL registries multi-matched
+  `emacs`->bundle+config-set, `basic_tools`->bundle, `claude`->thirdparty, and
+  unknown-dies-listing-all-3. NOT verified: incus-runtime push into a live VM +
+  apt-install emacs - this host's unprivileged `user-1000` project has no IPv4 (the
+  documented net gap; host setup aborted at the group-activation gate) and the image
+  server hung, so no container/VM could boot here. The push is a thin `incus file
+  push` wrapper; the distro-install path is unchanged from 1b. NOT wired: `ivm init`
+  from a template's `dotfiles:` field still ignores config sets (provision is the
+  path; that field stays unused - a follow-up if init-time emacs config is wanted).
 
 - [ ] **`cpp_dev` + `qt_dev` distro bundles** - the `qtdev` item under "ivm
   real-run fixes + desktop UX" becomes two `distro_packages` bundles (Qt6 + C++
@@ -668,6 +691,20 @@ manages packages). Decided: role -> `centralize_lang_pkgs_dir`, dir
   Independent of the `ivm provision` work; can land anytime. Existing installs
   under the old `~/.local-pkgs/` are left for the user to `rm -rf` (or a one-time
   note in the role README).
+
+## profile_tasks callback: boot-style run/skip log
+
+- [x] **`callback_plugins/profile_tasks.py`: print every task in execution order
+  with a systemd-boot-style status tag BEFORE the timing summary** - `[  OK  ]`
+  ran, `[ SKIP ]` skipped (e.g. `when:` false), `[ FAIL ]` failed/unreachable;
+  then the existing top-N timing table. One record per task captured at
+  `v2_playbook_on_task_start` (so the list is in execution order), upgraded by
+  `v2_runner_on_ok/skipped/failed/unreachable` with precedence fail>ok>skip
+  (ok-on-host1 + skip-on-host2 stays OK; any failure wins). OK=green, FAIL=red,
+  SKIP=default colour (via `display(..., color=)`, which respects ansible's colour
+  settings). Verified: a real `ansible-playbook` run (ok / `when:false` skip /
+  changed / loop / `when:1>2` skip - all tagged correctly, in order) AND the real
+  120-task `incus_vm.yml` apply.
 
 ## Notes / future
 
