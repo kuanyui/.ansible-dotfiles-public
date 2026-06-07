@@ -1,0 +1,25 @@
+// Managed by ansible `roles/firefox_tunes` - reapplied at every Firefox startup,
+// so any in-session about:config edit to these reverts on the next launch.
+// Do not edit by hand. Cache strategy: {{ firefox_tunes_cache_strategy }}
+
+// Session store: recovery.jsonlz4 is written every interval (Firefox default
+// 15000 ms) - the dominant idle SSD-write source. A clean shutdown always saves
+// immediately, so a long interval only affects what is recovered after a crash.
+user_pref("browser.sessionstore.interval", {{ firefox_tunes_sessionstore_interval_ms }});
+
+{% if firefox_tunes_cache_strategy == "ram" %}
+// (a) RAM-only cache: never write the cache to the SSD. The cache does not
+// persist across Firefox restarts.
+user_pref("browser.cache.disk.enable", false);
+user_pref("browser.cache.memory.enable", true);
+user_pref("browser.cache.memory.capacity", {{ firefox_tunes_memory_cache_capacity_kib }});
+{% elif firefox_tunes_cache_strategy == "tmpfs_disk" %}
+// (b) Disk cache redirected to a tmpfs (RAM-backed) dir: zero SSD writes, but
+// the cache survives Firefox restarts (until a reboot clears tmpfs). smart_size
+// must be off for the capacity cap to take effect. Firefox does NOT create the
+// parent directory - the role + a user-tmpfiles.d entry ensure it exists.
+user_pref("browser.cache.disk.enable", true);
+user_pref("browser.cache.disk.smart_size.enabled", false);
+user_pref("browser.cache.disk.capacity", {{ firefox_tunes_disk_cache_capacity_kib }});
+user_pref("browser.cache.disk.parent_directory", "{{ firefox_tunes_disk_cache_tmpfs_dir }}");
+{% endif %}

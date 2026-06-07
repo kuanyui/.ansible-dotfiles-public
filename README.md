@@ -27,7 +27,8 @@ playbooks/                # entry playbooks
   ├─ incus_vm.yml         # ├─ dedicated entry: install the `ivm` Incus VM launcher
   ├─ incus_vm_uninstall.yml      # ├─ uninstall flow (removes `ivm` + role subdir)
   ├─ apparmor.yml         # ├─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
-  └─ trusted_pubkeys.yml  # └─ dedicated entry: pin GitHub/GitLab SSH host keys + Debian CD signing keys
+  ├─ trusted_pubkeys.yml  # ├─ dedicated entry: pin GitHub/GitLab SSH host keys + Debian CD signing keys
+  └─ firefox_tunes.yml    # └─ dedicated entry: write per-profile user.js (session-store + cache off the SSD)
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
 callback_plugins/         # local ansible callback plugins (profile_tasks for per-task timing)
@@ -56,6 +57,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`incus_vm/`](roles/incus_vm/) | Install `ivm`: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
 | [`trusted_pubkeys/`](roles/trusted_pubkeys/) | Pin well-known public keys for the current user (hardcoded in-repo for audit, not fetched): GitHub/GitLab SSH host keys into `~/.ssh/known_hosts` (no TOFU prompt on `git clone git@...`), plus Debian CD signing GPG keys into a dedicated keyring for verifying Debian images. |
+| [`firefox_tunes/`](roles/firefox_tunes/) | Cut Firefox SSD writes for the current user: write a per-profile `user.js` (enumerated from `profiles.ini`) that lengthens the session-store interval and keeps the cache off the SSD (RAM-only, or disk cache on a tmpfs dir). |
 
 ## Installation
 

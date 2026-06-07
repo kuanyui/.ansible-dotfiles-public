@@ -1,0 +1,85 @@
+---
+- name: Stat the Firefox profiles index `{{ target_home }}/.mozilla/firefox/profiles.ini`
+  ansible.builtin.stat:
+    path: "{{ target_home }}/.mozilla/firefox/profiles.ini"
+  register: _firefox_tunes_profiles_ini
+
+- name: Warn and skip when there is no profiles.ini (Firefox not installed / never launched)
+  ansible.builtin.debug:
+    msg: >-
+      No {{ target_home }}/.mozilla/firefox/profiles.ini - skipping firefox_tunes.
+      Install Firefox and launch it once to create a profile, then re-run.
+  when: not _firefox_tunes_profiles_ini.stat.exists
+
+- name: Configure every Firefox profile
+  when: _firefox_tunes_profiles_ini.stat.exists
+  block:
+    - name: Read profiles.ini
+      ansible.builtin.slurp:
+        src: "{{ target_home }}/.mozilla/firefox/profiles.ini"
+      register: _firefox_tunes_profiles_raw
+
+    # `Path=` is relative to ~/.mozilla/firefox/ unless IsRelative=0 (absolute,
+    # rare). The `^(?!/)` zero-width replace prepends the firefox dir only to the
+    # relative ones, leaving any absolute path untouched.
+    - name: Resolve profile directories from profiles.ini `Path=` entries
+      ansible.builtin.set_fact:
+        _firefox_tunes_profile_dirs: >-
+          {{ (_firefox_tunes_profiles_raw.content | b64decode
+              | regex_findall('^Path=(.+)$', multiline=True)
+              | map('regex_replace', '\r$', ''))
+             | map('regex_replace', '^(?!/)', target_home ~ '/.mozilla/firefox/')
+             | list }}
+
+    - name: Remove the tmpfs-cache boot entry when strategy is not `tmpfs_disk`
+      ansible.builtin.file:
+        path: "{{ target_home }}/.config/user-tmpfiles.d/firefox-tunes-cache.conf"
+        state: absent
+      when: firefox_tunes_cache_strategy != "tmpfs_disk"
+
+    - name: Ensure the tmpfs disk-cache dir + recreate-on-boot entry (strategy `tmpfs_disk`)
+      when: firefox_tunes_cache_strategy == "tmpfs_disk"
+      block:
+        - name: Create the tmpfs cache dir `{{ firefox_tunes_disk_cache_tmpfs_dir }}` now
+          ansible.builtin.file:
+            path: "{{ firefox_tunes_disk_cache_tmpfs_dir }}"
+            state: directory
+            owner: "{{ target_user }}"
+            group: "{{ target_group }}"
+            mode: "0700"
+
+        - name: Ensure `{{ target_home }}/.config/user-tmpfiles.d/` exists
+          ansible.builtin.file:
+            path: "{{ target_home }}/.config/user-tmpfiles.d"
+            state: directory
+            owner: "{{ target_user }}"
+            group: "{{ target_group }}"
+            mode: "0755"
+
+        - name: Recreate the tmpfs cache dir each boot via `{{ target_home }}/.config/user-tmpfiles.d/firefox-tunes-cache.conf`
+          ansible.builtin.copy:
+            dest: "{{ target_home }}/.config/user-tmpfiles.d/firefox-tunes-cache.conf"
+            owner: "{{ target_user }}"
+            group: "{{ target_group }}"
+            mode: "0644"
+            content: |
+              # Managed by ansible roles/firefox_tunes. /tmp is tmpfs (emptied on
+              # boot), so recreate Firefox's RAM-backed disk-cache dir each login.
+              d {{ firefox_tunes_disk_cache_tmpfs_dir }} 0700 {{ target_user }} {{ target_group }} -
+
+    - name: Deploy user.js into each Firefox profile
+      ansible.builtin.template:
+        src: user.js.j2
+        dest: "{{ item }}/user.js"
+        owner: "{{ target_user }}"
+        group: "{{ target_group }}"
+        mode: "0644"
+      loop: "{{ _firefox_tunes_profile_dirs }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    - name: Note that Firefox must be restarted for user.js to take effect
+      ansible.builtin.debug:
+        msg: >-
+          user.js written to {{ _firefox_tunes_profile_dirs | length }} profile(s)
+          (strategy={{ firefox_tunes_cache_strategy }}). Restart Firefox to apply.

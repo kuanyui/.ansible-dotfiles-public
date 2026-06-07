@@ -1,0 +1,21 @@
+---
+- name: Skip `firefox_tunes` role unless `setup_firefox_tunes` is true
+  ansible.builtin.debug:
+    msg: "Skipping firefox_tunes (setup_firefox_tunes={{ setup_firefox_tunes | default(false) }})."
+  when: not setup_firefox_tunes | default(false) | bool
+
+- when: setup_firefox_tunes | default(false) | bool
+  block:
+    - name: Verify required variables are set
+      ansible.builtin.assert:
+        that:
+          - target_home != ""
+          - target_user != ""
+          - target_group != ""
+          - firefox_tunes_cache_strategy in ["ram", "tmpfs_disk"]
+        msg: >-
+          target_home/target_user/target_group must be set by the calling playbook
+          and firefox_tunes_cache_strategy must be 'ram' or 'tmpfs_disk'.
+
+    - name: Apply about:config tweaks via a per-profile user.js
+      ansible.builtin.include_tasks: apply_user_js.yml

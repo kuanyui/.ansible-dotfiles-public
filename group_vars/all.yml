@@ -45,3 +45,7 @@ setup_apparmor: false
 # so `git clone git@...` skips the TOFU prompt. Keys are hardcoded in-repo (not
 # fetched) for an auditable, frozen record. Off by default - opt-in per host.
 setup_trusted_pubkeys: false
+# `setup_firefox_tunes`: apply about:config tweaks (session-store interval + cache
+# off the SSD) to every Firefox profile of the current user via
+# `roles/firefox_tunes`, by writing a per-profile user.js. Off by default - opt-in.
+setup_firefox_tunes: false

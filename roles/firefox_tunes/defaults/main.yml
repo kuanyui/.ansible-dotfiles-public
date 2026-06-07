@@ -1,0 +1,33 @@
+---
+# Must be set by the calling playbook (see `playbooks/user.yml`).
+target_home: ""
+target_user: ""
+target_group: ""
+
+# How Firefox keeps its cache OFF the SSD:
+#   "ram"        (a) - disk cache disabled; cache lives only in RAM (memory
+#                      cache). Simplest; cache does NOT persist across restarts.
+#   "tmpfs_disk" (b) - disk cache redirected to a tmpfs (RAM-backed) dir, so it
+#                      persists across Firefox restarts (until reboot) yet never
+#                      touches the SSD. Needs the tmpfs dir (re)created each boot
+#                      (a user-tmpfiles.d entry does that; no root).
+firefox_tunes_cache_strategy: "ram"
+
+# Session store writes sessionstore-backups/recovery.jsonlz4 every interval - the
+# dominant idle SSD-write source. Firefox default is 15000 ms (15 s). A clean
+# shutdown always saves immediately, so a long interval only changes what is
+# recovered after a CRASH / power loss. 1800000 = 30 min (lower it for tighter
+# crash recovery at the cost of more writes).
+firefox_tunes_sessionstore_interval_ms: 1800000
+
+# (a) RAM cache size cap, KiB. -1 = auto (Firefox sizes it from physical RAM).
+firefox_tunes_memory_cache_capacity_kib: -1
+
+# (b) tmpfs disk-cache size cap, KiB (bounds RAM use). 1048576 = 1 GiB.
+firefox_tunes_disk_cache_capacity_kib: 1048576
+
+# (b) tmpfs dir for the disk cache. MUST be on a tmpfs mount (the user confirmed
+# /tmp is tmpfs). Firefox creates `cache2/` UNDER this but does NOT create the
+# dir itself, so the role makes it now + a user-tmpfiles.d entry recreates it
+# each boot.
+firefox_tunes_disk_cache_tmpfs_dir: "/tmp/firefox-cache-{{ target_user }}"

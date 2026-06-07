@@ -16,3 +16,4 @@
     - container_apps   # gated by `setup_container_apps` (default false in group_vars/all.yml)
     - apparmor         # gated by `setup_apparmor` (default false in group_vars/all.yml)
     - trusted_pubkeys  # gated by `setup_trusted_pubkeys` (default false in group_vars/all.yml)
+    - firefox_tunes    # gated by `setup_firefox_tunes` (default false in group_vars/all.yml)

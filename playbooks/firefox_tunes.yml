@@ -1,0 +1,12 @@
+---
+- name: Apply Firefox about:config tweaks for the current user via `roles/firefox_tunes`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    target_home: "{{ ansible_facts['env']['HOME'] }}"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    setup_firefox_tunes: true  # dedicated entry point - bypass the opt-in gate
+  roles:
+    - firefox_tunes

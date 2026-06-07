@@ -445,7 +445,7 @@ in different places; keep them separate:
   the disabled path prints a visible skip-debug (transparency rule). GPG-import
   idempotency lands with the GPG part (`gpg --import` is naturally idempotent).
 
-## firefox_tunes role (planned)
+## firefox_tunes role (built + verified on a fake profile tree; needs a real-Firefox run)
 
 Apply `about:config` tweaks (mainly disk-cache, to cut SSD writes) to ALL Firefox
 profiles of the current user. Config-style role (writes per-profile dotfiles);
@@ -467,11 +467,19 @@ wire into `playbooks/user.yml`, gate `setup_firefox_tunes` (default false).
     powerful: `lockPref()` sets/locks ANY pref incl. ones policies.json refuses, but
     lives in the read-only INSTALL dir -> system-wide, not per-user.
   Do NOT edit `prefs.js` directly (Firefox overwrites it on exit).
-- [ ] **Enumerate profiles** - native Firefox only (user dropped Flatpak). Parse
-  `~/.mozilla/firefox/profiles.ini` and write `user.js` into each listed profile
-  dir (a user can have several profiles).
+- [x] **Enumerate profiles** - DONE (native only). `tasks/apply_user_js.yml` slurps
+  `~/.mozilla/firefox/profiles.ini`, `regex_findall('^Path=(.+)$', multiline=True)`,
+  prepends the firefox dir to relative paths (`^(?!/)` zero-width replace; an absolute
+  IsRelative=0 path is left as-is), writes `user.js` into each. No profiles.ini ->
+  visible warn + skip (Firefox not installed / never launched).
 
-- [ ] **Prefs to write** (from the user's notes; values are examples):
+- [x] **Prefs to write** - DONE (rendered from `templates/user.js.j2`) + web-verified
+  current (Firefox ~v140; the v73-era notes still hold). KEY FINDING:
+  `browser.sessionstore.interval` is the #1 idle SSD-write lever (recovery.jsonlz4
+  every 15s default) -> default set to 1800000 (30min); clean shutdown still saves
+  immediately. `parent_directory` needs a String AND a pre-existing dir (Firefox
+  won't create it). All values are overridable `defaults/main.yml` knobs. Original
+  notes' prefs (kept as reference):
 
   | pref | value | note |
   | --- | --- | --- |
@@ -488,18 +496,28 @@ wire into `playbooks/user.yml`, gate `setup_firefox_tunes` (default false).
   | `browser.cache.memory.enable` | `true` |
   | `browser.cache.memory.capacity` | `-1` (auto) or e.g. `204800` KiB |
 
-- [ ] **Keep cache off the SSD (native)** - user CONFIRMS `/tmp` is tmpfs. Two
-  ways, pick one: (a) SIMPLER - the RAM-cache variant above
-  (`browser.cache.disk.enable=false` + memory cache): no disk cache, no path to
-  maintain; (b) point `browser.cache.disk.parent_directory` at a tmpfs dir under
-  `/tmp` so the disk cache lives in RAM - but tmpfs is empty on boot, so the role
-  must (re)create that dir each boot (systemd-tmpfiles, or a login/user unit).
-  Either way cache writes never hit the SSD; RAM cache is lost on reboot (fine -
-  cache is disposable). No Flatpak permission dance now (native writes `/tmp`
-  freely).
-- [ ] **Apply semantics** - `user.js` only takes effect at NEXT startup; success =
-  a `cache2/` dir appears at the configured path. Consider warning if Firefox is
-  currently running.
+- [x] **Keep cache off the SSD** - DONE. `firefox_tunes_cache_strategy` (default
+  `ram`, per user's "a+b switchable, default a"): (a) `ram` = `browser.cache.disk.
+  enable=false` + memory cache (no disk cache, no dir to manage); (b) `tmpfs_disk` =
+  disk cache `parent_directory` on a `/tmp` tmpfs dir. (b) also drops
+  `~/.config/user-tmpfiles.d/firefox-tunes-cache.conf` (`d <dir> 0700 ...`) so the
+  systemd USER instance recreates the dir each boot (verified: systemd 257 ships
+  `systemd-tmpfiles-setup.service` in the user dir + `--user`); the role also creates
+  it now. Switching back to `ram` removes that tmpfiles entry.
+- [x] **Apply semantics** - DONE: prints "restart Firefox to apply" + the profile
+  count. (No "Firefox is running" warning - user.js is harmless to write live, just
+  applies next launch.)
+- [x] **Wiring + verification** - `playbooks/firefox_tunes.yml` + `setup_firefox_tunes`
+  (default false) + `make apply-firefox-tunes` / `check-firefox-tunes` (+ `.PHONY`,
+  README role-table + playbook tree), same pattern as trusted_pubkeys. Verified
+  end-to-end on a FAKE `profiles.ini` + 2 profile dirs in a temp HOME: syntax-check;
+  ram run1 changed / run2 changed=0 (idempotent); BOTH profiles get user.js;
+  tmpfs_disk writes `parent_directory` + creates the tmpfs dir + the user-tmpfiles.d
+  entry; no-profiles warn+skip; `make -n` both targets.
+- [ ] **Real-Firefox run** - NOT exercised against an actual Firefox (sandbox has
+  none). On a real host confirm: Firefox picks up the per-profile user.js (the prefs
+  show as set/locked-to-value in about:config), and for `tmpfs_disk` a `cache2/`
+  actually appears under the `/tmp` dir. Re-run to confirm idempotency.
 
 ## install sources: `thirdparty_software` provider + `ivm provision` (planned)
 

@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys incus-install incus-check incus-sandbox incus-uninstall-ivm incus-teardown-host incus-push-dotfiles check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes incus-install incus-check incus-sandbox incus-uninstall-ivm incus-teardown-host incus-push-dotfiles check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -69,6 +69,9 @@ apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chr
 apply-trusted-pubkeys:  ## Pin GitHub/GitLab SSH host keys (~/.ssh/known_hosts) + Debian CD signing keys (dedicated GPG keyring) for the current user (bypasses `setup_trusted_pubkeys` gate). Idempotent; user-level, no sudo.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/trusted_pubkeys.yml
 
+apply-firefox-tunes:  ## Apply Firefox about:config tweaks (session-store interval + cache off the SSD) to every profile of the current user (bypasses `setup_firefox_tunes` gate). Writes user.js per profile; restart Firefox to apply. No sudo.
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/firefox_tunes.yml
+
 ### -------------------------------------------------------------------------
 ### Incus (host daemon + the `ivm` VM launcher)
 ### -------------------------------------------------------------------------
@@ -134,6 +137,9 @@ check-apparmor:  ## Dry-run diff for AppArmor profile deployment
 
 check-trusted-pubkeys:  ## Dry-run diff for trusted_pubkeys (SSH host keys + Debian CD signing keys)
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/trusted_pubkeys.yml
+
+check-firefox-tunes:  ## Dry-run diff for firefox_tunes (per-profile user.js)
+	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/firefox_tunes.yml
 
 ### -------------------------------------------------------------------------
 ### AppArmor runtime helpers (live denial inspection)
