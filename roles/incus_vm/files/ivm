@@ -10,7 +10,7 @@ Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 `delete`/`update`/`overwrite-dotfiles`/`set-password`/`unset-password`/
-`enable-user-sudo`/`disable-user-sudo`; `env`; `info` (storage pool); `list` (incus list passthrough).
+`enable-user-sudo`/`disable-user-sudo`/`info` (target VM status/hw/mounts/storage); `env`; `list` (incus list passthrough).
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
 attach devices (mounts + `shadow` masking, `hw.tpm`, macvlan/bridge `net`) ->
@@ -58,8 +58,28 @@ DEFAULT_ROOT: Path = Path(
 CWD_RESOLVED: tuple[str, ...] = (
     "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete",
     "overwrite-dotfiles", "update", "set-password", "unset-password",
-    "enable-user-sudo", "disable-user-sudo", "snapshot", "gui",
+    "enable-user-sudo", "disable-user-sudo", "snapshot", "gui", "info",
 )
+# One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
+# share one useless generic line. Keys MUST match CWD_RESOLVED exactly.
+CWD_RESOLVED_HELP: dict[str, str] = {
+    "shell": "open a zsh shell in the VM as `user` (starts it if stopped)",
+    "shell-user": "open a zsh shell in the VM as `user`",
+    "shell-root": "open a zsh shell in the VM as `root`",
+    "start": "start the VM",
+    "reboot": "restart the VM (`incus restart`)",
+    "stop": "stop the VM (disk state preserved)",
+    "delete": "delete the VM + disk + snapshots (confirms; `--yes` skips)",
+    "overwrite-dotfiles": "re-push the host-staged dotfiles into the VM (no re-provision)",
+    "update": "refresh + upgrade all packages in the VM",
+    "set-password": "set a guest account's login password",
+    "unset-password": "lock a guest account's password",
+    "enable-user-sudo": "let `user` sudo, gated by root's password",
+    "disable-user-sudo": "revert enable-user-sudo (remove the sudoers drop-in)",
+    "snapshot": "`incus snapshot` wrapper (create/list/restore/delete)",
+    "gui": "open a SPICE graphical console",
+    "info": "show the VM's live state (status/image/hw/network/mounts/storage)",
+}
 # Subcommands taking a positional `<username>` (set/unset a login password).
 PASSWORD_SUBCOMMANDS: tuple[str, ...] = ("set-password", "unset-password")
 
@@ -1240,11 +1260,42 @@ def cmd_env(template_name: str, root: Path) -> None:
         print(f"-> resolved   : ({ansible_os_family}) {' '.join(resolved)}")
 
 
-def cmd_info(root: Path) -> None:
-    """`ivm info`: show the incus storage pool - backend, where VM disks physically
-    live (same lines the init/delete prompts show, incl. the `.img` loop file +
-    usage), and how full it is. Read-only; needs no init/delete to inspect."""
-    print("incus storage (where VM disks physically live):")
+def cmd_info(name: str, root: Path) -> None:
+    """`ivm info`: the TARGET VM's live state - status, image, hw, network, mounts
+    (from `incus config show --expanded`) + the storage pool its disk lives in.
+    Target resolved by cwd or `--name`, like the other VM subcommands. Read-only."""
+    import yaml  # lazy, same as load_yaml (ships with ansible-core / python3-yaml)
+    parsed: Any = yaml.safe_load(capture(["incus", "config", "show", "--expanded", name]) or "")
+    cfg: dict[str, Any] = parsed if isinstance(parsed, dict) else {}
+    config: dict[str, Any] = cfg.get("config", {}) or {}
+    devices: dict[str, Any] = cfg.get("devices", {}) or {}
+    status: str = capture(["incus", "list", name, "--format", "csv", "--columns", "s"]).strip() or "?"
+    image: str = (config.get("image.description")
+                  or f"{config.get('image.os', '')} {config.get('image.release', '')}".strip()
+                  or "?")
+    root_device: dict[str, Any] = devices.get("root", {}) or {}
+    eth0_device: dict[str, Any] = devices.get("eth0", {}) or {}
+    network: str = (eth0_device.get("network")
+                    or f"{eth0_device.get('nictype', '')} {eth0_device.get('parent', '')}".strip()
+                    or "?")
+    print(f"VM: {name}")
+    print(f"  status:        {status}")
+    print(f"  image:         {image}")
+    print(f"  hw:            cpu={config.get('limits.cpu', '?')} "
+          f"memory={config.get('limits.memory', '?')} disk={root_device.get('size', '?')}")
+    print(f"  network:       {network}")
+    # Host->guest mounts are the non-root disk devices ivm attaches; skip the
+    # `_shadow_` masking devices (internal, not user-meaningful).
+    mount_lines: list[str] = [
+        f"    {device.get('source')} -> {device.get('path', '?')}"
+        for device_name, device in devices.items()
+        if device.get("type") == "disk" and device_name != "root"
+        and "shadow" not in device_name and device.get("source")
+    ]
+    if mount_lines:
+        print("  mounts:")
+        for mount_line in mount_lines:
+            print(mount_line)
     for line in preview_storage_pool(root, dry_run=False):
         print(line)
 
@@ -1256,7 +1307,10 @@ def cmd_stub(subcommand: str) -> NoReturn:
 # ---------- CLI ----------
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ivm", description="incus VM launcher")
+    parser = argparse.ArgumentParser(
+        prog="ivm", description="incus VM launcher",
+        epilog="Most subcommands act on ONE VM, resolved by the current directory "
+               "(`user.ivm_init_at_dir`) or `--name <vm>`; `init`/`env`/`list` do not.")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
                         help=f"install root (schema + templates + rootfs). Default: {DEFAULT_ROOT}")
     parser.add_argument("--dry-run", action="store_true",
@@ -1280,10 +1334,8 @@ def build_parser() -> argparse.ArgumentParser:
     # via parse_known_args in main() (REMAINDER mishandles leading `--flags`).
     sub.add_parser("list", help="`incus list` passthrough (e.g. `ivm list --format csv`)")
 
-    sub.add_parser("info", help="show the incus storage pool (backend, on-disk location, usage)")
-
     for name in CWD_RESOLVED:
-        sp: argparse.ArgumentParser = sub.add_parser(name, help="(target VM: cwd or --name)")
+        sp: argparse.ArgumentParser = sub.add_parser(name, help=CWD_RESOLVED_HELP[name])
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name in PASSWORD_SUBCOMMANDS:
@@ -1308,9 +1360,6 @@ def main() -> None:
         return
     if args.subcommand == "env":
         cmd_env(args.template, root)
-        return
-    if args.subcommand == "info":
-        cmd_info(root)
         return
     # Everything else acts on a VM: the global --name overrides the cwd binding.
     name: str = args.name if args.name else resolve_vm_by_cwd(Path.cwd(), dry_run=args.dry_run)
@@ -1342,6 +1391,8 @@ def main() -> None:
         cmd_snapshot(name, args.snapshot_args, dry_run=args.dry_run)
     elif args.subcommand == "gui":
         cmd_gui(name, dry_run=args.dry_run)
+    elif args.subcommand == "info":
+        cmd_info(name, root)
     else:
         cmd_stub(args.subcommand)
 
