@@ -105,6 +105,26 @@
         'incus_guest_baseline': distro_packages_incus_guest_baseline,
       } | to_nice_json }}
 
+# ---------- Materialize the thirdparty_software recipe registry for `ivm` ----------
+# Same rationale as the distro bundles above: `ivm` has no ansible at `init` time,
+# so snapshot the `roles/thirdparty_software` registry to JSON. `ivm` reads it to run
+# a template's `thirdparty_software:` recipes in the guest (probe-then-install, as
+# root). Source of truth stays in `roles/thirdparty_software/defaults/main.yml`;
+# adding a recipe means adding it to BOTH that file and this render dict.
+- name: Load the `thirdparty_software` recipe registry (sibling role's defaults)
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../thirdparty_software/defaults/main.yml"
+
+- name: Render the recipe registry to `{{ incus_vm_ivm_dir }}/thirdparty-software.json`
+  ansible.builtin.copy:
+    dest: "{{ incus_vm_ivm_dir }}/thirdparty-software.json"
+    mode: "0644"
+    content: |
+      {{ {
+        'claude': thirdparty_software_claude,
+        'codex': thirdparty_software_codex,
+      } | to_nice_json }}
+
 # ---------- Stage VM dotfiles (user + root variants, per ansible_os_family) ----------
 # Rendered host-side by tasks/stage_dotfiles.yml into
 # `{{ incus_vm_ivm_dir }}/rootfs/<ansible_os_family>/{home/user,root}`; at init `ivm`

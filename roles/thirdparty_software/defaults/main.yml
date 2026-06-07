@@ -1,0 +1,44 @@
+---
+# Registry of NON-distro install recipes - the sibling of `roles/distro_packages`
+# for everything that is NOT an apt/zypper/dnf package name: 3rd-party repos
+# (vscode), `curl|bash` installers (claude), npm/pip globals (codex).
+#
+# Each `thirdparty_software_<name>` is a per-`ansible_os_family` dict. Resolution
+# is OVERRIDE, not additive (UNLIKE `distro_packages`, which concatenates
+# `common` + the family overlay): a piece of software has ONE install method,
+# possibly varying by family - so use the host/guest family's entry if defined,
+# else `common`. Each entry:
+#   install_script    REQUIRED  shell run as ROOT in the guest; `su - user -c '...'`
+#                               for user-scoped installs (root switches to anyone,
+#                               no password).
+#   already_installed OPTIONAL  probe run as root; rc 0 -> skip the install
+#                               (idempotency, esp. for a future `ivm provision`
+#                               re-run). Omit -> always run. Pick a probe that can
+#                               only succeed when truly installed (a file test is
+#                               more robust than `command -v` when the bin dir is
+#                               not on the login PATH).
+#
+# `roles/incus_vm` materializes this to `thirdparty-software.json` at apply time;
+# `ivm` reads it and runs the recipes in a guest via `incus exec`. A template opts
+# in with `thirdparty_software: [<name>]`. Adding a recipe = define it here AND add
+# it to the render list in `roles/incus_vm/tasks/ivm_install.yml` (same explicit
+# pattern as the distro bundles).
+
+thirdparty_software_claude:
+  common:
+    already_installed: su - user -c 'command -v claude'
+    install_script: |
+      # claude.ai/install.sh redirects to a `#!/bin/bash` bootstrap that uses
+      # `[[ =~ ]]` - pipe to `bash` (present in the guest), NOT `sh` (dash chokes).
+      su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
+
+thirdparty_software_codex:
+  common:
+    # File test, not `command -v`: codex lands in ~/.local/npm_global/bin, which is
+    # not necessarily on the login PATH, so a PATH probe could wrongly re-install.
+    already_installed: su - user -c 'test -x ~/.local/npm_global/bin/codex'
+    install_script: |
+      # Needs nodejs + npm from the template's `distro_packages`. npm prefix kept at
+      # ~/.local/npm_global for now; switch to the centralize_lang_pkgs_dir tree when
+      # that role rename lands (see TODO.md).
+      su - user -c 'mkdir -p ~/.local/npm_global && npm config set prefix ~/.local/npm_global && npm install -g @openai/codex'

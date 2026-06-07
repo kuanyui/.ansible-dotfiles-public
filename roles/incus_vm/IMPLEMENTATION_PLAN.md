@@ -28,7 +28,9 @@ Builds `ivm`, the launcher that replaces the bash launchers. Design = `REDESIGN.
 
 `tasks/incus_host_install.yml` (host prep) + `tasks/stage_dotfiles.yml` (user+root
 dotfile staging), both folded in from the former `_incus_*` roles;
-`roles/distro_packages` (the `distro_package_groups` registry).
+`roles/distro_packages` (the `distro_package_groups` registry); `roles/thirdparty_software`
+(the `thirdparty_software` install-recipe registry, materialized to
+`thirdparty-software.json` for `ivm`).
 
 ## Phases (each testable on a real incus host)
 

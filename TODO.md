@@ -379,6 +379,233 @@ pip/mypy in this env - run it on the host); NOT exercised against real incus.
   ancestor-dir branch gets the same >1 handling. Candidates shown as `name
   [template=…, STATUS]`.
 
+## trusted_pubkeys role (planned)
+
+Auto-import a small set of well-known public keys for the CURRENT USER only (per
+request; no system-wide trust). NOTE: this is a config-style face role (writes
+standard dotfiles like `zsh`/`emacs`), NOT a tool role - so NO
+`~/.local/share/ansible-managed/` namespace subdir. Wire into `playbooks/user.yml`,
+gate `setup_trusted_pubkeys` (default false in `group_vars/all.yml`).
+
+The user lumped two DIFFERENT key types - they serve different purposes and land
+in different places; keep them separate:
+
+- [ ] **SSH host keys (GitHub, GitLab) -> `~/.ssh/known_hosts`** - so `git clone
+  git@github.com:...` over SSH doesn't TOFU-prompt. PIN these (see the RESOLVED
+  decision below). Verified current GitHub fingerprints (docs page): Ed25519
+  `SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`, ECDSA
+  `SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM`, RSA
+  `SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s` (DSA being retired). Full
+  `known_hosts` key lines also at `https://api.github.com/meta` (`ssh_keys`);
+  GitLab via its host-keys doc.
+- [ ] **GPG signing keys (Debian CD/install-media signing) -> user GnuPG keyring**
+  (`gpg --import` into `~/.gnupg`) - to verify downloaded Debian ISOs
+  (`SHA256SUMS` + detached `SHA256SUMS.sign`). This is NOT `apt` repo trust
+  (`/etc/apt/...` = system-wide, out of scope per "user only").
+- [x] **DECIDED: PIN the keys (hardcode in-repo) - this is the user's intent, for
+  audit.** Correct call: they're PUBLIC (no secret to leak, committing is fine -
+  the CLAUDE.md path/secret rules don't apply) and pinning gives INTEGRITY -
+  reviewed once, frozen, any change shows in `git diff`. The rejected alternative
+  (fetch + overwrite each apply) would trust DNS+TLS EVERY run, so a hijacked fetch
+  could silently swap in an attacker's key -> MITM of future `git clone`, defeating
+  the point of pinning a host key. Rotation is rare so pinning is cheap: GitHub's
+  RSA key rotated EXACTLY ONCE (2023-03-24, private key leaked to a public repo),
+  ECDSA/Ed25519 never; Debian CD keys roll per stable release and are ADDITIVE (old
+  keys still verify old ISOs). Treat a rotation as a deliberate reviewed pin-bump;
+  the loud SSH "HOST IDENTIFICATION CHANGED" failure is the wanted signal.
+- [ ] **Idempotency** - dedupe `known_hosts` entries (don't append on every run);
+  `gpg --import` is already idempotent. Print what's imported (transparency rule).
+
+## firefox_tunes role (planned)
+
+Apply `about:config` tweaks (mainly disk-cache, to cut SSD writes) to ALL Firefox
+profiles of the current user. Config-style role (writes per-profile dotfiles);
+wire into `playbooks/user.yml`, gate `setup_firefox_tunes` (default false).
+
+- [x] **RESOLVED (verified, Mozilla docs + support forum): use `user.js` per
+  profile.** Three external mechanisms exist; `user.js` is the right one here:
+  - **`user.js`** (in each profile dir) - read at EVERY startup, initializes the
+    listed prefs to your values; an in-session about:config edit reverts on next
+    restart. Sets the EXACT prefs you'd set by hand, just declarative + reapplied -
+    this is the "permanent, like manual" method asked for. Profile-level (not
+    install-level), needs NO root. <- this role's method.
+  - **`policies.json`** (`Preferences` policy; Linux `/etc/firefox/policies/` or
+    `<install>/distribution/`) - can LOCK prefs, BUT Mozilla intentionally blocks
+    many prefs from being set this way ("avoid people messing with settings... that
+    could impact the browser negatively"), so not every about:config key works.
+    System/install-level -> awkward for a per-user, no-root role.
+  - **AutoConfig** (`mozilla.cfg` + `autoconfig.js` in `defaults/pref`) - most
+    powerful: `lockPref()` sets/locks ANY pref incl. ones policies.json refuses, but
+    lives in the read-only INSTALL dir -> system-wide, not per-user.
+  Do NOT edit `prefs.js` directly (Firefox overwrites it on exit).
+- [ ] **Enumerate profiles** - native Firefox only (user dropped Flatpak). Parse
+  `~/.mozilla/firefox/profiles.ini` and write `user.js` into each listed profile
+  dir (a user can have several profiles).
+
+- [ ] **Prefs to write** (from the user's notes; values are examples):
+
+  | pref | value | note |
+  | --- | --- | --- |
+  | `browser.cache.disk.smart_size.enabled` | `false` | MUST be false before `capacity` takes effect |
+  | `browser.cache.disk.capacity` | KiB, e.g. `1048576` | disk cache size cap |
+  | `browser.cache.disk.parent_directory` | path string | dir must exist / be writable; create manually |
+  | `browser.sessionstore.interval` | ms, `> 15000` | fewer session-restore writes (default 15000) |
+
+  RAM-cache variant (host RAM >= 16 GB; skip disk cache entirely):
+
+  | pref | value |
+  | --- | --- |
+  | `browser.cache.disk.enable` | `false` |
+  | `browser.cache.memory.enable` | `true` |
+  | `browser.cache.memory.capacity` | `-1` (auto) or e.g. `204800` KiB |
+
+- [ ] **Keep cache off the SSD (native)** - user CONFIRMS `/tmp` is tmpfs. Two
+  ways, pick one: (a) SIMPLER - the RAM-cache variant above
+  (`browser.cache.disk.enable=false` + memory cache): no disk cache, no path to
+  maintain; (b) point `browser.cache.disk.parent_directory` at a tmpfs dir under
+  `/tmp` so the disk cache lives in RAM - but tmpfs is empty on boot, so the role
+  must (re)create that dir each boot (systemd-tmpfiles, or a login/user unit).
+  Either way cache writes never hit the SSD; RAM cache is lost on reboot (fine -
+  cache is disposable). No Flatpak permission dance now (native writes `/tmp`
+  freely).
+- [ ] **Apply semantics** - `user.js` only takes effect at NEXT startup; success =
+  a `cache2/` dir appears at the configured path. Consider warning if Firefox is
+  currently running.
+
+## install sources: `thirdparty_software` provider + `ivm provision` (planned)
+
+Two axes: WHAT to install (composable named sets) vs HOW (install method). The
+distro axis is DONE (`distro_packages` bundles + `_install_distro_packages`
+executor + `ivm` reading the materialized JSON). Gaps: non-distro sources
+(vscode/claude/npm) are stuck ad-hoc in each template's `post_install_script`
+(not reusable), and there's no way to add software AFTER `init`. Decisions from
+the design chat: keep `distro_packages` (do NOT rename to a vague
+`install_packages`); add ONE sibling provider for everything non-distro; expose
+an imperative `ivm provision`. Phased.
+
+- [x] **Phase 1a: `thirdparty_software` provider** - new registry (sibling to
+  `distro_packages`) for all non-distro installs: 3rd-party repo (vscode),
+  `curl|bash` (claude), npm/pip (codex) - all are "run a shell snippet as root."
+  Per-family but **OVERRIDE, not additive** (use host/guest family key if
+  present, else `common`; UNLIKE `distro_packages` which concatenates
+  common+family - a piece of software has one install method, maybe varying by
+  family - document this difference in the docstring). Shape (probe lives WITH
+  its script):
+
+  ```yaml
+  thirdparty_software_vscode:        # repo type: per-family
+    debian: { already_installed: command -v code, install_script: "<add MS keyring + sources.list.d>; apt-get install -y code" }
+    suse:   { already_installed: command -v code, install_script: "<rpm --import + zypper ar>; zypper --non-interactive install code" }
+  thirdparty_software_claude:        # same everywhere: common only
+    common: { already_installed: "su - user -c 'command -v claude'", install_script: "su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'" }
+  ```
+
+  `already_installed` OPTIONAL (omit = always run), runs as ROOT (so user-scope
+  checks need `su - user -c ...`), use `command -v` not `which`. vscode's snippet
+  must ADD THE REPO (not fetch a one-off `.deb`) so `ivm update` keeps it current.
+  Executor: HOST = an `_install_*` role analog to `_install_distro_packages`
+  (become + run snippet + probe-skip); GUEST = `ivm` reads it from a materialized
+  JSON (same mechanism as the distro groups -> `distro-package-groups.json`) and
+  runs via `incus exec <vm> -- bash -c`. Migrate claude/codex/webbrowser's
+  `post_install_script` installs into entries. codex's npm install must honor
+  `centralize_lang_pkgs_dir` (today it hardcodes `npm config set prefix
+  ~/.local/npm_global` - see the rename section).
+  **DONE:** `roles/thirdparty_software/` (defaults + README, data-only role);
+  `ivm_install.yml` materializes -> `thirdparty-software.json`; `ivm` gains
+  `load_thirdparty_software` + `resolve_thirdparty_software` (OVERRIDE: family else
+  `common`) + `thirdparty_install_script` (probe-guarded `if {probe}; then skip;
+  else install; fi`), wired into `provision_script` BEFORE `post_install_script`;
+  schema `thirdparty_software[]` field (+ windows exclusion + desc); `ivm env`
+  shows it; claude.yaml + codex.yaml migrated off `post_install_script`. Verified:
+  `py_compile`, `mypy --strict` 0 errors, `ansible-playbook --syntax-check`, 24
+  unit/integration checks (registry rendered from the REAL defaults, jsonschema-
+  validate all 4 templates, override/fallback/unknown/no-recipe error paths, probe
+  guard, `provision_script` injection, missing-JSON clean die). NOT done: real-
+  incus end-to-end (host only); HOST executor role (no consumer yet); `vscode`
+  entry (needs web-verified MS repo - infra is ready); codex npm prefix stays
+  `~/.local/npm_global` until the rename. When adding a recipe: define it in the
+  role defaults AND the `ivm_install.yml` render dict (explicit, like the distro
+  bundles).
+
+- [ ] **Phase 1b: `ivm provision <name...>`** - install named units onto an
+  EXISTING VM (cwd-resolved or `--name`), so software can be added after `init`.
+  Phase 1 resolves each name against `distro_packages` bundles + `thirdparty_
+  software` entries DIRECTLY - **no new "groups" registry needed yet** (that's
+  only for multi-kind bundles; phase 2). Idempotent (apt/zypper natural +
+  `already_installed`). zsh+bash completion of the unit names (union of the two
+  registries) - REQUIRED, it's how you discover what's installable. Verb decision:
+  **`provision`** - `install` is vague (install what? incus?), `profile` clashes
+  with incus's own `profile` concept; `provision` ties to ivm's existing
+  provisioning step and is unambiguous (`add`/`setup` were the alternatives, easy
+  rename if reconsidered).
+
+- [ ] **Phase 2: groups/composite registry + emacs (pkg + config)** - some units
+  span KINDS: `emacs` = distro pkg `emacs` PLUS its `.emacs.d` config. Needs a
+  thin **groups registry** consumed ONLY by `ivm provision` (NOT forced into
+  templates - templates keep their explicit per-kind lists; this is the layer the
+  user said not to push into templates) that bundles across kinds + can `include`:
+
+  ```yaml
+  emacs:  { distro_packages: [emacs], config: [emacs] }   # config key name TBD
+  qtdev:  { distro_groups: [cpp_dev, qt_dev] }
+  devbox: { include: [qtdev, emacs, claude] }
+  ```
+
+  emacs config MUST stage **family-AGNOSTIC, once** - elisp is distro-independent;
+  staging the `*.el` pile under each `rootfs/<family>/` would duplicate junk
+  across Debian/Suse/RedHat (the per-family split exists ONLY for the shell
+  dotfiles' `apt-min`/`zypper-min` line). So add a family-neutral set dir (e.g.
+  `<root>/config-sets/emacs/...`) beside the per-family `rootfs/<family>/`.
+  `roles/emacs` already splits `install-emacs-from-distro-repo.yml` +
+  `deploy-emacs-config.yml`, so the config payload slots into staging the same way
+  `_stage_family.yml` includes `roles/zsh deploy-zsh-config`. `ivm` gains a
+  "push one config set" path. This finally WIRES UP the currently-DEAD template
+  `dotfiles[]` field (ivm never reads it today - confirmed) or replaces it with
+  the groups `config:` kind. DEFER the registry name (`groups` vs `profiles` -
+  avoid clashing with `distro_package_groups` + incus profiles) + the config key
+  name until built.
+
+- [ ] **`cpp_dev` + `qt_dev` distro bundles** - the `qtdev` item under "ivm
+  real-run fixes + desktop UX" becomes two `distro_packages` bundles (Qt6 + C++
+  toolchain, per-family names TO VERIFY on a real box). Then `ivm provision
+  cpp_dev qt_dev` (phase 1, raw bundles) or `ivm provision qtdev` (phase 2 group).
+
+- context: **no-ansible-in-guest / no-ssh is intentional.** Running full ansible
+  against the VM without ssh would need `community.general.incus` (the incus
+  connection plugin) - BANNED here (ansible-core-only, CLAUDE.md). `ivm` IS the
+  sanctioned no-ssh path: host-driven `incus exec` + ansible-defined data
+  materialized to JSON. `provision` reuses those registries; nothing runs ansible
+  in the guest.
+
+## rename `local_pkgs` -> `centralize_lang_pkgs_dir` (planned)
+
+The name is unclear (the author forgot what it did a week after writing it). The
+role does NOT install/manage language packages - it REDIRECTS where npm / pip /
+pipx / cargo / go put their GLOBAL installs (sets prefixes/env), out of `~/.local/`
+into a dedicated tree. So `lang_pkg_managers` would be MISLEADING (implies it
+manages packages). Decided: role -> `centralize_lang_pkgs_dir`, dir
+`~/.local-pkgs` -> `~/.centralized-lang-pkgs`. Clean sweep, no debt left.
+
+- [ ] **Rename role + dir + toggle + env file + vars** - full blast radius
+  (verified: NO apparmor rule, NO Makefile, NO CLAUDE.md refs - the apparmor
+  mention in the role README is future-rationale only, not a live rule):
+
+  | # | File | Change |
+  |---|------|--------|
+  | 1 | `roles/local_pkgs/` | `git mv` -> `roles/centralize_lang_pkgs_dir/` |
+  | 2 | `group_vars/all.yml` | `setup_local_pkgs` -> `setup_centralize_lang_pkgs_dir` + comment |
+  | 3 | `playbooks/user.yml` | role ref + comment |
+  | 4 | `roles/dotfiles/templates/.bashrc.j2` | source-line path + comment |
+  | 5 | `roles/zsh/templates/.zshrc.j2` | source-line path + comment |
+  | 6 | top-level `README.md` | role-table row |
+  | 7 | role `README.md` | full (paths/name/dir) |
+  | 8 | role `defaults/main.yml` | toggle name |
+  | 9 | role `files/{local-pkgs.env.sh,pip.conf}` + `tasks/main.yml` | dir `~/.centralized-lang-pkgs`, env file -> `centralized-lang-pkgs.env.sh`, vars `_LOCAL_PKGS`/`LOCAL_PKGS_ENV_LOADED` -> matching |
+
+  Independent of the `ivm provision` work; can land anytime. Existing installs
+  under the old `~/.local-pkgs/` are left for the user to `rm -rf` (or a one-time
+  note in the role README).
+
 ## Notes / future
 
 - [ ] **container_apps -> one engine + declarative templates** (parallel to what

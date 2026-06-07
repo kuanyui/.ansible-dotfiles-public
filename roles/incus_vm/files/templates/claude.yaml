@@ -37,12 +37,10 @@ distro_package_groups:
 distro_packages:
   - curl
   - git
+thirdparty_software:
+  - claude   # curl|bash installer; recipe in roles/thirdparty_software/defaults/main.yml
 dotfiles:
   - bash
   - tmux
   - zsh
   - emacs
-post_install_script: |
-  # claude.ai/install.sh redirects to a `#!/bin/bash` bootstrap that uses `[[ =~ ]]`
-  # - pipe to `bash` (present in the Debian guest), NOT `sh` (dash chokes on it).
-  su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'

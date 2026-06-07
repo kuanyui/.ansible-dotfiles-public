@@ -23,5 +23,5 @@ mounts:
 distro_packages:
   - nodejs
   - npm
-post_install_script: |
-  su - user -c 'mkdir -p ~/.local/npm_global && npm config set prefix ~/.local/npm_global && npm install -g @openai/codex'
+thirdparty_software:
+  - codex   # npm install -g @openai/codex; recipe in roles/thirdparty_software/defaults/main.yml

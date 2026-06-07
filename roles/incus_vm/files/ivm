@@ -14,7 +14,7 @@ dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
 attach devices (mounts + `shadow` masking, `hw.tpm`, macvlan/bridge `net`) ->
-start -> provision (`sys.timezone`/`sys.tmpfs`/`sys.ssh_server`, packages,
+start -> provision (`sys.timezone`/`sys.tmpfs`/`sys.ssh_server`, packages, `thirdparty_software`,
 `post_install_script`) -> push dotfiles. Plus `hw.secureboot=false`, `snapshot`,
 `gui`, and the lifecycle/shell subcommands. `hw.nested_virt` is host-gated (warn
 only). `--dry-run` prints every mutating command instead of running it. GPU
@@ -212,6 +212,18 @@ def load_package_groups(root: Path) -> dict[str, Any]:
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
         die(f"distro-package-groups.json is not a mapping: {path}")
+    return loaded
+
+
+def load_thirdparty_software(root: Path) -> dict[str, Any]:
+    """Load thirdparty-software.json (rendered at apply time from the
+    thirdparty_software registry; see roles/incus_vm/tasks/ivm_install.yml)."""
+    path: Path = root / "thirdparty-software.json"
+    if not path.is_file():
+        die(f"thirdparty-software.json not found: {path}; re-run `make apply-incus-vm`")
+    loaded: Any = json.loads(path.read_text())
+    if not isinstance(loaded, dict):
+        die(f"thirdparty-software.json is not a mapping: {path}")
     return loaded
 
 
@@ -705,6 +717,60 @@ def ssh_provision(doc: Template, cwd: Path) -> str:
     return script
 
 
+def resolve_thirdparty_software(
+    doc: Template, registry: dict[str, Any], ansible_os_family: str
+) -> list[dict[str, Any]]:
+    """Resolve the template's `thirdparty_software` names against the registry into
+    `{name, already_installed?, install_script}` recipes for THIS VM's family.
+    OVERRIDE (not additive like distro groups): the family's entry if defined, else
+    `common`."""
+    overlay_key: str = ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY[ansible_os_family]
+    recipes: list[dict[str, Any]] = []
+    for name in doc.get("thirdparty_software", []):
+        entry: Any = registry.get(name)
+        if entry is None:
+            die(f"unknown thirdparty_software '{name}' (not in thirdparty-software.json; "
+                f"defined: {', '.join(sorted(registry))})")
+        family_recipe: Any = entry.get(overlay_key) or entry.get("common")
+        if family_recipe is None:
+            die(f"thirdparty_software '{name}' has no recipe for {ansible_os_family} "
+                f"(needs a '{overlay_key}' or 'common' entry)")
+        install_script: str = family_recipe.get("install_script", "")
+        if not install_script:
+            die(f"thirdparty_software '{name}' ({ansible_os_family}) has no install_script")
+        recipes.append({
+            "name": name,
+            "already_installed": family_recipe.get("already_installed"),
+            "install_script": install_script,
+        })
+    return recipes
+
+
+def thirdparty_install_script(recipes: list[dict[str, Any]]) -> str:
+    """Shell (run as root in the guest) that installs each resolved recipe, guarded
+    by its `already_installed` probe when present (rc 0 -> skip), so a re-run is
+    idempotent. Each recipe's `install_script` is the author's verbatim shell."""
+    script: str = ""
+    for recipe in recipes:
+        name: str = recipe["name"]
+        install: str = recipe["install_script"]
+        if not install.endswith("\n"):
+            install += "\n"
+        probe: str | None = recipe.get("already_installed")
+        script += f"echo '==> thirdparty_software: {name}' >&2\n"
+        if probe:
+            script += (
+                f"if {{ {probe}; }} >/dev/null 2>&1; then\n"
+                f"  echo '    already present, skipping' >&2\n"
+                "else\n"
+                f"{install}"
+                "fi\n"
+            )
+        else:
+            script += install
+    return script
+
+
 def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: Path) -> str:
     """First-provision shell, run as root via `incus exec`: install packages
     (baseline + groups + flat), set timezone + tmpfs, create `user`, set both
@@ -741,6 +807,14 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: P
         script += "su - user -c 'xdg-user-dirs-update'\n"
     script += input_method_provision(doc, root)
     script += ssh_provision(doc, cwd)
+    # Non-distro installs (3rd-party repos / curl|bash / npm-pip) declared in the
+    # template's `thirdparty_software`, run as root before the author's custom
+    # `post_install_script` so that can rely on them. Registry loaded only when used.
+    thirdparty_names: list[str] = doc.get("thirdparty_software", [])
+    if thirdparty_names:
+        script += thirdparty_install_script(
+            resolve_thirdparty_software(doc, load_thirdparty_software(root), ansible_os_family)
+        )
     post_install_script: str = doc.get("post_install_script", "")
     if post_install_script:
         script += post_install_script if post_install_script.endswith("\n") else post_install_script + "\n"
@@ -1084,6 +1158,14 @@ def confirm_create(doc: Template, name: str, cwd: Path, root: Path, *, assume_ye
     print(f"  template:      {doc['template_name']}  (cwd: {cwd})", file=sys.stderr)
     print(f"  image:         {image_ref(doc['os'])}", file=sys.stderr)
     print(f"  hw:            cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
+    # Surface what will run as ROOT in the guest at provision time BEFORE the create
+    # is confirmed (esp. `thirdparty_software`, which fetches + runs external
+    # installers like claude's `curl|bash`) - transparency before a privileged fetch.
+    thirdparty_software: list[str] = doc.get("thirdparty_software", [])
+    if thirdparty_software:
+        print(f"  3rd-party:     {', '.join(thirdparty_software)}  (install recipes run as ROOT in the guest)", file=sys.stderr)
+    if doc.get("post_install_script"):
+        print("  post-install:  custom script (runs as ROOT in the guest)", file=sys.stderr)
     for line in (preview_network(doc) + preview_mounts(doc, cwd) + preview_storage_pool(root, dry_run=dry_run)):
         print(line, file=sys.stderr)
     print("", file=sys.stderr)
@@ -1378,6 +1460,9 @@ def cmd_env(template_name: str, root: Path) -> None:
         print(f"pkg groups    : {', '.join(groups)}")
     if packages:
         print(f"packages      : {', '.join(packages)}")
+    thirdparty: list[str] = doc.get("thirdparty_software", [])
+    if thirdparty:
+        print(f"thirdparty    : {', '.join(thirdparty)}")
     if os_block.get("type") == "linux":
         ansible_os_family: str = ansible_os_family_of(doc)
         resolved: list[str] = resolve_packages(doc, load_package_groups(root), ansible_os_family)

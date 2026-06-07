@@ -45,13 +45,17 @@ Field groups (see the schema for the full, authoritative list):
 | `sys` | `gui`, `timezone`, `tmpfs[]`, `ssh_server.{enabled,port,root_login,password_login,authorized_keys}` |
 | `net` | `mode` (`nat`/`macvlan`/`bridge`), `parent` |
 | `mounts[]` | `host`, `guest`, `ro`, `shadow[]` (subpaths to mask, e.g. `.git`) |
-| (linux provisioning) | `distro_package_groups[]`, `distro_packages[]`, `dotfiles[]`, `post_install_script` |
+| (linux provisioning) | `distro_package_groups[]`, `distro_packages[]`, `thirdparty_software[]`, `dotfiles[]`, `post_install_script` |
 | `windows` | `unattend`, `post_install_powershell` |
 
 - `distro_package_groups` reference bundles in `roles/distro_packages`
   (`basic_tools`, `sys_tools`, ...); resolved per the VM's ansible_os_family. A
   fixed baseline (`incus_guest_baseline`: zsh + plugins, sudo, sshd, git, ...) is
   always installed.
+- `thirdparty_software` reference non-distro install recipes in
+  `roles/thirdparty_software` (`claude`, `codex`, ...): a shell snippet run as root
+  in the guest (3rd-party repo / `curl|bash` / npm-pip) with an optional
+  idempotency probe - for software not in the distro repos.
 - `mounts[].host` is shell-expanded on the HOST at init (`$(pwd)`, `$HOME`, `~`,
   relative paths).
 - GPU acceleration is intentionally absent - incus can't do shared virtio-gpu 3D;

@@ -128,6 +128,11 @@
       "items": { "type": "string" },
       "description": "Extra packages, literal names for THIS VM's distro. Flat (no per-distro dict) because `os` already pins one distro - so version-pinned names like `python3.13` go here."
     },
+    "thirdparty_software": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Named non-distro install recipes defined in `roles/thirdparty_software/defaults/main.yml` (variable `thirdparty_software_<name>`), referenced by the short `<name>`. Each runs a shell snippet as ROOT in the guest (with an optional `already_installed` probe that skips it if present): 3rd-party repos (vscode), `curl|bash` installers (claude), npm/pip globals (codex). Resolved per ansible_os_family - the family's entry if defined, else `common` (OVERRIDE, not additive). (Linux only.)"
+    },
     "dotfiles": {
       "type": "array",
       "items": { "type": "string", "enum": ["bash", "tmux", "zsh", "emacs"] },
@@ -141,7 +146,7 @@
     "windows": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Windows-only provisioning (used when os.type=windows). The unix provisioning fields (distro_packages, distro_package_groups, dotfiles, post_install_script) do NOT apply to Windows.",
+      "description": "Windows-only provisioning (used when os.type=windows). The unix provisioning fields (distro_packages, distro_package_groups, thirdparty_software, dotfiles, post_install_script) do NOT apply to Windows.",
       "properties": {
         "unattend": {
           "type": "string",
@@ -166,6 +171,7 @@
           "anyOf": [
             { "required": ["distro_packages"] },
             { "required": ["distro_package_groups"] },
+            { "required": ["thirdparty_software"] },
             { "required": ["dotfiles"] },
             { "required": ["post_install_script"] }
           ]
