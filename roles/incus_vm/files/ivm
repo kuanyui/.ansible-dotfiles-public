@@ -37,7 +37,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, Callable, NoReturn
 
 if TYPE_CHECKING:
     # Type-only: keep the runtime imports of yaml/jsonschema lazy (inside the
@@ -1019,6 +1019,11 @@ def confirm_create(doc: Template, name: str, cwd: Path, root: Path, *, assume_ye
 
 def cmd_init(template_name: str, given_name: str | None, root: Path, *,
              assume_yes: bool, dry_run: bool) -> None:
+    """Create a VM from `<template>`, bound to the current directory: validate the
+    template, prompt for + confirm the instance name, then `incus create` (stopped)
+    -> attach devices (mounts, shadow masks, tpm, nic) -> start -> provision (packages,
+    `user`, dotfiles); a GUI template also reboots into the desktop. A post-create
+    failure leaves the VM in place (blips are often transient) with recovery hints."""
     cwd: Path = Path.cwd()
     doc: Template = load_and_validate(template_name, root)
     if doc["os"]["type"] != "linux":
@@ -1071,6 +1076,9 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
 
 
 def cmd_shell(name: str, root: Path, *, as_root: bool, dry_run: bool) -> None:
+    """Open an interactive zsh in the target VM (starting it first if stopped): as
+    `root` when `as_root`, else as the unprivileged `user` (uid/gid 1000). Auth is the
+    host incus socket - no in-guest password needed."""
     ensure_up(name, dry_run=dry_run)
     if as_root:
         cmd: list[str] = ["incus", "exec", "--env", "HOME=/root", "--env", "USER=root",
@@ -1082,6 +1090,7 @@ def cmd_shell(name: str, root: Path, *, as_root: bool, dry_run: bool) -> None:
 
 
 def cmd_start(name: str, *, dry_run: bool) -> None:
+    """Start the target VM and wait until it is ready (no-op if already running)."""
     ensure_up(name, dry_run=dry_run)
     print(f"==> {name} running.", file=sys.stderr)
 
@@ -1093,6 +1102,8 @@ def cmd_reboot(name: str, *, dry_run: bool) -> None:
 
 
 def cmd_stop(name: str, *, dry_run: bool) -> None:
+    """Stop the target VM (`incus stop`); disk state is preserved. No-op if already
+    stopped."""
     if dry_run or vm_is_running(name):
         run(["incus", "stop", name], dry_run=dry_run)
     else:
@@ -1116,6 +1127,9 @@ def confirm_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) ->
 
 
 def cmd_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> None:
+    """Permanently delete the target VM - config, disk, and snapshots (`incus delete
+    --force`). Confirms first (showing the storage pool) unless `--yes`; no-op if the
+    VM does not exist."""
     if not dry_run and not instance_exists(name):
         print(f"==> {name} does not exist; nothing to delete.", file=sys.stderr)
         return
@@ -1171,6 +1185,9 @@ _SUDOERS_USER: str = "Defaults:user rootpw\nuser ALL=(ALL) ALL\n"
 
 
 def cmd_enable_user_sudo(name: str, *, dry_run: bool) -> None:
+    """Opt `user` into in-guest sudo via an `/etc/sudoers.d/user` drop-in - sudo then
+    prompts for ROOT's password (`Defaults:user rootpw`), so set one first with
+    `ivm set-password root`. Revert with `disable-user-sudo`."""
     ensure_up(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "bash", "-ec",
          "cat > /etc/sudoers.d/user <<'EOF'\n" + _SUDOERS_USER + "EOF\n"
@@ -1181,6 +1198,8 @@ def cmd_enable_user_sudo(name: str, *, dry_run: bool) -> None:
 
 
 def cmd_disable_user_sudo(name: str, *, dry_run: bool) -> None:
+    """Remove the `/etc/sudoers.d/user` drop-in, reverting `enable-user-sudo` (back to
+    the locked-down default where `user` cannot sudo)."""
     ensure_up(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "rm", "-f", "/etc/sudoers.d/user"], dry_run=dry_run)
     print(f"==> `user` sudo removed on {name}; back to the locked-down default.", file=sys.stderr)
@@ -1306,6 +1325,19 @@ def cmd_stub(subcommand: str) -> NoReturn:
 
 # ---------- CLI ----------
 
+# Each cwd-resolved subcommand's handler; build_parser() uses its docstring as the
+# `ivm <cmd> --help` description - one source: the code doc IS the CLI long help.
+# Keys MUST match CWD_RESOLVED.
+CWD_RESOLVED_HANDLER: dict[str, Callable[..., None]] = {
+    "shell": cmd_shell, "shell-user": cmd_shell, "shell-root": cmd_shell,
+    "start": cmd_start, "reboot": cmd_reboot, "stop": cmd_stop, "delete": cmd_delete,
+    "overwrite-dotfiles": cmd_overwrite_dotfiles, "update": cmd_update,
+    "set-password": cmd_set_password, "unset-password": cmd_unset_password,
+    "enable-user-sudo": cmd_enable_user_sudo, "disable-user-sudo": cmd_disable_user_sudo,
+    "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info,
+}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ivm", description="incus VM launcher",
@@ -1322,20 +1354,24 @@ def build_parser() -> argparse.ArgumentParser:
                              "(applies to the VM-acting subcommands; not init/env/list)")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    p_init: argparse.ArgumentParser = sub.add_parser("init", help="create a VM from a template")
+    p_init: argparse.ArgumentParser = sub.add_parser(
+        "init", help="create a VM from a template", description=cmd_init.__doc__)
     p_init.add_argument("template", help="template id (file in templates/)")
     p_init.add_argument("name", nargs="?",
                         help="incus VM instance name (as shown in `incus list`); skips the prompt")
 
-    p_env: argparse.ArgumentParser = sub.add_parser("env", help="print a template's resolved config")
+    p_env: argparse.ArgumentParser = sub.add_parser(
+        "env", help="print a template's resolved config", description=cmd_env.__doc__)
     p_env.add_argument("template", help="template id")
 
     # No args here: `list` is a raw passthrough, so we collect everything after it
     # via parse_known_args in main() (REMAINDER mishandles leading `--flags`).
-    sub.add_parser("list", help="`incus list` passthrough (e.g. `ivm list --format csv`)")
+    sub.add_parser("list", help="`incus list` passthrough (e.g. `ivm list --format csv`)",
+                   description=cmd_list.__doc__)
 
     for name in CWD_RESOLVED:
-        sp: argparse.ArgumentParser = sub.add_parser(name, help=CWD_RESOLVED_HELP[name])
+        sp: argparse.ArgumentParser = sub.add_parser(
+            name, help=CWD_RESOLVED_HELP[name], description=CWD_RESOLVED_HANDLER[name].__doc__)
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name in PASSWORD_SUBCOMMANDS:
