@@ -98,7 +98,7 @@ _incus_storage_overrides := \
   $(if $(_pool_src_set),-e incus_storage_pool_source=$(INCUS_STORAGE_POOL_SOURCE)) \
   $(if $(_pool_size_set),-e incus_storage_pool_size=$(INCUS_STORAGE_POOL_SIZE))
 
-incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). Shows + confirms the storage pool config before the sudo prompt. Sudo only for the host steps that actually run.
+incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). Shows + confirms the storage pool config before the sudo prompt ONLY on first-time init (skipped once the `default` pool exists). Sudo only for the host steps that actually run.
 	@incus_defaults='roles/incus_vm/defaults/main/incus_host_install.yml'; \
 	pool_driver='$(INCUS_STORAGE_POOL_DRIVER)'; pool_source='$(INCUS_STORAGE_POOL_SOURCE)'; pool_size='$(INCUS_STORAGE_POOL_SIZE)'; \
 	if [ -n '$(_pool_drv_set)' ];  then driver_origin=override; else pool_driver="$$(sed -n 's/^incus_storage_pool_driver:[[:space:]]*//p' "$$incus_defaults")"; driver_origin=default; fi; \
@@ -106,6 +106,11 @@ incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `i
 	if [ -n '$(_pool_size_set)' ]; then size_origin=override;   else pool_size="$$(sed -n 's/^incus_storage_pool_size:[[:space:]]*//p' "$$incus_defaults")"; size_origin=default; fi; \
 	case "$$pool_driver" in dir|btrfs|zfs|lvm-thin) ;; *) echo "ERROR: INCUS_STORAGE_POOL_DRIVER='$$pool_driver' invalid (want dir|btrfs|zfs|lvm-thin)" >&2; exit 1;; esac; \
 	if [ "$$pool_driver" = dir ] && [ -n "$$pool_size" ]; then echo "ERROR: the dir driver needs an empty size (pass INCUS_STORAGE_POOL_SIZE=)" >&2; exit 1; fi; \
+	if command -v incus >/dev/null 2>&1 && incus storage list --format csv 2>/dev/null | grep -q '^default,'; then incus_pool_already_initialized=1; else incus_pool_already_initialized=; fi; \
+	if [ -n "$$incus_pool_already_initialized" ]; then \
+	echo; \
+	echo "Incus 'default' pool already exists -- host is initialized; the storage-pool config is NOT re-applied. Running the idempotent playbook to reconcile the host + 'ivm' (the per-task sudo gate decides what, if anything, needs root)."; \
+	else \
 	echo; \
 	echo "Incus storage pool -- applied ONLY at first-time 'incus admin init' (an existing pool is left untouched):"; \
 	printf '  driver = %-26s [%s]\n' "$$pool_driver"          "$$driver_origin"; \
@@ -113,7 +118,8 @@ incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `i
 	printf '  size   = %-26s [%s]\n' "$${pool_size:-(empty)}" "$$size_origin"; \
 	echo; \
 	printf 'Proceed? The sudo (BECOME) password prompt is next. [y/N] '; \
-	IFS= read -r confirm_reply; case "$$confirm_reply" in y|Y|yes|YES) ;; *) echo "Aborted -- nothing was run." >&2; exit 1;; esac
+	IFS= read -r confirm_reply; case "$$confirm_reply" in y|Y|yes|YES) ;; *) echo "Aborted -- nothing was run." >&2; exit 1;; esac; \
+	fi
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml $(_incus_storage_overrides)
 
 incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (run `incus-install` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.
