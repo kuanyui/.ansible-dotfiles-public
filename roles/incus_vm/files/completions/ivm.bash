@@ -31,7 +31,7 @@ _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init shell shell-user shell-root start reboot stop delete env list info adopt overwrite-dotfiles update provision set-password unset-password enable-user-sudo disable-user-sudo snapshot gui resize"
+    local subcommands="init shell shell-user shell-root start reboot stop delete env list info adopt overwrite-dotfiles update provision set-password unset-password enable-user-sudo disable-user-sudo snapshot gui resize mount"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}/templates"
 
     # --name / --root take a value: complete VM names after --name.
@@ -73,6 +73,30 @@ _ivm() {
             ;;
         resize)
             COMPREPLY=( $(compgen -W "--cpu --memory --disk" -- "$cur") )
+            ;;
+        mount)
+            # After `mount`: the action (ls/attach/detach), then args. `i` indexes the
+            # `mount` word; flags may sit between, so skip them to find the action.
+            local mount_action="" mount_word_index
+            for (( mount_word_index = i + 1; mount_word_index < COMP_CWORD; mount_word_index++ )); do
+                [[ "${COMP_WORDS[mount_word_index]}" == -* ]] && continue
+                mount_action="${COMP_WORDS[mount_word_index]}"; break
+            done
+            if [[ -z "$mount_action" ]]; then
+                COMPREPLY=( $(compgen -W "ls attach detach" -- "$cur") )
+            elif [[ "$mount_action" == attach ]]; then
+                COMPREPLY=( $(compgen -A file -- "$cur") )
+            elif [[ "$mount_action" == detach ]]; then
+                # detach target: the VM's own mount/shadow device names (ivm_mount_*).
+                local mount_vm="" name_index
+                for (( name_index = 1; name_index < COMP_CWORD; name_index++ )); do
+                    if [[ "${COMP_WORDS[name_index]}" == "--name" ]]; then
+                        mount_vm="${COMP_WORDS[name_index+1]}"; break
+                    fi
+                done
+                [[ -z "$mount_vm" ]] && mount_vm="$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)"
+                [[ -n "$mount_vm" ]] && COMPREPLY=( $(compgen -W "$(incus config device list "$mount_vm" 2>/dev/null | grep '^ivm_mount')" -- "$cur") )
+            fi
             ;;
         provision)
             COMPREPLY=( $(compgen -W "$(_ivm_unit_names)" -- "$cur") )

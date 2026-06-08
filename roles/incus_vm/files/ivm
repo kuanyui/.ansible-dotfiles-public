@@ -9,7 +9,7 @@ roles/incus_vm/IMPLEMENTATION_PLAN.md.
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
-`delete`/`update`/`provision`/`resize`/`overwrite-dotfiles`/`set-password`/`unset-password`/
+`delete`/`update`/`provision`/`resize`/`mount`/`overwrite-dotfiles`/`set-password`/`unset-password`/
 `enable-user-sudo`/`disable-user-sudo`/`info` (target VM status/hw/mounts/storage); `env`; `list` (incus list passthrough);
 `adopt` (tag a pre-existing/older-ivm VM into ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
@@ -59,7 +59,7 @@ DEFAULT_ROOT: Path = Path(
 # they don't resolve a target VM.)
 CWD_RESOLVED: tuple[str, ...] = (
     "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete",
-    "overwrite-dotfiles", "update", "provision", "resize", "set-password", "unset-password",
+    "overwrite-dotfiles", "update", "provision", "resize", "mount", "set-password", "unset-password",
     "enable-user-sudo", "disable-user-sudo", "snapshot", "gui", "info",
 )
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
@@ -76,6 +76,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "update": "refresh + upgrade all packages in the VM",
     "provision": "install distro bundle(s) / thirdparty recipe(s) onto the VM",
     "resize": "change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk; disk grows only)",
+    "mount": "inspect/change a VM's virtio-fs shares post-init (ls/attach/detach; hotplug)",
     "set-password": "set a guest account's login password",
     "unset-password": "lock a guest account's password",
     "enable-user-sudo": "let `user` sudo, gated by root's password",
@@ -1672,6 +1673,159 @@ def cmd_resize(name: str, *, cpu: int | None, memory: str | None, disk: str | No
         print("        btrfs filesystem resize max /                  # btrfs root", file=sys.stderr)
 
 
+def _vm_disk_devices(name: str) -> dict[str, dict[str, Any]]:
+    """The VM's INSTANCE-LOCAL disk devices (mounts + their shadow masks), keyed by
+    device name. Non-expanded `incus config show`, so profile-inherited devices
+    (`root`/`eth0`) are excluded - what's left is exactly the shares attached to THIS
+    VM. Empty if the VM is unreachable."""
+    import yaml  # lazy, same as cmd_info
+    raw: Any = yaml.safe_load(capture(["incus", "config", "show", name]) or "")
+    config: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    devices: dict[str, Any] = config.get("devices", {}) or {}
+    return {device_name: device for device_name, device in devices.items()
+            if isinstance(device, dict) and device.get("type") == "disk" and device_name != "root"}
+
+
+def _next_ivm_mount_index(disk_devices: dict[str, dict[str, Any]]) -> int:
+    """Next free N for an `ivm_mount_<N>` device, so a hotplugged mount keeps ivm's
+    naming and never collides. Base mount names only (not the `_shadow_` children)."""
+    indices: list[int] = []
+    for device_name in disk_devices:
+        match: re.Match[str] | None = re.fullmatch(r"ivm_mount_([0-9]+)", device_name)
+        if match:
+            indices.append(int(match.group(1)))
+    return max(indices) + 1 if indices else 0
+
+
+def cmd_mount_ls(name: str) -> None:
+    """List the VM's virtio-fs shares + any shadow masks layered on them. Read-only."""
+    if not instance_exists(name):
+        die(f"no such incus VM: '{name}' (see `incus list`)")
+    disk_devices: dict[str, dict[str, Any]] = _vm_disk_devices(name)
+    base_mounts: dict[str, dict[str, Any]] = {n: d for n, d in disk_devices.items() if "_shadow_" not in n}
+    if not base_mounts:
+        print(f"{colorize_vm_name(name, stream=sys.stdout)}: no virtio-fs mounts.")
+        return
+    print(f"mounts on {colorize_vm_name(name, stream=sys.stdout)}:")
+    for mount_name, mount_device in sorted(base_mounts.items()):
+        ro_tag: str = "  [ro]" if str(mount_device.get("readonly", "")).lower() == "true" else ""
+        print(f"  {mount_name:20} {mount_device.get('source', '?')} -> {mount_device.get('path', '?')}{ro_tag}")
+        for shadow_name in sorted(disk_devices):
+            if shadow_name.startswith(f"{mount_name}_shadow_"):
+                print(f"      masked: {disk_devices[shadow_name].get('path') or '?'}  ({shadow_name})")
+
+
+def cmd_mount_attach(name: str, host: str, guest: str, *, ro: bool, shadow: list[str],
+                     root: Path, dry_run: bool) -> None:
+    """Hotplug a virtio-fs share (host dir -> absolute guest path), plus an empty
+    read-only mask over each `--shadow` subpath. Uses the next free `ivm_mount_<N>`
+    name; works on a running (hotplug) or stopped VM."""
+    host_abs: str = os.path.abspath(os.path.expanduser(host))
+    if not guest.startswith("/"):
+        die(f"guest path must be absolute (got '{guest}')")
+    if not dry_run:
+        if not instance_exists(name):
+            die(f"no such incus VM: '{name}' (see `incus list`)")
+        if not os.path.exists(host_abs):
+            die(f"host path does not exist: {host_abs}")
+    disk_devices: dict[str, dict[str, Any]] = {} if dry_run else _vm_disk_devices(name)
+    mount_index: int = _next_ivm_mount_index(disk_devices)
+    device_name: str = mount_device_name(mount_index)
+    # The same AF_UNIX sun_path guard `init` applies, for the new device(s).
+    if not dry_run:
+        incus_project_prefix: str = current_incus_project_prefix()
+        new_device_names: list[str] = [device_name] + [
+            shadow_device_name(mount_index, shadow_index) for shadow_index in range(len(shadow))]
+        for new_device_name in new_device_names:
+            socket_path: str = virtiofs_socket_path(incus_project_prefix, name, new_device_name)
+            if len(socket_path) > SUN_PATH_MAX - 1:
+                die(f"virtiofs socket path too long ({len(socket_path)} > {SUN_PATH_MAX - 1}): "
+                    f"{socket_path}. The VM name is the long part - recreate it with a shorter name.")
+    add_cmd: list[str] = ["incus", "config", "device", "add", name, device_name, "disk",
+                          f"source={host_abs}", f"path={guest}"]
+    if ro:
+        add_cmd.append("readonly=true")
+    run(add_cmd, dry_run=dry_run)
+    if shadow:
+        ensure_shadow_mask(root, dry_run=dry_run)
+        mask_source: str = str(shadow_mask_dir(root))
+        for shadow_index, subpath in enumerate(shadow):
+            masked_guest_path: str = f"{guest.rstrip('/')}/{subpath.lstrip('/')}"
+            run(["incus", "config", "device", "add", name,
+                 shadow_device_name(mount_index, shadow_index), "disk",
+                 f"source={mask_source}", f"path={masked_guest_path}", "readonly=true"], dry_run=dry_run)
+    print(f"==> attached {device_name} to {colorize_vm_name(name)}: {host_abs} -> {guest}"
+          f"{' [ro]' if ro else ''}.", file=sys.stderr)
+    if shadow:
+        print(f"    masked subpaths: {', '.join(shadow)}", file=sys.stderr)
+
+
+def cmd_mount_detach(name: str, target: str, *, dry_run: bool) -> None:
+    """Detach a mount OR a single shadow mask, addressed by device name or by path:
+      - a mount (`ivm_mount_1`, or its guest path) -> detached WITH its shadow masks
+      - one shadow mask (its `..._shadow_N` name, or the masked subpath like the
+        project's `.git`) -> just that mask is detached, un-masking the subpath
+    Only the virtio-fs binding goes away (`incus config device remove`); the host
+    directory + its data are left intact. `ivm mount ls` shows paths + device names."""
+    disk_devices: dict[str, dict[str, Any]] = _vm_disk_devices(name)
+    if not disk_devices:
+        if dry_run:  # no daemon to introspect under --dry-run: take target as the device name
+            run(["incus", "config", "device", "remove", name, target], dry_run=dry_run)
+            return
+        die(f"{name} has no virtio-fs mounts to detach (or is unreachable).")
+    # Resolve target -> a device name: exact device name (mount or shadow), else the
+    # device whose guest path matches (a mount's path, or a shadow's masked subpath).
+    device_name: str | None = None
+    if target in disk_devices:
+        device_name = target
+    else:
+        for candidate_name, candidate_device in disk_devices.items():
+            if candidate_device.get("path") == target:
+                device_name = candidate_name
+                break
+    if device_name is None:
+        die(f"no mount or shadow mask matching '{target}' on {name} (see `ivm mount ls`); "
+            f"pass a device name (e.g. ivm_mount_1) or the exact (masked) guest path.")
+    # A base mount drags its shadow masks with it; a shadow mask is detached alone.
+    is_shadow: bool = "_shadow_" in device_name
+    shadow_names: list[str] = [] if is_shadow else sorted(
+        n for n in disk_devices if n.startswith(f"{device_name}_shadow_"))
+    for device_to_remove in [device_name, *shadow_names]:
+        run(["incus", "config", "device", "remove", name, device_to_remove], dry_run=dry_run)
+    if is_shadow:
+        print(f"==> detached shadow mask {device_name} from {colorize_vm_name(name)} "
+              f"(subpath un-masked; host data untouched).", file=sys.stderr)
+    else:
+        shadow_note: str = (f" (+{len(shadow_names)} shadow mask{'s' if len(shadow_names) != 1 else ''})"
+                            if shadow_names else "")
+        print(f"==> detached {device_name}{shadow_note} from {colorize_vm_name(name)} "
+              f"(share unbound; host directory untouched).", file=sys.stderr)
+
+
+def cmd_mount(name: str, action: str, *, host: str | None, guest: str | None, ro: bool,
+              shadow: list[str], target: str | None, root: Path, dry_run: bool) -> None:
+    """`ivm mount`: inspect or change a VM's virtio-fs shares AFTER creation. Template
+    `mounts` apply only at `init`, but incus disk devices hotplug for VMs, so this
+    works on a live (or stopped) VM. Actions:
+
+      ls                                    list this VM's mounts + their shadow masks
+      attach <host> <guest> [--ro]          add a share; repeat --shadow <subpath>
+                 [--shadow SUB ...]         to mask subpaths (e.g. --shadow .git)
+      detach <device | path>                unbind a mount (+its masks), or one mask
+                                            (un-mask a subpath, e.g. `.git`)
+
+    `detach` only unbinds the share (host data is never deleted). Mounts keep ivm's
+    `ivm_mount_<N>` naming so `ls`/`detach` stay consistent."""
+    if action == "ls":
+        cmd_mount_ls(name)
+    elif action == "attach":
+        cmd_mount_attach(name, host or "", guest or "", ro=ro, shadow=shadow, root=root, dry_run=dry_run)
+    elif action == "detach":
+        cmd_mount_detach(name, target or "", dry_run=dry_run)
+    else:
+        die(f"unknown `ivm mount` action: {action!r} (want ls / attach / detach)")
+
+
 # The legacy `user.*` tags older ivm versions wrote, superseded by the canonical
 # set below; `adopt` unsets any that linger so a re-tagged VM has no stale keys.
 LEGACY_TAGS: tuple[str, ...] = ("user.ansible-managed", "user.ansible-guest-os")
@@ -1742,6 +1896,7 @@ CWD_RESOLVED_HANDLER: dict[str, Callable[..., None]] = {
     "set-password": cmd_set_password, "unset-password": cmd_unset_password,
     "enable-user-sudo": cmd_enable_user_sudo, "disable-user-sudo": cmd_disable_user_sudo,
     "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info, "resize": cmd_resize,
+    "mount": cmd_mount,
 }
 
 
@@ -1795,6 +1950,19 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("--memory", metavar="NG", help="new RAM, whole GiB with a G suffix (e.g. 16G)")
             sp.add_argument("--disk", metavar="NG",
                             help="new root-disk size, whole GiB with a G suffix (e.g. 50G); GROW only")
+        if name == "mount":
+            mount_sub = sp.add_subparsers(dest="mount_action", required=True)
+            mount_sub.add_parser("ls", help="list this VM's mounts + shadow masks")
+            p_mount_attach: argparse.ArgumentParser = mount_sub.add_parser("attach", help="add a virtio-fs share")
+            p_mount_attach.add_argument("host", help="host path to share")
+            p_mount_attach.add_argument("guest", help="absolute path inside the guest")
+            p_mount_attach.add_argument("--ro", action="store_true", help="mount read-only")
+            p_mount_attach.add_argument("--shadow", action="append", default=[], metavar="SUBPATH",
+                                        help="mask a subpath under <guest> with an empty ro dir (repeatable)")
+            p_mount_detach: argparse.ArgumentParser = mount_sub.add_parser(
+                "detach", help="unbind a mount (+ its shadow masks); host data is never deleted")
+            p_mount_detach.add_argument("target", help="a mount (ivm_mount_N / its guest path; unbinds its "
+                                        "masks too), or one shadow mask (its name / the masked subpath)")
     return parser
 
 
@@ -1859,6 +2027,11 @@ def main() -> None:
         cmd_info(name, root)
     elif args.subcommand == "resize":
         cmd_resize(name, cpu=args.cpu, memory=args.memory, disk=args.disk, dry_run=args.dry_run)
+    elif args.subcommand == "mount":
+        cmd_mount(name, args.mount_action,
+                  host=getattr(args, "host", None), guest=getattr(args, "guest", None),
+                  ro=getattr(args, "ro", False), shadow=getattr(args, "shadow", []),
+                  target=getattr(args, "target", None), root=root, dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 
