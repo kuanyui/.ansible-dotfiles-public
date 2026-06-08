@@ -30,6 +30,7 @@ _ivm_subcommands=(
   'gui:open a SPICE graphical console'
   'resize:change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk)'
   'mount:inspect/change virtio-fs shares post-init (ls/attach/detach; hotplug)'
+  'push:copy a host file/dir into the VM (incus file push; --as-root)'
 )
 
 # All installable unit names for `provision`: keys of the materialized distro-bundle
@@ -91,6 +92,7 @@ case "$state" in
           [[ -n "$_ivm_mount_vm" ]] && compadd -- ${(f)"$(incus config device list ${_ivm_mount_vm} 2>/dev/null | grep '^ivm_mount')"}
         fi
         ;;
+      push) compadd -- --as-root; _files ;;
       provision) compadd -- ${(f)"$(_ivm_unit_names)"} ;;
       set-password|unset-password) compadd -- user root ;;
       snapshot)

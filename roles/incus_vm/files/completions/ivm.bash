@@ -31,7 +31,7 @@ _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init shell shell-user shell-root start reboot stop delete env list info adopt overwrite-dotfiles update provision set-password unset-password enable-user-sudo disable-user-sudo snapshot gui resize mount"
+    local subcommands="init shell shell-user shell-root start reboot stop delete env list info adopt overwrite-dotfiles update provision set-password unset-password enable-user-sudo disable-user-sudo snapshot gui resize mount push"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/incus-vm/ivm}/templates"
 
     # --name / --root take a value: complete VM names after --name.
@@ -97,6 +97,9 @@ _ivm() {
                 [[ -z "$mount_vm" ]] && mount_vm="$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)"
                 [[ -n "$mount_vm" ]] && COMPREPLY=( $(compgen -W "$(incus config device list "$mount_vm" 2>/dev/null | grep '^ivm_mount')" -- "$cur") )
             fi
+            ;;
+        push)
+            COMPREPLY=( $(compgen -W "--as-root" -- "$cur") $(compgen -A file -- "$cur") )
             ;;
         provision)
             COMPREPLY=( $(compgen -W "$(_ivm_unit_names)" -- "$cur") )

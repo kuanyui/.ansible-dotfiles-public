@@ -9,7 +9,7 @@ roles/incus_vm/IMPLEMENTATION_PLAN.md.
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
-`delete`/`update`/`provision`/`resize`/`mount`/`overwrite-dotfiles`/`set-password`/`unset-password`/
+`delete`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set-password`/`unset-password`/
 `enable-user-sudo`/`disable-user-sudo`/`info` (target VM status/hw/mounts/storage); `env`; `list` (incus list passthrough);
 `adopt` (tag a pre-existing/older-ivm VM into ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
@@ -59,7 +59,7 @@ DEFAULT_ROOT: Path = Path(
 # they don't resolve a target VM.)
 CWD_RESOLVED: tuple[str, ...] = (
     "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete",
-    "overwrite-dotfiles", "update", "provision", "resize", "mount", "set-password", "unset-password",
+    "overwrite-dotfiles", "update", "provision", "resize", "mount", "push", "set-password", "unset-password",
     "enable-user-sudo", "disable-user-sudo", "snapshot", "gui", "info",
 )
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
@@ -77,6 +77,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "provision": "install distro bundle(s) / thirdparty recipe(s) onto the VM",
     "resize": "change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk; disk grows only)",
     "mount": "inspect/change a VM's virtio-fs shares post-init (ls/attach/detach; hotplug)",
+    "push": "copy a host file/dir into the VM (incus file push; --as-root for root-owned)",
     "set-password": "set a guest account's login password",
     "unset-password": "lock a guest account's password",
     "enable-user-sudo": "let `user` sudo, gated by root's password",
@@ -1826,6 +1827,29 @@ def cmd_mount(name: str, action: str, *, host: str | None, guest: str | None, ro
         die(f"unknown `ivm mount` action: {action!r} (want ls / attach / detach)")
 
 
+def cmd_push(name: str, local: str, guest: str, *, as_root: bool, dry_run: bool) -> None:
+    """`ivm push <local> <guest>`: copy a host file/dir into the VM via
+    `incus file push` (a one-shot snapshot; for a live two-way share use
+    `ivm mount attach`). Ownership defaults to `user` (uid/gid 1000); `--as-root`
+    pushes as root (0/0). A directory source goes recursively, missing guest dirs are
+    created, and the guest path must be absolute. VM file ops run through the
+    incus-agent, so the VM is started + waited-for if stopped."""
+    local_abs: str = os.path.abspath(os.path.expanduser(local))
+    if not guest.startswith("/"):
+        die(f"guest path must be absolute (got '{guest}')")
+    if not dry_run and not os.path.exists(local_abs):
+        die(f"local path does not exist: {local_abs}")
+    ensure_up(name, dry_run=dry_run)
+    owner_id: str = "0" if as_root else "1000"
+    push_cmd: list[str] = ["incus", "file", "push", "--create-dirs"]
+    if os.path.isdir(local_abs):
+        push_cmd.append("--recursive")
+    push_cmd += ["--uid", owner_id, "--gid", owner_id, local_abs, f"{name}{guest}"]
+    run(push_cmd, dry_run=dry_run)
+    print(f"==> pushed {local_abs} -> {colorize_vm_name(name)}:{guest} "
+          f"(owner {'root' if as_root else 'user'}).", file=sys.stderr)
+
+
 # The legacy `user.*` tags older ivm versions wrote, superseded by the canonical
 # set below; `adopt` unsets any that linger so a re-tagged VM has no stale keys.
 LEGACY_TAGS: tuple[str, ...] = ("user.ansible-managed", "user.ansible-guest-os")
@@ -1896,7 +1920,7 @@ CWD_RESOLVED_HANDLER: dict[str, Callable[..., None]] = {
     "set-password": cmd_set_password, "unset-password": cmd_unset_password,
     "enable-user-sudo": cmd_enable_user_sudo, "disable-user-sudo": cmd_disable_user_sudo,
     "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info, "resize": cmd_resize,
-    "mount": cmd_mount,
+    "mount": cmd_mount, "push": cmd_push,
 }
 
 
@@ -1963,6 +1987,11 @@ def build_parser() -> argparse.ArgumentParser:
                 "detach", help="unbind a mount (+ its shadow masks); host data is never deleted")
             p_mount_detach.add_argument("target", help="a mount (ivm_mount_N / its guest path; unbinds its "
                                         "masks too), or one shadow mask (its name / the masked subpath)")
+        if name == "push":
+            sp.add_argument("local", help="host file or directory to copy in")
+            sp.add_argument("guest", help="absolute destination path in the guest")
+            sp.add_argument("--as-root", action="store_true",
+                            help="own the pushed files as root (uid/gid 0); default is user (1000)")
     return parser
 
 
@@ -2032,6 +2061,8 @@ def main() -> None:
                   host=getattr(args, "host", None), guest=getattr(args, "guest", None),
                   ro=getattr(args, "ro", False), shadow=getattr(args, "shadow", []),
                   target=getattr(args, "target", None), root=root, dry_run=args.dry_run)
+    elif args.subcommand == "push":
+        cmd_push(name, args.local, args.guest, as_root=args.as_root, dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 

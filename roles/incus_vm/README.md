@@ -81,6 +81,7 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 | `update` | Refresh + upgrade all packages in the VM (per-family apt/zypper/dnf). |
 | `resize [--cpu N] [--memory NG] [--disk NG]` | Change an existing VM's vCPU / RAM / root-disk (the template `hw.*` only applies at `init`). cpu/memory apply live; **disk grows only** (refuses shrink) and resizes just the host block device - the guest fs needs `ivm reboot` or in-guest `growpart`+`resize2fs`. |
 | `mount ls\|attach\|detach` | Inspect / change a VM's virtio-fs shares after creation (template `mounts` only apply at `init`, but incus disk devices hotplug for VMs). `attach <host> <guest> [--ro] [--shadow SUB ...]`; `detach <mount>` (drops its masks too) **or** `detach <masked-path>` to un-mask one subpath (e.g. un-shadow `.git` for a project that needs git). `detach` only unbinds the share - **host data is never deleted**. `ls`. |
+| `push <local> <guest> [--as-root]` | Copy a host file/dir into the VM (`incus file push`, one-shot snapshot). Owns files as `user` (uid/gid 1000) by default; `--as-root` for root. A directory goes recursively; the guest path must be absolute; the VM is started if stopped. For a live two-way share, use `mount attach` instead. |
 | `overwrite-dotfiles` | Re-push the host-staged dotfiles into the VM (no re-provision). |
 | `set-password <username>` | Set a guest account's login password (e.g. `user` for console/TTY login). Password only - prompted, sent via stdin. |
 | `unset-password <username>` | Lock that account's password. |
