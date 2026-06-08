@@ -72,6 +72,14 @@
 
 - name: Probe (`{{ _install_distro_packages_entry.probe | default("(none)") }}`) whether packages are already present
   ansible.builtin.shell: "{{ _install_distro_packages_entry.probe }}"
+  # This probe runs WITHOUT `become`, so it inherits the connecting user's PATH.
+  # An unprivileged user's PATH commonly omits /usr/sbin and /sbin, where system
+  # tools (e.g. `mkfs.btrfs` from btrfsprogs) live - so a bare `command -v
+  # mkfs.btrfs` would report an INSTALLED package as missing and re-trigger the
+  # install on EVERY run. Append the sbin dirs so such probes resolve. (probe
+  # forms that don't touch PATH, e.g. `python3 -c "import X"`, are unaffected.)
+  environment:
+    PATH: "{{ ansible_facts['env']['PATH'] | default('/usr/bin:/bin') }}:/usr/local/sbin:/usr/sbin:/sbin"
   register: _install_distro_packages_probe
   changed_when: false
   failed_when: false

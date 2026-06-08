@@ -76,8 +76,45 @@ apply-firefox-tunes:  ## Apply Firefox about:config tweaks (session-store interv
 ### Incus (host daemon + the `ivm` VM launcher)
 ### -------------------------------------------------------------------------
 
-incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). Sudo only for the host steps that actually run.
-	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml
+## Incus storage pool backend (available: dir|btrfs|zfs|lvm-thin, default: `btrfs`). Details: roles/incus_vm/defaults/main/incus_host_install.yml
+INCUS_STORAGE_POOL_DRIVER ?=
+## Incus storage pool source path (default: `/home/incus-storage.img`). Details: roles/incus_vm/defaults/main/incus_host_install.yml
+INCUS_STORAGE_POOL_SOURCE ?=
+## Incus storage pool size; empty for `dir` (default: `500GiB`). Details: roles/incus_vm/defaults/main/incus_host_install.yml
+INCUS_STORAGE_POOL_SIZE ?=
+
+# Which of the three INCUS_STORAGE_POOL_* the user actually set (origin = command
+# line / environment). Shared by the `-e` translation and the incus-install
+# pre-flight labels below.
+_pool_drv_set  := $(filter command line environment,$(origin INCUS_STORAGE_POOL_DRIVER))
+_pool_src_set  := $(filter command line environment,$(origin INCUS_STORAGE_POOL_SOURCE))
+_pool_size_set := $(filter command line environment,$(origin INCUS_STORAGE_POOL_SIZE))
+
+# -> ansible `-e` only for vars the user set; unset defers to the role's
+# defaults/main (no Makefile-side default to drift). An explicit-but-empty value
+# (`INCUS_STORAGE_POOL_SIZE=` for `dir`) still counts as set -> `-e ...size=` (= no size).
+_incus_storage_overrides := \
+  $(if $(_pool_drv_set),-e incus_storage_pool_driver=$(INCUS_STORAGE_POOL_DRIVER)) \
+  $(if $(_pool_src_set),-e incus_storage_pool_source=$(INCUS_STORAGE_POOL_SOURCE)) \
+  $(if $(_pool_size_set),-e incus_storage_pool_size=$(INCUS_STORAGE_POOL_SIZE))
+
+incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). Shows + confirms the storage pool config before the sudo prompt. Sudo only for the host steps that actually run.
+	@incus_defaults='roles/incus_vm/defaults/main/incus_host_install.yml'; \
+	pool_driver='$(INCUS_STORAGE_POOL_DRIVER)'; pool_source='$(INCUS_STORAGE_POOL_SOURCE)'; pool_size='$(INCUS_STORAGE_POOL_SIZE)'; \
+	if [ -n '$(_pool_drv_set)' ];  then driver_origin=override; else pool_driver="$$(sed -n 's/^incus_storage_pool_driver:[[:space:]]*//p' "$$incus_defaults")"; driver_origin=default; fi; \
+	if [ -n '$(_pool_src_set)' ];  then source_origin=override; else pool_source="$$(sed -n 's/^incus_storage_pool_source:[[:space:]]*//p' "$$incus_defaults")"; source_origin=default; fi; \
+	if [ -n '$(_pool_size_set)' ]; then size_origin=override;   else pool_size="$$(sed -n 's/^incus_storage_pool_size:[[:space:]]*//p' "$$incus_defaults")"; size_origin=default; fi; \
+	case "$$pool_driver" in dir|btrfs|zfs|lvm-thin) ;; *) echo "ERROR: INCUS_STORAGE_POOL_DRIVER='$$pool_driver' invalid (want dir|btrfs|zfs|lvm-thin)" >&2; exit 1;; esac; \
+	if [ "$$pool_driver" = dir ] && [ -n "$$pool_size" ]; then echo "ERROR: the dir driver needs an empty size (pass INCUS_STORAGE_POOL_SIZE=)" >&2; exit 1; fi; \
+	echo; \
+	echo "Incus storage pool -- applied ONLY at first-time 'incus admin init' (an existing pool is left untouched):"; \
+	printf '  driver = %-26s [%s]\n' "$$pool_driver"          "$$driver_origin"; \
+	printf '  source = %-26s [%s]\n' "$$pool_source"          "$$source_origin"; \
+	printf '  size   = %-26s [%s]\n' "$${pool_size:-(empty)}" "$$size_origin"; \
+	echo; \
+	printf 'Proceed? The sudo (BECOME) password prompt is next. [y/N] '; \
+	IFS= read -r confirm_reply; case "$$confirm_reply" in y|Y|yes|YES) ;; *) echo "Aborted -- nothing was run." >&2; exit 1;; esac
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml $(_incus_storage_overrides)
 
 incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (run `incus-install` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.
 	@set -e; \
@@ -107,8 +144,8 @@ INCUS_VM_HOST_TEARDOWN_FLAGS := -e incus_vm_uninstall_delete_all_instances=true 
 incus-teardown-host:  ## DESTRUCTIVE host-level incus teardown: deletes ALL VMs, the `default` pool (ERASES disks), `incusbr0`, `user-*` projects + `incusbr-*` bridges, and disables the daemon. Keeps packages + your `incus` group. Needs sudo.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm_uninstall.yml $(INCUS_VM_HOST_TEARDOWN_FLAGS)
 
-incus-check:  ## Dry-run `incus-install` (`--check --diff`).
-	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_vm.yml
+incus-check:  ## Dry-run `incus-install` (`--check --diff`). Honors the same INCUS_STORAGE_POOL_* overrides.
+	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_vm.yml $(_incus_storage_overrides)
 
 incus-sandbox:  ## Dry-run `incus-install` in a throwaway podman+systemd sandbox (`incus` binary stubbed).
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_vm
