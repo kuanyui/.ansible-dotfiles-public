@@ -18,6 +18,7 @@ _ivm_subcommands=(
   'env:load + print a template'\''s resolved config'
   'list:incus list passthrough'
   'info:target VM info - status, image, hw, network, mounts, storage (cwd or --name)'
+  'adopt:tag an existing incus VM into ivm management (requires --name)'
   'overwrite-dotfiles:re-push staged dotfiles into the VM'
   'update:upgrade all packages in the VM'
   'provision:install distro bundle(s) / thirdparty recipe(s) onto the VM'
