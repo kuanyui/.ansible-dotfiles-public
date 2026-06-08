@@ -8,12 +8,14 @@
 # Copy Fail), ax25, can, ...
 #
 # Only effective at an abi that mediates network families (abi/4.0+); profiles pin `abi <abi/5.0>`.
-# Apps that need NO network use local_mixin_network_deny instead.
-
+# Apps that need NO network egress use local_mixin_network_deny instead (it includes the same
+# local_mixin_network_local_ipc, minus the inet egress lines below).
+#
+# AF_UNIX local IPC (Wayland / D-Bus / audio / journald) comes from the shared mixin; the inet
+# egress + netlink lines here are what makes this the "networked app" variant.
+#include <abstractions/local_mixin_network_local_ipc>
 network inet  stream,
 network inet6 stream,
 network inet  dgram,
 network inet6 dgram,
-network unix  stream,
-network unix  dgram,
 network netlink raw,

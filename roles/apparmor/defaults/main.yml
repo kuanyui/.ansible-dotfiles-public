@@ -53,6 +53,8 @@ apparmor_static_abstractions:
     dest: abstractions/local_mixin_deny_probably_credentials
   - src: local_mixin_deny_persistent_attack.aa
     dest: abstractions/local_mixin_deny_persistent_attack
+  - src: local_mixin_network_local_ipc.aa
+    dest: abstractions/local_mixin_network_local_ipc
   - src: local_mixin_network_deny.aa
     dest: abstractions/local_mixin_network_deny
   - src: local_mixin_kernel_surface_browser.aa

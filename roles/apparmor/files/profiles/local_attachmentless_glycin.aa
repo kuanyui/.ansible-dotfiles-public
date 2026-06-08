@@ -46,6 +46,13 @@ profile local_attachmentless_glycin flags=(attach_disconnected) {
     # this rule bwrap's userns creation is denied and image decoding breaks).
     userns create,
 
+    # Network (mediated once abi/5.0 is pinned). bwrap sets up a loopback-only network
+    # namespace via rtnetlink (capability net_admin above) - that is the `network netlink raw`.
+    # The decoder also inherits an AF_UNIX socket from the calling app (e.g. firefox) for
+    # image-data IPC - that is local_mixin_network_local_ipc below. No inet/inet6: the decoder
+    # has no network egress.
+    network netlink raw,
+
     # Mount namespace setup
     mount,
     umount,
@@ -55,6 +62,7 @@ profile local_attachmentless_glycin flags=(attach_disconnected) {
     /usr/bin/bwrap mr,
 
     #include <abstractions/local_mixin_glycin>
+    #include <abstractions/local_mixin_network_local_ipc>
     #include <abstractions/local_mixin_deny_mounted_external_media>
 
     # User/group namespace ID mapping

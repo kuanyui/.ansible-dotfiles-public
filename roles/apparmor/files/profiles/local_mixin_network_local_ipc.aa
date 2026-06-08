@@ -1,0 +1,19 @@
+# Managed by Ansible - do not edit manually
+# Local-IPC AF_UNIX socket grant - /etc/apparmor.d/abstractions/local_mixin_network_local_ipc
+#
+# Include in EVERY confined GUI app. At abi/4.0+ AppArmor mediates AF_UNIX (local
+# inter-process sockets) SEPARATELY from the coarse `network` rule, and a bare `network,`
+# (or abstractions/base / abstractions/nameservice) no longer implies it. Wayland (display),
+# D-Bus (IPC / notifications), PipeWire / Pulse (audio) and journald (logging) all run over
+# AF_UNIX, so the moment a profile pins `abi <abi/5.0>` these are default-denied unless granted
+# here - the app loses display, IPC, audio and logging.
+#
+# AF_UNIX is local-by-definition and carries NO network egress, so granting it does not widen
+# the egress surface that local_mixin_network_app (whitelist) / local_mixin_network_deny (block)
+# control - both of those include this mixin; a no-egress viewer still needs local IPC.
+#
+# stream = Wayland / D-Bus / X11 / audio control sockets. dgram = journald log socket.
+# Only effective at an abi that mediates AF_UNIX (abi/4.0+); managed profiles pin `abi <abi/5.0>`.
+
+network unix stream,
+network unix dgram,
