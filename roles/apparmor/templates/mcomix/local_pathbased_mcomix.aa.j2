@@ -1,3 +1,4 @@
+abi <abi/5.0>,
 #include <tunables/global>
 
 # Managed by Ansible - do not edit manually
@@ -16,6 +17,8 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     #include <abstractions/local_mixin_deny_keyrings>
     #include <abstractions/local_mixin_deny_probably_credentials>
     #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_network_deny>
+    #include <abstractions/local_mixin_kernel_surface_general_app>
     #include <abstractions/local_mixin_personal_dirs__for__image_viewer>
     #include <abstractions/local_mixin_deny_mounted_external_media>
     #include <abstractions/local_mixin_glycin>
@@ -29,8 +32,6 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
 
     # Root directory listing (names only); occurs during glycin image-load startup
     / r,
-
-    # network access intentionally denied
 
     # Wayland display socket
     owner /run/user/*/wayland-[0-9]* rw,

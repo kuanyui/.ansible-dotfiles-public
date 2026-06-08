@@ -16,6 +16,13 @@ apparmor_xdg_screenshots_exists: false     # fallback; overridden at runtime by 
 apparmor_non_interactive: false
 
 
+# `apparmor_profile_mode`: `enforce` (default) or `complain`. The final step in
+# `tasks/_install.yml` runs `aa-enforce` or `aa-complain` on every managed profile
+# accordingly. Use `complain` for the validation pass after an abi / mediation change
+# (pinning `abi <abi/5.0>` turns on dbus + userns + unix mediation at once; complain
+# logs the new denials without breaking apps). Switch back to `enforce` once clean.
+apparmor_profile_mode: enforce
+
 # Static AppArmor profiles managed by this role.
 # src: filename under roles/apparmor/files/profiles/
 # dest: filename deployed to /etc/apparmor.d/ (no extension)
@@ -46,6 +53,14 @@ apparmor_static_abstractions:
     dest: abstractions/local_mixin_deny_probably_credentials
   - src: local_mixin_deny_persistent_attack.aa
     dest: abstractions/local_mixin_deny_persistent_attack
+  - src: local_mixin_network_deny.aa
+    dest: abstractions/local_mixin_network_deny
+  - src: local_mixin_kernel_surface_browser.aa
+    dest: abstractions/local_mixin_kernel_surface_browser
+  - src: local_mixin_kernel_surface_general_app.aa
+    dest: abstractions/local_mixin_kernel_surface_general_app
+  - src: local_mixin_network_app.aa
+    dest: abstractions/local_mixin_network_app
   - src: local_mixin_gpu.aa
     dest: abstractions/local_mixin_gpu
   - src: local_mixin_gpu_chromium_based.aa

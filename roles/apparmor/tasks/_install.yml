@@ -52,7 +52,7 @@
   tags: apparmor
 
 # =============================================
-# Enforce all managed profiles
+# Set mode (enforce / complain) on all managed profiles
 # =============================================
 # Run after all deploy tasks so apparmor_parser sees a consistent set of
 # files. Enforcing mid-deploy risks parse failures when one profile
@@ -69,11 +69,13 @@
 # the partial run re-enforces every other profile too (aa-enforce on an
 # already-enforced profile is functionally a no-op at the kernel level).
 
-- name: Enforce all deployed `local_*` AppArmor profiles via `aa-enforce` (batched single invocation)
+- name: Set mode (`aa-enforce` / `aa-complain` per `apparmor_profile_mode`) on all deployed `local_*` profiles (batched single invocation)
   ansible.builtin.command:
-    argv: "{{ ['aa-enforce'] + _aa_enforce_paths }}"
+    argv: "{{ [_aa_mode_command] + _aa_mode_paths }}"
   vars:
-    _aa_enforce_paths: >-
+    # `aa-complain` for the validation pass after an abi / mediation change, else `aa-enforce`.
+    _aa_mode_command: "{{ 'aa-complain' if (apparmor_profile_mode | default('enforce')) == 'complain' else 'aa-enforce' }}"
+    _aa_mode_paths: >-
       {{ ((apparmor_static_profiles | map(attribute='dest') | list)
           + apparmor_template_profile_names)
          | map('regex_replace', '^', '/etc/apparmor.d/')

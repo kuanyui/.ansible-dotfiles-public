@@ -85,10 +85,10 @@ incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (ru
 	if [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
 	else echo "No staged dotfiles found -- run 'make incus-install' first" >&2; exit 1; fi; \
 	echo "Source (Debian tree; the only buildable guest family today): $$SRC"; \
-	VMS=$$(incus list user.ansible-managed=true --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
+	VMS=$$(incus list user.ansible_managed=true --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
 	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
 	for vm in $$VMS; do \
-	    os=$$(incus config get "$$vm" user.ansible-guest-os 2>/dev/null || true); \
+	    os=$$(incus config get "$$vm" user.ivm_guest_os 2>/dev/null || true); \
 	    if [ "$$os" = "windows" ]; then echo "==> Skipping $$vm (guest-os=windows)"; continue; fi; \
 	    echo "==> Re-pushing dotfiles into $$vm (user + root)"; \
 	    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$$SRC/home/user" "$$vm/home/"; \

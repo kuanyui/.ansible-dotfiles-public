@@ -1,0 +1,19 @@
+# Managed by Ansible - do not edit manually
+# Network family whitelist for networked apps - /etc/apparmor.d/abstractions/local_mixin_network_app
+#
+# Include in confined apps that need network egress (IM, remote desktop) INSTEAD of a bare
+# `network,` (which allows every address family). Whitelists only the families a desktop app
+# uses, so obscure protocol families that are recurring kernel-LPE surface stay default-denied:
+# rds (CVE-2026-43494 PinTheft), rxrpc (CVE-2026-43284 Dirty Frag), alg / AF_ALG (CVE-2026-31431
+# Copy Fail), ax25, can, ...
+#
+# Only effective at an abi that mediates network families (abi/4.0+); profiles pin `abi <abi/5.0>`.
+# Apps that need NO network use local_mixin_network_deny instead.
+
+network inet  stream,
+network inet6 stream,
+network inet  dgram,
+network inet6 dgram,
+network unix  stream,
+network unix  dgram,
+network netlink raw,

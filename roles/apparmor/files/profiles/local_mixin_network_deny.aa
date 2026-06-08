@@ -1,0 +1,15 @@
+# Managed by Ansible - do not edit manually
+# Deny all network access - /etc/apparmor.d/abstractions/local_mixin_network_deny
+#
+# Include in local-only viewers (image / video / PDF / score) that must have no
+# network egress. `deny network,` overrides any `network ...` allow pulled in by an
+# abstraction (e.g. abstractions/nameservice grants `network inet stream,`), so egress
+# stays blocked even if such an include is added later.
+#
+# Only effective when the including profile compiles at an abi that mediates network
+# (abi/4.0+); managed profiles pin `abi <abi/5.0>` in their preamble for this.
+#
+# Plain `deny` (NOT `audit deny`): startup network probes (NSS, proxy autodetect) are
+# routine noise, not a tripwire - silence them so the real `audit deny` tripwires stay
+# visible. See "audit deny vs plain deny" in roles/apparmor/CLAUDE.md.
+deny network,

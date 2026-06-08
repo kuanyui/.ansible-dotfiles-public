@@ -1,5 +1,32 @@
 # TODO
 
+## Kernel attack-surface hardening (userns / io_uring / caps / network) - in progress
+
+Pin `abi <abi/5.0>` per profile to turn on userns / io_uring / network / mqueue mediation
+(pure kernel LSM; kernel 7.0.10 + parser 5.0 support all). Roll out via
+`apparmor_profile_mode=complain`, collect denials, then enforce.
+
+CVE rationale: unprivileged userns gates ~44-63% of recent kernel LPEs (CVE-2024-1086
+nf_tables, eBPF, io_uring families) and expands kernel attack surface 3.4x; io_uring was
+~60% of Google's 2022 kernel-exploit bug-bounty. Deny these for every non-browser app.
+
+userns policy: the 4 browsers (firefox / chromium / msedge / vscode) + glycin (firefox's
+forced image-decoder bwrap) get `userns create`; everything else denied.
+
+D-Bus is OUT of scope: the session bus is `dbus-broker`, which does NOT consult AppArmor,
+so `dbus` rules are no-ops here. (Would need `xdg-dbus-proxy` [needs bwrap, dropped] or
+switching to `dbus-daemon`.)
+
+- [x] `local_mixin_network_deny` (deny egress for image / video / pdf / score viewers)
+- [x] `apparmor_profile_mode` var + `aa-enforce` / `aa-complain` toggle in `_install.yml`
+- [x] `local_mixin_kernel_surface_browser` (caps sys_admin/sys_chroot/sys_ptrace + userns create)
+- [x] `local_mixin_kernel_surface_general_app` (audit deny capability/userns/io_uring/mount/umount/pivot_root/mqueue)
+- [x] `local_mixin_network_app` (whitelist inet/inet6/unix/netlink; denies rds/rxrpc/alg -> PinTheft/DirtyFrag/CopyFail)
+- [x] abi/5.0 pinned on ALL profiles; browsers -> capabilities_browser; telegram + all viewers + mpv -> deny_kernel_attack_surface; viewers + mpv -> deny_network; telegram/anydesk -> network_app
+- [ ] vscode userns: pending `ls -l /usr/share/code/code-sandbox`. If 4755 (SUID) -> split vscode out of capabilities_browser (keep `capability sys_chroot`, drop `userns create`: SUID sandbox stays, userns closed). If 0755 -> keep userns (avoid forcing --no-sandbox).
+- [x] glycin: kept (firefox forces it); pinned abi/5.0 + added `userns create` (its bwrap needs it). Keeps inline caps; NOT given deny_kernel_attack_surface.
+- [ ] Complain pass -> add audited mount/unix/etc. allows -> flip `apparmor_profile_mode` to `enforce`
+
 ## `python3-jsonschema` install: handled by the role itself
 
 `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py` validates

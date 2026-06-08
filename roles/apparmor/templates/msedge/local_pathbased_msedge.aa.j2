@@ -1,3 +1,4 @@
+abi <abi/5.0>,
 #include <tunables/global>
 
 # Managed by Ansible - do not edit manually
@@ -16,6 +17,7 @@ profile local_pathbased_msedge /opt/microsoft/msedge/msedge {
     #include <abstractions/fonts>
     #include <abstractions/dbus-session-strict>
 
+    #include <abstractions/local_mixin_kernel_surface_browser>
     #include <abstractions/local_mixin_sysinfo>
     #include <abstractions/local_mixin_gpu>
     #include <abstractions/local_mixin_gpu_chromium_based>
@@ -45,10 +47,8 @@ profile local_pathbased_msedge /opt/microsoft/msedge/msedge {
     /etc/opt/microsoft/msedge/{,**} r,
     deny /opt/microsoft/msedge/Extensions/ w,  # Edge probes this; install path is root-owned so mkdir would fail anyway
 
-    # Capabilities - same Chromium sandbox model
-    capability sys_admin,    # user namespace setup for sandboxed child processes
-    capability sys_chroot,   # chroot-based content process sandbox
-    capability sys_ptrace,   # inspect sandboxed child processes
+    # Content-process sandbox capabilities + userns are in
+    # <abstractions/local_mixin_kernel_surface_browser>, included at the top.
 
     # User/group namespace ID mapping - needed for user namespace setup
     /proc/sys/kernel/overflowuid r,

@@ -1,3 +1,4 @@
+abi <abi/5.0>,
 #include <tunables/global>
 
 # Managed by Ansible - do not edit manually
@@ -16,14 +17,14 @@ profile local_pathbased_stardict /usr/bin/stardict {
     #include <abstractions/local_mixin_deny_keyrings>
     #include <abstractions/local_mixin_deny_probably_credentials>
     #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_network_deny>
+    #include <abstractions/local_mixin_kernel_surface_general_app>
     #include <abstractions/local_mixin_personal_dirs__for__others>
     #include <abstractions/local_mixin_deny_mounted_external_media>
 
     # Glycin image loader - bwrap exec transitions to local_attachmentless_glycin
     /usr/bin/bwrap Px -> local_attachmentless_glycin,
     signal (send) set=(kill) peer=local_attachmentless_glycin,
-
-    # network access intentionally denied
 
     # Wayland display socket
     owner /run/user/*/wayland-[0-9]* rw,

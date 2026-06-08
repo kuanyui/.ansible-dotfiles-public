@@ -321,6 +321,22 @@ First real `ivm init webbrowser` on the host surfaced these (all fixed unless no
 
 ## ivm CLI/UX polish
 
+- [x] **`ivm adopt` + `user.*` tag rename** - older-ivm / hand-made VMs carry no
+  `user.ivm_init_at_dir`, so the cwd resolver (and thus `ivm info`) can't find
+  them. Added `ivm --name <vm> adopt`: forces `--name` (never resolves by cwd -
+  the binding is what it creates), interactively (re)writes the canonical tags
+  (prefill = current value, blank skips, enum fields validated), and unsets the
+  legacy hyphenated keys. Also standardized the tag separator on `_` (incus
+  `user.*` is free-form, no convention - these are ivm's own keys, so be
+  internally consistent): `user.ansible-managed` -> `user.ansible_managed`,
+  `user.ansible-guest-os` -> `user.ivm_guest_os` (the latter also gains the `ivm_`
+  prefix; `ansible_managed` keeps its name as the host-wide ownership flag). The
+  three pre-existing `user.ivm_*` keys were already `_`. Updated the two
+  Makefile readers (`incus-push-dotfiles`), both completions, the module
+  docstring. Verified: `py_compile`, `bash -n`/`zsh -n`, `make -n`, and dry-run
+  smoke (write commands, missing-`--name` error, enum re-prompt). NOT run against
+  real incus.
+
 Surfaced using `ivm` interactively. All DONE (notes per item). Static checks:
 `py_compile` + a focused unit harness (importlib-loaded `ivm`, stubbed
 incus/tty/input - 23 cases) + CLI dry-run smoke. `mypy --strict` NOT run (no

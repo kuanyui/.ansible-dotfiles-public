@@ -1,3 +1,4 @@
+abi <abi/5.0>,
 #include <tunables/global>
 
 # Managed by Ansible - do not edit manually
@@ -16,6 +17,7 @@ profile local_pathbased_vscode /usr/share/code/code {
     #include <abstractions/fonts>
     #include <abstractions/dbus-session-strict>
 
+    #include <abstractions/local_mixin_kernel_surface_browser>
     #include <abstractions/local_mixin_sysinfo>
     #include <abstractions/local_mixin_gpu>
     #include <abstractions/local_mixin_gpu_chromium_based>
@@ -41,10 +43,8 @@ profile local_pathbased_vscode /usr/share/code/code {
 
     deny /usr/share/code/resources/app/extensions/ w,  # VS Code probes this; root-owned so mkdir fails anyway
 
-    # Capabilities - Electron uses the same Chromium multi-process sandbox model
-    capability sys_admin,    # user namespace setup for sandboxed renderer/extension-host processes
-    capability sys_chroot,   # chroot-based content process sandbox
-    capability sys_ptrace,   # inspect sandboxed child processes
+    # Content-process sandbox capabilities + userns are in
+    # <abstractions/local_mixin_kernel_surface_browser>, included at the top.
 
     # User/group namespace ID mapping - needed for user namespace setup
     /proc/sys/kernel/overflowuid r,

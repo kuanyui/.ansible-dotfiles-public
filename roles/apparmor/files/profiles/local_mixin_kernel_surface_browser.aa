@@ -1,0 +1,26 @@
+# Managed by Ansible - do not edit manually
+# Browser content-process sandbox: kernel-surface grants + never-needed tripwire denies - /etc/apparmor.d/abstractions/local_mixin_kernel_surface_browser
+#
+# Include ONLY in Chromium / Gecko / Electron browser profiles (firefox, chromium, msedge,
+# vscode). Centralises the privileged grants their content-process sandbox needs, so the
+# browser attack surface is auditable in one place instead of scattered inline.
+#
+# WARNING: this GRANTS dangerous privileges. `userns create` is the gateway to ~44-63% of
+# recent kernel LPEs (see the CVE mapping in roles/apparmor/TODO.md); it is allowed here only
+# because browser renderer sandboxes require it to isolate untrusted web content. Do NOT include
+# in any non-browser profile - general apps get local_mixin_kernel_surface_general_app instead.
+#
+# Only effective at an abi that mediates capability / userns; profiles pin `abi <abi/5.0>`.
+
+capability sys_admin,    # content-process sandbox: mount operations inside the user namespace
+capability sys_chroot,   # chroot-based content-process sandbox
+capability sys_ptrace,   # sandbox inspects its own child processes
+userns create,           # unprivileged user namespace for the content-process sandbox
+
+# Tripwire-deny what a browser never needs (audit deny = logged + enforced even in complain).
+# io_uring: ~60% of 2022 kernel exploits, and browsers do not use it by default. NOT denied:
+# mount / umount / pivot_root - the namespace sandbox uses them to build its content-process
+# jail (that is what `capability sys_admin` above is for), so they stay default-deny and pick
+# up minimal ALLOW rules from the complain pass (general apps deny them outright instead).
+audit deny io_uring,
+audit deny mqueue,

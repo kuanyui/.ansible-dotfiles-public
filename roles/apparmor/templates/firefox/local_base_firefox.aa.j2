@@ -7,6 +7,7 @@
     #include <abstractions/fonts>
     #include <abstractions/dbus-session-strict>
 
+    #include <abstractions/local_mixin_kernel_surface_browser>
     #include <abstractions/local_mixin_sysinfo>
     #include <abstractions/local_mixin_gpu>
     #include <abstractions/local_mixin_audio>
@@ -51,10 +52,9 @@
     deny @{PROC}/@{pid}/environ r,       # process environment variables (may contain secrets)
     deny @{PROC}/@{pid}/pagemap r,       # virtual-to-physical memory mapping (exploit aid)
 
-    # Capabilities
-    capability sys_admin,    # Firefox content process sandbox uses mount operations inside user namespace
-    capability sys_chroot,   # Firefox Chroot Helper sets up chroot sandbox for content processes
-    capability sys_ptrace,   # Firefox content process sandbox inspects child processes
+    # Content-process sandbox privileges (capability sys_admin / sys_chroot / sys_ptrace +
+    # userns create) are centralised in <abstractions/local_mixin_kernel_surface_browser>,
+    # included at the top of this abstraction.
 
     /etc/sysconfig/proxy r,                  # openSUSE system-wide proxy settings
     /usr/share/mozilla/extensions/{,**} r,   # system-wide Firefox extensions

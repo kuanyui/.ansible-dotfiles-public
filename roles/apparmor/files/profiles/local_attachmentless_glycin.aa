@@ -1,3 +1,4 @@
+abi <abi/5.0>,
 #include <tunables/global>
 
 # Managed by Ansible - do not edit manually
@@ -40,6 +41,10 @@ profile local_attachmentless_glycin flags=(attach_disconnected) {
     capability sys_ptrace,  # process inspection inside sandbox
     capability setpcap,     # drop capabilities after sandbox setup (security hardening)
     capability net_admin,   # configure loopback interface inside network namespace
+
+    # Unprivileged user namespace bwrap creates (mediated once abi/5.0 is pinned; without
+    # this rule bwrap's userns creation is denied and image decoding breaks).
+    userns create,
 
     # Mount namespace setup
     mount,

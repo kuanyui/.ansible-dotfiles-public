@@ -1,0 +1,22 @@
+# Managed by Ansible - do not edit manually
+# Deny kernel attack-surface for general apps - /etc/apparmor.d/abstractions/local_mixin_kernel_surface_general_app
+#
+# Include in every confined app that is NOT a browser sandbox (IM, viewers, players, editors).
+# Denies the AppArmor-mediated kernel interfaces a normal desktop app never needs - the recurring
+# gateways in recent Linux kernel LPEs (CVE mapping in roles/apparmor/TODO.md).
+#
+# Only effective at an abi that mediates these classes (abi/4.0+ for userns / io_uring / mqueue);
+# profiles pin `abi <abi/5.0>`. `audit deny` (not plain deny): never legitimate for a general app,
+# so a denied attempt is a security signal worth logging, and explicit deny stays enforced even
+# while a profile is in complain mode.
+#
+# Do NOT include in browser profiles (would override local_mixin_kernel_surface_browser's grants)
+# or in bwrap / container helper profiles (glycin, podman) that legitimately need these.
+
+audit deny capability,    # any capability (incl. CAP_BPF -> eBPF verifier LPEs); general apps need none
+audit deny userns,        # unprivileged user namespace creation: prerequisite for ~44-63% of recent kernel LPEs
+audit deny io_uring,      # io_uring: ~60% of kernel exploits in Google's 2022 bug-bounty targeted it
+audit deny mount,         # mount / remount: namespace-escape and overlay tricks
+audit deny umount,
+audit deny pivot_root,
+audit deny mqueue,        # POSIX + System V message queues: rarely-used IPC, extra kernel surface
