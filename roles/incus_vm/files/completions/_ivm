@@ -28,6 +28,7 @@ _ivm_subcommands=(
   'disable-user-sudo:revert enable-user-sudo'
   'snapshot:incus snapshot (create/list/restore/delete/rename/show)'
   'gui:open a SPICE graphical console'
+  'resize:change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk)'
 )
 
 # All installable unit names for `provision`: keys of the materialized distro-bundle
@@ -71,6 +72,7 @@ case "$state" in
   args)
     case "$words[1]" in
       init|env) compadd -- ${_ivm_templates_root}/*.yaml(N:t:r) ;;
+      resize) compadd -- --cpu --memory --disk ;;
       provision) compadd -- ${(f)"$(_ivm_unit_names)"} ;;
       set-password|unset-password) compadd -- user root ;;
       snapshot)

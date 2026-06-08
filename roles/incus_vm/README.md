@@ -79,6 +79,7 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 | `reboot` | `incus restart` the target VM. |
 | `delete` | Delete the VM + its disk + snapshots (asks first; `--yes` skips). |
 | `update` | Refresh + upgrade all packages in the VM (per-family apt/zypper/dnf). |
+| `resize [--cpu N] [--memory NG] [--disk NG]` | Change an existing VM's vCPU / RAM / root-disk (the template `hw.*` only applies at `init`). cpu/memory apply live; **disk grows only** (refuses shrink) and resizes just the host block device - the guest fs needs `ivm reboot` or in-guest `growpart`+`resize2fs`. |
 | `overwrite-dotfiles` | Re-push the host-staged dotfiles into the VM (no re-provision). |
 | `set-password <username>` | Set a guest account's login password (e.g. `user` for console/TTY login). Password only - prompted, sent via stdin. |
 | `unset-password <username>` | Lock that account's password. |

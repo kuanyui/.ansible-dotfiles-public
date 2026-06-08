@@ -9,7 +9,7 @@ roles/incus_vm/IMPLEMENTATION_PLAN.md.
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
-`delete`/`update`/`provision`/`overwrite-dotfiles`/`set-password`/`unset-password`/
+`delete`/`update`/`provision`/`resize`/`overwrite-dotfiles`/`set-password`/`unset-password`/
 `enable-user-sudo`/`disable-user-sudo`/`info` (target VM status/hw/mounts/storage); `env`; `list` (incus list passthrough);
 `adopt` (tag a pre-existing/older-ivm VM into ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
@@ -59,7 +59,7 @@ DEFAULT_ROOT: Path = Path(
 # they don't resolve a target VM.)
 CWD_RESOLVED: tuple[str, ...] = (
     "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete",
-    "overwrite-dotfiles", "update", "provision", "set-password", "unset-password",
+    "overwrite-dotfiles", "update", "provision", "resize", "set-password", "unset-password",
     "enable-user-sudo", "disable-user-sudo", "snapshot", "gui", "info",
 )
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
@@ -75,6 +75,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "overwrite-dotfiles": "re-push the host-staged dotfiles into the VM (no re-provision)",
     "update": "refresh + upgrade all packages in the VM",
     "provision": "install distro bundle(s) / thirdparty recipe(s) onto the VM",
+    "resize": "change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk; disk grows only)",
     "set-password": "set a guest account's login password",
     "unset-password": "lock a guest account's password",
     "enable-user-sudo": "let `user` sudo, gated by root's password",
@@ -1589,6 +1590,88 @@ def cmd_info(name: str, root: Path) -> None:
         print(line)
 
 
+def _parse_gib(size: str) -> int | None:
+    """'50GiB' / '50G' / '50GB' -> 50. Anything else (empty, or MiB/TiB/other units)
+    -> None, so a caller comparing two sizes skips the check rather than guess wrong."""
+    match: re.Match[str] | None = re.fullmatch(r"([0-9]+)\s*(?:G|GB|GiB)", (size or "").strip())
+    return int(match.group(1)) if match else None
+
+
+def _resize_root_disk(name: str, new_size: str, *, dry_run: bool) -> bool:
+    """Grow the VM's `root` device to `new_size` (incus form, e.g. '50GiB'). Returns
+    True if a resize was issued, False if the disk was already that size. REFUSES to
+    shrink. Picks the verb by whether `root` is instance-local: ivm VMs created with
+    `hw.disk` carry a `--device root,size=` override (-> `set`); one created without it
+    inherits `root` from the profile (-> `override`, since `set` rejects an inherited
+    device)."""
+    import yaml  # lazy, same as cmd_info / load_yaml
+    requested_gib: int | None = _parse_gib(new_size)
+    expanded_raw: Any = yaml.safe_load(capture(["incus", "config", "show", "--expanded", name]) or "")
+    expanded: dict[str, Any] = expanded_raw if isinstance(expanded_raw, dict) else {}
+    expanded_devices: dict[str, Any] = expanded.get("devices", {}) or {}
+    current_size: str = (expanded_devices.get("root", {}) or {}).get("size", "")
+    current_gib: int | None = _parse_gib(current_size)
+    if requested_gib is not None and current_gib is not None:
+        if requested_gib < current_gib:
+            die(f"refusing to SHRINK the root disk ({current_size} -> {new_size}): incus has no "
+                f"safe VM-disk shrink (it truncates under the guest filesystem). To go smaller, "
+                f"recreate the VM - `ivm delete` then `ivm init`.")
+        if requested_gib == current_gib:
+            print(f"    disk already {current_size}; left as-is.", file=sys.stderr)
+            return False
+    # `incus config device set` only edits an INSTANCE-LOCAL device; the non-expanded
+    # view lists exactly those (inherited devices are omitted). If `root` isn't there,
+    # it's profile-inherited - promote it to an instance override before sizing.
+    local_raw: Any = yaml.safe_load(capture(["incus", "config", "show", name]) or "")
+    local_config: dict[str, Any] = local_raw if isinstance(local_raw, dict) else {}
+    root_is_instance_local: bool = "root" in (local_config.get("devices", {}) or {})
+    device_verb: str = "set" if root_is_instance_local else "override"
+    run(["incus", "config", "device", device_verb, name, "root", f"size={new_size}"], dry_run=dry_run)
+    return True
+
+
+def cmd_resize(name: str, *, cpu: int | None, memory: str | None, disk: str | None, dry_run: bool) -> None:
+    """`ivm resize`: change an EXISTING VM's vCPU / RAM / root-disk allocation. The
+    template `hw.*` only applies at `init`, and editing the template never touches a
+    live VM - this is how you change one afterward. Pass any subset of
+    `--cpu N` / `--memory NG` / `--disk NG` (at least one):
+
+      cpu    -> `incus config set <vm> limits.cpu=N`        (live hotplug; the guest
+                may need to bring the new vCPUs online, or just `ivm reboot`)
+      memory -> `incus config set <vm> limits.memory=NGiB`  (live: grow via hotplug,
+                shrink via balloon (slow); a reboot applies it cleanly)
+      disk   -> `incus config device set|override <vm> root size=NGiB`  (GROW ONLY)
+
+    Disk is grow-only and resizes only the HOST block device; the GUEST filesystem is
+    NOT auto-grown (see the printed follow-up). Shrinking is refused (no safe VM-disk
+    shrink). `--memory`/`--disk` take the template's whole-GiB `NG` form (e.g. `16G`)."""
+    if cpu is None and memory is None and disk is None:
+        die("resize needs at least one of --cpu / --memory / --disk")
+    if cpu is not None and cpu < 1:
+        die(f"--cpu must be >= 1 (got {cpu})")
+    for flag_name, flag_value in (("--memory", memory), ("--disk", disk)):
+        if flag_value is not None and not re.fullmatch(r"[0-9]+G", flag_value):
+            die(f"{flag_name} must be a whole number of GiB with a 'G' suffix, e.g. 16G (got '{flag_value}')")
+    if not dry_run and not instance_exists(name):
+        die(f"no such incus VM: '{name}' (see `incus list`)")
+
+    if cpu is not None:
+        run(["incus", "config", "set", name, f"limits.cpu={cpu}"], dry_run=dry_run)
+    if memory is not None:
+        run(["incus", "config", "set", name, f"limits.memory={g_to_gib(memory)}"], dry_run=dry_run)
+    disk_changed: bool = _resize_root_disk(name, g_to_gib(disk), dry_run=dry_run) if disk is not None else False
+
+    print(f"==> {colorize_vm_name(name)} resized.", file=sys.stderr)
+    if cpu is not None or memory is not None:
+        print("    cpu/memory apply live; if the guest doesn't reflect the change, `ivm reboot`.",
+              file=sys.stderr)
+    if disk_changed:
+        print("    disk: the HOST block device grew, but the GUEST filesystem did NOT. Either", file=sys.stderr)
+        print("    `ivm reboot` (most images grow the root fs on boot), or live inside the guest:", file=sys.stderr)
+        print("        growpart /dev/sda 2 && resize2fs /dev/sda2     # ext4 root", file=sys.stderr)
+        print("        btrfs filesystem resize max /                  # btrfs root", file=sys.stderr)
+
+
 # The legacy `user.*` tags older ivm versions wrote, superseded by the canonical
 # set below; `adopt` unsets any that linger so a re-tagged VM has no stale keys.
 LEGACY_TAGS: tuple[str, ...] = ("user.ansible-managed", "user.ansible-guest-os")
@@ -1658,7 +1741,7 @@ CWD_RESOLVED_HANDLER: dict[str, Callable[..., None]] = {
     "overwrite-dotfiles": cmd_overwrite_dotfiles, "update": cmd_update, "provision": cmd_provision,
     "set-password": cmd_set_password, "unset-password": cmd_unset_password,
     "enable-user-sudo": cmd_enable_user_sudo, "disable-user-sudo": cmd_disable_user_sudo,
-    "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info,
+    "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info, "resize": cmd_resize,
 }
 
 
@@ -1707,6 +1790,11 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "provision":
             sp.add_argument("names", nargs="+",
                             help="unit(s) to install: a distro_package_groups bundle or a thirdparty_software recipe")
+        if name == "resize":
+            sp.add_argument("--cpu", type=int, metavar="N", help="new vCPU count")
+            sp.add_argument("--memory", metavar="NG", help="new RAM, whole GiB with a G suffix (e.g. 16G)")
+            sp.add_argument("--disk", metavar="NG",
+                            help="new root-disk size, whole GiB with a G suffix (e.g. 50G); GROW only")
     return parser
 
 
@@ -1769,6 +1857,8 @@ def main() -> None:
         cmd_gui(name, dry_run=args.dry_run)
     elif args.subcommand == "info":
         cmd_info(name, root)
+    elif args.subcommand == "resize":
+        cmd_resize(name, cpu=args.cpu, memory=args.memory, disk=args.disk, dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 
