@@ -56,6 +56,11 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected me
     # SSL certificate verification (bind-mounted read-only by launcher)
     /etc/ssl/{,**} r,
 
+    # openSUSE system proxy config. Telegram's MTProto networking reads this to
+    # honor the host HTTP/SOCKS proxy settings. A network-facing app legitimately
+    # consults it; read-only single file, no secrets.
+    /etc/sysconfig/proxy r,
+
     # Network families whitelisted via <abstractions/local_mixin_network_app> (included at top):
     # TCP/UDP/QUIC = inet/inet6 stream+dgram. Obscure families (rds/rxrpc/alg) stay denied.
 
@@ -107,6 +112,30 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected me
     # plain memory copies for frame delivery. gwenview grants this inline; Telegram does not.
     deny /dev/udmabuf rw,
 
+    # Audio intentionally absent. The bwrap launcher binds no audio socket (its
+    # "Audio" section only binds D-Bus) and `--dev /dev` exposes no /dev/snd, so
+    # Telegram gets no sound by design. Plain `deny` (NOT `audit deny`) silences
+    # the implicit-deny audit spam from Telegram probing the host sound server /
+    # ALSA hardware; the paths stay hard-denied. local_mixin_audio stays included
+    # only for the PipeWire client-config reads Qt does at startup regardless -
+    # it never granted the socket or the device nodes.
+    deny /run/user/*/pulse/native rw,
+    deny /dev/snd/** rw,
+
+    # System D-Bus intentionally denied - only the session bus is bound by the
+    # launcher and allowed above; Telegram has no business on the system bus.
+    # Plain `deny` silences the connect-attempt spam while keeping it denied.
+    deny /run/dbus/system_bus_socket rw,
+
+    # systemd journal: Telegram (libsystemd) tries to log to the journal socket;
+    # the profile intentionally does not grant it - Telegram needs no host-journal
+    # access. The audit reports the target as /systemd/journal/socket without the
+    # real /run prefix (apparmor disconnected-path reporting under
+    # flags=(attach_disconnected)), so deny both the canonical and the reported
+    # form to silence the sendmsg spam regardless of how the path resolves.
+    deny /run/systemd/journal/socket w,
+    deny /systemd/journal/socket w,
+
     # Qt reads /dev/tty to detect whether stdout is a terminal
     /dev/tty r,
 
@@ -116,6 +145,11 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected me
     # Process self-inspection
     owner @{PROC}/@{pid}/ r,
     owner @{PROC}/@{pid}/** r,
+    # Thread naming: Telegram names its worker threads via prctl(PR_SET_NAME),
+    # which the kernel reflects as a write to /proc/<pid>/task/<tid>/comm. Own
+    # process only; purely cosmetic (htop/debugger thread labels). The `r` rule
+    # above already covers reading these - this adds just the `w` for the set.
+    owner @{PROC}/@{pid}/task/*/comm w,
     @{PROC}/sys/kernel/core_pattern r,
     # systemd-detect-virt (allowed above) reads osrelease for VM/container detection
     @{PROC}/sys/kernel/osrelease r,

@@ -91,12 +91,26 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     /usr/share/drirc.d/{,**} r,                   # DRI driver workaround configs
     owner @{HOME}/.cache/mesa_shader_cache/{,**} rwk,  # llvmpipe software rasterizer also writes here
 
-    # Process self-introspection (only /proc/<own pid>/fd/, narrowly scoped
-    # to what gwenview actually audits - KIO/Qt walking own open fds during
-    # kioworker fork). NOT promoted to local_mixin_qt: most Qt apps do not
-    # need this and granting it widens the attack surface (ASLR addresses,
-    # mmap'd library inspection, env var leaks via /proc/<pid>/environ).
+    # GPU metadata probes silenced. deny_gpu forces llvmpipe, so the nvidia
+    # blob / EGL-external probes below find nothing useful - they are pure
+    # startup noise. Plain `deny` (NOT `audit deny`) silences the audit spam
+    # while local_mixin_deny_gpu keeps the hardware device-node denials as
+    # the real tripwire. Distinct from the vulkan/drirc reads above, which
+    # Qt's core EGL loader path uses and are therefore allowed, not denied.
+    deny /sys/devices/**/boot_vga r,                          # PCI: is-this-the-boot-GPU flag
+    deny /usr/share/egl/egl_external_platform.d/{,**} r,      # EGL external platform configs (nvidia/wayland)
+    deny /usr/share/nvidia/nvidia-application-profiles-* r,   # nvidia per-app driver tunables (version in name)
+
+    # Process self-introspection (only /proc/<own pid>/{fd/,comm,cmdline},
+    # narrowly scoped to what gwenview actually audits - KIO/Qt walking own
+    # open fds during kioworker fork, plus reading its own name/argv). NOT
+    # promoted to local_mixin_qt: most Qt apps do not need this and granting
+    # it widens the attack surface (ASLR addresses, mmap'd library
+    # inspection, env var leaks via /proc/<pid>/environ). comm/cmdline are
+    # far less sensitive than fd//environ - own process name and argv only.
     owner @{PROC}/@{pid}/fd/ r,
+    owner @{PROC}/@{pid}/comm r,
+    owner @{PROC}/@{pid}/cmdline r,
 
     # Gwenview's own application data
     /usr/share/gwenview/{,**} r,                 # color schemes, images, cursors, etc.
@@ -127,7 +141,7 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     owner @{HOME}/.local/state/#[0-9]* rw,                  # QSaveFile temp for atomic save of gwenviewstaterc
     owner @{HOME}/.local/state/gwenviewstaterc.?????? rwl,  # KSaveFile mkstemp link target (linkat + later rename/unlink)
     owner @{HOME}/.config/#[0-9]* rw,                       # QSaveFile temp for atomic save of files under .config/
-    owner @{HOME}/.config/gwenviewrc.?????? wl,             # KSaveFile mkstemp link target (linkat + later rename/unlink)
+    owner @{HOME}/.config/gwenviewrc.?????? rwl,           # KSaveFile mkstemp link target (linkat + rename; `r` = rename_src reads the temp before swapping it into place)
 
     # KIO - NSS uid/gid name resolution silently denied. kioworker calls
     # getpwuid / getgrgid via libc NSS to render file Owner/Group columns
