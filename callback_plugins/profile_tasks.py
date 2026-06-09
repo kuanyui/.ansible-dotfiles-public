@@ -9,7 +9,8 @@ Or in ansible.cfg:
 At the end of the run it prints, in this order:
   1. a boot-style log of EVERY task in execution order, each tagged like systemd
      boot: [  OK  ] ran, [ SKIP ] skipped (e.g. `when:` false), [ FAIL ] failed;
-  2. a sorted top-N list of the slowest tasks by elapsed wall time, plus a total.
+  2. a sorted top-N list of the slowest tasks by elapsed wall time, plus a total;
+  3. the wall-clock start and finish timestamps of the run.
 
 Roughly equivalent to ansible.posix.profile_tasks but written from scratch so this
 repo's "ansible-core only, no collections" rule (top-level CLAUDE.md) is not violated.
@@ -18,6 +19,7 @@ repo's "ansible-core only, no collections" rule (top-level CLAUDE.md) is not vio
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Any
 
 from ansible.plugins.callback import CallbackBase
@@ -54,6 +56,10 @@ class CallbackModule(CallbackBase):
 
     def __init__(self) -> None:
         super().__init__()
+        # Wall-clock start of the whole run (first playbook). Separate from the
+        # per-task time.monotonic() timings: monotonic is for durations, this is
+        # a human-readable timestamp, so it uses datetime.now().
+        self._run_started_at: datetime | None = None
         self._task_start: float | None = None
         self._current_task: str | None = None
         self._timings: list[tuple[str, float]] = []
@@ -86,6 +92,12 @@ class CallbackModule(CallbackBase):
             return
         if status == "fail" or self._current_result["status"] != "ok":
             self._current_result["status"] = status
+
+    def v2_playbook_on_start(self, playbook: Any) -> None:
+        # Stamp the run start once; with multiple playbooks this fires per
+        # playbook, so guard on None to keep the FIRST playbook's start time.
+        if self._run_started_at is None:
+            self._run_started_at = datetime.now()
 
     def v2_playbook_on_task_start(self, task: Any, is_conditional: bool) -> None:
         self._begin_task(task.get_name().strip() or "<unnamed task>")
@@ -125,3 +137,14 @@ class CallbackModule(CallbackBase):
             self._display.display(f"  {secs:8.2f}s  {name}")
         self._display.display("-" * 72)
         self._display.display(f"  {total:8.2f}s  TOTAL")
+
+        # 3) Wall-clock run window. Distinct from TOTAL above (which sums task
+        # elapsed and excludes the gaps between tasks): these two are the actual
+        # start/end timestamps of the run.
+        run_finished_at = datetime.now()
+        started_text = (
+            f"{self._run_started_at:%Y-%m-%d %H:%M:%S}" if self._run_started_at else "<unknown>"
+        )
+        self._display.display("")
+        self._display.display(f"  started:  {started_text}")
+        self._display.display(f"  finished: {run_finished_at:%Y-%m-%d %H:%M:%S}")
