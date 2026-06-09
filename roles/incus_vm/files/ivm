@@ -1997,6 +1997,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     parser: argparse.ArgumentParser = build_parser()
+    # Bare `ivm` (no args at all) prints full help and exits 0, instead of the
+    # argparse `required=True` subcommand error (short usage + stderr, exit 2).
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
     args: argparse.Namespace
     extras: list[str]
     args, extras = parser.parse_known_args()
