@@ -89,13 +89,30 @@ was just unmounted / shadowed):
   completions. Verified: py_compile, verdict() unit-tested (driver-mismatch / ghost-mount /
   consistent / not-mounted), `ivm storage-status --help` + dispatch, `bash -n`,
   `ansible.builtin.script` `cmd:` + role `files/` resolution confirmed vs ansible docs.
-- [ ] **Phase 2: fold the MUTATING build-loop / init / delete-pool logic into
-  `incus_storage_pool.py`** so the imperative storage lifecycle leaves the ansible
-  `shell:`/`when:`/`set_fact:` chains entirely (the two task files shrink to a few script
-  calls). Each mutating subcommand MUST print its argv before running (transparency rule).
-  DO ONLY AFTER the user confirms the Phase-1 fix + recovery work on the real host - don't
-  rewrite the just-fixed create/delete path on an unverified baseline. (User-approved plan:
-  "分階段完整抽離".)
+- [x] **Phase 2: folded the MUTATING build-loop / init / delete-pool logic into
+  `incus_storage_pool.py`** (subcommands `build-loop`, `init`, `delete-pool`; each prints
+  argv before acting, is idempotent, ends with `RESULT: changed|noop`; `__main__` catches
+  CalledProcessError -> clean error, no traceback). ansible now CALLS them via the `script`
+  module: `incus_host_install.yml` lost the 6 truncate/blkid/mkfs/mkdir/fstab/mount tasks
+  (-> one `build-loop`) and the `incus admin init` task (-> one `init`); `incus_host_uninstall.yml`
+  lost the pool-delete + umount + fstab tasks (-> one `delete-pool`). `init` renders the
+  preseed (pool + incusbr0 + default profile) in Python (`build_preseed`, fed as JSON =
+  valid YAML), so `templates/incus_preseed.yml.j2` was DELETED (refs updated). TESTED against
+  REAL incus 6.0.4 + real loop/btrfs in this Debian-13 guest (installed incus + btrfs-progs +
+  dnsmasq-base + ansible-core via apt): (1) direct script run - 25 assertions incl. full
+  build->init->verify->delete cycle, ghost-mount eviction, idempotency (noop on re-run),
+  negative verify; (2) end-to-end `ansible-playbook` driving the role's `script`-module tasks
+  -> build-loop/init/verify/delete-pool all `changed`/`ok`, `failed=0`, pool/mount/fstab clean
+  after. Both playbooks `--syntax-check` clean. (NOTE: the incus.service `RequiresMountsFor`
+  boot-mount drop-in stays in ansible - it is post-init + reconcile-driven, not the messy part.)
+- [ ] **(separate, optional) split the 2076-line `files/ivm` monolith into a package.** Asked
+  by user ("ivm 還不需要分檔嗎"). The storage concern is now OUT of ivm's orbit (this script).
+  A full ivm split is a distinct effort with a DEPLOYMENT tradeoff (today: one self-contained
+  file = one `copy`; a package needs either a thin `~/.local/bin/ivm` launcher that `exec`s
+  `python3 -m <pkg>` over a shipped module dir, or a zipapp build step). Recommend the
+  thin-launcher + module-dir approach, as its OWN pass, after the storage work is confirmed on
+  the real host. NOT done here. (ivm's own `cmd_info` storage helpers still duplicate the
+  script's status rendering at a per-VM scope - candidate to delegate later.)
 
 ## incus_vm host install/uninstall split + per-user net gap
 

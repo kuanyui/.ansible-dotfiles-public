@@ -421,87 +421,25 @@
         probe: command -v mkfs.btrfs
   when: _incus_pool_needs_build | bool
 
-- name: Create the sparse btrfs loop file `{{ incus_storage_pool_source }}` (size `{{ incus_storage_pool_size }}`; sparse, ~0 on disk until VMs write)
-  ansible.builtin.command:
-    cmd: "truncate --size={{ incus_storage_pool_size | regex_replace('iB$', '') }} {{ incus_storage_pool_source }}"
-    creates: "{{ incus_storage_pool_source }}"
+# The btrfs loop-file lifecycle - truncate the sparse `.img` if absent, `mkfs.btrfs` it
+# if unformatted, ensure the mount point + the /etc/fstab line, then a SOURCE-AWARE mount
+# that evicts any stale/ghost loop (a prior pool's `.img`, possibly already `(deleted)`,
+# left mounted here would otherwise shadow the new one and the pool would silently sit on
+# the wrong filesystem) - now lives in `files/incus_storage_pool.py build-loop`: one
+# readable, unit-tested place instead of six interlocking command/shell/lineinfile tasks.
+# Run via the `script` module (resolves from the role `files/`; no install dependency, so
+# it works before `ivm_install.yml` copies the script). `RESULT: changed` -> changed_when.
+- name: Build + mount the btrfs loop file `{{ incus_storage_pool_source }}` -> `{{ incus_storage_pool_loop_mountpoint }}` (truncate + mkfs.btrfs + fstab + source-aware mount, via `incus_storage_pool.py build-loop`)
+  ansible.builtin.script:
+    cmd: >-
+      incus_storage_pool.py build-loop
+      --source {{ incus_storage_pool_source | quote }}
+      --size {{ incus_storage_pool_size | quote }}
+      --mountpoint {{ incus_storage_pool_loop_mountpoint | quote }}
   become: true
+  register: _incus_build_loop
+  changed_when: "'RESULT: changed' in (_incus_build_loop.stdout | default(''))"
   when: _incus_pool_needs_build | bool
-
-- name: Probe the loop file's filesystem so the role never re-`mkfs`-es an already-formatted `{{ incus_storage_pool_source }}`
-  ansible.builtin.command:
-    cmd: "blkid --output value --match-tag TYPE {{ incus_storage_pool_source }}"
-  register: _incus_loop_blkid
-  changed_when: false
-  failed_when: false
-  become: true
-  when: _incus_pool_needs_build | bool
-
-- name: "`mkfs.btrfs` the loop file `{{ incus_storage_pool_source }}` (only when it has no filesystem yet)"
-  ansible.builtin.command:
-    cmd: "mkfs.btrfs {{ incus_storage_pool_source }}"
-  become: true
-  when:
-    - _incus_pool_needs_build | bool
-    - (_incus_loop_blkid.stdout | default('') | trim) | length == 0
-
-- name: Ensure the loop mount point `{{ incus_storage_pool_loop_mountpoint }}` exists
-  ansible.builtin.file:
-    path: "{{ incus_storage_pool_loop_mountpoint }}"
-    state: directory
-    mode: "0711"
-  become: true
-  when: _incus_pool_needs_build | bool
-
-- name: Add the /etc/fstab loop mount `{{ incus_storage_pool_source }}` -> `{{ incus_storage_pool_loop_mountpoint }}` (`nofail` so a missing disk never blocks boot)
-  ansible.builtin.lineinfile:
-    path: /etc/fstab
-    regexp: '\s{{ incus_storage_pool_loop_mountpoint | regex_escape }}\s'
-    line: "{{ incus_storage_pool_source }} {{ incus_storage_pool_loop_mountpoint }} btrfs loop,nofail,noatime 0 0"
-    state: present
-  become: true
-  when: _incus_pool_needs_build | bool
-
-# The old check was `if mountpoint -q <mp>; then ALREADY_MOUNTED` - it only asked
-# "is ANYTHING mounted here", NOT "is the RIGHT source mounted here". A stale loop
-# left over at `incus_storage_pool_loop_mountpoint` (e.g. a prior pool's
-# `/home/incus-storage.img`, possibly already `(deleted)` but still held open by its
-# loop device) would therefore report ALREADY_MOUNTED, the freshly-built `.img` would
-# never get mounted, and the new pool would silently sit on the STALE filesystem. So
-# verify the mounted backing file IS `incus_storage_pool_source`; if a different one is
-# mounted, replace it. Safe to umount here: this task runs only when no `default` pool
-# exists yet (`_incus_pool_needs_build`), so nothing is using the mount.
-- name: Mount `{{ incus_storage_pool_loop_mountpoint }}` from `{{ incus_storage_pool_source }}` (replacing any STALE loop whose backing file is NOT `{{ incus_storage_pool_source }}`, so a leftover from a prior pool can't shadow the new one)
-  ansible.builtin.shell: |
-    set -eu
-    loop_mountpoint={{ incus_storage_pool_loop_mountpoint | quote }}
-    wanted_loop_source={{ incus_storage_pool_source | quote }}
-    if ! mountpoint -q "$loop_mountpoint"; then
-      mount "$loop_mountpoint" && echo "MOUNTED_NOW"
-      exit 0
-    fi
-    mounted_device_at_loop_mountpoint=$(findmnt --noheadings --first-only --output SOURCE --mountpoint "$loop_mountpoint" || true)
-    case "$mounted_device_at_loop_mountpoint" in
-      /dev/loop*) mounted_backing_file=$(losetup --noheadings --output BACK-FILE "$mounted_device_at_loop_mountpoint" 2>/dev/null | sed 's/ (deleted)$//') ;;
-      *)          mounted_backing_file="$mounted_device_at_loop_mountpoint" ;;
-    esac
-    if [ "$mounted_backing_file" = "$wanted_loop_source" ]; then
-      echo "ALREADY_MOUNTED_CORRECT"
-    else
-      umount "$loop_mountpoint"
-      mount "$loop_mountpoint" && echo "REMOUNTED_FROM_STALE was=[$mounted_backing_file] now=[$wanted_loop_source]"
-    fi
-  become: true
-  register: _incus_loop_mount
-  changed_when: "('MOUNTED_NOW' in _incus_loop_mount.stdout) or ('REMOUNTED_FROM_STALE' in _incus_loop_mount.stdout)"
-  when: _incus_pool_needs_build | bool
-
-- name: Surface loudly when a STALE loop mount was replaced at `{{ incus_storage_pool_loop_mountpoint }}` (a prior pool's leftover would otherwise have shadowed the new btrfs loop)
-  ansible.builtin.debug:
-    msg: "Replaced a stale mount at {{ incus_storage_pool_loop_mountpoint }}: {{ _incus_loop_mount.stdout | default('') }}"
-  when:
-    - _incus_pool_needs_build | bool
-    - "'REMOUNTED_FROM_STALE' in (_incus_loop_mount.stdout | default(''))"
 
 - name: Compute the effective pool `source`/`size` for the preseed (the loop mount + no size when the role built a loop; else the raw config)
   ansible.builtin.set_fact:
@@ -515,14 +453,17 @@
 # only the lower-privilege `incus` group). Root bypasses the group check, so
 # init works without needing any user-level group membership.
 
-- name: Initialize incus via `incus admin init --preseed` (only if `default` storage pool not present; `_incus_storage_list` is probed once near the top of this file)
-  ansible.builtin.command:
-    cmd: incus admin init --preseed
-    stdin: "{{ lookup('template', 'incus_preseed.yml.j2') }}"
+- name: Initialize incus via `incus admin init --preseed` (pool + incusbr0 + default profile; preseed rendered by `incus_storage_pool.py init`, only if no `default` pool yet)
+  ansible.builtin.script:
+    cmd: >-
+      incus_storage_pool.py init
+      --driver {{ incus_storage_pool_driver | quote }}
+      --pool-source {{ _incus_effective_pool_source | default('') | quote }}
+      --pool-size {{ _incus_effective_pool_size | default('') | quote }}
   when: "'default,' not in _incus_storage_list.stdout"
   become: true
   register: _incus_init
-  changed_when: _incus_init.rc == 0
+  changed_when: "'RESULT: changed' in (_incus_init.stdout | default(''))"
 
 # ---------- Surface a pre-existing `default` pool whose backend != `incus_storage_pool_driver` ----------
 # The preseed above runs ONLY when `default` does not already exist. So on a host
@@ -759,7 +700,7 @@
 # Fix: put `incusbr0` into the built-in `trusted` zone. Scope is this ONE
 # interface - a private internal NAT segment (10.x/24) carrying only our own
 # VMs - so trusting it does NOT widen the host's real NICs (still in `public`).
-# `incusbr0` is the fixed bridge name from `incus_preseed.yml.j2`.
+# `incusbr0` is the fixed bridge name from the preseed (`incus_storage_pool.py` `build_preseed`).
 #
 # Detection MUST use `systemctl is-active firewalld`, NOT `firewall-cmd`. Any
 # `firewall-cmd` call as a non-root user goes through polkit; under Ansible

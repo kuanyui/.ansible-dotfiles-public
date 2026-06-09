@@ -30,8 +30,9 @@ incus_install_assume_yes: false
 incus_storage_pool_overrides_passed: false
 
 # ---------- Storage pool config (preseed-only, first-time init) ----------
-# These three vars feed into the `default` storage_pool block of
-# `templates/incus_preseed.yml.j2`. They are EFFECTIVE ONLY at first-time
+# These three vars feed the `default` storage_pool block of the preseed, which is
+# rendered by `files/incus_storage_pool.py` (`build_preseed`) and applied by its
+# `init` subcommand. They are EFFECTIVE ONLY at first-time
 # `incus admin init --preseed`; already-initialized incus won't be re-pointed.
 # To change pool layout after the fact: `incus storage create <new-pool> ...`
 # + manual `incus move` of VMs, then `incus storage delete default`.

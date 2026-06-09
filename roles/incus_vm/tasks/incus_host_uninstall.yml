@@ -174,32 +174,24 @@
   changed_when: "'INCUSBR0_CHANGED' in _incus_uninstall_delete_incusbr0.stdout"
   failed_when: "'TEARDOWN_FAILED' in _incus_uninstall_delete_incusbr0.stdout"
 
-# ---------- Step 4: delete the `default` storage pool (reverse of preseed's pool) ----------
-# DESTRUCTIVE: deleting the pool erases its contents (the btrfs/zfs loop file or
-# the dir tree = your VM disks). The default-project `default` profile pins it via
-# root, so detach that first. `incus storage delete` is REFUSED while any instance
-# / profile (incl. a surviving user-* project's, see Step 2) / custom volume still
-# references it -> needs Steps 1-2 done. A still-refused delete echoes
-# `TEARDOWN_FAILED` so `failed_when` FAILS the task: the old behaviour returned
-# green while the pool quietly survived, so the next `apply` skipped preseed and
-# you kept the wrong backend. incus's own "in use by ..." reason is on stderr.
-
-- name: "`incus_vm_uninstall_delete_default_storage_pool`: detach `default` profile `root` + delete the `default` storage pool (erases the loop file / pool contents; FAILS loudly if the pool is still referenced)"
-  ansible.builtin.shell: |
-    set -u
-    pool_changed=0
-    if incus profile device list default 2>/dev/null | grep -qx root; then
-      incus profile device remove default root && { echo "REMOVED default/root"; pool_changed=1; }
-    fi
-    if incus storage show default >/dev/null 2>&1; then
-      if incus storage delete default; then echo "DELETED storage default"; pool_changed=1; else echo "TEARDOWN_FAILED default (storage pool still referenced - see the incus error above)"; fi
-    fi
-    [ "$pool_changed" = 1 ] && echo "POOL_CHANGED" || echo "POOL_NOOP"
+# ---------- Step 4: delete the `default` storage pool (reverse of init + build-loop) ----------
+# DESTRUCTIVE: deleting the pool erases its contents (the btrfs/zfs loop file or the dir
+# tree = your VM disks). `files/incus_storage_pool.py delete-pool` does the whole storage
+# teardown in one readable place: detach the `default` profile root disk (it pins the
+# pool), `incus storage delete default`, then unmount the loop + drop its fstab line (the
+# `.img` is left for reuse). `incus storage delete` is REFUSED while any instance /
+# profile (incl. a surviving user-* project's, see Step 2) / custom volume still
+# references it -> needs Steps 1-2 done; that refusal makes the script exit non-zero so
+# this task FAILS loudly (incus's "in use by ..." reason is on stderr) - never green while
+# the pool quietly survives. Run via the `script` module because `ivm_uninstall.yml` has
+# already removed the installed copy by now.
+- name: "`incus_vm_uninstall_delete_default_storage_pool`: delete the `default` pool + its loop (detach profile root, `incus storage delete`, unmount + drop fstab line) via `incus_storage_pool.py delete-pool`; FAILS loudly if the pool is still referenced"
+  ansible.builtin.script:
+    cmd: "incus_storage_pool.py delete-pool --mountpoint {{ incus_storage_pool_loop_mountpoint | quote }}"
   become: true
   when: incus_vm_uninstall_delete_default_storage_pool | bool
   register: _incus_uninstall_delete_pool
-  changed_when: "'POOL_CHANGED' in _incus_uninstall_delete_pool.stdout"
-  failed_when: "'TEARDOWN_FAILED' in _incus_uninstall_delete_pool.stdout"
+  changed_when: "'RESULT: changed' in (_incus_uninstall_delete_pool.stdout | default(''))"
 
 # Parity with install's reboot-persistence drop-in: once the pool (and its loop mount)
 # is gone, the `RequiresMountsFor` drop-in would make incus.service REFUSE to start
@@ -217,37 +209,6 @@
     daemon_reload: true
   become: true
   when: _incus_uninstall_pool_mount_dropin is changed
-
-# The pool is deleted above, but the install side ALSO loop-mounts a btrfs `.img` at
-# `incus_storage_pool_loop_mountpoint` via /etc/fstab. A teardown that deleted the pool
-# but left that mounted leaves a loop device holding the (now often deleted) `.img`
-# open - the `(deleted)` ghost mount that then SHADOWS the mountpoint on the NEXT
-# install: the source-check there would have to evict it, and an older install would
-# silently point the rebuilt pool at the stale filesystem. So unmount it (the loop
-# device auto-detaches) and drop the fstab line. The `.img` FILE is deliberately left
-# in place - a later reinstall reuses it (its `mkfs` is skipped when already formatted);
-# only the MOUNT + the fstab entry are this pool's to remove.
-- name: "`incus_vm_uninstall_delete_default_storage_pool`: unmount the storage loop at `{{ incus_storage_pool_loop_mountpoint }}` if mounted (frees the loop device; stops a `(deleted)`-img ghost mount from shadowing the next install)"
-  ansible.builtin.shell: |
-    set -eu
-    loop_mountpoint={{ incus_storage_pool_loop_mountpoint | quote }}
-    if mountpoint -q "$loop_mountpoint"; then
-      umount "$loop_mountpoint" && echo "UNMOUNTED"
-    else
-      echo "NOT_MOUNTED_NOOP"
-    fi
-  become: true
-  when: incus_vm_uninstall_delete_default_storage_pool | bool
-  register: _incus_uninstall_loop_umount
-  changed_when: "'UNMOUNTED' in _incus_uninstall_loop_umount.stdout"
-
-- name: "`incus_vm_uninstall_delete_default_storage_pool`: remove the /etc/fstab loop line for `{{ incus_storage_pool_loop_mountpoint }}` (reverse of the install's fstab entry; a stale line would re-mount the old `.img` on the next boot)"
-  ansible.builtin.lineinfile:
-    path: /etc/fstab
-    regexp: '\s{{ incus_storage_pool_loop_mountpoint | regex_escape }}\s'
-    state: absent
-  become: true
-  when: incus_vm_uninstall_delete_default_storage_pool | bool
 
 # ---------- Step 5: revert the firewalld `incusbr0` trusted-zone change ----------
 # Mirror of install's firewalld step. `systemctl is-active firewalld` (NOT
