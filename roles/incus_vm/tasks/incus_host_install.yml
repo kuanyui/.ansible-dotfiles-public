@@ -34,6 +34,27 @@
       - openSUSE Leap
       - openSUSE Tumbleweed
 
+# ---------- Storage pool config validation (fail fast, before any mutation) ----------
+# Was inline shell in the `incus-install` Makefile recipe; moved here so the role is
+# the single source of truth (no shell-side re-derivation / YAML scraping).
+
+- name: Assert `incus_storage_pool_driver` is one of `dir` / `btrfs` / `zfs` / `lvm-thin`
+  ansible.builtin.assert:
+    that:
+      - incus_storage_pool_driver in ['dir', 'btrfs', 'zfs', 'lvm-thin']
+    fail_msg: >-
+      `incus_storage_pool_driver` is '{{ incus_storage_pool_driver }}' - must be one
+      of dir / btrfs / zfs / lvm-thin.
+
+- name: Assert the `dir` driver has an empty `incus_storage_pool_size` (a directory pool takes no size)
+  ansible.builtin.assert:
+    that:
+      - not ((incus_storage_pool_driver == 'dir') and (incus_storage_pool_size | length > 0))
+    fail_msg: >-
+      `incus_storage_pool_driver` is `dir` but `incus_storage_pool_size` is
+      '{{ incus_storage_pool_size }}' - the dir driver needs an empty size
+      (set `incus_storage_pool_size: ""`, or pass `INCUS_STORAGE_POOL_SIZE=`).
+
 # ---------- Probe phase (no become) ----------
 
 - name: Probe whether `incus.service` is active
@@ -285,6 +306,62 @@
 - name: Set `_incus_pool_already_initialized` (true = a `default` pool exists -> the role must not build, reformat, or repoint storage)
   ansible.builtin.set_fact:
     _incus_pool_already_initialized: "{{ 'default,' in (_incus_storage_list.stdout | default('')) }}"
+
+# ---------- First-time storage-pool preview + confirmation ----------
+# Was an inline shell prompt in the `incus-install` Makefile recipe (which also
+# `sed`-scraped these defaults out of this very file). Now the role owns it: show the
+# layout `incus admin init` is about to BAKE IN (it cannot be re-pointed later without
+# a teardown) and require a typed `yes`. First-time ONLY - skipped once a `default`
+# pool exists (a re-run reconciles, applies no storage). Skipped in `--check`
+# (`ansible_check_mode`) and when `incus_install_assume_yes` is set (CI / cron). Same
+# pause+assume_yes+assert shape as the teardown confirm in tasks/incus_host_uninstall.yml.
+# Note vs. the old Makefile prompt: this runs DURING the play (after the become-pass
+# prompt + the benign package/daemon/group steps), so it gates the STORAGE COMMITMENT
+# specifically, not the whole run; aborting here leaves incus installed but no pool.
+
+- name: Note that incus is already initialized (storage config is NOT re-applied; reconciling host + `ivm` only)
+  ansible.builtin.debug:
+    msg: >-
+      Incus `default` pool already exists - storage config is NOT re-applied;
+      reconciling host + `ivm` only.
+  when: _incus_pool_already_initialized | bool
+
+- name: Show the storage pool layout to be applied now at first-time `incus admin init`
+  ansible.builtin.debug:
+    msg: |
+      Incus storage pool - applied ONLY now, at first-time `incus admin init`
+      (an existing pool is never re-pointed; to change it later = teardown + reinstall):
+        driver = {{ incus_storage_pool_driver }}
+        source = {{ incus_storage_pool_source | default('(incus default location)', true) }}
+        size   = {{ incus_storage_pool_size | default('(empty)', true) }}
+  when:
+    - not (_incus_pool_already_initialized | bool)
+    - not (incus_install_assume_yes | bool)
+    - not ansible_check_mode
+
+- name: Confirm the storage pool layout before first-time init (type `yes` to proceed)
+  ansible.builtin.pause:
+    prompt: |
+
+      The storage pool above is created NOW and cannot be re-pointed later without
+      `make incus-teardown-host`. Type 'yes' to proceed (anything else aborts).
+  register: _incus_install_confirm
+  when:
+    - not (_incus_pool_already_initialized | bool)
+    - not (incus_install_assume_yes | bool)
+    - not ansible_check_mode
+
+- name: Abort unless the storage pool layout was confirmed with `yes`
+  ansible.builtin.assert:
+    that:
+      - (_incus_install_confirm.user_input | default('') | trim | lower) == 'yes'
+    fail_msg: >-
+      Aborted - storage pool layout not confirmed. incus may already be installed and
+      its daemon started, but NO storage pool was created and NO VM was touched.
+  when:
+    - not (_incus_pool_already_initialized | bool)
+    - not (incus_install_assume_yes | bool)
+    - not ansible_check_mode
 
 # ---------- btrfs loop file on a custom disk (the role builds it; incus won't) ----------
 # incus only ever CREATES a btrfs loop file at its OWN `/var/lib/incus/disks/<pool>.img`

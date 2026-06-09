@@ -26,6 +26,16 @@ was just unmounted / shadowed):
   `incus.service` drop-in `RequiresMountsFor=<mountpoint>` (gated on the pool's REAL
   source == mountpoint, read post-init) + daemon-reload; removed on teardown and when
   the pool is not a loop pool. Verified RequiresMountsFor / nofail semantics vs man7.org.
+- [x] **Makefile -> role consolidation** - the `incus-install` recipe was a 21-line inline
+  shell blob that `sed`-scraped the role's defaults YAML, validated the driver, probed
+  `incus storage list` (a 2nd source of truth next to the role), and `read` a confirm.
+  Moved all of it into `tasks/incus_host_install.yml`: driver/size -> `assert`s (fail
+  fast), layout preview -> `debug`, confirm -> `pause` (first-time only; gated on
+  `ansible_check_mode` + new `incus_install_assume_yes`, mirroring the teardown confirm).
+  Makefile recipe is now a one-line `ansible-playbook` call. Behavior change: the confirm
+  now runs DURING the play (after the become-pass prompt) and gates the storage commitment
+  specifically, not the whole run; dropped the `[override]`/`[default]` origin labels
+  (ansible can't tell a `-e` from a default cleanly).
 - [ ] **Validate on a real host** - no ansible in the edit env, and `make incus-sandbox`
   skips host setup (`incus_vm_skip_host_setup`), so neither exercises this path. Test:
   first-time `make incus-install`, reboot, re-run no-var `make incus-install`, reboot;

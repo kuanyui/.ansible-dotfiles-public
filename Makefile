@@ -84,8 +84,9 @@ INCUS_STORAGE_POOL_SOURCE ?=
 INCUS_STORAGE_POOL_SIZE ?=
 
 # Which of the three INCUS_STORAGE_POOL_* the user actually set (origin = command
-# line / environment). Shared by the `-e` translation and the incus-install
-# pre-flight labels below.
+# line / environment) -> passed through to ansible as `-e` only for those (validation,
+# the storage-layout preview, and the first-time confirm now all live in the role:
+# roles/incus_vm/tasks/incus_host_install.yml).
 _pool_drv_set  := $(filter command line environment,$(origin INCUS_STORAGE_POOL_DRIVER))
 _pool_src_set  := $(filter command line environment,$(origin INCUS_STORAGE_POOL_SOURCE))
 _pool_size_set := $(filter command line environment,$(origin INCUS_STORAGE_POOL_SIZE))
@@ -98,28 +99,7 @@ _incus_storage_overrides := \
   $(if $(_pool_src_set),-e incus_storage_pool_source=$(INCUS_STORAGE_POOL_SOURCE)) \
   $(if $(_pool_size_set),-e incus_storage_pool_size=$(INCUS_STORAGE_POOL_SIZE))
 
-incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). Shows + confirms the storage pool config before the sudo prompt ONLY on first-time init (skipped once the `default` pool exists). Sudo only for the host steps that actually run.
-	@incus_defaults='roles/incus_vm/defaults/main/incus_host_install.yml'; \
-	pool_driver='$(INCUS_STORAGE_POOL_DRIVER)'; pool_source='$(INCUS_STORAGE_POOL_SOURCE)'; pool_size='$(INCUS_STORAGE_POOL_SIZE)'; \
-	if [ -n '$(_pool_drv_set)' ];  then driver_origin=override; else pool_driver="$$(sed -n 's/^incus_storage_pool_driver:[[:space:]]*//p' "$$incus_defaults")"; driver_origin=default; fi; \
-	if [ -n '$(_pool_src_set)' ];  then source_origin=override; else pool_source="$$(sed -n 's/^incus_storage_pool_source:[[:space:]]*//p' "$$incus_defaults")"; source_origin=default; fi; \
-	if [ -n '$(_pool_size_set)' ]; then size_origin=override;   else pool_size="$$(sed -n 's/^incus_storage_pool_size:[[:space:]]*//p' "$$incus_defaults")"; size_origin=default; fi; \
-	case "$$pool_driver" in dir|btrfs|zfs|lvm-thin) ;; *) echo "ERROR: INCUS_STORAGE_POOL_DRIVER='$$pool_driver' invalid (want dir|btrfs|zfs|lvm-thin)" >&2; exit 1;; esac; \
-	if [ "$$pool_driver" = dir ] && [ -n "$$pool_size" ]; then echo "ERROR: the dir driver needs an empty size (pass INCUS_STORAGE_POOL_SIZE=)" >&2; exit 1; fi; \
-	if command -v incus >/dev/null 2>&1 && incus storage list --format csv 2>/dev/null | grep -q '^default,'; then incus_pool_already_initialized=1; else incus_pool_already_initialized=; fi; \
-	if [ -n "$$incus_pool_already_initialized" ]; then \
-	echo; \
-	echo "Incus 'default' pool already exists -- host is initialized; the storage-pool config is NOT re-applied. Running the idempotent playbook to reconcile the host + 'ivm' (the per-task sudo gate decides what, if anything, needs root)."; \
-	else \
-	echo; \
-	echo "Incus storage pool -- applied ONLY at first-time 'incus admin init' (an existing pool is left untouched):"; \
-	printf '  driver = %-26s [%s]\n' "$$pool_driver"          "$$driver_origin"; \
-	printf '  source = %-26s [%s]\n' "$$pool_source"          "$$source_origin"; \
-	printf '  size   = %-26s [%s]\n' "$${pool_size:-(empty)}" "$$size_origin"; \
-	echo; \
-	printf 'Proceed? The sudo (BECOME) password prompt is next. [y/N] '; \
-	IFS= read -r confirm_reply; case "$$confirm_reply" in y|Y|yes|YES) ;; *) echo "Aborted -- nothing was run." >&2; exit 1;; esac; \
-	fi
+incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). On first-time init the role confirms the storage pool layout before `incus admin init` (skipped once a `default` pool exists). Sudo only for the host steps that actually run.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml $(_incus_storage_overrides)
 
 incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (run `incus-install` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.

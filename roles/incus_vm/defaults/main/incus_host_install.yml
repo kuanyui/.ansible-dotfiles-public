@@ -12,6 +12,14 @@
 # / by users who manage incus themselves. Off by default.
 incus_vm_skip_host_setup: false
 
+# `incus_install_assume_yes`: skip the interactive first-time storage-pool
+# confirmation (the `pause` in `tasks/incus_host_install.yml`). Off by default, so
+# a first-time `make incus-install` prompts before `incus admin init` bakes in the
+# pool layout. Set true for non-interactive runs (CI / cron / direct
+# `ansible-playbook`). Mirrors `incus_vm_uninstall_assume_yes`. Once a `default`
+# pool exists the confirmation is skipped regardless (nothing is re-applied).
+incus_install_assume_yes: false
+
 # ---------- Storage pool config (preseed-only, first-time init) ----------
 # These three vars feed into the `default` storage_pool block of
 # `templates/incus_preseed.yml.j2`. They are EFFECTIVE ONLY at first-time
