@@ -1920,6 +1920,23 @@ def cmd_adopt(name: str, root: Path, *, dry_run: bool) -> None:
     print(f"\n(run it {where}, or anywhere with `--name {name}`)", file=sys.stderr)
 
 
+def cmd_storage_status(root: Path, *, as_json: bool, dry_run: bool) -> None:
+    """Show the whole host incus storage picture in ONE command: the `default`
+    pool's live driver/source, the role-built btrfs loop file + its sparse
+    footprint, the loop mount + the file it is ACTUALLY backed by, the matching
+    /etc/fstab line, the recorded request (storage-info.json), and a consistency
+    verdict. Delegates to the shared `incus_storage_pool.py` inspector (the same one
+    the `make incus-install` post-step runs), so host setup and `ivm` report storage
+    identically. Read-only - unreadable admin-only fields fall back to the record."""
+    inspector: Path = root / "incus_storage_pool.py"
+    if not inspector.exists():
+        die(f"storage inspector not found at {inspector} - run `make incus-install` first")
+    inspector_cmd: list[str] = [sys.executable, str(inspector), "--root", str(root), "status"]
+    if as_json:
+        inspector_cmd.append("--json")
+    run(inspector_cmd, dry_run=dry_run)
+
+
 def cmd_stub(subcommand: str) -> NoReturn:
     die(f"`{subcommand}` is not implemented yet (see IMPLEMENTATION_PLAN.md phases).")
 
@@ -1974,6 +1991,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("adopt",
                    help="tag an existing incus VM into ivm management (requires `--name`)",
                    description=cmd_adopt.__doc__)
+
+    storage_status_parser: argparse.ArgumentParser = sub.add_parser(
+        "storage-status",
+        help="show the host incus storage pool status (driver, loop file, mount, fstab, verdict)",
+        description=cmd_storage_status.__doc__)
+    storage_status_parser.add_argument("--json", action="store_true", help="machine-readable output")
 
     for name in CWD_RESOLVED:
         sp: argparse.ArgumentParser = sub.add_parser(
@@ -2040,6 +2063,11 @@ def main() -> None:
         if not args.name:
             parser.error("adopt requires `--name <vm>` (it never resolves a VM by cwd)")
         cmd_adopt(args.name, root, dry_run=args.dry_run)
+        return
+    # storage-status is host-level (the whole `default` pool), not per-VM, so it
+    # resolves no VM by cwd - handle it before the cwd binding below.
+    if args.subcommand == "storage-status":
+        cmd_storage_status(root, as_json=args.json, dry_run=args.dry_run)
         return
     # Everything else acts on a VM: the global --name overrides the cwd binding.
     name: str = args.name if args.name else resolve_vm_by_cwd(Path.cwd(), dry_run=args.dry_run)

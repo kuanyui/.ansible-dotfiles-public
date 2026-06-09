@@ -37,6 +37,15 @@
     dest: "{{ incus_vm_bin_dir }}/ivm"
     mode: "0755"
 
+# Read-only storage inspector shared by `ivm storage-status` AND the `incus-install`
+# post-verify step (tasks/incus_host_install.yml runs it via the `script` module).
+# Installed here so `ivm storage-status` finds it at `{{ incus_vm_ivm_dir }}/incus_storage_pool.py`.
+- name: Install the storage-pool inspector to `{{ incus_vm_ivm_dir }}/incus_storage_pool.py` (powers `ivm storage-status`)
+  ansible.builtin.copy:
+    src: incus_storage_pool.py
+    dest: "{{ incus_vm_ivm_dir }}/incus_storage_pool.py"
+    mode: "0755"
+
 - name: Install the VM definition schema to `{{ incus_vm_ivm_dir }}/template.schema.json`
   ansible.builtin.copy:
     src: template.schema.json

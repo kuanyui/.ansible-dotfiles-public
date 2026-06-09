@@ -796,3 +796,45 @@
   register: _incus_firewalld_zone_apply
   changed_when: "'INCUSBR0_MOVED_TO_TRUSTED' in _incus_firewalld_zone_apply.stdout"
   when: _incus_firewalld_active.stdout | trim == 'active'
+
+# ---------- Post-install storage verification (show the real result + assert it) ----------
+# `make incus-install` historically reported success even when the `default` pool
+# ended up `dir` (an existing pool is never re-pointed) or sat on a stale/ghost loop
+# mount - a silent wrong "success". So at the END: SHOW the real picture (live
+# `incus storage list`, the loop mount + its backing file, the matching /etc/fstab
+# line) and, on a first-time init, ASSERT the live pool is EXACTLY what was requested
+# (non-zero exit -> the task fails loudly). Both delegate to files/incus_storage_pool.py,
+# the SAME read-only inspector `ivm storage-status` runs, so host setup and `ivm` never
+# disagree about storage. (Phase 2 folds the build/create/delete logic into that script
+# too; this is the read-only half.) `incus_storage_pool.py` is run via the `script`
+# module, so it works here even though `ivm_install.yml` (which also installs it for
+# `ivm`) runs later - storage-info.json may not exist yet, hence the verify passes the
+# expected layout EXPLICITLY rather than reading the record.
+- name: Print the live incus storage-pool status at the end of install (mount / fstab / `incus storage list` + verdict) via `incus_storage_pool.py status`
+  ansible.builtin.script:
+    cmd: "incus_storage_pool.py --root {{ incus_vm_ivm_dir | quote }} status"
+  become: true
+  register: _incus_storage_status_print
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Show the storage-pool status output
+  ansible.builtin.debug:
+    msg: "{{ _incus_storage_status_print.stdout_lines | default(['(skipped under --check)']) }}"
+  when: not ansible_check_mode
+
+- name: Verify the freshly-created pool IS the requested layout (first-time init only; FAILS loudly if install produced the wrong storage - silent `dir`, wrong source, or a stale/ghost loop)
+  ansible.builtin.script:
+    cmd: >-
+      incus_storage_pool.py --root {{ incus_vm_ivm_dir | quote }} verify
+      --expect-driver {{ incus_storage_pool_driver | quote }}
+      --expect-source {{ _incus_effective_pool_source | default('') | quote }}
+      --expect-loop-backing {{ (incus_storage_pool_source if (_incus_pool_build_loop | default(false) | bool) else '') | quote }}
+  become: true
+  register: _incus_storage_verify
+  changed_when: false
+  failed_when: _incus_storage_verify.rc != 0
+  when:
+    - not ansible_check_mode
+    - not (_incus_pool_already_initialized | bool)

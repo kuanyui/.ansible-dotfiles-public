@@ -76,6 +76,26 @@ was just unmounted / shadowed):
   ghost + clears fstab), then `make incus-install INCUS_STORAGE_POOL_SOURCE=/data/vm/incus-btrfs.img INCUS_STORAGE_POOL_SIZE=100GiB`;
   confirm `incus storage list` shows `default | btrfs` and `ivm init` lands the disk under
   `/var/lib/incus-storage` (-> `/data/vm/incus-btrfs.img`), not the `dir` tree on `/`.
+- [x] **Extract storage inspection/verification to `files/incus_storage_pool.py` (Phase 1
+  of "stop cramming storage logic into unreadable ansible")** - new READ-ONLY standalone
+  script (stdlib only). `status` = full live picture (`incus storage list`, default pool
+  driver/source, loop-file footprint, mount + its backing file, /etc/fstab line, recorded
+  storage-info.json, + a consistent / MISMATCH / no-pool verdict); `verify
+  --expect-driver/--expect-source/--expect-loop-backing` = non-zero exit on mismatch.
+  Wired: (a) `incus_host_install.yml` END prints `status` + (first-time only) runs `verify`
+  via the `script` module -> install self-checks, a silent `dir`/stale-loop result FAILS
+  loudly; (b) `ivm storage-status [--json]` runs the same script (installed to
+  `incus_vm_ivm_dir`) -> one command for the whole storage picture; (c) zsh + bash
+  completions. Verified: py_compile, verdict() unit-tested (driver-mismatch / ghost-mount /
+  consistent / not-mounted), `ivm storage-status --help` + dispatch, `bash -n`,
+  `ansible.builtin.script` `cmd:` + role `files/` resolution confirmed vs ansible docs.
+- [ ] **Phase 2: fold the MUTATING build-loop / init / delete-pool logic into
+  `incus_storage_pool.py`** so the imperative storage lifecycle leaves the ansible
+  `shell:`/`when:`/`set_fact:` chains entirely (the two task files shrink to a few script
+  calls). Each mutating subcommand MUST print its argv before running (transparency rule).
+  DO ONLY AFTER the user confirms the Phase-1 fix + recovery work on the real host - don't
+  rewrite the just-fixed create/delete path on an unverified baseline. (User-approved plan:
+  "分階段完整抽離".)
 
 ## incus_vm host install/uninstall split + per-user net gap
 
