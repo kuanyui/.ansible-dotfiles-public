@@ -90,6 +90,11 @@ INCUS_STORAGE_POOL_SIZE ?=
 _pool_drv_set  := $(filter command line environment,$(origin INCUS_STORAGE_POOL_DRIVER))
 _pool_src_set  := $(filter command line environment,$(origin INCUS_STORAGE_POOL_SOURCE))
 _pool_size_set := $(filter command line environment,$(origin INCUS_STORAGE_POOL_SIZE))
+# True (non-empty) when the user set ANY of the three -> the role then knows the
+# storage layout was EXPLICITLY requested (vs a plain reconcile run using defaults),
+# so it can FAIL loudly - not just warn - if a pre-existing `default` pool means the
+# override can't apply (see tasks/incus_host_install.yml).
+_pool_any_set  := $(or $(_pool_drv_set),$(_pool_src_set),$(_pool_size_set))
 
 # -> ansible `-e` only for vars the user set; unset defers to the role's
 # defaults/main (no Makefile-side default to drift). An explicit-but-empty value
@@ -97,7 +102,8 @@ _pool_size_set := $(filter command line environment,$(origin INCUS_STORAGE_POOL_
 _incus_storage_overrides := \
   $(if $(_pool_drv_set),-e incus_storage_pool_driver=$(INCUS_STORAGE_POOL_DRIVER)) \
   $(if $(_pool_src_set),-e incus_storage_pool_source=$(INCUS_STORAGE_POOL_SOURCE)) \
-  $(if $(_pool_size_set),-e incus_storage_pool_size=$(INCUS_STORAGE_POOL_SIZE))
+  $(if $(_pool_size_set),-e incus_storage_pool_size=$(INCUS_STORAGE_POOL_SIZE)) \
+  $(if $(_pool_any_set),-e incus_storage_pool_overrides_passed=true)
 
 incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). On first-time init the role confirms the storage pool layout before `incus admin init` (skipped once a `default` pool exists). Sudo only for the host steps that actually run.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml $(_incus_storage_overrides)

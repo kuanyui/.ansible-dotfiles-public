@@ -1079,6 +1079,22 @@ def storage_location_lines(root: Path, storage_pool_name: str, storage_pool_driv
     if recorded is None:
         return preview_storage_pool_location(storage_pool_name, storage_pool_driver)
     value_column_indent: str = " " * 17
+    # `storage-info.json` records what the role was ASKED to build; `storage_pool_driver`
+    # is what incus ACTUALLY has live. They disagree when `incus admin init` was skipped
+    # because a `default` pool already existed (so the recorded btrfs/loop config never
+    # applied). Printing the recorded loop line under a live `(dir)` driver would be a
+    # flat contradiction - surface the mismatch instead of pretending they agree.
+    recorded_driver: str = str(recorded.get("driver") or "")
+    if recorded_driver and storage_pool_driver not in ("", "?") and recorded_driver != storage_pool_driver:
+        recorded_loop_or_source: str = recorded.get("loop_file") or recorded.get("source") or "(see storage-info.json)"
+        return [
+            f"{value_column_indent}⚠ MISMATCH: live pool is `{storage_pool_driver}`, but the recorded "
+            f"config wanted `{recorded_driver}` ({recorded_loop_or_source})",
+            f"{value_column_indent}  `incus admin init` was skipped (a `default` pool already existed) - the "
+            f"storage override never applied.",
+            f"{value_column_indent}  to apply it (DESTROYS VMs): `make incus-teardown-host` then "
+            f"`make incus-install INCUS_STORAGE_POOL_*=...`",
+        ]
     if recorded.get("build_loop") and recorded.get("loop_file"):
         # The role built a btrfs loop file (e.g. on `/home`) and mounted it: show the
         # real `.img` + its sparse on-disk footprint (`stat` needs no root - metadata

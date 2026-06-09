@@ -44,6 +44,38 @@ was just unmounted / shadowed):
   show a wrong `.img` path after a no-var re-run; feed `_incus_pool_real_source` instead.
 - [ ] (note, pre-existing) `make incus-check` skips command-probes in check mode, so the
   dry-run can error on probe-result `when:`s - out of scope for this fix.
+- [x] **Ghost mount survives teardown -> a changed source never takes effect** (the
+  week-long footgun on host `<the-real-host>`). `make incus-teardown-host` deleted the
+  `default` pool but NEVER unmounted `/var/lib/incus-storage` nor removed its fstab line,
+  so the loop device kept the old `/home/incus-storage.img` open as a `(deleted)` ghost
+  mount across teardown+reinstall cycles. The install mount task was keyed on
+  `mountpoint -q` ALONE (not the backing source), so it reported ALREADY_MOUNTED over the
+  ghost and the new `/data/vm/incus-btrfs.img` never mounted (stuck at 4.65MiB; pool not
+  on it). Fixes: (a) `incus_host_uninstall.yml` under `delete_default_storage_pool` now
+  `umount`s the loop mountpoint + removes its fstab line (the `.img` is left for reuse);
+  (b) the install mount task (`incus_host_install.yml`) resolves the mounted backing file
+  (`findmnt`+`losetup`, strips ` (deleted)`) and REMOUNTS from the wanted source when it
+  differs (safe: runs only when no `default` pool exists). Verified: ivm py_compile,
+  no-tab YAML, `make -n` flag expansion.
+- [x] **Silent `dir` despite an explicit `INCUS_STORAGE_POOL_*` override** - a pre-existing
+  hand-made `dir` `default` pool makes preseed skip, so the override had ZERO effect and
+  the only signal was a `debug:` warning buried in `--diff`. Now the Makefile passes
+  `incus_storage_pool_overrides_passed=true` when any `INCUS_STORAGE_POOL_*` is set (new
+  `_pool_any_set`); the role hard-FAILS (not warns) on a driver mismatch when that flag is
+  set, printing the exact `make incus-teardown-host && make incus-install ...` rebuild
+  command; reconcile runs (no override) keep the soft `debug`. Also the REQUESTED layout
+  preview is now ALWAYS printed (was first-time-only) - addresses "playbook didn't show me
+  the settings". New default `incus_storage_pool_overrides_passed: false`.
+- [x] **`ivm` preview box self-contradiction** - it printed the LIVE pool driver
+  (`default (dir)`) on top and the RECORDED btrfs loop line below as if consistent.
+  `storage_location_lines` now compares recorded vs live driver and prints a
+  `⚠ MISMATCH ...` block (with the teardown+reinstall hint) instead of the false loop line.
+  (Covers the driver-mismatch variant of the optional `storage-info.json` item above.)
+- [ ] **Validate the above on a real host** (same env limit: no ansible/incus here).
+  Recovery to verify on `<the-real-host>`: `make incus-teardown-host` (now unmounts the
+  ghost + clears fstab), then `make incus-install INCUS_STORAGE_POOL_SOURCE=/data/vm/incus-btrfs.img INCUS_STORAGE_POOL_SIZE=100GiB`;
+  confirm `incus storage list` shows `default | btrfs` and `ivm init` lands the disk under
+  `/var/lib/incus-storage` (-> `/data/vm/incus-btrfs.img`), not the `dir` tree on `/`.
 
 ## incus_vm host install/uninstall split + per-user net gap
 

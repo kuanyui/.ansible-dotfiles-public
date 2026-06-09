@@ -20,6 +20,15 @@ incus_vm_skip_host_setup: false
 # pool exists the confirmation is skipped regardless (nothing is re-applied).
 incus_install_assume_yes: false
 
+# `incus_storage_pool_overrides_passed`: set true by the Makefile (`incus-install` /
+# `incus-check`) when the user passed ANY `INCUS_STORAGE_POOL_*` on the command line.
+# Lets the role distinguish "the storage layout was EXPLICITLY requested" from "a plain
+# reconcile run using the defaults". Used by tasks/incus_host_install.yml to FAIL loudly
+# (instead of only warning) when an explicit override cannot be applied because a
+# `default` pool already exists (an existing pool is never re-pointed). Off by default
+# for direct `ansible-playbook` / reconcile runs.
+incus_storage_pool_overrides_passed: false
+
 # ---------- Storage pool config (preseed-only, first-time init) ----------
 # These three vars feed into the `default` storage_pool block of
 # `templates/incus_preseed.yml.j2`. They are EFFECTIVE ONLY at first-time

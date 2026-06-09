@@ -326,18 +326,16 @@
       reconciling host + `ivm` only.
   when: _incus_pool_already_initialized | bool
 
-- name: Show the storage pool layout to be applied now at first-time `incus admin init`
+- name: Show the REQUESTED incus storage pool layout (ALWAYS printed - so a re-run also shows what was asked for; only actually applied at first-time `incus admin init`, an existing pool is never re-pointed)
   ansible.builtin.debug:
     msg: |
-      Incus storage pool - applied ONLY now, at first-time `incus admin init`
-      (an existing pool is never re-pointed; to change it later = teardown + reinstall):
+      Requested incus storage pool layout
+      (applied ONLY at first-time `incus admin init`; an existing pool is never
+      re-pointed - to change it later: `make incus-teardown-host` + reinstall):
         driver = {{ incus_storage_pool_driver }}
         source = {{ incus_storage_pool_source | default('(incus default location)', true) }}
         size   = {{ incus_storage_pool_size | default('(empty)', true) }}
-  when:
-    - not (_incus_pool_already_initialized | bool)
-    - not (incus_install_assume_yes | bool)
-    - not ansible_check_mode
+        {{ '(a `default` pool ALREADY EXISTS - see its ACTUAL backend below; the above is NOT re-applied)' if (_incus_pool_already_initialized | bool) else '(no `default` pool yet - the above is created NOW)' }}
 
 - name: Confirm the storage pool layout before first-time init (type `yes` to proceed)
   ansible.builtin.pause:
@@ -464,13 +462,46 @@
   become: true
   when: _incus_pool_needs_build | bool
 
-- name: Mount `{{ incus_storage_pool_loop_mountpoint }}` now if not already mounted
-  ansible.builtin.shell:
-    cmd: "if mountpoint -q {{ incus_storage_pool_loop_mountpoint }}; then echo ALREADY_MOUNTED; else mount {{ incus_storage_pool_loop_mountpoint }} && echo MOUNTED_NOW; fi"
+# The old check was `if mountpoint -q <mp>; then ALREADY_MOUNTED` - it only asked
+# "is ANYTHING mounted here", NOT "is the RIGHT source mounted here". A stale loop
+# left over at `incus_storage_pool_loop_mountpoint` (e.g. a prior pool's
+# `/home/incus-storage.img`, possibly already `(deleted)` but still held open by its
+# loop device) would therefore report ALREADY_MOUNTED, the freshly-built `.img` would
+# never get mounted, and the new pool would silently sit on the STALE filesystem. So
+# verify the mounted backing file IS `incus_storage_pool_source`; if a different one is
+# mounted, replace it. Safe to umount here: this task runs only when no `default` pool
+# exists yet (`_incus_pool_needs_build`), so nothing is using the mount.
+- name: Mount `{{ incus_storage_pool_loop_mountpoint }}` from `{{ incus_storage_pool_source }}` (replacing any STALE loop whose backing file is NOT `{{ incus_storage_pool_source }}`, so a leftover from a prior pool can't shadow the new one)
+  ansible.builtin.shell: |
+    set -eu
+    loop_mountpoint={{ incus_storage_pool_loop_mountpoint | quote }}
+    wanted_loop_source={{ incus_storage_pool_source | quote }}
+    if ! mountpoint -q "$loop_mountpoint"; then
+      mount "$loop_mountpoint" && echo "MOUNTED_NOW"
+      exit 0
+    fi
+    mounted_device_at_loop_mountpoint=$(findmnt --noheadings --first-only --output SOURCE --mountpoint "$loop_mountpoint" || true)
+    case "$mounted_device_at_loop_mountpoint" in
+      /dev/loop*) mounted_backing_file=$(losetup --noheadings --output BACK-FILE "$mounted_device_at_loop_mountpoint" 2>/dev/null | sed 's/ (deleted)$//') ;;
+      *)          mounted_backing_file="$mounted_device_at_loop_mountpoint" ;;
+    esac
+    if [ "$mounted_backing_file" = "$wanted_loop_source" ]; then
+      echo "ALREADY_MOUNTED_CORRECT"
+    else
+      umount "$loop_mountpoint"
+      mount "$loop_mountpoint" && echo "REMOUNTED_FROM_STALE was=[$mounted_backing_file] now=[$wanted_loop_source]"
+    fi
   become: true
   register: _incus_loop_mount
-  changed_when: "'MOUNTED_NOW' in _incus_loop_mount.stdout"
+  changed_when: "('MOUNTED_NOW' in _incus_loop_mount.stdout) or ('REMOUNTED_FROM_STALE' in _incus_loop_mount.stdout)"
   when: _incus_pool_needs_build | bool
+
+- name: Surface loudly when a STALE loop mount was replaced at `{{ incus_storage_pool_loop_mountpoint }}` (a prior pool's leftover would otherwise have shadowed the new btrfs loop)
+  ansible.builtin.debug:
+    msg: "Replaced a stale mount at {{ incus_storage_pool_loop_mountpoint }}: {{ _incus_loop_mount.stdout | default('') }}"
+  when:
+    - _incus_pool_needs_build | bool
+    - "'REMOUNTED_FROM_STALE' in (_incus_loop_mount.stdout | default(''))"
 
 - name: Compute the effective pool `source`/`size` for the preseed (the loop mount + no size when the role built a loop; else the raw config)
   ansible.builtin.set_fact:
@@ -514,33 +545,64 @@
   become: true
   when: "'default,' in _incus_storage_list.stdout"
 
-- name: Warn when the existing `default` pool's backend differs from `incus_storage_pool_driver` (preseed cannot re-point an already-initialized pool; rebuild via `make incus-teardown-host` + `make incus-install`)
+- name: Set `_existing_default_pool_driver` (backend of the pre-existing `default` pool; empty when no pool / unreadable) - drives the mismatch fail + warn below
+  ansible.builtin.set_fact:
+    _existing_default_pool_driver: "{{ (_incus_default_pool_show.stdout | default('') | from_yaml | default({}, true)).driver | default('', true) }}"
+
+# The user EXPLICITLY passed `INCUS_STORAGE_POOL_*` (the Makefile sets
+# `incus_storage_pool_overrides_passed=true` when any was given) but a `default` pool
+# already exists, so `incus admin init --preseed` was skipped and those settings had
+# ZERO effect - you asked for e.g. a btrfs loop and silently kept a `dir` pool. That
+# silent wrong "success" is exactly what this project forbids, so FAIL LOUDLY with the
+# exact rebuild command. (A plain reconcile run with NO override falls through to the
+# softer debug warning below.)
+- name: FAIL when an explicit `incus_storage_pool_*` override cannot apply because the `default` pool already exists with a different backend (an existing pool is never re-pointed)
+  ansible.builtin.fail:
+    msg: |2
+
+      ============================================================
+       incus `default` pool ALREADY EXISTS - your storage override
+       had NO effect (an existing pool is never re-pointed).
+      ============================================================
+       You passed INCUS_STORAGE_POOL_* on the command line, but a
+       `default` pool already exists, so `incus admin init --preseed`
+       was SKIPPED and the pool kept its ORIGINAL backend:
+
+         wanted (`incus_storage_pool_driver`): {{ incus_storage_pool_driver }}
+         actual (existing `default` pool):     {{ _existing_default_pool_driver }}
+         wanted (`incus_storage_pool_source`): {{ incus_storage_pool_source | default('(incus default location)', true) }}
+
+       To REBUILD the pool as configured (DESTROYS every incus VM +
+       the current pool + all its disks, then recreates it). Run:
+
+           make incus-teardown-host && make incus-install INCUS_STORAGE_POOL_DRIVER={{ incus_storage_pool_driver }} INCUS_STORAGE_POOL_SOURCE={{ incus_storage_pool_source }} INCUS_STORAGE_POOL_SIZE={{ incus_storage_pool_size }}
+      ============================================================
+  when:
+    - _existing_default_pool_driver | length > 0
+    - _existing_default_pool_driver != incus_storage_pool_driver
+    - incus_storage_pool_overrides_passed | default(false) | bool
+
+- name: Warn (reconcile run, NO explicit override) when the existing `default` pool's backend differs from `incus_storage_pool_driver` (preseed cannot re-point an already-initialized pool; rebuild via `make incus-teardown-host` + `make incus-install`)
   ansible.builtin.debug:
     msg: |
       ============================================================
        WARNING - incus `default` pool backend does NOT match config
       ============================================================
        incus's `default` storage pool already existed, so
-       `incus admin init --preseed` was SKIPPED and your
-       `incus_storage_pool_*` settings were NOT applied. The pool
-       keeps whatever backend it was first created with.
+       `incus admin init --preseed` was SKIPPED. The pool keeps
+       whatever backend it was first created with.
 
-         wanted (`incus_storage_pool_driver`): {{ incus_storage_pool_driver }}
+         config (`incus_storage_pool_driver`): {{ incus_storage_pool_driver }}
          actual (existing `default` pool):     {{ _existing_default_pool_driver }}
-         wanted (`incus_storage_pool_source`): {{ incus_storage_pool_source | default('(incus default location)', true) }}
 
        This role never clobbers an existing pool. To REBUILD it as
        configured (DESTROYS every incus VM + the current pool):
-
-           make incus-teardown-host
-           make incus-install
+           make incus-teardown-host && make incus-install
       ============================================================
-  vars:
-    _existing_default_pool_driver: "{{ (_incus_default_pool_show.stdout | default('') | from_yaml).driver | default('', true) }}"
   when:
-    - _incus_default_pool_show is not skipped
     - _existing_default_pool_driver | length > 0
     - _existing_default_pool_driver != incus_storage_pool_driver
+    - not (incus_storage_pool_overrides_passed | default(false) | bool)
 
 # ---------- Make incus wait for the loop-file pool mount on boot (reboot persistence) ----------
 # When the `default` pool's source is the role's loop MOUNTPOINT, incus is useless until

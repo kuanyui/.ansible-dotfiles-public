@@ -218,6 +218,37 @@
   become: true
   when: _incus_uninstall_pool_mount_dropin is changed
 
+# The pool is deleted above, but the install side ALSO loop-mounts a btrfs `.img` at
+# `incus_storage_pool_loop_mountpoint` via /etc/fstab. A teardown that deleted the pool
+# but left that mounted leaves a loop device holding the (now often deleted) `.img`
+# open - the `(deleted)` ghost mount that then SHADOWS the mountpoint on the NEXT
+# install: the source-check there would have to evict it, and an older install would
+# silently point the rebuilt pool at the stale filesystem. So unmount it (the loop
+# device auto-detaches) and drop the fstab line. The `.img` FILE is deliberately left
+# in place - a later reinstall reuses it (its `mkfs` is skipped when already formatted);
+# only the MOUNT + the fstab entry are this pool's to remove.
+- name: "`incus_vm_uninstall_delete_default_storage_pool`: unmount the storage loop at `{{ incus_storage_pool_loop_mountpoint }}` if mounted (frees the loop device; stops a `(deleted)`-img ghost mount from shadowing the next install)"
+  ansible.builtin.shell: |
+    set -eu
+    loop_mountpoint={{ incus_storage_pool_loop_mountpoint | quote }}
+    if mountpoint -q "$loop_mountpoint"; then
+      umount "$loop_mountpoint" && echo "UNMOUNTED"
+    else
+      echo "NOT_MOUNTED_NOOP"
+    fi
+  become: true
+  when: incus_vm_uninstall_delete_default_storage_pool | bool
+  register: _incus_uninstall_loop_umount
+  changed_when: "'UNMOUNTED' in _incus_uninstall_loop_umount.stdout"
+
+- name: "`incus_vm_uninstall_delete_default_storage_pool`: remove the /etc/fstab loop line for `{{ incus_storage_pool_loop_mountpoint }}` (reverse of the install's fstab entry; a stale line would re-mount the old `.img` on the next boot)"
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '\s{{ incus_storage_pool_loop_mountpoint | regex_escape }}\s'
+    state: absent
+  become: true
+  when: incus_vm_uninstall_delete_default_storage_pool | bool
+
 # ---------- Step 5: revert the firewalld `incusbr0` trusted-zone change ----------
 # Mirror of install's firewalld step. `systemctl is-active firewalld` (NOT
 # `firewall-cmd`, which would block on polkit under non-interactive ansible) is
