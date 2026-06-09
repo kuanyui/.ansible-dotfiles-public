@@ -42,3 +42,45 @@ thirdparty_software_codex:
       # ~/.local/npm_global for now; switch to the centralize_lang_pkgs_dir tree when
       # that role rename lands (see TODO.md).
       su - user -c 'mkdir -p ~/.local/npm_global && npm config set prefix ~/.local/npm_global && npm install -g @openai/codex'
+
+# Rust via rustup - the official, recommended install (rust-lang.org/tools/install).
+# It downloads PREBUILT toolchain binaries (NOT source) into ~/.rustup + ~/.cargo as the
+# unprivileged `user`. The stable toolchain already bundles rustc/cargo/clippy/rustfmt;
+# rust-analyzer (editor LSP) is added on top - it is NOT in the default profile. Distro
+# rustc/cargo are intentionally NOT used: they lag Rust's 6-week stable cadence and can't
+# manage toolchains/targets/components the way Rust development expects.
+thirdparty_software_dev_rust:
+  common:
+    already_installed: su - user -c 'test -x ~/.cargo/bin/cargo'
+    install_script: |
+      # `-y` is rustup-init's only non-interactive flag (no long-form alias exists);
+      # --proto / --tlsv1.2 are the curl flags rust-lang.org documents for the installer.
+      su - user -c 'curl --proto "=https" --tlsv1.2 --fail --silent --show-error --location https://sh.rustup.rs | sh -s -- -y'
+      su - user -c '~/.cargo/bin/rustup component add rust-analyzer'
+
+# Android SDK (command-line tools), user-scoped under ~/Android/Sdk - the headless half of
+# `dev_android`. Pairs with the `dev_android` DISTRO group (JDK + unzip), which cmd_provision
+# installs FIRST in the same run, so the JDK sdkmanager needs and the unzip step both have
+# their deps ready. Installs platform-tools (adb), a build-tools, and a platform = enough to
+# `./gradlew assembleDebug`. NOT the emulator (heavy/GUI/needs host nested virt; add via
+# `sdkmanager emulator`). Set ANDROID_HOME=~/Android/Sdk (or a project local.properties) to
+# point Gradle/AGP at it.
+thirdparty_software_dev_android:
+  common:
+    already_installed: su - user -c 'test -x ~/Android/Sdk/platform-tools/adb'
+    install_script: |
+      # Google ships cmdline-tools as a build-numbered zip - there is NO stable "latest" URL,
+      # so the build number is PINNED (14742923, verified 2026-06-09 against
+      # developer.android.com/studio); bump it when it ages. platform / build-tools pinned to
+      # API 36 (current stable); `sdkmanager` more as needed. platform-tools is unversioned (latest).
+      su - user -c 'set -eu
+        ANDROID_SDK_ROOT="$HOME/Android/Sdk"
+        mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+        cd "$ANDROID_SDK_ROOT/cmdline-tools"
+        curl --fail --silent --show-error --location --output cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip
+        unzip -q cmdline-tools.zip
+        rm cmdline-tools.zip
+        rm -rf latest && mv cmdline-tools latest   # the zip extracts to ./cmdline-tools; sdkmanager wants .../latest
+        yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null
+        "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" platform-tools "platforms;android-36" "build-tools;36.0.0"
+      '

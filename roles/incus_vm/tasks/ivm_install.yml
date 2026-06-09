@@ -113,6 +113,8 @@
         'cjk_input': distro_packages_cjk_input,
         'incus_guest_baseline': distro_packages_incus_guest_baseline,
         'emacs': distro_packages_emacs,
+        'dev_qt': distro_packages_dev_qt,
+        'dev_android': distro_packages_dev_android,
       } | to_nice_json }}
 
 # ---------- Materialize the thirdparty_software recipe registry for `ivm` ----------
@@ -133,6 +135,8 @@
       {{ {
         'claude': thirdparty_software_claude,
         'codex': thirdparty_software_codex,
+        'dev_rust': thirdparty_software_dev_rust,
+        'dev_android': thirdparty_software_dev_android,
       } | to_nice_json }}
 
 # ---------- Stage VM dotfiles (user + root variants, per ansible_os_family) ----------

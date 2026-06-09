@@ -21,6 +21,12 @@ distro_packages_install_basic_tools: true
 distro_packages_install_sys_tools: true
 distro_packages_install_net_tools: true
 distro_packages_install_wayland_tools: false
+# Dev toolchains - opt-in per host (most hosts don't build Qt/Android). These install the
+# DISTRO half on the host (`dev_qt` = full Qt6+cmake+compiler; `dev_android` = JDK+unzip).
+# The thirdparty halves (rustup, Android SDK) have NO host runner yet - see TODO.md; on a
+# host run rustup / sdkmanager by hand. In an `ivm` guest, `ivm provision dev_*` does both.
+distro_packages_install_dev_qt: false
+distro_packages_install_dev_android: false
 setup_podman_oci_runtimes: false
 podman_runtime: "libkrun"  # "default" | "libkrun"
 podman_runtime_scope: "user"  # "user" | "system"

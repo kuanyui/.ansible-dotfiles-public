@@ -831,6 +831,29 @@ manages packages). Decided: role -> `centralize_lang_pkgs_dir`, dir
   changed / loop / `when:1>2` skip - all tagged correctly, in order) AND the real
   120-task `incus_vm.yml` apply.
 
+## ivm dev toolchain provision groups (dev_qt / dev_rust / dev_android)
+
+Added `provision` units for basic dev: `dev_qt` (distro: Qt6 Core/Gui/Widgets/Concurrent
++ multimedia + QML + Linguist + cmake/make/compiler), `dev_rust` (thirdparty: rustup +
+rust-analyzer), `dev_android` (distro JDK+unzip + thirdparty: Android SDK cmdline-tools ->
+sdkmanager platform-tools/build-tools/platform). Kotlin needs nothing extra - Android Gradle
+pulls the Kotlin compiler per project.
+
+- [x] `dev_qt` / `dev_android` distro groups (`roles/distro_packages/defaults/main.yml`),
+  rendered into `distro-package-groups.json` + wired into the host `distro_packages_install_*`
+  toggle loop (`tasks/main.yml`) + `group_vars/all.yml` (both default `false`, opt-in).
+- [x] `dev_rust` / `dev_android` thirdparty recipes (`roles/thirdparty_software/defaults/main.yml`),
+  rendered into `thirdparty-software.json`. Package names verified against upstream DBs / docs.
+- [ ] **Host runner for thirdparty recipes** - `roles/thirdparty_software` is defaults-only
+  (no `tasks/`); only `ivm` (guest) executes recipes. So on the HOST, `dev_rust` (rustup) and
+  the `dev_android` SDK half can't be installed via ansible - user runs rustup / sdkmanager by
+  hand. A host-side runner (probe-then-`install_script`, mirroring ivm's `thirdparty_install_script`)
+  would close the gap. Separate effort.
+- [ ] **Validate in a guest** - no incus in this env. `ivm provision dev_qt` / `dev_rust` /
+  `dev_android` on a Debian + an openSUSE + a Fedora guest; confirm package names resolve, rustup
+  lands in ~/.cargo, sdkmanager builds out ~/Android/Sdk. Bump the pinned cmdline-tools build
+  number (14742923) / API 36 if stale.
+
 ## Notes / future
 
 - [ ] **container_apps -> one engine + declarative templates** (parallel to what

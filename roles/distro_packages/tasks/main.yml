@@ -18,6 +18,8 @@
     - { toggle: distro_packages_install_sys_tools,     enabled: "{{ distro_packages_install_sys_tools }}",     bundle: "{{ distro_packages_sys_tools }}" }
     - { toggle: distro_packages_install_net_tools,     enabled: "{{ distro_packages_install_net_tools }}",     bundle: "{{ distro_packages_net_tools }}" }
     - { toggle: distro_packages_install_wayland_tools, enabled: "{{ distro_packages_install_wayland_tools }}", bundle: "{{ distro_packages_wayland_tools }}" }
+    - { toggle: distro_packages_install_dev_qt,        enabled: "{{ distro_packages_install_dev_qt }}",        bundle: "{{ distro_packages_dev_qt }}" }
+    - { toggle: distro_packages_install_dev_android,   enabled: "{{ distro_packages_install_dev_android }}",   bundle: "{{ distro_packages_dev_android }}" }
   when: item.enabled | bool
   loop_control:
     label: "{{ item.toggle }}={{ item.enabled }}"

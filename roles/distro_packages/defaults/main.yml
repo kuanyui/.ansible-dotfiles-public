@@ -154,3 +154,61 @@ distro_packages_incus_guest_baseline:
     - openssh-server
     - zsh-syntax-highlighting
     - zsh-autosuggestions
+
+# Qt6 development: the basics for building a Qt6 C++/QML app with CMake. Modules
+# requested: Core / Gui / Widgets / Concurrent + Multimedia + Declarative (QML) +
+# Linguist (translation tooling). `cmake` + `make` (the default CMake generator on
+# Linux) + the C++ compiler ride in so `provision dev_qt` is self-sufficient to build.
+# Names diverge per family (Debian ships ONE dev meta `qt6-base-dev` covering
+# Core/Gui/Widgets/Concurrent/Network/...; openSUSE splits every module into its own
+# `qt6-<module>-devel`; Fedora prefixes `qt6-qt<module>-devel`). The Linguist package
+# also differs: Debian splits GUI (`linguist-qt6`) from CLI tools (`qt6-l10n-tools`,
+# = lrelease/lupdate); openSUSE `qt6-linguist-devel`; Fedora `qt6-linguist`.
+distro_packages_dev_qt:
+  common:
+    - cmake
+    - make
+  debian:
+    - qt6-base-dev          # Core, Gui, Widgets, Concurrent, Network, Sql, Test, ... (one meta)
+    - qt6-declarative-dev   # QML / Qt Quick
+    - qt6-multimedia-dev
+    - qt6-l10n-tools        # lrelease / lupdate (Linguist CLI; CMake LinguistTools)
+    - linguist-qt6          # Qt Linguist GUI
+    - g++
+  suse:
+    - qt6-core-devel
+    - qt6-gui-devel
+    - qt6-widgets-devel
+    - qt6-concurrent-devel
+    - qt6-multimedia-devel
+    - qt6-declarative-devel   # QML / Qt Quick
+    - qt6-linguist-devel      # Linguist tools (lrelease/lupdate + CMake module)
+    - gcc-c++
+  redhat:
+    - qt6-qtbase-devel        # Core, Gui, Widgets, Concurrent, ...
+    - qt6-qtdeclarative-devel # QML / Qt Quick
+    - qt6-qtmultimedia-devel
+    - qt6-linguist            # Qt6 Linguist tools
+    - gcc-c++
+
+# Android development: the headless build chain (JDK + Android SDK), enough to
+# `./gradlew assembleDebug` an APK from the command line. This DISTRO group is only the
+# JDK (Gradle/AGP run on the JVM) + `unzip` (the SDK thirdparty step below needs it);
+# the SDK itself (sdkmanager, platform-tools, build-tools, a platform) comes from the
+# `dev_android` THIRDPARTY recipe (roles/thirdparty_software) - `ivm provision dev_android`
+# applies BOTH, distro first (cmd_provision order), so the JDK is present when sdkmanager runs.
+# Deliberately NOT here:
+#   - Gradle: not in the openSUSE / Fedora default repos at all (only Debian + Snap), and
+#     Android pins its version via each project's `./gradlew` wrapper anyway - so use the wrapper.
+#   - The emulator: heavy + GUI + needs host nested virt (`hw.nested_virt: true`); add it
+#     yourself with `sdkmanager emulator` when wanted.
+# JDK is JDK 21 (current LTS; Debian `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+.
+distro_packages_dev_android:
+  common:
+    - unzip   # extract the Android command-line tools zip (the dev_android thirdparty step)
+  debian:
+    - default-jdk
+  suse:
+    - java-21-openjdk-devel
+  redhat:
+    - java-21-openjdk-devel
