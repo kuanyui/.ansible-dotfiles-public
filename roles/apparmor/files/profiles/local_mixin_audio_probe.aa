@@ -1,0 +1,34 @@
+# Managed by Ansible - do not edit manually
+# Audio config probe (config reads + pulse client setup, NOT live audio) -
+# /etc/apparmor.d/abstractions/local_mixin_audio_probe
+#
+# Include in any profile that touches audio CONFIG without (necessarily) playing
+# sound: the client/config reads (PulseAudio + PipeWire + ALSA), the pulse socket
+# directory, pulse cookie, and pulseaudio auto-spawn. Even no-sound apps (telegram,
+# gwenview, browsers) read these at startup via Qt / PulseAudio.
+#
+# NEVER put the live connection sockets or sound device nodes here - those are the
+# actual audio CAPABILITY and live in <abstractions/local_mixin_audio> (which
+# #includes this). Same split as local_mixin_gpu_probe vs local_mixin_gpu.
+
+# PulseAudio
+/etc/pulse/client.conf r,
+owner @{HOME}/.pulse/client.conf r,
+owner @{HOME}/.config/pulse/ rw,           # PulseAudio may rmdir and recreate this directory
+owner @{HOME}/.config/pulse/** rwk,        # includes cookie file used for daemon authentication
+owner /run/user/*/pulse/ rw,               # PulseAudio socket directory
+/dev/shm/ r,                               # shared memory directory listing (PulseAudio client)
+/usr/bin/pulseaudio ix,                    # PulseAudio auto-spawn (also covers pipewire-pulse shim)
+
+# PipeWire (config reads only; the live pipewire-0 socket is in local_mixin_audio)
+/usr/share/pipewire/client.conf r,
+/usr/share/pipewire/client.conf.d/{,**} r,
+/usr/share/pipewire/jack.conf r,           # JACK-emulation client config (read on backend probe)
+
+# ALSA
+/etc/alsa/conf.d/{,**} r,                  # ALSA config directory (audio IPC process probe)
+/usr/share/alsa/{,**} r,
+owner @{HOME}/.asoundrc r,                 # user ALSA config (audio IPC process probe)
+
+# XDG sound themes
+/usr/share/sounds/{,**} r,

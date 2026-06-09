@@ -1,0 +1,19 @@
+# Managed by Ansible - do not edit manually
+# Deny live audio (no sound output) - /etc/apparmor.d/abstractions/local_mixin_deny_audio
+#
+# Include in any profile that has no legitimate reason to play sound (telegram,
+# image viewers...). Denies the live connection sockets and the ALSA device nodes -
+# the audio-output capability that local_mixin_audio grants. The inert
+# config reads still come from local_mixin_audio (Qt / PulseAudio probe these at
+# startup regardless of whether the app ever opens a stream).
+#
+# Companion: local_mixin_audio (the opposite - GRANTS the sockets). Do NOT
+# include both in the same profile.
+#
+# `deny` (NOT `audit deny`) so the implicit-deny audit spam from the app probing the
+# host sound server / ALSA hardware at startup is silenced. Mirrors the
+# local_mixin_gpu_probe / local_mixin_gpu / local_mixin_deny_gpu triad.
+
+deny /run/user/*/pipewire-0 rw,      # PipeWire native socket
+deny /run/user/*/pulse/native rw,    # PulseAudio client socket
+deny /dev/snd/** rw,                 # ALSA sound device nodes

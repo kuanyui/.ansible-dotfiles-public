@@ -61,14 +61,10 @@
     # write capability scoped to thread comm files.
     owner @{PROC}/@{pid}/task/*/comm rw,
 
-    # Audio gaps not yet covered by `local_mixin_audio` (which currently only
-    # handles PulseAudio + ALSA config, not native PipeWire client or ALSA
-    # device nodes). Kept inline here rather than extended into the shared mixin
-    # because telegram intentionally comments out the equivalent PipeWire lines;
-    # if a second audio-playing profile hits the same denials, promote to the
-    # mixin.
-    /usr/share/pipewire/client.conf r,
-    /usr/share/pipewire/client.conf.d/{,**} r,
+    # PulseAudio drop-in config + ALSA mixer control node (mpv-specific). The
+    # PipeWire client-config reads come from `local_mixin_audio_probe`; the live
+    # PipeWire / Pulse connection sockets are the audio capability and come from
+    # `local_mixin_audio` (included above, which nests the probe).
     /etc/pulse/client.conf.d/{,**} r,
     /dev/snd/controlC[0-9]* rw,
 

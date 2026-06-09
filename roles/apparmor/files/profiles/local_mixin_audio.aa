@@ -1,22 +1,20 @@
 # Managed by Ansible - do not edit manually
-# Audio access rules - /etc/apparmor.d/abstractions/local_mixin_audio
+# Live audio output capability (full sound: config + connection sockets) -
+# /etc/apparmor.d/abstractions/local_mixin_audio
 #
-# Include this in any profile that needs PulseAudio/PipeWire audio output.
-# Covers: PulseAudio client config, ALSA config, socket access, and auto-spawn.
-
-# PulseAudio
-/etc/pulse/client.conf r,
-owner @{HOME}/.pulse/client.conf r,
-owner @{HOME}/.config/pulse/ rw,           # PulseAudio may rmdir and recreate this directory
-owner @{HOME}/.config/pulse/** rwk,        # includes cookie file used for daemon authentication
-owner /run/user/*/pulse/ rw,               # PulseAudio socket directory
-/dev/shm/ r,                               # shared memory directory listing (PulseAudio client)
-/usr/bin/pulseaudio ix,                    # PulseAudio auto-spawn (also covers pipewire-pulse shim)
-
-# ALSA
-/etc/alsa/conf.d/{,**} r,                  # ALSA config directory (audio IPC process probe)
-/usr/share/alsa/{,**} r,
-owner @{HOME}/.asoundrc r,                 # user ALSA config (audio IPC process probe)
-
-# XDG sound themes
-/usr/share/sounds/{,**} r,
+# Include ONLY in profiles that actually play sound (mpv, vlc, mscore...). This is
+# the audio equivalent of local_mixin_gpu: it pulls in the config reads via
+# local_mixin_audio_probe and adds the live PipeWire / PulseAudio connection
+# sockets - connecting to them IS audio output.
+#
+# Apps that play no sound include local_mixin_audio_probe (config only) +
+# local_mixin_deny_audio (hard-deny the sockets). Do NOT include local_mixin_audio
+# and local_mixin_deny_audio together.
+#
+# Why a file rule for a socket: at abi/5.0 AppArmor mediates a pathname AF_UNIX
+# socket via BOTH a `unix` rule (local_mixin_network_local_ipc) AND a file rule on
+# the socket path. The `unix` grant alone is not enough - without the file rule the
+# connect is denied with class="file", silently killing audio (the abi/5.0 regression).
+#include <abstractions/local_mixin_audio_probe>
+owner /run/user/*/pipewire-0 rw,           # PipeWire native client socket
+owner /run/user/*/pulse/native rw,         # PulseAudio client socket (also the pipewire-pulse shim)
