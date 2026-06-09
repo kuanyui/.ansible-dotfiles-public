@@ -263,6 +263,29 @@
     - _root_fs_type is defined
     - (_root_fs_type.stdout | trim) == 'btrfs'
 
+# ---------- Probe init state EARLY: the storage build below must be first-time-only ----------
+# The `incus admin init --preseed` further down is already guarded to run ONLY when no
+# `default` pool exists. The btrfs loop-file BUILD below (truncate + mkfs + fstab +
+# mount) must obey the SAME guard - otherwise a later `make incus-install` that does
+# not re-pass the original INCUS_STORAGE_POOL_* (so the role falls back to its DEFAULT
+# `incus_storage_pool_source`) would: build a second, EMPTY `.img`, then - because the
+# fstab line is keyed on the shared `incus_storage_pool_loop_mountpoint`, identical for
+# any source - REWRITE the fstab line to that empty img and (if the mountpoint was free)
+# mount it, silently shadowing the real pool data. So probe init state HERE, before the
+# build, and gate the build on "no `default` pool yet". `_incus_storage_list` is also
+# consumed by the preseed + driver-mismatch tasks further down (one probe, not three).
+- name: Probe whether incus is already initialized (`default` storage pool present) - gates BOTH the loop-file build below and the preseed init further down
+  ansible.builtin.command:
+    cmd: incus storage list --format csv
+  register: _incus_storage_list
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Set `_incus_pool_already_initialized` (true = a `default` pool exists -> the role must not build, reformat, or repoint storage)
+  ansible.builtin.set_fact:
+    _incus_pool_already_initialized: "{{ 'default,' in (_incus_storage_list.stdout | default('')) }}"
+
 # ---------- btrfs loop file on a custom disk (the role builds it; incus won't) ----------
 # incus only ever CREATES a btrfs loop file at its OWN `/var/lib/incus/disks/<pool>.img`
 # (on `/`). To put a CoW loop on another disk (the project's `/home` goal), the role
@@ -297,6 +320,16 @@
          and (_incus_pool_source_stat.stat is defined)
          and ((not _incus_pool_source_stat.stat.exists) or (_incus_pool_source_stat.stat.isreg | default(false))) }}
 
+# `_incus_pool_build_loop` (above) = "the CONFIG describes a role-built loop" - it stays
+# config-derived because `ivm_install.yml` records it into `storage-info.json` for
+# `ivm info`. `_incus_pool_needs_build` adds the first-time guard: only actually
+# truncate/mkfs/fstab/mount when the loop is wanted AND incus is not yet initialized.
+# On any re-run of an initialized host this is false, so the whole build is a no-op
+# (the pool, its fstab line, and its mount are left exactly as the first run made them).
+- name: Set `_incus_pool_needs_build` (build the loop file ONLY first time = config wants a loop AND no `default` pool exists yet)
+  ansible.builtin.set_fact:
+    _incus_pool_needs_build: "{{ (_incus_pool_build_loop | bool) and not (_incus_pool_already_initialized | bool) }}"
+
 - name: Install `btrfs-progs` for `mkfs.btrfs` (only when the role must build a btrfs loop file)
   ansible.builtin.include_role:
     name: _install_distro_packages
@@ -311,14 +344,14 @@
       RedHat:
         install: [btrfs-progs]
         probe: command -v mkfs.btrfs
-  when: _incus_pool_build_loop | bool
+  when: _incus_pool_needs_build | bool
 
 - name: Create the sparse btrfs loop file `{{ incus_storage_pool_source }}` (size `{{ incus_storage_pool_size }}`; sparse, ~0 on disk until VMs write)
   ansible.builtin.command:
     cmd: "truncate --size={{ incus_storage_pool_size | regex_replace('iB$', '') }} {{ incus_storage_pool_source }}"
     creates: "{{ incus_storage_pool_source }}"
   become: true
-  when: _incus_pool_build_loop | bool
+  when: _incus_pool_needs_build | bool
 
 - name: Probe the loop file's filesystem so the role never re-`mkfs`-es an already-formatted `{{ incus_storage_pool_source }}`
   ansible.builtin.command:
@@ -327,14 +360,14 @@
   changed_when: false
   failed_when: false
   become: true
-  when: _incus_pool_build_loop | bool
+  when: _incus_pool_needs_build | bool
 
 - name: "`mkfs.btrfs` the loop file `{{ incus_storage_pool_source }}` (only when it has no filesystem yet)"
   ansible.builtin.command:
     cmd: "mkfs.btrfs {{ incus_storage_pool_source }}"
   become: true
   when:
-    - _incus_pool_build_loop | bool
+    - _incus_pool_needs_build | bool
     - (_incus_loop_blkid.stdout | default('') | trim) | length == 0
 
 - name: Ensure the loop mount point `{{ incus_storage_pool_loop_mountpoint }}` exists
@@ -343,7 +376,7 @@
     state: directory
     mode: "0711"
   become: true
-  when: _incus_pool_build_loop | bool
+  when: _incus_pool_needs_build | bool
 
 - name: Add the /etc/fstab loop mount `{{ incus_storage_pool_source }}` -> `{{ incus_storage_pool_loop_mountpoint }}` (`nofail` so a missing disk never blocks boot)
   ansible.builtin.lineinfile:
@@ -352,7 +385,7 @@
     line: "{{ incus_storage_pool_source }} {{ incus_storage_pool_loop_mountpoint }} btrfs loop,nofail,noatime 0 0"
     state: present
   become: true
-  when: _incus_pool_build_loop | bool
+  when: _incus_pool_needs_build | bool
 
 - name: Mount `{{ incus_storage_pool_loop_mountpoint }}` now if not already mounted
   ansible.builtin.shell:
@@ -360,7 +393,7 @@
   become: true
   register: _incus_loop_mount
   changed_when: "'MOUNTED_NOW' in _incus_loop_mount.stdout"
-  when: _incus_pool_build_loop | bool
+  when: _incus_pool_needs_build | bool
 
 - name: Compute the effective pool `source`/`size` for the preseed (the loop mount + no size when the role built a loop; else the raw config)
   ansible.builtin.set_fact:
@@ -374,15 +407,7 @@
 # only the lower-privilege `incus` group). Root bypasses the group check, so
 # init works without needing any user-level group membership.
 
-- name: Probe whether incus is already initialized (default storage pool present)
-  ansible.builtin.command:
-    cmd: incus storage list --format csv
-  register: _incus_storage_list
-  changed_when: false
-  failed_when: false
-  become: true
-
-- name: Initialize incus via `incus admin init --preseed` (only if `default` storage pool not present)
+- name: Initialize incus via `incus admin init --preseed` (only if `default` storage pool not present; `_incus_storage_list` is probed once near the top of this file)
   ansible.builtin.command:
     cmd: incus admin init --preseed
     stdin: "{{ lookup('template', 'incus_preseed.yml.j2') }}"
@@ -439,6 +464,78 @@
     - _incus_default_pool_show is not skipped
     - _existing_default_pool_driver | length > 0
     - _existing_default_pool_driver != incus_storage_pool_driver
+
+# ---------- Make incus wait for the loop-file pool mount on boot (reboot persistence) ----------
+# When the `default` pool's source is the role's loop MOUNTPOINT, incus is useless until
+# that loop is mounted. The /etc/fstab entry is `nofail` so a missing VM disk never blocks
+# BOOT - but per systemd.mount(5) `nofail` ALSO drops the mount's ordering before
+# local-fs.target, so incus.service (started via multi-user.target, after local-fs.target)
+# can win the race and start on an EMPTY mountpoint dir: the pool looks wiped and every VM
+# is "gone" until the next mount. This is the reboot failure mode. Fix: a RequiresMountsFor=
+# drop-in adds a Requires= + After= from incus.service onto that .mount unit (systemd.unit(5)),
+# so incus WAITS for - and refuses to start without - its pool storage. Scoped to incus only;
+# BOOT stays resilient. Decided from the pool's REAL source (read post-init), not from the
+# passed-in vars, so a re-run without the original INCUS_STORAGE_POOL_* still does the right
+# thing and a `dir`/external pool never gets a drop-in pointing at a mount that won't exist.
+- name: Probe the `default` pool's real `config.source` (root; read AFTER init so it sees a freshly-created pool too) to decide whether incus must wait for a loop mount
+  ansible.builtin.command:
+    cmd: incus storage show default
+  register: _incus_pool_show_post_init
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Set `_incus_pool_real_source` (the `default` pool's actual `config.source`, or empty when no pool is readable) - drives the boot-mount-wait drop-in below
+  ansible.builtin.set_fact:
+    _incus_pool_real_source: >-
+      {{ ((_incus_pool_show_post_init.stdout | default('') | from_yaml | default({}, true)).config | default({}, true)).source | default('') }}
+
+- name: Ensure the `/etc/systemd/system/incus.service.d/` drop-in directory exists (only when the `default` pool's source IS the role's loop mountpoint)
+  ansible.builtin.file:
+    path: /etc/systemd/system/incus.service.d
+    state: directory
+    mode: "0755"
+  become: true
+  when: _incus_pool_real_source == incus_storage_pool_loop_mountpoint
+
+- name: Write the `incus.service` drop-in `/etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf` (`RequiresMountsFor={{ incus_storage_pool_loop_mountpoint }}`; makes incus wait for + require the loop pool mount so a `nofail` boot race can't start it on an empty pool dir)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/incus_vm) - do not edit.
+      # The `default` incus pool lives on the loop mount {{ incus_storage_pool_loop_mountpoint }}.
+      # Its /etc/fstab entry is `nofail` (a missing VM disk must never block BOOT), but per
+      # systemd.mount(5) `nofail` also drops the mount's ordering before local-fs.target, so
+      # incus.service could otherwise win the boot race and start on an EMPTY mountpoint dir
+      # (every VM looks "gone" until the loop is mounted). RequiresMountsFor= adds a Requires=
+      # + After= on that .mount unit (systemd.unit(5)): incus waits for, and refuses to start
+      # without, its pool storage. Scoped to incus only; BOOT stays resilient.
+      [Unit]
+      RequiresMountsFor={{ incus_storage_pool_loop_mountpoint }}
+  become: true
+  when: _incus_pool_real_source == incus_storage_pool_loop_mountpoint
+  register: _incus_pool_mount_wait_dropin
+
+# Remove only when we POSITIVELY know the pool is NOT on the loop mount (a real,
+# non-mountpoint source). An empty `_incus_pool_real_source` means the probe could not
+# read the pool (transient / daemon hiccup), in which case we touch nothing rather than
+# delete a still-valid drop-in.
+- name: Remove the `incus.service` pool-mount drop-in `/etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf` when the pool has a real source that is NOT the loop mountpoint (e.g. `dir`/external pool; a stale `RequiresMountsFor` would block incus)
+  ansible.builtin.file:
+    path: /etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf
+    state: absent
+  become: true
+  when:
+    - _incus_pool_real_source | length > 0
+    - _incus_pool_real_source != incus_storage_pool_loop_mountpoint
+  register: _incus_pool_mount_wait_dropin_absent
+
+- name: Reload systemd so the `incus.service` drop-in dependency change applies on the next start / reboot (we deliberately do NOT restart incus now - that would disrupt running VMs)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  when: (_incus_pool_mount_wait_dropin is changed) or (_incus_pool_mount_wait_dropin_absent is changed)
 
 # ---------- Per-user networking: route `user-<uid>` VMs through the standard incusbr0 ----------
 # Unprivileged `incus`-group users get a per-user restricted project `user-<uid>`

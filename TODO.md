@@ -5,6 +5,36 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## incus_vm storage pool: re-run footgun + reboot-disappearance fix
+
+A host set up with `make INCUS_STORAGE_POOL_SOURCE=/data/...img ... incus-install`
+lost every VM after a host reboot followed by a second `make incus-install` run
+WITHOUT re-passing the original `INCUS_STORAGE_POOL_*`. Two root causes in
+`roles/incus_vm/tasks/incus_host_install.yml` (data was never destroyed - the `.img`
+was just unmounted / shadowed):
+
+- [x] **Re-run footgun** - the btrfs loop-file BUILD (truncate/mkfs/fstab/mount) ran on
+  every apply, keyed only on the vars passed THAT run. A no-var re-run fell back to the
+  DEFAULT source, built a 2nd empty `.img`, and (the fstab line is keyed on the shared
+  mountpoint) silently repointed `/var/lib/incus-storage` at it, shadowing the real
+  pool. Fix: probe init state EARLY; gate the build on new `_incus_pool_needs_build`
+  (= config-wants-loop AND no `default` pool yet) so the build is strictly first-time.
+  `_incus_pool_build_loop` kept as the config-derived fact for `storage-info.json`.
+- [x] **Reboot disappearance** - the fstab loop entry uses `nofail`, which per
+  systemd.mount(5) drops the mount's ordering before local-fs.target, so incus.service
+  could start before the loop was mounted and see an EMPTY pool dir. Fix: an
+  `incus.service` drop-in `RequiresMountsFor=<mountpoint>` (gated on the pool's REAL
+  source == mountpoint, read post-init) + daemon-reload; removed on teardown and when
+  the pool is not a loop pool. Verified RequiresMountsFor / nofail semantics vs man7.org.
+- [ ] **Validate on a real host** - no ansible in the edit env, and `make incus-sandbox`
+  skips host setup (`incus_vm_skip_host_setup`), so neither exercises this path. Test:
+  first-time `make incus-install`, reboot, re-run no-var `make incus-install`, reboot;
+  confirm pool + VMs survive and `/etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf` exists.
+- [ ] (optional) `storage-info.json` still records the CONFIG source, so `ivm info` can
+  show a wrong `.img` path after a no-var re-run; feed `_incus_pool_real_source` instead.
+- [ ] (note, pre-existing) `make incus-check` skips command-probes in check mode, so the
+  dry-run can error on probe-result `when:`s - out of scope for this fix.
+
 ## incus_vm host install/uninstall split + per-user net gap
 
 Triggered by a real `ivm init claude` on a host using the unprivileged `incus`

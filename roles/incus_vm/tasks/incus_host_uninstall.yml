@@ -201,6 +201,23 @@
   changed_when: "'POOL_CHANGED' in _incus_uninstall_delete_pool.stdout"
   failed_when: "'TEARDOWN_FAILED' in _incus_uninstall_delete_pool.stdout"
 
+# Parity with install's reboot-persistence drop-in: once the pool (and its loop mount)
+# is gone, the `RequiresMountsFor` drop-in would make incus.service REFUSE to start
+# (it requires a mount that no longer exists). Remove it under the same toggle.
+- name: "`incus_vm_uninstall_delete_default_storage_pool`: remove the `incus.service` pool-mount-wait drop-in `/etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf` (its `RequiresMountsFor` would block incus once the pool/loop is gone)"
+  ansible.builtin.file:
+    path: /etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf
+    state: absent
+  become: true
+  when: incus_vm_uninstall_delete_default_storage_pool | bool
+  register: _incus_uninstall_pool_mount_dropin
+
+- name: Reload systemd after removing the `incus.service` pool-mount-wait drop-in
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  when: _incus_uninstall_pool_mount_dropin is changed
+
 # ---------- Step 5: revert the firewalld `incusbr0` trusted-zone change ----------
 # Mirror of install's firewalld step. `systemctl is-active firewalld` (NOT
 # `firewall-cmd`, which would block on polkit under non-interactive ansible) is
