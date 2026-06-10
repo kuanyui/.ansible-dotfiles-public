@@ -27,6 +27,38 @@ switching to `dbus-daemon`.)
 - [x] glycin: kept (firefox forces it); pinned abi/5.0 + added `userns create` (its bwrap needs it). Keeps inline caps; NOT given deny_kernel_attack_surface.
 - [ ] Complain pass -> add audited mount/unix/etc. allows -> flip `apparmor_profile_mode` to `enforce`
 
+## Display-server access: extract `local_mixin_gui_{wayland,x11}` - not started
+
+Every confined GUI app inlines its own Wayland/X11 display grants; they have drifted
+out of sync. Extract two mixins (protocol-split, mirroring the `network_app`/`network_deny`
+duality):
+
+- `local_mixin_gui_wayland` - `owner /run/user/*/wayland-[0-9]* rw,`. Included by EVERY GUI
+  profile, unconditional (every includer wants it; library-determined path -> mixin justified
+  on first caller).
+- `local_mixin_gui_x11` - `xauth_* r`, `iceauth_* r`, `/tmp/.X11-unix/{,X*}`. Included only
+  inside `{% raw %}{% if apparmor_allow_x11 %}{% endif %}{% endraw %}`.
+
+Gate bugs this fixes (found 2026-06-10 while debugging firefox launch):
+
+- [ ] **X11 gate is bypassed in 4 profiles**: `chromium`, `msedge`, `vscode`, `mpv` grant
+  `xauth_* r` + `iceauth_* r` with NO `{% raw %}{% if apparmor_allow_x11 %}{% endif %}{% endraw %}` wrapper, so they
+  read X11 auth cookies even when `apparmor_allow_x11: false`. firefox is half-bypassed
+  (`iceauth_*` ungated, `xauth_*` gated). Moving X11 grants into a single conditionally-included
+  mixin makes the gate structural and closes all of these at once.
+- [ ] firefox launch fix (2026-06-10) added `wayland-[0-9]*` inline as a stopgap; fold into
+  `local_mixin_gui_wayland` during this refactor.
+- [ ] Optional: `local_mixin_gui_x11_deny` (plain `deny` of the X11 probes) included when
+  `apparmor_allow_x11: false`, to silence Wayland-session probe noise (mirrors `network_deny`).
+  Only one profile (`gwenview`) does the allow-if-else-deny pattern today.
+
+## Unrelated profile drift found 2026-06-10 - not started
+
+- [ ] `anydesk` is missing both `local_mixin_deny_mounted_external_media` and a
+  `local_mixin_personal_dirs__for__<category>` include. CLAUDE.md requires every pathbased
+  profile to include exactly one personal_dirs category. Confirm whether anydesk's omission
+  is intentional (remote-desktop tool) or an oversight, then fix or document.
+
 ## `python3-jsonschema` install: handled by the role itself
 
 `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py` validates

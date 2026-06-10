@@ -61,6 +61,9 @@
     /usr/share/mozilla/extensions/{,**} r,   # system-wide Firefox extensions
     /usr/share/myspell/{,**} r,              # spell check dictionaries
 
+    # Wayland display socket
+    owner /run/user/*/wayland-[0-9]* rw,
+
     # Wayland proxy socket
     owner /run/user/*/wayland-proxy-* rw,
 
