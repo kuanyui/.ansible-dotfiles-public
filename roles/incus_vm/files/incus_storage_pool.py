@@ -32,6 +32,7 @@ from typing import Any
 FSTAB_PATH: str = "/etc/fstab"
 PROC_MOUNTS_PATH: str = "/proc/mounts"
 FSTAB_LOOP_OPTIONS: str = "loop,nofail,noatime"
+INCUS_VAR_DIR: str = "/var/lib/incus"  # incus daemon state root; the `default` pool lives at storage-pools/default
 
 
 def run_capture(argv: list[str]) -> tuple[int, str, str]:
@@ -138,6 +139,38 @@ def mount_state_of(mountpoint: str) -> dict[str, Any]:
     return {"mounted": False, "device": "", "fstype": "", "backing_file": ""}
 
 
+def mounts_of_backing_file(backing_file: str) -> list[dict[str, str]]:
+    """Every `/proc/mounts` entry that is the loop `.img` `backing_file`: the loop
+    mount, incus's bind mount onto the pool path, and one entry per live btrfs
+    subvolume (a running instance). Each line's device (field 0) is resolved through
+    the loop driver before comparing, so it matches whether `/proc/mounts` shows the
+    raw `/dev/loopN` OR (as `mount`/libmount renders it) the backing file itself -
+    that single file appearing many times is exactly the "repeated mounts". Returns
+    `{mount_target, fstype, btrfs_subvol}` per match (`btrfs_subvol` from the `subvol=`
+    option, '' if absent). Empty when `backing_file` is unset / `/proc/mounts` unreadable."""
+    matching_mounts: list[dict[str, str]] = []
+    if not backing_file:
+        return matching_mounts
+    try:
+        proc_mounts_text: str = open(PROC_MOUNTS_PATH).read()
+    except OSError:
+        return matching_mounts
+    for mount_line in proc_mounts_text.splitlines():
+        fields: list[str] = mount_line.split()
+        if len(fields) < 4 or loop_backing_file_of(fields[0]) != backing_file:
+            continue
+        mount_options: list[str] = fields[3].split(",")
+        btrfs_subvol: str = next(
+            (option.split("=", 1)[1] for option in mount_options if option.startswith("subvol=")), "")
+        matching_mounts.append({
+            # /proc/mounts escapes spaces in the mount target as the octal \040.
+            "mount_target": fields[1].replace("\\040", " "),
+            "fstype": fields[2],
+            "btrfs_subvol": btrfs_subvol,
+        })
+    return matching_mounts
+
+
 def fstab_line_for(mountpoint: str) -> str:
     """The `/etc/fstab` line whose mount target (2nd field) is `mountpoint`,
     or '' when none (comments skipped)."""
@@ -183,14 +216,23 @@ def gather(root: str) -> dict[str, Any]:
     recorded_mountpoint: str = (recorded or {}).get("mountpoint") or ""
     recorded_loop_file: str = (recorded or {}).get("loop_file") or ""
     mountpoint_to_probe: str = recorded_mountpoint or (live["source"] if live["source"].startswith("/") else "")
+    # The mount picture is computed ONCE here; its resolved loop `.img` (`backing_file`,
+    # e.g. /data/vm/incus-btrfs.img) is then the key for `mounts_of_backing_file` - every
+    # OTHER mount of that same file (the incus bind + each running instance's subvolume),
+    # which the relationship section decodes. Only meaningful for the role's loop layout.
+    mount_at_probe: dict[str, Any] = mount_state_of(mountpoint_to_probe)
+    is_loop_mount: bool = mount_at_probe["mounted"] and mount_at_probe["device"].startswith("/dev/loop")
+    loop_device_mounts: list[dict[str, str]] = (
+        mounts_of_backing_file(mount_at_probe["backing_file"]) if is_loop_mount else [])
     return {
         "recorded": recorded,
         "live_pool": live,
-        "mount": mount_state_of(mountpoint_to_probe),
+        "mount": mount_at_probe,
         "mountpoint": mountpoint_to_probe,
         "fstab_line": fstab_line_for(mountpoint_to_probe),
         "loop_file": recorded_loop_file,
         "loop_footprint": loop_file_footprint(recorded_loop_file) if recorded_loop_file else {"exists": False, "on_disk_bytes": 0, "logical_bytes": 0},
+        "loop_device_mounts": loop_device_mounts,
         "raw_storage_list": run_capture(["incus", "storage", "list"])[1],
     }
 
@@ -218,6 +260,70 @@ def verdict(data: dict[str, Any]) -> tuple[str, list[str]]:
                 reasons.append(f"{data['mountpoint']} is mounted from `{data['mount']['backing_file']}`,"
                                f" not the recorded loop `{recorded['loop_file']}` (stale / ghost mount)")
     return ("MISMATCH", reasons) if reasons else ("consistent", [])
+
+
+def describe_loop_device_mount(mount_target: str, btrfs_subvol: str,
+                               loop_mountpoint: str, default_pool_path: str) -> str:
+    """Label one mount of the loop `.img` by its ROLE so a raw `mount` line reads in
+    plain terms: the fstab loop mount, incus's bind mount onto the pool path, or a
+    running instance's btrfs subvolume. The instance case is named by its `subvol=`
+    (e.g. `virtual-machines/<vm>`), because incus mounts it at an INTERNAL target like
+    `devices/<vm>/config.mount`, not under the pool path. '' when it is none of these."""
+    if mount_target == loop_mountpoint:
+        return "the loop mount; your /etc/fstab line"
+    if mount_target == default_pool_path:
+        return "incus bind mount; the pool root"
+    if mount_target.startswith(default_pool_path + "/"):
+        return f"subvolume: {mount_target[len(default_pool_path) + 1:]}"
+    running_instance_subvol: str = (btrfs_subvol or "").lstrip("/")
+    if running_instance_subvol:
+        return f"running instance: {running_instance_subvol}"
+    return ""
+
+
+def render_mount_relationship(data: dict[str, Any]) -> list[str]:
+    """Plain-language explanation, for the END of `status`, of how the default
+    btrfs-loop layout is actually mounted - written to answer the three things this
+    layout makes people doubt: (1) is my `.img` even being used? (yes - it is the
+    device on every line); (2) why does `storage-pools/default/virtual-machines/<vm>/`
+    have a big `root.img` and is it eating my `/`? (no - that path is a BIND mount, so
+    its blocks live in the `.img`, not on `/`); (3) why is the same file mounted over
+    and over in `mount`? (the loop mount + incus's bind + one per running instance).
+    The displayed device is the `.img` path itself (what `mount`/libmount shows), so it
+    lines up with what the user sees. Returns [] for any non-loop layout (e.g. `dir`)."""
+    mount: dict[str, Any] = data["mount"]
+    loop_file: str = data["loop_file"]
+    if not (loop_file and mount["mounted"] and mount["device"].startswith("/dev/loop")):
+        return []
+    loop_device: str = mount["device"]
+    img_file: str = mount["backing_file"] or loop_file
+    loop_mountpoint: str = data["mountpoint"]
+    default_pool_path: str = f"{INCUS_VAR_DIR}/storage-pools/default"
+    loop_device_mounts: list[dict[str, str]] = data.get("loop_device_mounts") or []
+    lines: list[str] = ["-- how it is mounted (one `.img`, shared by every VM) --"]
+    lines.append(f"  YES, all VM data is inside `{img_file}` - nothing lands outside it. Each VM is a")
+    lines.append("  btrfs SUBVOLUME in that file; its disk `root.img` is just a file in the subvolume.")
+    lines.append("  The chain, the one real file down to what incus shows:")
+    lines.append("")
+    lines.append(f"    {'.img file':<13}{img_file}")
+    lines.append(f"    {'loop device':<13}{loop_device}   (the kernel exposes the .img as a block device)")
+    lines.append(f"    {'btrfs mount':<13}{loop_mountpoint}   (your /etc/fstab loop line)")
+    lines.append(f"    {'incus bind':<13}{default_pool_path}   (incus's canonical pool path)")
+    lines.append(f"    {'per-VM disk':<13}{default_pool_path}/virtual-machines/<vm>/root.img   (a subvolume; the VM's disk)")
+    lines.append("")
+    lines.append(f"  `{default_pool_path}/` is that BIND mount, so whatever you")
+    lines.append("  `ls` there (e.g. a large `root.img`) really lives inside the `.img` above, NOT on `/`.")
+    if loop_device_mounts:
+        lines.append("")
+        lines.append(f"  Right now `{img_file}` is mounted {len(loop_device_mounts)}x -"
+                     " in `mount` each line below is this SAME file:")
+        for loop_device_mount in loop_device_mounts:
+            mount_role: str = describe_loop_device_mount(
+                loop_device_mount["mount_target"], loop_device_mount["btrfs_subvol"],
+                loop_mountpoint, default_pool_path)
+            role_note: str = f"   ({mount_role})" if mount_role else ""
+            lines.append(f"    {img_file}  {loop_device_mount['mount_target']}{role_note}")
+    return lines
 
 
 def render_text(data: dict[str, Any]) -> str:
@@ -258,6 +364,10 @@ def render_text(data: dict[str, Any]) -> str:
         for key in ("driver", "build_loop", "loop_file", "mountpoint", "source", "size"):
             if key in recorded:
                 lines.append(f"  {key}: {recorded[key]}")
+    relationship_section: list[str] = render_mount_relationship(data)
+    if relationship_section:
+        lines.append("")
+        lines.extend(relationship_section)
     lines.append("")
     lines.append(f"==== VERDICT: {state} ====")
     for reason in reasons:
