@@ -1,0 +1,29 @@
+# Managed by Ansible - do not edit manually
+# Desktop session-management (ICE) auth - /etc/apparmor.d/abstractions/local_mixin_gui_session_manager
+#
+# TL;DR - include in: GUI apps that use libSM session management (the Mozilla / Chromium /
+#         Electron / mpv family), UNCONDITIONALLY. Do NOT put behind apparmor_allow_x11.
+#         Apps that never probe iceauth (the Qt / GTK XWayland viewers) should NOT include it.
+#
+# Grants:
+#   - owner /run/user/*/iceauth_* r         read the ICE session-management auth cookie
+#
+# -----------------------------------------------------------------------------------------
+# iceauth cookie for the ICE (Inter-Client Exchange) protocol. ICE is the transport under
+# XSMP (X Session Management Protocol) - the session manager that saves / restores the
+# session on logout / login. Toolkits using libSM open this to register with it.
+#
+# NOT the same as xauth (local_mixin_gui_x11), despite the similar name and shared X-era
+# plumbing:
+#   - xauth   authenticates to the X DISPLAY SERVER -> windows / input / clipboard / screen
+#             -> high value -> gated behind apparmor_allow_x11.
+#   - iceauth authenticates to the SESSION MANAGER  -> save / restore session, restart hints
+#             -> low value, and used under BOTH Wayland and X11 (a session manager exists on
+#                Wayland too), so it is granted UNCONDITIONALLY, never behind apparmor_allow_x11.
+#
+# Gating this behind apparmor_allow_x11 would deny it in Wayland sessions, where libSM still
+# probes it; the EACCES (vs a clean ENOENT) can hang / error app startup. Keep it ungated.
+#
+# Read-only: the cookie is only ever read.
+
+owner /run/user/*/iceauth_* r,

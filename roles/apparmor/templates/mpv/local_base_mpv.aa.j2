@@ -24,6 +24,13 @@
     #include <abstractions/local_mixin_personal_dirs__for__video_player>
     #include <abstractions/local_mixin_deny_mounted_external_media>
     #include <abstractions/local_mixin_gpu_probe>
+    #include <abstractions/local_mixin_gui_wayland>
+    #include <abstractions/local_mixin_gui_session_manager>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
 
     # mpv system resources
     /usr/share/mpv/{,**} r,
@@ -67,13 +74,6 @@
     # `local_mixin_audio` (included above, which nests the probe).
     /etc/pulse/client.conf.d/{,**} r,
     /dev/snd/controlC[0-9]* rw,
-
-    # Wayland display socket
-    owner /run/user/*/wayland-[0-9]* rw,
-
-    # X11 auth
-    owner /run/user/*/xauth_* r,
-    owner /run/user/*/iceauth_* r,
 
     # Process self-inspection
     owner @{PROC}/@{pid}/ r,

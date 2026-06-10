@@ -44,6 +44,12 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected me
     #include <abstractions/local_mixin_deny_gpu>
     #include <abstractions/local_mixin_deny_machine_id>
     #include <abstractions/local_mixin_network_app>
+    #include <abstractions/local_mixin_gui_wayland>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
 
     # Open clicked links/files in the default application; ix keeps xdg-open confined
     /usr/bin/xdg-open rix,
@@ -64,16 +70,6 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected me
 
     # Network families whitelisted via <abstractions/local_mixin_network_app> (included at top):
     # TCP/UDP/QUIC = inet/inet6 stream+dgram. Obscure families (rds/rxrpc/alg) stay denied.
-
-    # Wayland display socket (bind-mounted by launcher)
-    owner /run/user/*/wayland-[0-9]* rw,
-
-{% if apparmor_allow_x11 %}
-    # X11 (bind-mounted by launcher when $DISPLAY is set)
-    /tmp/.X11-unix/ r,
-    /tmp/.X11-unix/X* rw,
-    owner /run/user/*/xauth_* r,
-{% endif %}
 
     # D-Bus socket (bind-mounted by launcher; used for desktop notifications and portal access)
     owner /run/user/*/bus rw,

@@ -23,6 +23,12 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     #include <abstractions/local_mixin_deny_mounted_external_media>
     #include <abstractions/local_mixin_glycin>
     #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_gui_wayland>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
 
     # Python launcher re-opened by the interpreter at runtime (argv[0])
     /usr/bin/mcomix r,
@@ -32,15 +38,6 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
 
     # Root directory listing (names only); occurs during glycin image-load startup
     / r,
-
-    # Wayland display socket
-    owner /run/user/*/wayland-[0-9]* rw,
-
-{% if apparmor_allow_x11 %}
-    /tmp/.X11-unix/ r,
-    /tmp/.X11-unix/X* rw,
-    owner /run/user/*/xauth_* r,
-{% endif %}
 
     # D-Bus (desktop notifications)
     owner /run/user/*/bus rw,

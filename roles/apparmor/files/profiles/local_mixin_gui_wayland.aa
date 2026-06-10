@@ -1,0 +1,25 @@
+# Managed by Ansible - do not edit manually
+# Wayland display socket - /etc/apparmor.d/abstractions/local_mixin_gui_wayland
+#
+# TL;DR - include in: EVERY confined GUI app, UNCONDITIONALLY (not behind any toggle).
+#
+# Grants:
+#   - owner /run/user/*/wayland-[0-9]* rw   connect to the Wayland compositor display socket
+#
+# -----------------------------------------------------------------------------------------
+# An app talks to the Wayland compositor by connecting to this socket. Needed ONLY when the
+# app runs on the Wayland backend - under X11 / XWayland the app connects to the X server
+# instead (see local_mixin_gui_x11) and never touches this path. Profiles grant both because
+# the same binary may run on either backend across sessions.
+#
+# Low risk, unlike X11: Wayland isolation is enforced by the compositor - a client sees only
+# its own surfaces and its own input (when focused). It CANNOT read other windows, globally
+# log input, screenshot the desktop, or inject events into other clients. Connecting to the
+# socket grants "be a normal sandboxed client", nothing more. (Screen-share / capture is a
+# separate compositor portal interface, not reachable through this file grant.) Contrast
+# local_mixin_gui_x11, where the X socket + xauth cookie hand over the entire desktop.
+#
+# AF_UNIX socket-type mediation (network unix) is granted separately by
+# local_mixin_network_local_ipc; this mixin grants only the socket's file path.
+
+owner /run/user/*/wayland-[0-9]* rw,

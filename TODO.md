@@ -40,8 +40,43 @@ was just unmounted / shadowed):
   skips host setup (`incus_vm_skip_host_setup`), so neither exercises this path. Test:
   first-time `make incus-install`, reboot, re-run no-var `make incus-install`, reboot;
   confirm pool + VMs survive and `/etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf` exists.
-- [ ] (optional) `storage-info.json` still records the CONFIG source, so `ivm info` can
-  show a wrong `.img` path after a no-var re-run; feed `_incus_pool_real_source` instead.
+- [x] **Re-runs now FOLLOW the established storage record (a no-var re-run no longer
+  pollutes `storage-info.json`)** - resolves the optional item below. The DECISION lives in
+  the script, not Jinja: a new READ-ONLY `incus_storage_pool.py resolve` subcommand
+  (`resolve_layout` + `cmd_resolve`) reads the recorded `storage-info.json` and prints the
+  effective layout as JSON. Rule: once a `default` pool exists WITH a usable record it FOLLOWS
+  that record (the layout the pool was built with) and ignores the passed/default vars;
+  otherwise (first install / no record) it derives from the request. `incus_host_install.yml`
+  calls it ONCE -> `_storage`, which now feeds the build-loop / init / verify / record / boot
+  drop-in tasks; this DELETED the scattered `_incus_pool_source_stat` + `_incus_pool_build_loop`
+  + `_incus_effective_pool_source/size` `set_fact` chain (net LESS ansible, per the Phase-2
+  "logic in the script" direction the first attempt regressed against - caught by the user).
+  ivm_install.yml's record write is now just `_storage.record | to_nice_json` -> on a re-run it
+  is the EXISTING record echoed back (byte-identical write, no false `MISMATCH`, no wrong `.img`
+  in `ivm info`). Two guards on the FOLLOW path (the user's choices): (Q1) overrides passed ->
+  loud WARNING carried in `_storage.warnings` (kept, not failed; the no-record driver-mismatch
+  FAIL is gated `not _storage.following`); (Q2) the recorded loop `.img` has vanished -> resolve
+  exits non-zero so the `script` task FAILS with a remount-first / teardown banner, never
+  silently rebuilding empty storage. `resolve` runs `check_mode: false` (read-only) so `make
+  incus-check` still gets `_storage`. Verified: py_compile; 5 `resolve_layout`/`cmd_resolve`
+  unit tests (reconcile-follow reproduces the record byte-for-byte; first-time derive; Q2
+  exit-2; Q1 warning in JSON; dir backend); `ansible-playbook --syntax-check`; localhost e2e
+  driving the real script (reconcile-with-defaults follows record + needs_build=false;
+  first-time build-loop/init args; Q2 rc=2). Real-host validation still pending.
+- [x] **`storage-status` now decodes the "why is the same `.img` mounted so many times"
+  picture** - `incus_storage_pool.py status` gained a final "how it is mounted" section: a
+  plain chain (`.img` -> loop device -> btrfs mount -> incus BIND mount -> per-VM subvolume
+  `root.img`) + a decode of every `/proc/mounts` line backed by the loop `.img` (matched by
+  RESOLVED backing file, so it works whether `/proc/mounts` shows `/dev/loopN` or the
+  libmount-style `.img` path), each labelled (loop mount / incus bind / running instance:
+  <subvol>). Answers the user's "is my `/data/vm/incus-btrfs.img` actually used, and is the
+  32GiB `root.img` eating `/`?" (no - `storage-pools/default` is a bind mount; the blocks live
+  in the `.img`). Skipped for non-loop layouts (`dir`). Verified: py_compile + render
+  simulation against the user's REAL `mount` output (matches the 3 loop-backed mounts;
+  excludes the nvme system subvols, the `cr_home` virtiofs binds, `/data/vm` ext4, tmpfs).
+- [ ] (optional, SUPERSEDED by the follow-record item above) `storage-info.json` still
+  records the CONFIG source, so `ivm info` can show a wrong `.img` path after a no-var re-run;
+  feed `_incus_pool_real_source` instead. Keep until real-host-validated, then drop.
 - [ ] (note, pre-existing) `make incus-check` skips command-probes in check mode, so the
   dry-run can error on probe-result `when:`s - out of scope for this fix.
 - [x] **Ghost mount survives teardown -> a changed source never takes effect** (the

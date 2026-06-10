@@ -23,14 +23,11 @@ profile local_pathbased_vlc /usr/bin/vlc {
     #include <abstractions/local_mixin_kernel_surface_general_app>
     #include <abstractions/local_mixin_personal_dirs__for__video_player>
     #include <abstractions/local_mixin_deny_mounted_external_media>
-
-    # Wayland display socket
-    owner /run/user/*/wayland-[0-9]* rw,
-
+    #include <abstractions/local_mixin_gui_wayland>
 {% if apparmor_allow_x11 %}
-    /tmp/.X11-unix/ r,
-    /tmp/.X11-unix/X* rw,
-    owner /run/user/*/xauth_* r,
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
 {% endif %}
 
     # D-Bus (desktop notifications, media keys via MPRIS)

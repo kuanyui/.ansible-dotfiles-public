@@ -26,18 +26,15 @@ profile local_pathbased_anydesk /**/anydesk {
     #include <abstractions/local_mixin_network_app>
     #include <abstractions/local_mixin_kernel_surface_general_app>
     #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_gui_wayland>
+    # X11 included UNCONDITIONALLY (not behind apparmor_allow_x11): AnyDesk needs libxtest
+    # (input injection) + libxdamage (screen capture) even in Wayland sessions; XWayland
+    # typically provides /tmp/.X11-unix/X0.
+    #include <abstractions/local_mixin_gui_x11>
 
-    # Wayland display socket
-    owner /run/user/*/wayland-[0-9]* rw,
-
-    # X11 - AnyDesk depends on libxtest (input injection) and libxdamage (screen capture)
-    # even in Wayland sessions; XWayland typically provides /tmp/.X11-unix/X0.
-    /tmp/.X11-unix/ r,
-    /tmp/.X11-unix/X* rw,
-    owner /run/user/*/xauth_* r,
-
+    # MIT-SHM extension (fast pixmap transfer over shared memory). AnyDesk-specific, kept
+    # inline; gated behind apparmor_allow_x11.
 {% if apparmor_allow_x11 %}
-    # MIT-SHM extension (fast pixmap transfer over shared memory)
     owner /tmp/.X11-unix-lock rw,
 {% endif %}
 

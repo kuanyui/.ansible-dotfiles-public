@@ -33,6 +33,13 @@ profile local_pathbased_msedge /opt/microsoft/msedge/msedge {
     #include <abstractions/local_mixin_deny_persistent_attack>
     #include <abstractions/local_mixin_personal_dirs__for__web_browser>
     #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_gui_wayland>
+    #include <abstractions/local_mixin_gui_session_manager>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
 
     # Edge executable and resources
     # TODO: verify remaining paths via complain mode log
@@ -77,13 +84,6 @@ profile local_pathbased_msedge /opt/microsoft/msedge/msedge {
     ptrace (trace) peer=local_pathbased_msedge,
 
     /dev/tty rw,                                     # terminal access (startup and crash reporter)
-
-    # Wayland display socket
-    owner /run/user/*/wayland-[0-9]* rw,
-
-    # X11 and ICE auth - Edge probes for both even under Wayland
-    owner /run/user/*/xauth_* r,
-    owner /run/user/*/iceauth_* r,
 
     # Shared memory - Edge uses both its own and Chromium's shm namespace prefixes
     owner /dev/shm/org.chromium.* rwk,

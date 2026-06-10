@@ -27,37 +27,42 @@ switching to `dbus-daemon`.)
 - [x] glycin: kept (firefox forces it); pinned abi/5.0 + added `userns create` (its bwrap needs it). Keeps inline caps; NOT given deny_kernel_attack_surface.
 - [ ] Complain pass -> add audited mount/unix/etc. allows -> flip `apparmor_profile_mode` to `enforce`
 
-## Display-server access: extract `local_mixin_gui_{wayland,x11}` - not started
+## Display-server access: `local_mixin_gui_*` extraction - done 2026-06-10
 
-Every confined GUI app inlines its own Wayland/X11 display grants; they have drifted
-out of sync. Extract two mixins (protocol-split, mirroring the `network_app`/`network_deny`
-duality):
+Every confined GUI app used to inline its own Wayland/X11 display grants; they had drifted
+out of sync. Extracted into four mixins (split by what each grant authenticates to, NOT just
+by protocol - iceauth turned out to be session-management, not X11 display):
 
-- `local_mixin_gui_wayland` - `owner /run/user/*/wayland-[0-9]* rw,`. Included by EVERY GUI
-  profile, unconditional (every includer wants it; library-determined path -> mixin justified
-  on first caller).
-- `local_mixin_gui_x11` - `xauth_* r`, `iceauth_* r`, `/tmp/.X11-unix/{,X*}`. Included only
-  inside `{% raw %}{% if apparmor_allow_x11 %}{% endif %}{% endraw %}`.
+- [x] `local_mixin_gui_wayland` - `wayland-[0-9]*` compositor socket. Unconditional, all 14
+  GUI profiles. Low risk (compositor-isolated).
+- [x] `local_mixin_gui_session_manager` - `iceauth_*` (ICE / XSMP session manager). Used under
+  BOTH Wayland and X11, so UNCONDITIONAL - never behind `apparmor_allow_x11`. Only the libSM
+  family (firefox / chromium / msedge / vscode / mpv) includes it.
+- [x] `local_mixin_gui_x11` - `xauth_*` + `/tmp/.X11-unix/{,X*}` (X server access, high risk).
+  Included inside `{% raw %}{% if apparmor_allow_x11 %}{% endif %}{% endraw %}`. Both socket styles in one mixin: the
+  abstract socket is already covered by `network unix` (local_mixin_network_local_ipc), so the
+  filesystem path is a redundant second door - no widening.
+- [x] `local_mixin_gui_x11_deny` - plain `deny` of the X11 paths (incl. legacy `~/.Xauthority`),
+  included in the `{% raw %}{% else %}{% endraw %}` branch. Noise silencer, not a security boundary.
 
-Gate bugs this fixes (found 2026-06-10 while debugging firefox launch):
+Gate bugs closed by the refactor (found 2026-06-10 while debugging firefox launch):
 
-- [ ] **X11 gate is bypassed in 4 profiles**: `chromium`, `msedge`, `vscode`, `mpv` grant
-  `xauth_* r` + `iceauth_* r` with NO `{% raw %}{% if apparmor_allow_x11 %}{% endif %}{% endraw %}` wrapper, so they
-  read X11 auth cookies even when `apparmor_allow_x11: false`. firefox is half-bypassed
-  (`iceauth_*` ungated, `xauth_*` gated). Moving X11 grants into a single conditionally-included
-  mixin makes the gate structural and closes all of these at once.
-- [ ] firefox launch fix (2026-06-10) added `wayland-[0-9]*` inline as a stopgap; fold into
-  `local_mixin_gui_wayland` during this refactor.
-- [ ] Optional: `local_mixin_gui_x11_deny` (plain `deny` of the X11 probes) included when
-  `apparmor_allow_x11: false`, to silence Wayland-session probe noise (mirrors `network_deny`).
-  Only one profile (`gwenview`) does the allow-if-else-deny pattern today.
+- [x] X11 gate was bypassed in `chromium` / `msedge` / `vscode` / `mpv` (xauth + iceauth had no
+  `apparmor_allow_x11` wrapper) and half-bypassed in firefox. Now `xauth` is structurally
+  behind the gate via the conditional `#include`; `iceauth` is intentionally ungated but moved
+  to its own `gui_session_manager` mixin (it is session management, not display access).
+- [x] firefox launch fix: the stopgap inline `wayland-[0-9]*` is folded into `gui_wayland`.
+- [x] `gui_x11_deny` generalises gwenview's lone allow-if-else-deny pattern to every X11 user.
 
-## Unrelated profile drift found 2026-06-10 - not started
+Rationale (iceauth vs xauth, why iceauth is ungated, why the two socket styles share one mixin)
+lives in the mixin file headers under `files/profiles/local_mixin_gui_*.aa`.
 
-- [ ] `anydesk` is missing both `local_mixin_deny_mounted_external_media` and a
-  `local_mixin_personal_dirs__for__<category>` include. CLAUDE.md requires every pathbased
-  profile to include exactly one personal_dirs category. Confirm whether anydesk's omission
-  is intentional (remote-desktop tool) or an oversight, then fix or document.
+## anydesk profile drift found 2026-06-10
+
+- [x] `anydesk` was missing `local_mixin_deny_mounted_external_media` - added.
+- [ ] `anydesk` still has no `local_mixin_personal_dirs__for__<category>` include. CLAUDE.md
+  requires every pathbased profile to include exactly one personal_dirs category. User does not
+  currently run anydesk; decide `others` vs a dedicated category, or document the exemption.
 
 ## `python3-jsonschema` install: handled by the role itself
 

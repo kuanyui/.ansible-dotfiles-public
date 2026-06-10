@@ -1,0 +1,31 @@
+# Managed by Ansible - do not edit manually
+# Silence X11 probes when X11 is disabled - /etc/apparmor.d/abstractions/local_mixin_gui_x11_deny
+#
+# TL;DR - include in: the same apps as local_mixin_gui_x11, in the `{% else %}` branch
+#         opposite it (i.e. when apparmor_allow_x11 is false). Apps that include gui_x11
+#         unconditionally (X11 hard-required) do NOT include this.
+#
+# Denies (silences):
+#   - deny owner /run/user/*/xauth_* r      silence X server cookie probes
+#   - deny /tmp/.X11-unix/{,*} rw           silence X socket probes
+#   - deny owner @{HOME}/.Xauthority r      silence the legacy xauth-location probe
+#
+# -----------------------------------------------------------------------------------------
+# This is a NOISE SILENCER, not a security boundary: with no allow rule the X11 paths are
+# already default-denied. This only turns the logged default-deny into a silent `deny`, so
+# the audit log is not spammed by toolkits probing for an X server on every launch in a
+# Wayland session.
+#
+# Covers the allow set in local_mixin_gui_x11, PLUS the legacy ~/.Xauthority location: Qt /
+# KDE apps probe ~/.Xauthority for an XWayland fallback under Wayland even though no profile
+# grants it (everything uses /run/user/*/xauth_* now), so silence that probe here too.
+#
+# Deliberately does NOT deny iceauth: session-management auth stays allowed under Wayland
+# (see local_mixin_gui_session_manager). Denying iceauth here would break app startup.
+#
+# plain `deny` (not `audit deny`): probing for X11 in a Wayland session is routine noise,
+# not a security tripwire. See "audit deny vs plain deny" in roles/apparmor/CLAUDE.md.
+
+deny owner /run/user/*/xauth_* r,
+deny /tmp/.X11-unix/{,*} rw,
+deny owner @{HOME}/.Xauthority r,

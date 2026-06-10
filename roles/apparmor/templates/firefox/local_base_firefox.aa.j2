@@ -21,6 +21,13 @@
     #include <abstractions/local_mixin_deny_persistent_attack>
     #include <abstractions/local_mixin_personal_dirs__for__web_browser>
     #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_gui_wayland>
+    #include <abstractions/local_mixin_gui_session_manager>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
 
     # Allow Firefox to execute itself, crash reporter, and shell utilities used during startup
     # ix (inherit execute) - child processes inherit this profile instead of transitioning to a new one
@@ -61,19 +68,9 @@
     /usr/share/mozilla/extensions/{,**} r,   # system-wide Firefox extensions
     /usr/share/myspell/{,**} r,              # spell check dictionaries
 
-    # Wayland display socket
-    owner /run/user/*/wayland-[0-9]* rw,
-
-    # Wayland proxy socket
+    # Wayland proxy socket (Firefox-specific). The generic Wayland display socket, X11 auth
+    # and ICE session-management auth are in the gui_* abstractions included at the top.
     owner /run/user/*/wayland-proxy-* rw,
-
-    # ICE (Inter-Client Exchange) auth for X11 - Firefox probes for this even under Wayland
-    owner /run/user/*/iceauth_* r,
-
-{% if apparmor_allow_x11 %}
-    # X11 auth
-    owner /run/user/*/xauth_* r,
-{% endif %}
 
     # Allow read-only access to shared Firefox files
     owner @{HOME}/.mozilla/firefox/profiles.ini r,

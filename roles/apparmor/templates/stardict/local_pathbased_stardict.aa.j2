@@ -21,19 +21,16 @@ profile local_pathbased_stardict /usr/bin/stardict {
     #include <abstractions/local_mixin_kernel_surface_general_app>
     #include <abstractions/local_mixin_personal_dirs__for__others>
     #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_gui_wayland>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
 
     # Glycin image loader - bwrap exec transitions to local_attachmentless_glycin
     /usr/bin/bwrap Px -> local_attachmentless_glycin,
     signal (send) set=(kill) peer=local_attachmentless_glycin,
-
-    # Wayland display socket
-    owner /run/user/*/wayland-[0-9]* rw,
-
-{% if apparmor_allow_x11 %}
-    /tmp/.X11-unix/ r,
-    /tmp/.X11-unix/X* rw,
-    owner /run/user/*/xauth_* r,
-{% endif %}
 
     # D-Bus (desktop notifications, portal access)
     owner /run/user/*/bus rw,

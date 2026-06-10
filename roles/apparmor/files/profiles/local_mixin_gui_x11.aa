@@ -1,0 +1,31 @@
+# Managed by Ansible - do not edit manually
+# X11 display-server access (high risk) - /etc/apparmor.d/abstractions/local_mixin_gui_x11
+#
+# TL;DR - include in: any GUI app that may run on X11 / XWayland, ONLY inside the
+#         `{% if apparmor_allow_x11 %}` branch. Pair it with local_mixin_gui_x11_deny in the
+#         matching `{% else %}`. (Exception: an app that hard-requires X11 regardless of the
+#         toggle - e.g. a remote-control tool - includes this UNCONDITIONALLY, with a comment.)
+#
+# Grants:
+#   - owner /run/user/*/xauth_* r           X server auth cookie (the key to the display)
+#   - /tmp/.X11-unix/ r                      list the X socket directory
+#   - /tmp/.X11-unix/X* rw                   connect to the X server's filesystem socket
+#
+# -----------------------------------------------------------------------------------------
+# X11 has NO inter-client isolation: a client that reaches the X server can read every
+# window, globally log keyboard / mouse input, read the clipboard, screenshot the whole
+# desktop, and inject events via XTEST. The xauth cookie is the key to all of that, so this
+# entire mixin is gated behind apparmor_allow_x11 (default false). Contrast
+# local_mixin_gui_wayland (compositor-isolated, low risk, ungated).
+#
+# Two socket styles, ONE mixin on purpose:
+#   - /tmp/.X11-unix/X*   filesystem socket (legacy Qt / GTK XWayland clients).
+#   - the abstract socket @/tmp/.X11-unix/X0 is mediated by `network unix` (granted by
+#                         local_mixin_network_local_ipc), so it needs no file rule here.
+# Both reach the SAME X server. Apps that use only the abstract socket still get the
+# filesystem path here - a redundant second door to a room they already hold the key (xauth)
+# to, so it widens nothing.
+
+owner /run/user/*/xauth_* r,
+/tmp/.X11-unix/ r,
+/tmp/.X11-unix/X* rw,

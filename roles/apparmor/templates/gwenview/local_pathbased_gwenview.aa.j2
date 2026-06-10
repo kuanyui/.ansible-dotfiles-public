@@ -29,22 +29,11 @@ profile local_pathbased_gwenview /usr/bin/gwenview {
     #include <abstractions/local_mixin_deny_mounted_external_media>
     #include <abstractions/local_mixin_deny_gpu>
     #include <abstractions/local_mixin_gpu_probe>
-
-    # Wayland display socket
-    owner /run/user/*/wayland-[0-9]* rw,
-
+    #include <abstractions/local_mixin_gui_wayland>
 {% if apparmor_allow_x11 %}
-    /tmp/.X11-unix/ r,
-    /tmp/.X11-unix/X* rw,
-    owner /run/user/*/xauth_* r,
+    #include <abstractions/local_mixin_gui_x11>
 {% else %}
-    # X11 attack surface intentionally blocked (Qt / KDE still probe these
-    # paths under Wayland for XWayland fallback). Use plain `deny` (NOT
-    # `audit deny`) so the implicit-deny audit-log spam is silenced while
-    # the paths stay hard-denied.
-    deny /tmp/.X11-unix/{,*} rw,
-    deny owner /run/user/*/xauth_* r,
-    deny owner @{HOME}/.Xauthority r,
+    #include <abstractions/local_mixin_gui_x11_deny>
 {% endif %}
 
     # D-Bus (desktop notifications, portal access)

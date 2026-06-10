@@ -31,6 +31,13 @@ profile local_pathbased_vscode /usr/share/code/code {
     #include <abstractions/local_mixin_deny_persistent_attack>
     #include <abstractions/local_mixin_personal_dirs__for__ide>
     #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_gui_wayland>
+    #include <abstractions/local_mixin_gui_session_manager>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
 
     # VS Code executable and resources
     /usr/share/code/ r,
@@ -78,13 +85,6 @@ profile local_pathbased_vscode /usr/share/code/code {
     /dev/tty rw,
     /dev/ptmx rw,                                   # pty master - required to open integrated terminal sessions
     owner /dev/pts/[0-9]* rw,                       # pty slave - the shell side of each terminal session
-
-    # Wayland display socket
-    owner /run/user/*/wayland-[0-9]* rw,
-
-    # X11 and ICE auth
-    owner /run/user/*/xauth_* r,
-    owner /run/user/*/iceauth_* r,
 
     # Shared memory - Electron renderer/GPU process IPC
     owner /dev/shm/org.chromium.* rwk,

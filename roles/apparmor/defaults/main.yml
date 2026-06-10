@@ -93,6 +93,14 @@ apparmor_static_abstractions:
     dest: abstractions/local_mixin_kde_native_apps
   - src: local_mixin_container_base.aa
     dest: abstractions/local_mixin_container_base
+  - src: local_mixin_gui_wayland.aa
+    dest: abstractions/local_mixin_gui_wayland
+  - src: local_mixin_gui_session_manager.aa
+    dest: abstractions/local_mixin_gui_session_manager
+  - src: local_mixin_gui_x11.aa
+    dest: abstractions/local_mixin_gui_x11
+  - src: local_mixin_gui_x11_deny.aa
+    dest: abstractions/local_mixin_gui_x11_deny
 
 # Profiles and abstractions deployed by template tasks (not static copy).
 # Listed here so the idempotent local_* cleanup in main.yml does not remove them.
