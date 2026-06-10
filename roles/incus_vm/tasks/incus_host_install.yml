@@ -307,6 +307,41 @@
   ansible.builtin.set_fact:
     _incus_pool_already_initialized: "{{ 'default,' in (_incus_storage_list.stdout | default('')) }}"
 
+# ---------- Resolve the effective storage layout (decided in `incus_storage_pool.py`, not Jinja) ----------
+# ONE call answers "what storage does THIS run use?": on a reconcile (a `default` pool already exists
+# with a recorded layout) it FOLLOWS that record and ignores the passed/default vars - so a re-run
+# (commonly just to redeploy `ivm`) never re-derives storage from the role defaults nor pollutes
+# storage-info.json; on a first install it derives from the request. The script also exits non-zero
+# (loud STOP) if the recorded loop `.img` has vanished, and returns a WARNING (in `.warnings`) when an
+# override cannot apply. Everything below + ivm_install.yml's record now consume `_storage.*`, so the
+# storage-layout LOGIC lives in the script (readable, unit-tested) and ansible just wires it.
+- name: Resolve the effective incus storage layout via `incus_storage_pool.py resolve` (follows the recorded layout once a `default` pool exists; reads storage-info.json under `{{ incus_vm_ivm_dir }}`)
+  ansible.builtin.script:
+    cmd: >-
+      incus_storage_pool.py --root {{ incus_vm_ivm_dir | quote }} resolve
+      --already-initialized {{ _incus_pool_already_initialized | bool | string | lower }}
+      --driver {{ incus_storage_pool_driver | quote }}
+      --source {{ incus_storage_pool_source | quote }}
+      --size {{ incus_storage_pool_size | quote }}
+      --mountpoint {{ incus_storage_pool_loop_mountpoint | quote }}
+      {{ '--overrides-passed' if (incus_storage_pool_overrides_passed | default(false) | bool) else '' }}
+  become: true
+  changed_when: false
+  # Read-only (reads storage-info.json + stats the `.img`; no incus, no mutation), and EVERY task
+  # below consumes `_storage`, so it must run even under `--check` / `make incus-check` - otherwise a
+  # `script` task is skipped in check mode and `_storage` is undefined.
+  check_mode: false
+  register: _incus_resolve
+
+- name: Set `_storage` (the effective layout the rest of the run uses - driver / build_loop / loop_file / mountpoint / effective preseed source+size / the storage-info.json record)
+  ansible.builtin.set_fact:
+    _storage: "{{ _incus_resolve.stdout | from_json }}"
+
+- name: Surface any storage-layout WARNING (e.g. an INCUS_STORAGE_POOL_* override ignored because a `default` pool already exists - the record is kept)
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop: "{{ _storage.warnings | default([]) }}"
+
 # ---------- First-time storage-pool preview + confirmation ----------
 # Was an inline shell prompt in the `incus-install` Makefile recipe (which also
 # `sed`-scraped these defaults out of this very file). Now the role owns it: show the
@@ -389,39 +424,14 @@
 # FS, which incus accepts). Idempotent + reboot-persistent; never re-`mkfs`-es an
 # already-formatted file, so a teardown+reinstall cycle reuses the same `.img`.
 
-- name: Probe `incus_storage_pool_source` (absent / a regular file -> role builds a btrfs loop there; a dir / block device -> incus uses it directly)
-  ansible.builtin.stat:
-    path: "{{ incus_storage_pool_source }}"
-    # MUST stay off: `source` can be a 500GiB loop `.img`, and the default sha1
-    # checksum READS THE WHOLE FILE -> 100% CPU, effectively hangs on every re-run
-    # once the file exists. We only use `.exists` / `.isreg`, which need none of these.
-    get_checksum: false
-    get_mime: false
-    get_attributes: false
-  register: _incus_pool_source_stat
-  when:
-    - incus_storage_pool_driver == 'btrfs'
-    - incus_storage_pool_source | length > 0
-    - incus_storage_pool_size | length > 0
-
-- name: Set `_incus_pool_build_loop` (true = role creates + loop-mounts a btrfs `.img` at `incus_storage_pool_source`)
-  ansible.builtin.set_fact:
-    _incus_pool_build_loop: >-
-      {{ (incus_storage_pool_driver == 'btrfs')
-         and (incus_storage_pool_source | length > 0)
-         and (incus_storage_pool_size | length > 0)
-         and (_incus_pool_source_stat.stat is defined)
-         and ((not _incus_pool_source_stat.stat.exists) or (_incus_pool_source_stat.stat.isreg | default(false))) }}
-
-# `_incus_pool_build_loop` (above) = "the CONFIG describes a role-built loop" - it stays
-# config-derived because `ivm_install.yml` records it into `storage-info.json` for
-# `ivm info`. `_incus_pool_needs_build` adds the first-time guard: only actually
-# truncate/mkfs/fstab/mount when the loop is wanted AND incus is not yet initialized.
-# On any re-run of an initialized host this is false, so the whole build is a no-op
+# `_storage.build_loop` (decided by `incus_storage_pool.py resolve`, which `stat`s the source) =
+# "the effective layout is a role-built btrfs loop". `_incus_pool_needs_build` adds the first-time
+# guard: only actually truncate/mkfs/fstab/mount when the loop is wanted AND incus is not yet
+# initialized. On any re-run of an initialized host this is false, so the whole build is a no-op
 # (the pool, its fstab line, and its mount are left exactly as the first run made them).
-- name: Set `_incus_pool_needs_build` (build the loop file ONLY first time = config wants a loop AND no `default` pool exists yet)
+- name: Set `_incus_pool_needs_build` (build the loop file ONLY first time = effective layout is a loop AND no `default` pool exists yet)
   ansible.builtin.set_fact:
-    _incus_pool_needs_build: "{{ (_incus_pool_build_loop | bool) and not (_incus_pool_already_initialized | bool) }}"
+    _incus_pool_needs_build: "{{ (_storage.build_loop | bool) and not (_incus_pool_already_initialized | bool) }}"
 
 - name: Install `btrfs-progs` for `mkfs.btrfs` (only when the role must build a btrfs loop file)
   ansible.builtin.include_role:
@@ -447,22 +457,17 @@
 # readable, unit-tested place instead of six interlocking command/shell/lineinfile tasks.
 # Run via the `script` module (resolves from the role `files/`; no install dependency, so
 # it works before `ivm_install.yml` copies the script). `RESULT: changed` -> changed_when.
-- name: Build + mount the btrfs loop file `{{ incus_storage_pool_source }}` -> `{{ incus_storage_pool_loop_mountpoint }}` (truncate + mkfs.btrfs + fstab + source-aware mount, via `incus_storage_pool.py build-loop`)
+- name: Build + mount the btrfs loop file `{{ _storage.loop_file }}` -> `{{ _storage.mountpoint }}` (truncate + mkfs.btrfs + fstab + source-aware mount, via `incus_storage_pool.py build-loop`)
   ansible.builtin.script:
     cmd: >-
       incus_storage_pool.py build-loop
-      --source {{ incus_storage_pool_source | quote }}
-      --size {{ incus_storage_pool_size | quote }}
-      --mountpoint {{ incus_storage_pool_loop_mountpoint | quote }}
+      --source {{ _storage.loop_file | quote }}
+      --size {{ _storage.declared_size | quote }}
+      --mountpoint {{ _storage.mountpoint | quote }}
   become: true
   register: _incus_build_loop
   changed_when: "'RESULT: changed' in (_incus_build_loop.stdout | default(''))"
   when: _incus_pool_needs_build | bool
-
-- name: Compute the effective pool `source`/`size` for the preseed (the loop mount + no size when the role built a loop; else the raw config)
-  ansible.builtin.set_fact:
-    _incus_effective_pool_source: "{{ incus_storage_pool_loop_mountpoint if (_incus_pool_build_loop | default(false) | bool) else incus_storage_pool_source }}"
-    _incus_effective_pool_size: "{{ '' if (_incus_pool_build_loop | default(false) | bool) else incus_storage_pool_size }}"
 
 # ---------- Initialize incus (idempotent: skipped if `default` storage pool already exists) ----------
 # Run as root via `become: true` because `incus admin init` requires the
@@ -475,9 +480,9 @@
   ansible.builtin.script:
     cmd: >-
       incus_storage_pool.py init
-      --driver {{ incus_storage_pool_driver | quote }}
-      --pool-source {{ _incus_effective_pool_source | default('') | quote }}
-      --pool-size {{ _incus_effective_pool_size | default('') | quote }}
+      --driver {{ _storage.driver | quote }}
+      --pool-source {{ _storage.pool_source | default('') | quote }}
+      --pool-size {{ _storage.pool_size | default('') | quote }}
   when: "'default,' not in _incus_storage_list.stdout"
   become: true
   register: _incus_init
@@ -540,6 +545,9 @@
     - _existing_default_pool_driver | length > 0
     - _existing_default_pool_driver != incus_storage_pool_driver
     - incus_storage_pool_overrides_passed | default(false) | bool
+    # When FOLLOWING a record, `resolve` already warned the override is ignored (Q1) - don't ALSO
+    # hard-fail; this guard keeps the loud fail for the no-record case (a pre-existing hand-made pool).
+    - not (_storage.following | default(false) | bool)
 
 - name: Warn (reconcile run, NO explicit override) when the existing `default` pool's backend differs from `incus_storage_pool_driver` (preseed cannot re-point an already-initialized pool; rebuild via `make incus-teardown-host` + `make incus-install`)
   ansible.builtin.debug:
@@ -562,6 +570,9 @@
     - _existing_default_pool_driver | length > 0
     - _existing_default_pool_driver != incus_storage_pool_driver
     - not (incus_storage_pool_overrides_passed | default(false) | bool)
+    # On the FOLLOWING path the effective driver IS the record's, so there is no mismatch to warn
+    # about; this only fires on a no-record reconcile whose live driver differs from the config.
+    - not (_storage.following | default(false) | bool)
 
 # ---------- Make incus wait for the loop-file pool mount on boot (reboot persistence) ----------
 # When the `default` pool's source is the role's loop MOUNTPOINT, incus is useless until
@@ -594,15 +605,17 @@
     state: directory
     mode: "0755"
   become: true
-  when: _incus_pool_real_source == incus_storage_pool_loop_mountpoint
+  when:
+    - (_storage.mountpoint | default('') | length) > 0
+    - _incus_pool_real_source == _storage.mountpoint
 
-- name: Write the `incus.service` drop-in `/etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf` (`RequiresMountsFor={{ incus_storage_pool_loop_mountpoint }}`; makes incus wait for + require the loop pool mount so a `nofail` boot race can't start it on an empty pool dir)
+- name: Write the `incus.service` drop-in `/etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf` (`RequiresMountsFor={{ _storage.mountpoint }}`; makes incus wait for + require the loop pool mount so a `nofail` boot race can't start it on an empty pool dir)
   ansible.builtin.copy:
     dest: /etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf
     mode: "0644"
     content: |
       # Managed by Ansible (roles/incus_vm) - do not edit.
-      # The `default` incus pool lives on the loop mount {{ incus_storage_pool_loop_mountpoint }}.
+      # The `default` incus pool lives on the loop mount {{ _storage.mountpoint }}.
       # Its /etc/fstab entry is `nofail` (a missing VM disk must never block BOOT), but per
       # systemd.mount(5) `nofail` also drops the mount's ordering before local-fs.target, so
       # incus.service could otherwise win the boot race and start on an EMPTY mountpoint dir
@@ -610,9 +623,11 @@
       # + After= on that .mount unit (systemd.unit(5)): incus waits for, and refuses to start
       # without, its pool storage. Scoped to incus only; BOOT stays resilient.
       [Unit]
-      RequiresMountsFor={{ incus_storage_pool_loop_mountpoint }}
+      RequiresMountsFor={{ _storage.mountpoint }}
   become: true
-  when: _incus_pool_real_source == incus_storage_pool_loop_mountpoint
+  when:
+    - (_storage.mountpoint | default('') | length) > 0
+    - _incus_pool_real_source == _storage.mountpoint
   register: _incus_pool_mount_wait_dropin
 
 # Remove only when we POSITIVELY know the pool is NOT on the loop mount (a real,
@@ -626,7 +641,7 @@
   become: true
   when:
     - _incus_pool_real_source | length > 0
-    - _incus_pool_real_source != incus_storage_pool_loop_mountpoint
+    - _incus_pool_real_source != (_storage.mountpoint | default(''))
   register: _incus_pool_mount_wait_dropin_absent
 
 - name: Reload systemd so the `incus.service` drop-in dependency change applies on the next start / reboot (we deliberately do NOT restart incus now - that would disrupt running VMs)
@@ -790,9 +805,9 @@
   ansible.builtin.script:
     cmd: >-
       incus_storage_pool.py --root {{ incus_vm_ivm_dir | quote }} verify
-      --expect-driver {{ incus_storage_pool_driver | quote }}
-      --expect-source {{ _incus_effective_pool_source | default('') | quote }}
-      --expect-loop-backing {{ (incus_storage_pool_source if (_incus_pool_build_loop | default(false) | bool) else '') | quote }}
+      --expect-driver {{ _storage.driver | quote }}
+      --expect-source {{ _storage.pool_source | default('') | quote }}
+      --expect-loop-backing {{ _storage.loop_file | default('') | quote }}
   become: true
   register: _incus_storage_verify
   changed_when: false

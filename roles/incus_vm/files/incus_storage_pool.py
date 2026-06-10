@@ -15,6 +15,12 @@ subcommands, so the imperative storage lifecycle lives in ONE readable, testable
 place. Every mutating subcommand added then MUST print its exact argv before
 running (the project's transparency-before-privileged-actions rule).
 
+`resolve` (READ-ONLY) is the same idea for the storage-layout DECISION: it folds
+the `_incus_pool_build_loop` / `_incus_effective_pool_*` `set_fact` chain out of
+ansible and answers "what layout does this install run use?" - crucially, once a
+`default` pool exists it FOLLOWS the recorded `storage-info.json` instead of the
+passed/default vars, so a re-run can't repoint the pool's record at the wrong `.img`.
+
 stdlib only (the project is ansible-core / no-extra-deps; this mirrors that).
 Runs both as root (ansible: full `incus storage show` config) and as an
 unprivileged `incus`-group user (`ivm`: pool config is admin-only, so `source`
@@ -423,6 +429,141 @@ def cmd_verify(root: str, expect_driver: str, expect_source: str,
     return 1 if failures else 0
 
 
+# ---------- resolve: decide the EFFECTIVE storage layout for an install run ----------
+# The ONE place that answers "what storage does this `make incus-install` use?" - kept here, in
+# readable + testable Python, instead of the `set_fact`/`when:` Jinja chains it replaces in
+# tasks/incus_host_install.yml. The rule: once a `default` pool EXISTS with a recorded layout, we
+# FOLLOW that record (what the pool was built with) and ignore the passed/default vars - so a re-run
+# (commonly just to redeploy `ivm`) that omits or changes INCUS_STORAGE_POOL_* never re-derives
+# storage from the role defaults and never pollutes storage-info.json. ansible calls this once and
+# consumes the JSON (effective preseed source/size, the role-built-loop facts, the exact record dict).
+
+
+def resolve_layout(root: str, already_initialized: bool, driver: str, source: str,
+                   size: str, mountpoint: str) -> tuple[dict[str, Any], bool, bool]:
+    """Pure decision: from the REQUESTED layout + whether a `default` pool already exists, return
+    `(resolved, following, loop_img_missing)`. FOLLOWING (pool exists AND a usable record is on
+    disk) -> the layout the pool was BUILT with, taken verbatim from the record; otherwise (first
+    install / no record yet) -> derived from the request. `resolved` carries everything the install
+    needs downstream: the effective preseed `pool_source`/`pool_size`, the role-built-loop facts
+    (`build_loop`/`loop_file`/`mountpoint`), and the exact `storage-info.json` `record` dict. Only
+    reads the record + `stat`s the loop file; never mutates."""
+    record: dict[str, Any] | None = read_storage_info(root)
+    following: bool = bool(already_initialized and record and str(record.get("driver") or ""))
+    loop_img_missing: bool = False
+    if following and record is not None:
+        effective_driver: str = str(record.get("driver") or "")
+        build_loop: bool = bool(record.get("build_loop"))
+        loop_file: str = str(record.get("loop_file") or "")
+        loop_mountpoint: str = str(record.get("mountpoint") or "")
+        effective_source: str = str(record.get("source") or "")
+        declared_size: str = str(record.get("size") or "")
+        # The pool exists but its loop `.img` is gone (most often: the disk holding it is not
+        # mounted) - the caller turns this into a loud STOP rather than rebuild empty storage.
+        loop_img_missing = bool(build_loop and loop_file and not os.path.exists(loop_file))
+    else:
+        effective_driver = driver
+        # Role-built loop = btrfs + `source` is a FILE path (absent, or an existing regular file)
+        # + a size. A dir / existing subvolume / block-device source is handed to incus as-is.
+        source_is_loop_file: bool = bool(source) and (not os.path.exists(source) or os.path.isfile(source))
+        build_loop = (driver == "btrfs") and bool(source) and bool(size) and source_is_loop_file
+        loop_file = source if build_loop else ""
+        loop_mountpoint = mountpoint if build_loop else ""
+        effective_source = mountpoint if build_loop else source
+        declared_size = size
+    # A role-built loop hands incus the already-mounted btrfs FS (so NO size in the preseed); every
+    # other form passes the size through. The record keeps the DECLARED size either way.
+    preseed_size: str = "" if build_loop else declared_size
+    resolved: dict[str, Any] = {
+        "following": following,
+        "already_initialized": already_initialized,
+        "driver": effective_driver,
+        "build_loop": build_loop,
+        "loop_file": loop_file,
+        "mountpoint": loop_mountpoint,
+        "pool_source": effective_source,
+        "pool_size": preseed_size,
+        "declared_size": declared_size,
+        "record": {
+            "driver": effective_driver,
+            "build_loop": build_loop,
+            "loop_file": loop_file,
+            "mountpoint": loop_mountpoint,
+            "source": effective_source,
+            "size": declared_size,
+        },
+    }
+    return resolved, following, loop_img_missing
+
+
+def _loop_missing_banner(record: dict[str, Any]) -> str:
+    """The loud STOP message (-> stderr) when a `default` pool exists but its recorded loop `.img`
+    is gone: lead with the cheap, non-destructive fix (remount its disk) before the teardown path."""
+    loop_file: str = str(record.get("loop_file") or "")
+    loop_mountpoint: str = str(record.get("mountpoint") or "")
+    bar: str = "=" * 60
+    return "\n".join([
+        "", bar,
+        " incus `default` pool exists, but its recorded loop file is",
+        " MISSING - stopping (never auto-rebuilding empty storage).",
+        bar,
+        f" recorded `.img`: {loop_file}",
+        f" mounted at:      {loop_mountpoint or '(n/a)'}",
+        "",
+        " The file is not on disk. The likeliest cause is its disk simply",
+        " is not mounted - check that FIRST; a remount fixes it WITHOUT",
+        " touching any VM data:",
+        "",
+        f"     mount {loop_mountpoint or '<mountpoint>'}    # or: mount -a",
+        "",
+        " Only if the `.img` is TRULY gone (its data already lost) rebuild",
+        " from scratch (DESTROYS the pool + every VM, then recreates it):",
+        "",
+        f"     make incus-teardown-host && make incus-install"
+        f" INCUS_STORAGE_POOL_SOURCE={loop_file} INCUS_STORAGE_POOL_SIZE={record.get('size') or ''}",
+        bar, "",
+    ])
+
+
+def _override_ignored_warning(record: dict[str, Any]) -> str:
+    """The WARNING (kept, not failed) shown when INCUS_STORAGE_POOL_* was passed on an already-
+    initialized host: the record is authoritative; teardown is the only way to actually change."""
+    bar: str = "=" * 60
+    record_source: str = str(record.get("loop_file") or record.get("source") or "")
+    return "\n".join([
+        bar,
+        " WARNING - incus `default` pool already exists, so your",
+        " INCUS_STORAGE_POOL_* override is IGNORED (a pool is never",
+        " re-pointed). The ESTABLISHED record is kept:",
+        bar,
+        f"   record driver = {record.get('driver') or '?'}",
+        f"   record source = {record_source or '?'}",
+        f"   record size   = {record.get('size') or '?'}",
+        "",
+        " If that already matches what you intended, just drop the",
+        " INCUS_STORAGE_POOL_* args. To genuinely change storage:",
+        "     make incus-teardown-host && make incus-install INCUS_STORAGE_POOL_*=...",
+        bar,
+    ])
+
+
+def cmd_resolve(root: str, already_initialized: bool, driver: str, source: str, size: str,
+                mountpoint: str, overrides_passed: bool) -> int:
+    """Print (JSON, stdout) the effective storage layout for this install run; ansible consumes it.
+    Two guards on the FOLLOWING path: (Q2) the recorded loop `.img` has vanished -> loud STOP
+    (banner to stderr, non-zero exit, so the `script` task fails); (Q1) overrides were passed but a
+    pool already exists -> a WARNING carried in `resolved["warnings"]` (kept, not failed - ansible
+    surfaces it)."""
+    resolved, following, loop_img_missing = resolve_layout(
+        root, already_initialized, driver, source, size, mountpoint)
+    if loop_img_missing:
+        sys.stderr.write(_loop_missing_banner(resolved["record"]))
+        return 2
+    resolved["warnings"] = [_override_ignored_warning(resolved["record"])] if (following and overrides_passed) else []
+    print(json.dumps(resolved, indent=2))
+    return 0
+
+
 # ---------- MUTATING subcommands (build-loop / init / delete-pool) ----------
 # These replace the imperative truncate/mkfs/fstab/mount + `incus admin init` + pool
 # delete chains that used to live as hard-to-read `shell:`/`when:`/`set_fact:` tasks in
@@ -610,6 +751,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--expect-source", default="", help="config.source the pool should have")
     verify_parser.add_argument("--expect-loop-backing", default="",
                                help="the `.img` the --expect-source mount point should be mounted from")
+    resolve_parser: argparse.ArgumentParser = sub.add_parser(
+        "resolve", help="decide + print (JSON) the effective storage layout for an install run "
+                        "(follows the recorded layout once a `default` pool exists)")
+    resolve_parser.add_argument("--already-initialized", required=True, choices=["true", "false"],
+                                help="whether a `default` pool already exists (ansible's probe)")
+    resolve_parser.add_argument("--driver", default="", help="REQUESTED pool driver")
+    resolve_parser.add_argument("--source", default="",
+                                help="REQUESTED source (a `.img` path -> role-built loop; else dir / subvolume / device)")
+    resolve_parser.add_argument("--size", default="", help="REQUESTED size (e.g. 100GiB)")
+    resolve_parser.add_argument("--mountpoint", default="", help="loop mount point for a role-built loop")
+    resolve_parser.add_argument("--overrides-passed", action="store_true",
+                                help="the user passed INCUS_STORAGE_POOL_* explicitly (drives the ignored-override warning)")
 
     # Mutating (run as root; print argv before acting; idempotent).
     build_loop_parser: argparse.ArgumentParser = sub.add_parser(
@@ -640,6 +793,9 @@ def main() -> int:
     if args.subcommand == "verify":
         return cmd_verify(args.root, args.expect_driver, args.expect_source,
                           args.expect_loop_backing, args.json)
+    if args.subcommand == "resolve":
+        return cmd_resolve(args.root, args.already_initialized == "true", args.driver,
+                           args.source, args.size, args.mountpoint, args.overrides_passed)
     if args.subcommand == "build-loop":
         return cmd_build_loop(args.source, args.size, args.mountpoint, dry_run=args.dry_run)
     if args.subcommand == "init":
