@@ -232,17 +232,34 @@ def load_thirdparty_software(root: Path) -> dict[str, Any]:
     return loaded
 
 
+def overlay_install_packages(overlay: Any) -> list[str]:
+    """A family overlay (the `common` / `debian` / `suse` / `redhat` value of a
+    distro_packages bundle) is EITHER a bare package list, OR - when that family also
+    carries setup - a dict `{install: [...], post_install: <shell>}`. Return its package
+    list either way."""
+    if isinstance(overlay, dict):
+        return list(overlay.get("install", []))
+    return list(overlay or [])
+
+
+def overlay_post_install(overlay: Any) -> str:
+    """The optional `post_install` shell snippet of a family overlay (only its dict form
+    has one). Returns "" for the bare-list form or when absent."""
+    if isinstance(overlay, dict):
+        return str(overlay.get("post_install", "") or "")
+    return ""
+
+
 def resolve_group(registry: dict[str, Any], group: str, ansible_os_family: str) -> list[str]:
-    """A bundle resolves to `common + <ansible_os_family overlay>` (same rule as
-    roles/distro_packages/tasks/main.yml, but for one family at a time)."""
+    """A bundle resolves to `common + <ansible_os_family overlay>` packages (same rule as
+    roles/distro_packages/tasks/main.yml, but for one family at a time). Each overlay is a
+    bare list or a `{install, post_install}` dict - see overlay_install_packages."""
     entry: Any = registry.get(group)
     if entry is None:
         die(f"unknown distro_package_group '{group}' "
             f"(not in distro-package-groups.json; defined ones: {', '.join(sorted(registry))})")
     overlay_key: str = ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY[ansible_os_family]
-    common: list[str] = list(entry.get("common", []))
-    overlay: list[str] = list(entry.get(overlay_key, []))
-    return common + overlay
+    return overlay_install_packages(entry.get("common")) + overlay_install_packages(entry.get(overlay_key))
 
 
 def resolve_packages(doc: Template, registry: dict[str, Any], ansible_os_family: str) -> list[str]:
@@ -254,6 +271,36 @@ def resolve_packages(doc: Template, registry: dict[str, Any], ansible_os_family:
         packages += resolve_group(registry, group, ansible_os_family)
     packages += doc.get("distro_packages", [])
     return list(dict.fromkeys(packages))
+
+
+def group_post_install_snippet(group_entry: dict[str, Any], ansible_os_family: str) -> str:
+    """Resolve a bundle's `post_install` for one family: the `common` overlay's snippet +
+    this family overlay's snippet, ADDITIVE (common runs first, the family-specific extra
+    appends - so a distro needing one extra step adds it without repeating the shared part).
+    `post_install` lives INSIDE each family overlay's dict form (sibling to its `install`),
+    so the bundle's top level stays purely families. Returns "" when none define one."""
+    overlay_key: str = ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY[ansible_os_family]
+    parts: list[str] = [overlay_post_install(group_entry.get("common")),
+                        overlay_post_install(group_entry.get(overlay_key))]
+    return "\n".join(part for part in parts if part.strip())
+
+
+def groups_post_install_script(groups: list[str], registry: dict[str, Any], ansible_os_family: str) -> str:
+    """A distro_packages bundle MAY carry an optional `post_install` shell snippet
+    (sibling to its per-family package overlays) - setup that belongs WITH its packages,
+    e.g. enabling a display manager after installing it. Concatenate the resolved
+    snippets of the given bundles, in order, each prefixed with an echo marker; skip
+    bundles without one. Run as ROOT in the guest AFTER the packages install (the caller
+    places it post-user-creation so a snippet's `su - user -c` works). Idempotent - it
+    re-runs on every `provision`. (Per-distro PACKAGE differences belong in the family
+    overlays; `post_install` is for per-distro SCRIPT steps - see group_post_install_snippet.)"""
+    script: str = ""
+    for group in groups:
+        snippet: str = group_post_install_snippet(registry.get(group) or {}, ansible_os_family)
+        if snippet.strip():
+            script += f"echo '==> {group}: post_install' >&2\n"
+            script += snippet if snippet.endswith("\n") else snippet + "\n"
+    return script
 
 
 # ---------- command execution (dry-run aware) ----------
@@ -812,6 +859,10 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: P
         script += "su - user -c 'xdg-user-dirs-update'\n"
     script += input_method_provision(doc, root)
     script += ssh_provision(doc, cwd)
+    # A bundle's optional `post_install` (e.g. icewm_desktop wiring lightdm autologin):
+    # run after its packages + after `user` exists (snippets may `su - user -c`), before
+    # the author's `post_install_script` so that can build on it.
+    script += groups_post_install_script(doc.get("distro_package_groups", []), registry, ansible_os_family)
     # Non-distro installs (3rd-party repos / curl|bash / npm-pip) declared in the
     # template's `thirdparty_software`, run as root before the author's custom
     # `post_install_script` so that can rely on them. Registry loaded only when used.
@@ -1464,6 +1515,9 @@ def cmd_provision(name: str, unit_names: list[str], root: Path, *, dry_run: bool
         packages = list(dict.fromkeys(packages))
         if packages:
             script += install_packages_script(ansible_os_family, packages)
+        # `user` already exists on a provisioned VM, so a bundle's post_install can
+        # `su - user -c` straight away (unlike init, no ordering concern).
+        script += groups_post_install_script(distro_bundles, distro_registry, ansible_os_family)
     if thirdparty_names:
         script += thirdparty_install_script(
             resolve_thirdparty_software(thirdparty_names, thirdparty_registry, ansible_os_family)

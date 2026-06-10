@@ -29,6 +29,11 @@
 # it)`. `_install_distro_packages` then picks the host's `os_family` key and
 # installs via the right package manager. Skipped entirely when every toggle
 # is off (empty list would trip the sub-role's non-empty assert).
+# NOTE: this host path assumes every overlay is a BARE package list. The
+# `{install, post_install}` dict overlay form (see defaults/main.yml) is GUEST-ONLY -
+# `post_install` runs only in an `ivm` guest - so dict-form bundles (e.g. icewm_desktop)
+# are NOT wired into the `distro_packages_install_*` toggle loop above. Keep it that way:
+# only add bare-list bundles to that loop.
 - name: Install enabled `distro_packages_*` bundles via `roles/_install_distro_packages`
   ansible.builtin.include_role:
     name: _install_distro_packages

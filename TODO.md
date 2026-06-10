@@ -854,6 +854,57 @@ pulls the Kotlin compiler per project.
   lands in ~/.cargo, sdkmanager builds out ~/Android/Sdk. Bump the pinned cmdline-tools build
   number (14742923) / API 36 if stale.
 
+## distro_packages optional `post_install` + icewm_desktop
+
+`gui_x11` is only the X SERVER stack (by design - WM/DE + display-manager are per-VM). So
+`ivm provision gui_x11` on a headless template gives no desktop. To make "add a desktop in
+one shot" possible, distro_packages bundles gained an OPTIONAL `post_install` key.
+
+- [x] **Per-family overlay `{install, post_install}`** - each family overlay
+  (`common`/`debian`/`suse`/`redhat`) is EITHER a bare package list (usual) OR a dict
+  `{install: [...], post_install: <shell>}`, so a family's packages AND its setup stay
+  co-located under that family and the bundle's TOP level is purely families (the {DISTRO}
+  layer keeps one meaning). Resolution (host + guest): packages = `common`.install +
+  `<family>`.install; post_install = `common`.post_install + `<family>`.post_install
+  (ADDITIVE). `post_install` runs as root in the guest after the packages, post-user-creation
+  (so `su - user` works), idempotent. GUEST-ONLY: host install path runs packages only (it
+  assumes bare-list overlays; dict-form bundles stay out of the `distro_packages_install_*`
+  loop). `ivm`: `overlay_install_packages` / `overlay_post_install` normalize the union in ONE
+  place; `resolve_group` + `group_post_install_snippet` use them; called in `provision_script`
+  (init) + `cmd_provision`. Verified vs the real ivm functions: existing bare-list bundles
+  unchanged, nested packages = common+family (no post_install leak), per-family post_install
+  appends the family extra ONLY on that family, mixed bare+dict overlays in one bundle work;
+  `bash -n` ok; host bare-list Jinja still yields only strings.
+- [x] **`distro_packages_icewm_desktop`** (nested form) - `common.install` icewm + lightdm +
+  spice-vdagent; `common.post_install` wires graphical.target + lightdm autologin (icewm
+  session DETECTED per-distro: Debian `icewm-session` / openSUSE `icewm`) + spice-vdagent
+  autostart. Per-family `install` carries ONLY the greeter (the one per-distro difference, a
+  PACKAGE not a script): Debian/openSUSE `lightdm-gtk-greeter`, Fedora `lightdm-gtk`. Rides on
+  `gui_x11`: `ivm provision gui_x11 icewm_desktop`.
+  - Greeter bug fix: ivm installs with recommends OFF (apt-min/zypper-min/dnf-min), so the
+    greeter is NOT auto-pulled - listed explicitly. Fedora name verified via packages.fedoraproject.org.
+- Decision log: started with a sibling `post_install` key (kept overlays mono-typed) but that
+  POLLUTED the family layer (post_install sitting beside debian/suse/redhat) and duplicated the
+  family enumeration. Switched to the nested per-family `{install, post_install}` (the user's
+  original instinct): family layer stays pure, per-family setup is co-located, and the union is
+  normalized in one ivm helper (the only real cost, and it is small). Also rejected renaming
+  `thirdparty_software` -> `provision_recipes` (breaks the template key for a config-not-install
+  case); `thirdparty_software` stays for genuine non-distro installs.
+- [ ] **Validate in a guest** - `ivm init` a headless template then
+  `ivm provision gui_x11 icewm_desktop`; `ivm gui` shows the icewm desktop (autologin worked,
+  session name detected, greeter present so lightdm starts, spice-vdagent gives live resize).
+  Debian = primary target; openSUSE mirrors templates/webbrowser.yaml.
+- [ ] **Fedora icewm_desktop is best-effort/untested** - SELinux Enforcing has known
+  lightdm-autologin issues (.xsession-errors write denials / home context; redhat bugzilla
+  1900334, 1323426). Once a fix is verified on a real Fedora box it goes in
+  `post_install.redhat` (the per-family slot now exists for exactly this).
+- [ ] (note) `templates/webbrowser.yaml` installs bare `lightdm` (no greeter) on openSUSE via
+  the same recommends-OFF path - it only works if openSUSE's lightdm HARD-requires a greeter.
+  Worth confirming on a real Tumbleweed box; if not, add `lightdm-gtk-greeter` there too.
+- [ ] (future, optional) host-side `post_install` / host GUI - currently guest-only; a host
+  path would need the real-user (not `user`) convention. Same bucket as the thirdparty
+  host-runner above.
+
 ## Notes / future
 
 - [ ] **container_apps -> one engine + declarative templates** (parallel to what

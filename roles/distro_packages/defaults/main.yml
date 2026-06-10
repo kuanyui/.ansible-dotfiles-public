@@ -7,6 +7,23 @@
 # (ansible-core-only: it shells `zypper --non-interactive` on openSUSE instead
 # of `ansible.builtin.package`, which would dispatch to
 # `community.general.zypper`).
+#
+# Each family overlay (`common` / `debian` / `suse` / `redhat`) is EITHER a bare package
+# list (the usual case), OR - when that family ALSO needs setup - a dict
+# `{install: [<pkgs>], post_install: <shell>}`. So a family's packages AND its setup stay
+# co-located under that family, and the bundle's TOP level is purely families (the {DISTRO}
+# layer keeps one meaning). Resolution, both host (`tasks/main.yml`) and guest (`ivm`):
+#   packages     = `common` install + `<family>` install
+#   post_install = `common` post_install + `<family>` post_install   (ADDITIVE: shared first,
+#                  then the family-specific extra appends - a distro needing one more step
+#                  just adds it under its own overlay, no repeating the shared part)
+# RULE OF THUMB: a per-distro PACKAGE difference (e.g. a greeter named differently per family)
+# is just a different `install` list per overlay; `post_install` is for per-distro SCRIPT steps.
+# `post_install` runs as ROOT in an `ivm` GUEST right after the packages, post-user-creation
+# (so `su - user` works), idempotent (re-runs each `ivm provision <bundle>`). GUEST-ONLY: the
+# host install path runs only the package lists (a snippet assumes the guest `user`), so the
+# host toggle loop holds bare-list bundles only. Most bundles never need the dict form -
+# `distro_packages_icewm_desktop` is the one that does.
 
 distro_packages_basic_tools:
   common:
@@ -212,3 +229,46 @@ distro_packages_dev_android:
     - java-21-openjdk-devel
   redhat:
     - java-21-openjdk-devel
+
+# A complete, autologin icewm desktop - the WM/DE + display-manager layer that `gui_x11`
+# (the X server stack) deliberately leaves out. RIDES ON gui_x11: provision them together,
+# `ivm provision gui_x11 icewm_desktop`. The shared packages + the (identical) setup wiring
+# live in `common`; the only per-family difference is the lightdm GREETER's package name
+# (Debian/openSUSE `lightdm-gtk-greeter`, Fedora `lightdm-gtk`) - a per-family `install`, NOT
+# a post_install, since it is a package not a script. The greeter is listed EXPLICITLY because
+# ivm installs with recommends OFF (apt-min/zypper-min/dnf-min) so it is not auto-pulled.
+# `spice-vdagent` (in common.install, not relying on `sys.gui`) gives `ivm gui`'s SPICE console
+# clipboard + dynamic resolution. The wiring: graphical.target + lightdm autologin (-> the
+# guest's `user`, into an icewm session, name DETECTED at runtime: Debian `icewm-session` /
+# openSUSE `icewm`) + spice-vdagent autostart. CAVEAT: verified-shaped for Debian (the common
+# ivm target) + openSUSE (mirrors templates/webbrowser.yaml); Fedora is best-effort - SELinux
+# Enforcing has known lightdm-autologin issues; a fix, once verified on a real box, lands as a
+# `redhat: {post_install: ...}` here (the per-family slot is exactly for that). See TODO.md.
+distro_packages_icewm_desktop:
+  common:
+    install:
+      - icewm
+      - lightdm
+      - spice-vdagent
+    post_install: |
+      systemctl set-default graphical.target
+      mkdir -p /etc/lightdm/lightdm.conf.d
+      # icewm's xsession .desktop name differs per distro (Debian 'icewm-session',
+      # openSUSE 'icewm') - detect it rather than hardcode.
+      icewm_session_name=$(basename "$(ls /usr/share/xsessions/*icewm*.desktop | head -n1)" .desktop)
+      printf '[Seat:*]\nautologin-user=user\nautologin-session=%s\n' "$icewm_session_name" > /etc/lightdm/lightdm.conf.d/autologin.conf
+      # --force: openSUSE pre-aliases display-manager.service; harmless on Debian/Fedora.
+      systemctl enable --force lightdm
+      # icewm ignores XDG autostart -> start spice-vdagent (host<->guest clipboard /
+      # dynamic resolution) from its own startup.
+      su - user -c 'mkdir -p ~/.config/icewm && printf "#!/bin/sh\nspice-vdagent &\n" > ~/.config/icewm/startup && chmod +x ~/.config/icewm/startup'
+  debian:
+    install:
+      - lightdm-gtk-greeter
+  suse:
+    install:
+      - icewm-theme-branding  # openSUSE-only: the default icewm theme/background
+      - lightdm-gtk-greeter
+  redhat:
+    install:
+      - lightdm-gtk          # Fedora's greeter package (NOT lightdm-gtk-greeter)

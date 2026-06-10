@@ -115,6 +115,7 @@
         'emacs': distro_packages_emacs,
         'dev_qt': distro_packages_dev_qt,
         'dev_android': distro_packages_dev_android,
+        'icewm_desktop': distro_packages_icewm_desktop,
       } | to_nice_json }}
 
 # ---------- Materialize the thirdparty_software recipe registry for `ivm` ----------
