@@ -75,27 +75,32 @@ _ivm() {
             COMPREPLY=( $(compgen -W "--cpu --memory --disk" -- "$cur") )
             ;;
         mount)
-            # After `mount`: the action (ls/attach/detach), then args. `i` indexes the
-            # `mount` word; flags may sit between, so skip them to find the action.
+            # After `mount`: the action (ls/attach/shadow/detach), then args. `i` indexes
+            # the `mount` word; flags may sit between, so skip them to find the action.
             local mount_action="" mount_word_index
             for (( mount_word_index = i + 1; mount_word_index < COMP_CWORD; mount_word_index++ )); do
                 [[ "${COMP_WORDS[mount_word_index]}" == -* ]] && continue
                 mount_action="${COMP_WORDS[mount_word_index]}"; break
             done
+            # The VM this mount command targets (shadow/detach completions need its devices).
+            local mount_vm="" name_index
+            for (( name_index = 1; name_index < COMP_CWORD; name_index++ )); do
+                if [[ "${COMP_WORDS[name_index]}" == "--name" ]]; then
+                    mount_vm="${COMP_WORDS[name_index+1]}"; break
+                fi
+            done
+            [[ -z "$mount_vm" ]] && mount_vm="$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)"
             if [[ -z "$mount_action" ]]; then
-                COMPREPLY=( $(compgen -W "ls attach detach" -- "$cur") )
+                COMPREPLY=( $(compgen -W "ls attach shadow detach" -- "$cur") )
             elif [[ "$mount_action" == attach ]]; then
-                COMPREPLY=( $(compgen -A file -- "$cur") )
+                # <host> is a host path; --ro / --shadow modify the share.
+                COMPREPLY=( $(compgen -W "--ro --shadow" -- "$cur") $(compgen -A file -- "$cur") )
+            elif [[ "$mount_action" == shadow ]]; then
+                # <guest_path>: a guest directory -> offer existing mount guest paths.
+                [[ -n "$mount_vm" ]] && COMPREPLY=( $(compgen -W "$(incus config show "$mount_vm" 2>/dev/null | awk '/^[[:space:]]+path:/ && $2 != "/" {print $2}')" -- "$cur") )
             elif [[ "$mount_action" == detach ]]; then
-                # detach target: the VM's own mount/shadow device names (ivm_mount_*).
-                local mount_vm="" name_index
-                for (( name_index = 1; name_index < COMP_CWORD; name_index++ )); do
-                    if [[ "${COMP_WORDS[name_index]}" == "--name" ]]; then
-                        mount_vm="${COMP_WORDS[name_index+1]}"; break
-                    fi
-                done
-                [[ -z "$mount_vm" ]] && mount_vm="$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)"
-                [[ -n "$mount_vm" ]] && COMPREPLY=( $(compgen -W "$(incus config device list "$mount_vm" 2>/dev/null | grep '^ivm_mount')" -- "$cur") )
+                # detach target: the VM's own mount/shadow device names (ivm_mount_* / ivm_shadow_*).
+                [[ -n "$mount_vm" ]] && COMPREPLY=( $(compgen -W "$(incus config device list "$mount_vm" 2>/dev/null | grep '^ivm_')" -- "$cur") )
             fi
             ;;
         push)

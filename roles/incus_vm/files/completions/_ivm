@@ -78,20 +78,26 @@ case "$state" in
       storage-status) compadd -- --json ;;
       resize) compadd -- --cpu --memory --disk ;;
       mount)
-        # 1=mount, then the action (ls/attach/detach); flags may sit between -> skip them.
+        # 1=mount, then the action (ls/attach/shadow/detach); flags may sit between -> skip them.
         local _ivm_mount_action="" _ivm_mount_word_index
         for (( _ivm_mount_word_index = 2; _ivm_mount_word_index < CURRENT; _ivm_mount_word_index++ )); do
           [[ "$words[_ivm_mount_word_index]" == -* ]] && continue
           _ivm_mount_action="$words[_ivm_mount_word_index]"; break
         done
+        # The VM this mount command targets (shadow/detach completions need its devices).
+        local _ivm_mount_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
         if [[ -z "$_ivm_mount_action" ]]; then
-          compadd -- ls attach detach
+          compadd -- ls attach shadow detach
         elif [[ "$_ivm_mount_action" == attach ]]; then
+          # <host> is a host path; --ro / --shadow modify the share.
+          compadd -- --ro --shadow
           _files
+        elif [[ "$_ivm_mount_action" == shadow ]]; then
+          # <guest_path>: a directory inside the guest -> offer existing mount guest paths.
+          [[ -n "$_ivm_mount_vm" ]] && compadd -- ${(f)"$(incus config show ${_ivm_mount_vm} 2>/dev/null | awk '/^[[:space:]]+path:/ && $2 != "/" {print $2}')"}
         elif [[ "$_ivm_mount_action" == detach ]]; then
-          # detach target: the VM's own mount/shadow device names (ivm_mount_*).
-          local _ivm_mount_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
-          [[ -n "$_ivm_mount_vm" ]] && compadd -- ${(f)"$(incus config device list ${_ivm_mount_vm} 2>/dev/null | grep '^ivm_mount')"}
+          # detach target: the VM's own mount/shadow device names (ivm_mount_* / ivm_shadow_*).
+          [[ -n "$_ivm_mount_vm" ]] && compadd -- ${(f)"$(incus config device list ${_ivm_mount_vm} 2>/dev/null | grep '^ivm_')"}
         fi
         ;;
       push) compadd -- --as-root; _files ;;

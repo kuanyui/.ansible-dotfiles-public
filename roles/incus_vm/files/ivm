@@ -76,7 +76,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "update": "refresh + upgrade all packages in the VM",
     "provision": "install distro bundle(s) / thirdparty recipe(s) onto the VM",
     "resize": "change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk; disk grows only)",
-    "mount": "inspect/change a VM's virtio-fs shares post-init (ls/attach/detach; hotplug)",
+    "mount": "inspect/change a VM's virtio-fs shares post-init (ls/attach/detach/shadow; hotplug)",
     "push": "copy a host file/dir into the VM (incus file push; --as-root for root-owned)",
     "set-password": "set a guest account's login password",
     "unset-password": "lock a guest account's password",
@@ -365,6 +365,13 @@ def mount_device_name(mount_index: int) -> str:
 
 def shadow_device_name(mount_index: int, shadow_index: int) -> str:
     return f"{mount_device_name(mount_index)}_shadow_{shadow_index}"
+
+
+def standalone_shadow_device_name(shadow_index: int) -> str:
+    """A shadow mask added on its own via `ivm mount shadow <guest_path>`, NOT tied
+    to a parent `ivm_mount_<N>` (which uses `shadow_device_name`). Still carries the
+    `_shadow_` marker so `detach`/`ls` classify it as a mask, not a base mount."""
+    return f"ivm_shadow_{shadow_index}"
 
 
 def mount_device_names(doc: Template) -> list[str]:
@@ -1768,13 +1775,29 @@ def _next_ivm_mount_index(disk_devices: dict[str, dict[str, Any]]) -> int:
     return max(indices) + 1 if indices else 0
 
 
+def _next_ivm_standalone_shadow_index(disk_devices: dict[str, dict[str, Any]]) -> int:
+    """Next free N for an `ivm_shadow_<N>` standalone mask (the kind `ivm mount
+    shadow` adds), so it never collides with an existing one. Ignores the
+    mount-tied `ivm_mount_<i>_shadow_<j>` masks, which have their own numbering."""
+    indices: list[int] = []
+    for device_name in disk_devices:
+        match: re.Match[str] | None = re.fullmatch(r"ivm_shadow_([0-9]+)", device_name)
+        if match:
+            indices.append(int(match.group(1)))
+    return max(indices) + 1 if indices else 0
+
+
 def cmd_mount_ls(name: str) -> None:
     """List the VM's virtio-fs shares + any shadow masks layered on them. Read-only."""
     if not instance_exists(name):
         die(f"no such incus VM: '{name}' (see `incus list`)")
     disk_devices: dict[str, dict[str, Any]] = _vm_disk_devices(name)
     base_mounts: dict[str, dict[str, Any]] = {n: d for n, d in disk_devices.items() if "_shadow_" not in n}
-    if not base_mounts:
+    # Standalone masks added via `ivm mount shadow` (`ivm_shadow_<N>`), not tied to
+    # any base mount; listed in their own section so they are not silently hidden.
+    standalone_shadows: dict[str, dict[str, Any]] = {
+        n: d for n, d in disk_devices.items() if re.fullmatch(r"ivm_shadow_[0-9]+", n)}
+    if not base_mounts and not standalone_shadows:
         print(f"{colorize_vm_name(name, stream=sys.stdout)}: no virtio-fs mounts.")
         return
     print(f"mounts on {colorize_vm_name(name, stream=sys.stdout)}:")
@@ -1784,6 +1807,8 @@ def cmd_mount_ls(name: str) -> None:
         for shadow_name in sorted(disk_devices):
             if shadow_name.startswith(f"{mount_name}_shadow_"):
                 print(f"      masked: {disk_devices[shadow_name].get('path') or '?'}  ({shadow_name})")
+    for shadow_name in sorted(standalone_shadows):
+        print(f"  {shadow_name:20} masked (empty ro): {standalone_shadows[shadow_name].get('path') or '?'}")
 
 
 def cmd_mount_attach(name: str, host: str, guest: str, *, ro: bool, shadow: list[str],
@@ -1829,6 +1854,51 @@ def cmd_mount_attach(name: str, host: str, guest: str, *, ro: bool, shadow: list
           f"{' [ro]' if ro else ''}.", file=sys.stderr)
     if shadow:
         print(f"    masked subpaths: {', '.join(shadow)}", file=sys.stderr)
+
+
+def cmd_mount_shadow(name: str, guest_path: str, *, root: Path, dry_run: bool) -> None:
+    """Mask an existing guest DIRECTORY with an empty read-only dir, so the guest
+    can no longer see whatever was there (its own files, or a subpath of a mount).
+    Adds a standalone `ivm_shadow_<N>` disk device at `guest_path`. Unlike `attach
+    --shadow` (a subpath relative to a mount added at attach time), this targets an
+    absolute guest path and works on an already-running, already-mounted tree.
+
+    Directories only: a VM disk device cannot mount a single file (incus:
+    'Mounting single files is not supported' for VMs), and Linux cannot mount a
+    filesystem over a regular-file path. `ivm mount detach <guest_path>` un-masks."""
+    if not guest_path.startswith("/"):
+        die(f"guest path must be absolute (got '{guest_path}')")
+    disk_devices: dict[str, dict[str, Any]] = {} if dry_run else _vm_disk_devices(name)
+    if not dry_run:
+        if not instance_exists(name):
+            die(f"no such incus VM: '{name}' (see `incus list`)")
+        # A mask only lands on a directory mountpoint. Probe the guest (running VMs
+        # only) so a file / missing path fails HERE with a clear reason, not as a
+        # cryptic mount error at hotplug or silently at next boot.
+        if vm_is_running(name):
+            guest_path_kind: str = capture([
+                "incus", "exec", name, "--", "sh", "-c",
+                f"if [ -d {shlex.quote(guest_path)} ]; then echo DIR; "
+                f"elif [ -e {shlex.quote(guest_path)} ]; then echo FILE; else echo MISSING; fi"]).strip()
+            if guest_path_kind == "FILE":
+                die(f"guest path is a file, not a directory: {guest_path}. A VM disk device "
+                    f"cannot mask a single file - mask its parent directory instead.")
+            if guest_path_kind == "MISSING":
+                die(f"guest path does not exist in {name}: {guest_path}. `shadow` masks an "
+                    f"existing guest directory (see `ivm mount ls`).")
+    shadow_index: int = _next_ivm_standalone_shadow_index(disk_devices)
+    device_name: str = standalone_shadow_device_name(shadow_index)
+    # Same AF_UNIX sun_path guard `init`/`attach` apply, for the new mask device.
+    if not dry_run:
+        socket_path: str = virtiofs_socket_path(current_incus_project_prefix(), name, device_name)
+        if len(socket_path) > SUN_PATH_MAX - 1:
+            die(f"virtiofs socket path too long ({len(socket_path)} > {SUN_PATH_MAX - 1}): "
+                f"{socket_path}. The VM name is the long part - recreate it with a shorter name.")
+    ensure_shadow_mask(root, dry_run=dry_run)
+    run(["incus", "config", "device", "add", name, device_name, "disk",
+         f"source={shadow_mask_dir(root)}", f"path={guest_path}", "readonly=true"], dry_run=dry_run)
+    print(f"==> masked {guest_path} on {colorize_vm_name(name)} with an empty read-only dir "
+          f"({device_name}). `ivm mount detach {guest_path}` un-masks it.", file=sys.stderr)
 
 
 def cmd_mount_detach(name: str, target: str, *, dry_run: bool) -> None:
@@ -1882,6 +1952,8 @@ def cmd_mount(name: str, action: str, *, host: str | None, guest: str | None, ro
       ls                                    list this VM's mounts + their shadow masks
       attach <host> <guest> [--ro]          add a share; repeat --shadow <subpath>
                  [--shadow SUB ...]         to mask subpaths (e.g. --shadow .git)
+      shadow <guest_path>                   mask one existing guest DIRECTORY with an
+                                            empty ro dir (no host; e.g. a mounted .git)
       detach <device | path>                unbind a mount (+its masks), or one mask
                                             (un-mask a subpath, e.g. `.git`)
 
@@ -1891,10 +1963,12 @@ def cmd_mount(name: str, action: str, *, host: str | None, guest: str | None, ro
         cmd_mount_ls(name)
     elif action == "attach":
         cmd_mount_attach(name, host or "", guest or "", ro=ro, shadow=shadow, root=root, dry_run=dry_run)
+    elif action == "shadow":
+        cmd_mount_shadow(name, guest or "", root=root, dry_run=dry_run)
     elif action == "detach":
         cmd_mount_detach(name, target or "", dry_run=dry_run)
     else:
-        die(f"unknown `ivm mount` action: {action!r} (want ls / attach / detach)")
+        die(f"unknown `ivm mount` action: {action!r} (want ls / attach / shadow / detach)")
 
 
 def cmd_push(name: str, local: str, guest: str, *, as_root: bool, dry_run: bool) -> None:
@@ -2076,6 +2150,12 @@ def build_parser() -> argparse.ArgumentParser:
             p_mount_attach.add_argument("--ro", action="store_true", help="mount read-only")
             p_mount_attach.add_argument("--shadow", action="append", default=[], metavar="SUBPATH",
                                         help="mask a subpath under <guest> with an empty ro dir (repeatable)")
+            p_mount_shadow: argparse.ArgumentParser = mount_sub.add_parser(
+                "shadow", help="mask an existing guest directory with an empty read-only dir")
+            # dest=`guest` (reuses cmd_mount's plumbing); shown as `guest_path` for clarity.
+            p_mount_shadow.add_argument("guest", metavar="guest_path",
+                                        help="absolute guest DIRECTORY to mask (e.g. a mounted project's "
+                                        ".git); single files are not maskable on a VM")
             p_mount_detach: argparse.ArgumentParser = mount_sub.add_parser(
                 "detach", help="unbind a mount (+ its shadow masks); host data is never deleted")
             p_mount_detach.add_argument("target", help="a mount (ivm_mount_N / its guest path; unbinds its "
