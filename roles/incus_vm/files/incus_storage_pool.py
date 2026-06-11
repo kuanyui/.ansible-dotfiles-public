@@ -581,19 +581,48 @@ def run_privileged(argv: list[str], *, dry_run: bool) -> None:
 
 
 def ensure_loop_file(source: str, size: str, *, dry_run: bool) -> bool:
-    """`truncate` a sparse `.img` at `source` if absent, then `mkfs.btrfs` it if it has
-    no filesystem yet (never reformats an existing one). Returns True if it changed.
+    """`truncate` a sparse `.img` at `source` if absent, then `mkfs.btrfs` it. Returns
+    True if it changed. A freshly-truncated file is formatted unconditionally; a
+    PRE-EXISTING file is formatted ONLY when `blkid` positively confirms it holds no
+    filesystem (exit 2 = "nothing found"). Any OTHER `blkid` outcome - a reported
+    filesystem (exit 0 with a TYPE), an ambivalent multi-signature (exit 8), a usage
+    error (exit 4), or `blkid` missing (exit 127) - means we CANNOT prove the file is
+    empty, so we REFUSE to mkfs rather than risk erasing existing VM data. (The earlier
+    version keyed only on blkid's stdout being empty, which is ALSO what a missing /
+    erroring blkid returns - that would reformat a file that may hold the pool.)
     `size` is the incus form e.g. `100GiB`; `truncate`'s binary `G`/`T` already mean
     GiB/TiB, so we just drop the `iB` (matches the old role's regex)."""
-    changed: bool = False
     if not os.path.exists(source):
         run_privileged(["truncate", f"--size={re.sub(r'iB$', '', size)}", source], dry_run=dry_run)
-        changed = True
-    existing_fs_type: str = run_capture(["blkid", "--output", "value", "--match-tag", "TYPE", source])[1].strip()
-    if not existing_fs_type:
+        # A just-created sparse file is definitionally empty -> format it without probing
+        # (blkid on a not-yet-created file would be meaningless under --dry-run anyway).
         run_privileged(["mkfs.btrfs", source], dry_run=dry_run)
-        changed = True
-    return changed
+        return True
+    # Pre-existing file: decide from blkid's EXIT CODE, never from an empty stdout alone -
+    # blkid prints nothing both when the file has no filesystem (exit 2) AND when it is
+    # missing / errors (exit 4/8/127), so the old empty-string test would mkfs (ERASE) a
+    # file that may be holding the pool.
+    blkid_rc, blkid_type_output, blkid_stderr = run_capture(
+        ["blkid", "--output", "value", "--match-tag", "TYPE", source])
+    existing_fs_type: str = blkid_type_output.strip()
+    if blkid_rc == 0 and existing_fs_type:
+        return False  # already carries a filesystem -> NEVER reformat
+    if blkid_rc != 2:
+        sys.stderr.write("\n".join([
+            "", "=" * 60,
+            " incus_storage_pool.py: REFUSING to mkfs.btrfs - cannot confirm",
+            f" `{source}` is empty (blkid exit {blkid_rc}).",
+            "=" * 60,
+            " mkfs would ERASE whatever the file holds. blkid did NOT return",
+            " its 'nothing found' code (2): it is missing (exit 127), hit a",
+            " usage error (4), or found an ambivalent multi-signature (8).",
+            " Refusing rather than risk destroying VM data.",
+            f" blkid stderr: {blkid_stderr.strip() or '(none)'}",
+            "=" * 60, "",
+        ]))
+        raise SystemExit(1)
+    run_privileged(["mkfs.btrfs", source], dry_run=dry_run)  # blkid exit 2 -> confirmed empty
+    return True
 
 
 def ensure_fstab_loop_line(source: str, mountpoint: str, *, dry_run: bool) -> bool:
