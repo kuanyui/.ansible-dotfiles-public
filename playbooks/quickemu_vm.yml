@@ -1,0 +1,9 @@
+---
+- name: Install the `qvm` quickemu VM launcher via `roles/quickemu_vm`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    setup_quickemu_vm: true  # dedicated entry point: bypass the host-level opt-in gate
+  roles:
+    - quickemu_vm

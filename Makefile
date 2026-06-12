@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv incus-install incus-check incus-sandbox incus-uninstall-ivm incus-teardown-host incus-push-dotfiles check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv incus-install incus-check incus-sandbox incus-uninstall-ivm incus-teardown-host incus-push-dotfiles quickemu-install quickemu-check quickemu-uninstall-qvm check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -144,6 +144,19 @@ incus-check:  ## Dry-run `incus-install` (`--check --diff`). Honors the same INC
 
 incus-sandbox:  ## Dry-run `incus-install` in a throwaway podman+systemd sandbox (`incus` binary stubbed).
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_vm
+
+### -------------------------------------------------------------------------
+### Quickemu (the `qvm` launcher; desktop/Windows/macOS axis - roles/quickemu_vm)
+### -------------------------------------------------------------------------
+
+quickemu-install:  ## Install quickemu host packages + the `qvm` launcher (`roles/quickemu_vm`; bypasses `setup_quickemu_vm` gate). Prebuilt tumbleweed/debian/fedora images = no interactive install. openSUSE hosts: `quickemu` itself is NOT packaged - the play warns with manual steps. Sudo only for package installs.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/quickemu_vm.yml
+
+quickemu-check:  ## Dry-run `quickemu-install` (`--check --diff`).
+	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/quickemu_vm.yml
+
+quickemu-uninstall-qvm:  ## Uninstall `qvm` + its `~/.local/share/ansible-managed/quickemu-vm/` subdir ONLY; VM data (`~/.local/share/qvm/`) and packages untouched.
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/quickemu_vm_uninstall.yml
 
 ### -------------------------------------------------------------------------
 ### Dry-run (--check --diff)

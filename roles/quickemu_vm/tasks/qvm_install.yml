@@ -1,0 +1,32 @@
+---
+# Install the `qvm` launcher + its shell completions. VM data is qvm's own
+# runtime concern (`~/.local/share/qvm/`, created on first `qvm init`) - the
+# role deploys nothing there on purpose (uninstall must never touch VMs).
+
+- name: Ensure `quickemu_vm_bin_dir` + completion dirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ quickemu_vm_bin_dir }}"
+    - "{{ quickemu_vm_zsh_completion_dir }}"
+    - "{{ quickemu_vm_bash_completion_dir }}"
+
+- name: Install `qvm` to `{{ quickemu_vm_bin_dir }}/qvm`
+  ansible.builtin.copy:
+    src: qvm
+    dest: "{{ quickemu_vm_bin_dir }}/qvm"
+    mode: "0755"
+
+- name: Install `qvm` zsh completion to `{{ quickemu_vm_zsh_completion_dir }}/_qvm`
+  ansible.builtin.copy:
+    src: completions/_qvm
+    dest: "{{ quickemu_vm_zsh_completion_dir }}/_qvm"
+    mode: "0644"
+
+- name: Install `qvm` bash completion to `{{ quickemu_vm_bash_completion_dir }}/qvm`
+  ansible.builtin.copy:
+    src: completions/qvm.bash
+    dest: "{{ quickemu_vm_bash_completion_dir }}/qvm"
+    mode: "0644"

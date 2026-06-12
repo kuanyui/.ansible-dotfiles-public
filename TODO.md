@@ -998,6 +998,52 @@ only xauth changed) + `mpv --vo=wlshm` playing fine under the broken profile on 
   `local_pathbased_mpv.aa.j2` (silences the card1 audit noise; completes the existing
   renderD/nvidiactl/udmabuf deny block). Uncommitted in the working tree.
 
+## quickemu_vm role + `qvm` launcher (v1 built; needs a real-host run)
+
+Sibling of `ivm` on the axis incus can't do (Windows/macOS guests, 3D desktop
+Linux - see `roles/incus_vm/docs/survey-of-quickemu.md`), built to the user's
+"no interactive installs for debian/TW/fedora" requirement. Role-local detail +
+the template-sharing design discussion: `roles/quickemu_vm/TODO.md`.
+
+- [x] **`qvm` launcher** (`files/qvm`, typed Python, stdlib only; 15 unit tests) -
+  `init` prebuilt paths: tumbleweed = official Minimal-VM Cloud qcow2
+  (sha256-verified, cached) + cloud-init NoCloud seed ISO (key-only user,
+  installs qemu-guest-agent on first boot); debian/fedora = `virt-builder`
+  (GPG-verified, agent+sshd baked in, per-VM ed25519 on root); anything else =
+  `quickget` passthrough (Windows unattended), conf adopted. Lifecycle:
+  start (headless default / `--gui` SPICE), stop (ACPI via the HMP monitor
+  socket - no agent needed, Windows too), kill, delete (y/N), list, info.
+  `exec`/`push`/`pull` via the QEMU Guest Agent socket (batch only - QGA has no
+  PTY, upstream-documented); interactive `shell` = SSH on quickemu's
+  auto-forwarded port (per-VM key + per-VM known_hosts). `snapshot` =
+  qcow2-internal passthrough (refused while running, except `info`). cwd
+  binding via per-VM `qvm-meta.json` (nearest ancestor) + global `--name`.
+  quickemu runtime contract verified against `REFS/quickemu` @ 2d9f6c9.
+- [x] **zsh + bash completions** - same `ansible-managed/*/{zsh,bash}-completions`
+  auto-discovery as ivm; `--name` completes from `$QVM_HOME/vms/*.conf` stems.
+- [x] **Role + playbooks + Makefile + gates + READMEs** - host pkgs all
+  probe-gated: `quickemu` (Debian 13+/Fedora 41+ OFFICIAL repos; openSUSE ships
+  NONE - loud warn + manual steps, role continues), `guestfs-tools`
+  (virt-builder; all 3 families incl. TW/Leap - repology 2026-06), `xorriso`
+  (seed ISO; skipped when genisoimage/mkisofs present). `make
+  quickemu-install/check/uninstall-qvm`; `setup_quickemu_vm` gate (default
+  false). VM data lives at `~/.local/share/qvm/` OUTSIDE ansible-managed/ ->
+  uninstall can never erase a VM. Verified: both playbooks syntax-check,
+  `make -n`, e2e in the sandbox env (install -> rerun changed=0 -> uninstall
+  clean, VM data dir untouched).
+- [ ] **Real-host validation** (no KVM in this env): TW first boot (cloud-init
+  installs the agent) -> `qvm exec`; debian/fedora virt-builder path;
+  `qvm init windows 11` unattended; offline snapshot create/apply.
+- [ ] **VERIFY: TW Minimal-VM `-Cloud` image - is `qemu-guest-agent`
+  preinstalled?** If yes, drop the seed's `packages:` step (faster first exec).
+- [ ] **(ivm, separate pass) `templates/base_{debian,opensusetw,fedora}.yaml`** -
+  bare guests, baseline + `basic_tools` only (user request). Symmetry once done:
+  `ivm init base_opensusetw` <-> `qvm init tumbleweed`. Template-sharing
+  decision recorded in `roles/quickemu_vm/TODO.md`: qvm copies NO ivm templates
+  (capability sets differ); the real sharing seam is the `distro_packages`
+  registry JSON (future `qvm provision`); role renaming (`vm_incus`/`vm_quickemu`)
+  deferred.
+
 ## Notes / future
 
 - [ ] **container_apps -> one engine + declarative templates** (parallel to what

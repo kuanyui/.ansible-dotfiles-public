@@ -42,6 +42,12 @@ setup_container_apps: false
 # lower-privilege `incus` group + `incus-user.socket` enabled so the CLI can
 # auto-route through it). Dedicated playbook `playbooks/incus_vm.yml` overrides this.
 setup_incus_vm: false
+# `setup_quickemu_vm`: install the `qvm` quickemu VM launcher via
+# `roles/quickemu_vm` (the desktop/Windows/macOS axis `ivm` doesn't cover;
+# prebuilt tumbleweed/debian/fedora images, guest-agent exec). Off by default -
+# pulls qemu via the `quickemu` package (openSUSE: not packaged, the play warns).
+# Dedicated playbook `playbooks/quickemu_vm.yml` overrides this.
+setup_quickemu_vm: false
 # `setup_apparmor`: deploy AppArmor profiles for desktop GUI apps (Firefox /
 # Chromium / VLC / mpv / VSCode / Telegram / etc.) via `roles/apparmor`. Off by
 # default because target hosts are usually VMs where these profiles don't apply.
