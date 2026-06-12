@@ -1,0 +1,52 @@
+#compdef qvm
+# qvm zsh completion (ansible-managed by roles/quickemu_vm). zsh autoloads this
+# via fpath - see the `ansible-managed/*/zsh-completions` glob in
+# roles/zsh/.zshrc.j2. Two levels: subcommands, then their args - prebuilt OS
+# names for `init`, snapshot actions, VM names for `--name`.
+
+local -a _qvm_subcommands
+_qvm_subcommands=(
+  'init:create a VM (tumbleweed/debian/fedora = prebuilt image; any other OS via quickget)'
+  'start:boot the VM headless (--gui = SPICE desktop window)'
+  'stop:clean ACPI shutdown (monitor socket; no agent needed)'
+  'kill:force-stop the qemu process (quickemu --kill)'
+  'delete:delete the VM - conf + disk + snapshots (confirms)'
+  'shell:interactive SSH (quickemu auto-forwarded port, per-VM key)'
+  'exec:run a command in the guest via the QEMU Guest Agent (batch; root)'
+  'push:copy one local file into the guest (guest agent)'
+  'pull:copy one guest file out (guest agent)'
+  'snapshot:qcow2-internal snapshots - apply/create/delete <tag>, info'
+  'info:show the VM state (conf, disk, ssh port, agent socket)'
+  'list:list qvm-managed VMs (name, state, bound dir)'
+)
+
+# qvm VM names = vms/<name>.conf stems under QVM_HOME (no daemon to ask - fast).
+_qvm_vm_names() {
+  local _qvm_vms_dir="${QVM_HOME:-$HOME/.local/share/qvm}/vms"
+  local _qvm_conf_path
+  for _qvm_conf_path in ${_qvm_vms_dir}/*.conf(N); do
+    print -r -- "${_qvm_conf_path:t:r}"
+  done
+}
+
+local state
+
+_arguments -C \
+  '--name[target an existing VM by name, ignoring the cwd binding]:vm:->vmname' \
+  '--dry-run[print every mutating command instead of running it]' \
+  '1:subcommand:->subcmd' \
+  '*::args:->args'
+
+case "$state" in
+  subcmd) _describe 'qvm subcommand' _qvm_subcommands ;;
+  vmname) compadd -- ${(f)"$(_qvm_vm_names)"} ;;
+  args)
+    case "$words[1]" in
+      init) compadd -- tumbleweed debian fedora --disk-size --ram --cpus --yes ;;
+      start) compadd -- --gui ;;
+      delete) compadd -- --yes ;;
+      snapshot) compadd -- apply create delete info ;;
+      push|pull) _files ;;
+    esac
+    ;;
+esac
