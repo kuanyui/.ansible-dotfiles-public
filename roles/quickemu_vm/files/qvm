@@ -1,0 +1,917 @@
+#!/usr/bin/env python3
+"""qvm - quickemu VM launcher (sibling of `ivm`; desktop/Windows/macOS axis).
+
+Drives `quickemu`/`quickget` from the host. Where `ivm` gives per-project
+headless Linux dev VMs on incus, `qvm` wraps quickemu for everything incus
+can't do (Windows/macOS guests, 3D desktop Linux) while fixing quickemu's two
+gaps for this repo's workflow:
+
+  - NO interactive OS install for the user's main distros: `init tumbleweed`
+    downloads the official Minimal-VM Cloud qcow2 (sha256-verified) + builds a
+    cloud-init NoCloud seed ISO; `init debian` / `init fedora` run
+    `virt-builder` (GPG-verified prebuilt images). Any other OS falls through
+    to `quickget` (installer ISO - interactive once; Windows is unattended).
+  - host->guest exec WITHOUT SSH: `exec`/`push`/`pull` speak the QEMU Guest
+    Agent protocol (JSON over the `<vm>-agent.sock` unix socket quickemu
+    already wires up). Batch only - QGA has no PTY; interactive `shell` uses
+    quickemu's auto-forwarded SSH port instead.
+
+Layout (runtime data - NOT under ansible-managed/, so uninstalling the role
+never touches VMs):
+  ~/.local/share/qvm/vms/<name>.conf   quickemu conf (absolute disk_img)
+  ~/.local/share/qvm/vms/<name>/       disk.qcow2, seed.iso, ssh keypair,
+                                       qvm-meta.json (cwd binding), quickemu
+                                       state (<name>.pid/.ports/.log/sockets)
+  ~/.local/share/qvm/cache/            downloaded base images
+
+quickemu runtime contract this relies on (verified against REFS/quickemu @
+2d9f6c9): qemu runs in the BACKGROUND (`... &` + `-pidfile`); `VMDIR =
+dirname(disk_img)`; ssh hostfwd port auto-picked from 22220 and recorded as
+`ssh,<port>` in `<vm>.ports`; a "used" disk image boots WITHOUT installer
+media; the guest-agent socket exists for `--display none|spice|spice-app`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+from typing import Any, NamedTuple, NoReturn
+
+QVM_DATA_HOME: Path = Path(os.environ.get("QVM_HOME", str(Path.home() / ".local/share/qvm")))
+VMS_DIR: Path = QVM_DATA_HOME / "vms"
+IMAGE_CACHE_DIR: Path = QVM_DATA_HOME / "cache"
+
+# `init <os>` arguments served by a PREBUILT image (no interactive installer).
+# Everything else is handed to `quickget <os> ...` as-is.
+TUMBLEWEED_CLOUD_QCOW2_URL: str = (
+    "https://download.opensuse.org/tumbleweed/appliances/"
+    "openSUSE-Tumbleweed-Minimal-VM.x86_64-Cloud.qcow2"
+)
+# virt-builder image name per `qvm init <os>` (GPG-verified prebuilt images from
+# builder.libguestfs.org; the index has NO openSUSE - hence the appliance URL above).
+VIRT_BUILDER_IMAGE_BY_OS: dict[str, str] = {
+    "debian": "debian-13",
+    "fedora": "fedora-43",
+}
+PREBUILT_OSES: tuple[str, ...] = ("tumbleweed", "debian", "fedora")
+
+# The guest account `shell`/cloud-init use. virt-builder images get the key on
+# `root`; the Tumbleweed cloud image creates this user via the seed ISO.
+TUMBLEWEED_SSH_USER: str = "user"
+VIRT_BUILDER_SSH_USER: str = "root"
+
+DEFAULT_DISK_SIZE: str = "32G"
+
+# VM name: quickemu derives state-file names from it, so keep it path/shell-safe.
+VM_NAME_RE: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$")
+
+QVM_META_FILENAME: str = "qvm-meta.json"
+
+# Subcommands that act on ONE existing VM, resolved by cwd binding or `--name`.
+VM_ACTING_SUBCOMMANDS: tuple[str, ...] = (
+    "start", "stop", "kill", "delete", "shell", "exec", "push", "pull",
+    "snapshot", "info",
+)
+
+VM_NAME_COLOR: str = "\033[1;36m"  # bold cyan, same convention as ivm
+COLOR_RESET: str = "\033[0m"
+
+
+def colorize_vm_name(vm_name: str, *, stream: Any = sys.stderr) -> str:
+    """Bold-cyan the VM name on TTYs (NO_COLOR honored), plain otherwise."""
+    if os.environ.get("NO_COLOR") or not stream.isatty():
+        return vm_name
+    return f"{VM_NAME_COLOR}{vm_name}{COLOR_RESET}"
+
+
+def die(message: str) -> NoReturn:
+    print(f"qvm: error: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def run(command_argv: list[str], *, dry_run: bool, cwd: Path | None = None) -> None:
+    """Run a mutating command, printing the exact argv FIRST (transparency rule)."""
+    print("+ " + shlex.join(command_argv), file=sys.stderr)
+    if dry_run:
+        return
+    subprocess.run(command_argv, check=True, cwd=cwd)
+
+
+def run_capture(command_argv: list[str], *, cwd: Path | None = None) -> tuple[int, str, str]:
+    """Run read-only, capture (returncode, stdout, stderr); missing binary -> rc 127."""
+    try:
+        completed = subprocess.run(command_argv, capture_output=True, text=True, check=False, cwd=cwd)
+    except FileNotFoundError:
+        return 127, "", f"{command_argv[0]}: not found"
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+def confirm_or_die(prompt_text: str, *, assume_yes: bool) -> None:
+    """y/N gate before anything heavy (download / build / delete). Non-TTY aborts
+    unless --yes, so scripts can never stumble into a half-made VM."""
+    if assume_yes:
+        return
+    if not sys.stdin.isatty():
+        die("not a TTY and --yes not given - refusing to proceed unconfirmed")
+    reply: str = input(f"{prompt_text} [y/N] ").strip().lower()
+    if reply not in ("y", "yes"):
+        die("aborted by user")
+
+
+# ---------- conf / ports / meta parsing (pure helpers; unit-tested) ----------
+
+
+def parse_conf_text(conf_text: str) -> dict[str, str]:
+    """Parse a quickemu `.conf` (shell `key="value"` lines; quickget writes the
+    same shape). Comments / non-assignment lines are skipped. Good enough for
+    the keys qvm reads back (guest_os, disk_img, fixed_iso); NOT a shell parser."""
+    parsed_conf: dict[str, str] = {}
+    for conf_line in conf_text.splitlines():
+        assignment = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=["\']?(.*?)["\']?\s*$', conf_line.strip())
+        if assignment and not conf_line.lstrip().startswith("#"):
+            parsed_conf[assignment.group(1)] = assignment.group(2)
+    return parsed_conf
+
+
+def render_conf_text(guest_os: str, disk_img_path: Path, *, fixed_iso_path: Path | None,
+                     disk_size: str, ram: str, cpu_cores: str) -> str:
+    """The quickemu conf qvm writes for a prebuilt image: ABSOLUTE disk_img (so
+    `VMDIR = dirname(disk_img)` is stable no matter where quickemu runs), no
+    `iso=` (the disk is already installed - quickemu boots it directly)."""
+    conf_lines: list[str] = [
+        "#!/usr/bin/env quickemu --vm",
+        "# Managed by qvm (roles/quickemu_vm) - prebuilt image, no installer ISO.",
+        f'guest_os="{guest_os}"',
+        f'disk_img="{disk_img_path}"',
+    ]
+    if fixed_iso_path is not None:
+        conf_lines.append(f'fixed_iso="{fixed_iso_path}"')
+    conf_lines.append(f'disk_size="{disk_size}"')
+    if ram:
+        conf_lines.append(f'ram="{ram}"')
+    if cpu_cores:
+        conf_lines.append(f'cpu_cores="{cpu_cores}"')
+    return "\n".join(conf_lines) + "\n"
+
+
+def parse_ssh_port(ports_file_text: str) -> int | None:
+    """The `ssh,<port>` line quickemu writes to `<vm>.ports` at boot."""
+    for ports_line in ports_file_text.splitlines():
+        port_fields: list[str] = ports_line.strip().split(",")
+        if len(port_fields) == 2 and port_fields[0] == "ssh" and port_fields[1].isdigit():
+            return int(port_fields[1])
+    return None
+
+
+def parse_sha256_line(sha256_file_text: str, image_filename: str) -> str | None:
+    """The `<hex>  <filename>` line matching `image_filename` from a `.sha256` file."""
+    for sha256_line in sha256_file_text.splitlines():
+        checksum_fields: list[str] = sha256_line.split()
+        if len(checksum_fields) >= 2 and Path(checksum_fields[-1].lstrip("*")).name == image_filename:
+            return checksum_fields[0].lower()
+    return None
+
+
+class VmRecord(NamedTuple):
+    """One qvm-managed VM: its conf + VMDIR + recorded metadata."""
+    vm_name: str
+    conf_path: Path
+    vm_dir: Path
+    meta: dict[str, Any]
+
+
+def choose_vm_for_cwd(vm_records: list[VmRecord], cwd: Path) -> VmRecord | None:
+    """The VM whose recorded `init_at_dir` is `cwd`, else the NEAREST ancestor
+    binding (deepest wins). >1 match at the same depth -> ValueError (caller
+    dies with a `--name` hint). Pure; unit-tested."""
+    bindings_by_dir: dict[Path, list[VmRecord]] = {}
+    for vm_record in vm_records:
+        recorded_init_dir: str = str(vm_record.meta.get("init_at_dir") or "")
+        if recorded_init_dir:
+            bindings_by_dir.setdefault(Path(recorded_init_dir), []).append(vm_record)
+    for candidate_dir in (cwd, *cwd.parents):
+        candidates_at_dir: list[VmRecord] = bindings_by_dir.get(candidate_dir, [])
+        if len(candidates_at_dir) > 1:
+            raise ValueError(
+                f"multiple VMs bound to {candidate_dir}: "
+                + ", ".join(candidate.vm_name for candidate in candidates_at_dir))
+        if candidates_at_dir:
+            return candidates_at_dir[0]
+    return None
+
+
+# ---------- VM registry (scan vms/) ----------
+
+
+def list_vm_records() -> list[VmRecord]:
+    """Every `vms/<name>.conf` + its VMDIR + qvm-meta.json (missing meta -> {},
+    e.g. a conf quickget wrote that qvm has not adopted)."""
+    vm_records: list[VmRecord] = []
+    if not VMS_DIR.is_dir():
+        return vm_records
+    for conf_path in sorted(VMS_DIR.glob("*.conf")):
+        vm_name: str = conf_path.stem
+        vm_dir: Path = VMS_DIR / vm_name
+        meta: dict[str, Any] = {}
+        try:
+            parsed_meta: Any = json.loads((vm_dir / QVM_META_FILENAME).read_text())
+            if isinstance(parsed_meta, dict):
+                meta = parsed_meta
+        except (OSError, ValueError):
+            pass
+        vm_records.append(VmRecord(vm_name, conf_path, vm_dir, meta))
+    return vm_records
+
+
+def resolve_target_vm(name_flag: str | None) -> VmRecord:
+    """The VM a subcommand acts on: `--name` wins; else the cwd binding."""
+    vm_records: list[VmRecord] = list_vm_records()
+    if name_flag:
+        for vm_record in vm_records:
+            if vm_record.vm_name == name_flag:
+                return vm_record
+        die(f"no VM named `{name_flag}` (known: "
+            f"{', '.join(record.vm_name for record in vm_records) or '(none)'})")
+    try:
+        cwd_bound_vm: VmRecord | None = choose_vm_for_cwd(vm_records, Path.cwd())
+    except ValueError as ambiguous:
+        die(f"{ambiguous} - pick one with `--name <vm>`")
+    if cwd_bound_vm is None:
+        die("no VM bound to this directory (or its ancestors) - "
+            "`qvm init <os>` here, or target one with `--name <vm>`")
+    return cwd_bound_vm
+
+
+def vm_pid_if_running(vm_record: VmRecord) -> int | None:
+    """quickemu writes `<vm>.pid` (qemu `-pidfile`); stale files are filtered
+    with a 0-signal probe."""
+    try:
+        qemu_pid: int = int((vm_record.vm_dir / f"{vm_record.vm_name}.pid").read_text().strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(qemu_pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return None
+    return qemu_pid
+
+
+# ---------- QEMU Guest Agent client (exec / push / pull) ----------
+# Protocol: newline-delimited JSON on `<vmdir>/<vm>-agent.sock` (the chardev
+# quickemu wires for --display none|spice|spice-app). guest-exec output is only
+# available AFTER the process exits (no PTY/streaming - upstream-documented), so
+# `exec` is batch-only; interactive work goes through `qvm shell` (SSH).
+
+
+class GuestAgentError(Exception):
+    pass
+
+
+def guest_agent_socket_path(vm_record: VmRecord) -> Path:
+    return vm_record.vm_dir / f"{vm_record.vm_name}-agent.sock"
+
+
+def qga_call(agent_socket_path: Path, execute: str, arguments: dict[str, Any] | None = None,
+             *, timeout_seconds: float = 10.0) -> Any:
+    """One QGA command -> its `return` value. Each call opens a fresh connection
+    and `guest-sync`s first (flushes any stale half-line the agent buffered), so
+    responses can't get crossed between calls."""
+    sync_id: int = (os.getpid() << 16) | (time.monotonic_ns() & 0xFFFF)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as agent_connection:
+        agent_connection.settimeout(timeout_seconds)
+        try:
+            agent_connection.connect(str(agent_socket_path))
+        except OSError as connect_error:
+            raise GuestAgentError(f"cannot connect to {agent_socket_path}: {connect_error}") from None
+
+        def send_request(request_execute: str, request_arguments: dict[str, Any] | None) -> None:
+            request_document: dict[str, Any] = {"execute": request_execute}
+            if request_arguments is not None:
+                request_document["arguments"] = request_arguments
+            agent_connection.sendall(json.dumps(request_document).encode() + b"\n")
+
+        received_buffer: bytes = b""
+
+        def read_response() -> Any:
+            nonlocal received_buffer
+            deadline: float = time.monotonic() + timeout_seconds
+            while True:
+                newline_position: int = received_buffer.find(b"\n")
+                if newline_position >= 0:
+                    response_line: bytes = received_buffer[:newline_position]
+                    received_buffer = received_buffer[newline_position + 1:]
+                    if not response_line.strip():
+                        continue
+                    response_document: Any = json.loads(response_line)
+                    if isinstance(response_document, dict) and "error" in response_document:
+                        error_description: str = str(
+                            (response_document["error"] or {}).get("desc", response_document["error"]))
+                        raise GuestAgentError(f"{execute}: {error_description}")
+                    if isinstance(response_document, dict) and "return" in response_document:
+                        return response_document["return"]
+                    continue  # events etc. - not ours, keep reading
+                if time.monotonic() > deadline:
+                    raise GuestAgentError(f"{execute}: timed out after {timeout_seconds}s")
+                try:
+                    received_chunk: bytes = agent_connection.recv(65536)
+                except TimeoutError:
+                    raise GuestAgentError(f"{execute}: timed out after {timeout_seconds}s") from None
+                if not received_chunk:
+                    raise GuestAgentError(f"{execute}: agent closed the connection")
+                received_buffer += received_chunk
+
+        # guest-sync: skip everything until the echoed id comes back.
+        send_request("guest-sync", {"id": sync_id})
+        while True:
+            sync_reply: Any = read_response()
+            if sync_reply == sync_id:
+                break
+        send_request(execute, arguments)
+        return read_response()
+
+
+def qga_call_or_die(vm_record: VmRecord, execute: str, arguments: dict[str, Any] | None = None,
+                    *, timeout_seconds: float = 10.0) -> Any:
+    """`qga_call` with the human diagnosis attached (VM down? agent not installed
+    yet? cloud-init still installing it on first boot?)."""
+    if vm_pid_if_running(vm_record) is None:
+        die(f"VM `{vm_record.vm_name}` is not running - `qvm start` first")
+    try:
+        return qga_call(guest_agent_socket_path(vm_record), execute, arguments,
+                        timeout_seconds=timeout_seconds)
+    except GuestAgentError as agent_error:
+        die(f"guest agent unreachable ({agent_error}).\n"
+            "  Likely causes: the guest is still booting; `qemu-guest-agent` is not\n"
+            "  installed/running in the guest (tumbleweed installs it via cloud-init on\n"
+            "  FIRST boot - give it a minute); or the VM was started without\n"
+            "  --display none/spice. Interactive fallback: `qvm shell` (SSH).")
+
+
+def cmd_exec(vm_record: VmRecord, guest_argv: list[str]) -> NoReturn:
+    """Run a command in the guest via QGA guest-exec (root, no SSH, no
+    credentials). Batch semantics: stdout/stderr arrive only after exit."""
+    if not guest_argv:
+        die("exec needs a command, e.g. `qvm exec -- uname -a`")
+    print(f"+ (guest-exec) {shlex.join(guest_argv)}", file=sys.stderr)
+    started: Any = qga_call_or_die(vm_record, "guest-exec", {
+        "path": guest_argv[0], "arg": guest_argv[1:], "capture-output": "separated"})
+    guest_pid: int = int(started["pid"])
+    while True:
+        execution_status: Any = qga_call_or_die(vm_record, "guest-exec-status", {"pid": guest_pid})
+        if execution_status.get("exited"):
+            break
+        time.sleep(0.3)
+    sys.stdout.write(base64.b64decode(execution_status.get("out-data", "")).decode(errors="replace"))
+    sys.stderr.write(base64.b64decode(execution_status.get("err-data", "")).decode(errors="replace"))
+    for truncated_stream_key in ("out-truncated", "err-truncated"):
+        if execution_status.get(truncated_stream_key):
+            print(f"qvm: warning: {truncated_stream_key} - output hit the agent's size cap; "
+                  "write to a guest file and `qvm pull` it instead", file=sys.stderr)
+    raise SystemExit(int(execution_status.get("exitcode", 1)))
+
+
+QGA_FILE_CHUNK_BYTES: int = 1024 * 1024
+
+
+def cmd_push(vm_record: VmRecord, local_path_argument: str, guest_path: str) -> None:
+    """Copy ONE local file into the guest via QGA guest-file-write (as root)."""
+    local_file_path: Path = Path(local_path_argument)
+    if not local_file_path.is_file():
+        die(f"`{local_file_path}` is not a regular file (qvm push handles single files)")
+    print(f"+ (guest-file) push {local_file_path} -> {guest_path}", file=sys.stderr)
+    guest_file_handle: Any = qga_call_or_die(vm_record, "guest-file-open",
+                                             {"path": guest_path, "mode": "wb"})
+    try:
+        with open(local_file_path, "rb") as local_file:
+            while True:
+                file_chunk: bytes = local_file.read(QGA_FILE_CHUNK_BYTES)
+                if not file_chunk:
+                    break
+                qga_call_or_die(vm_record, "guest-file-write", {
+                    "handle": guest_file_handle,
+                    "buf-b64": base64.b64encode(file_chunk).decode()})
+    finally:
+        qga_call_or_die(vm_record, "guest-file-close", {"handle": guest_file_handle})
+    print(f"==> pushed to {colorize_vm_name(vm_record.vm_name)}:{guest_path}", file=sys.stderr)
+
+
+def cmd_pull(vm_record: VmRecord, guest_path: str, local_path_argument: str) -> None:
+    """Copy ONE guest file out via QGA guest-file-read."""
+    local_file_path: Path = Path(local_path_argument)
+    print(f"+ (guest-file) pull {guest_path} -> {local_file_path}", file=sys.stderr)
+    guest_file_handle: Any = qga_call_or_die(vm_record, "guest-file-open",
+                                             {"path": guest_path, "mode": "rb"})
+    try:
+        with open(local_file_path, "wb") as local_file:
+            while True:
+                read_reply: Any = qga_call_or_die(vm_record, "guest-file-read", {
+                    "handle": guest_file_handle, "count": QGA_FILE_CHUNK_BYTES})
+                local_file.write(base64.b64decode(read_reply.get("buf-b64", "")))
+                if read_reply.get("eof"):
+                    break
+    finally:
+        qga_call_or_die(vm_record, "guest-file-close", {"handle": guest_file_handle})
+    print(f"==> pulled from {colorize_vm_name(vm_record.vm_name)}:{guest_path}", file=sys.stderr)
+
+
+# ---------- init: prebuilt images (the no-interactive-install paths) ----------
+
+
+def download_with_cache(image_url: str, *, dry_run: bool) -> Path:
+    """Download `image_url` into the cache (printed first - transparency for
+    outside-repo fetches), verifying the publisher's `.sha256`. A cached copy is
+    reused as-is: Tumbleweed is rolling, so the REMOTE checksum changes over
+    time and would false-fail a re-verify; delete the cache file to re-download."""
+    cached_image_path: Path = IMAGE_CACHE_DIR / Path(image_url).name
+    if cached_image_path.exists():
+        print(f"==> using cached {cached_image_path} (delete it to re-download)", file=sys.stderr)
+        return cached_image_path
+    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"+ GET {image_url}", file=sys.stderr)
+    print(f"+ GET {image_url}.sha256", file=sys.stderr)
+    if dry_run:
+        return cached_image_path
+    with urllib.request.urlopen(f"{image_url}.sha256") as sha256_response:
+        published_sha256: str | None = parse_sha256_line(
+            sha256_response.read().decode(), cached_image_path.name)
+    if not published_sha256:
+        die(f"no checksum for {cached_image_path.name} in {image_url}.sha256")
+    download_in_progress_path: Path = cached_image_path.with_suffix(".partial")
+    image_digest = hashlib.sha256()
+    with urllib.request.urlopen(image_url) as image_response, \
+            open(download_in_progress_path, "wb") as partial_file:
+        while True:
+            downloaded_chunk: bytes = image_response.read(QGA_FILE_CHUNK_BYTES)
+            if not downloaded_chunk:
+                break
+            image_digest.update(downloaded_chunk)
+            partial_file.write(downloaded_chunk)
+    if image_digest.hexdigest().lower() != published_sha256:
+        download_in_progress_path.unlink()
+        die(f"sha256 MISMATCH for {image_url}\n"
+            f"  expected {published_sha256}\n  got      {image_digest.hexdigest()}")
+    download_in_progress_path.rename(cached_image_path)
+    print(f"==> downloaded + sha256-verified {cached_image_path}", file=sys.stderr)
+    return cached_image_path
+
+
+def generate_vm_ssh_keypair(vm_dir: Path, *, dry_run: bool) -> Path:
+    """Per-VM ed25519 keypair (no passphrase) - `shell` uses it; nothing from the
+    host's own ~/.ssh is reused. Returns the PUBLIC key path."""
+    ssh_key_path: Path = vm_dir / "ssh" / "id_ed25519"
+    if not dry_run:
+        ssh_key_path.parent.mkdir(parents=True, exist_ok=True)
+    run(["ssh-keygen", "-t", "ed25519", "-N", "", "-C", f"qvm-{vm_dir.name}",
+         "-f", str(ssh_key_path)], dry_run=dry_run)
+    return ssh_key_path.with_suffix(".pub")
+
+
+def render_cloud_init_user_data(vm_name: str, ssh_public_key_line: str) -> str:
+    """NoCloud user-data for the Tumbleweed cloud image: create the login user
+    (key-only, passwordless sudo) and install+enable qemu-guest-agent on first
+    boot - that closes the chicken-and-egg for `qvm exec`."""
+    return "\n".join([
+        "#cloud-config",
+        f"hostname: {vm_name}",
+        "users:",
+        f"  - name: {TUMBLEWEED_SSH_USER}",
+        '    sudo: "ALL=(ALL) NOPASSWD:ALL"',
+        "    shell: /bin/bash",
+        "    lock_passwd: true",
+        "    ssh_authorized_keys:",
+        f"      - {ssh_public_key_line}",
+        "packages:",
+        "  - qemu-guest-agent",
+        "runcmd:",
+        "  - [systemctl, enable, --now, qemu-guest-agent]",
+        "",
+    ])
+
+
+def find_seed_iso_tool() -> list[str]:
+    """The ISO-9660 writer to build the cidata seed with, as the argv PREFIX
+    (xorriso needs its mkisofs emulation flag)."""
+    if shutil.which("xorriso"):
+        return ["xorriso", "-as", "mkisofs"]
+    for mkisofs_compatible_tool in ("genisoimage", "mkisofs"):
+        if shutil.which(mkisofs_compatible_tool):
+            return [mkisofs_compatible_tool]
+    die("need xorriso / genisoimage / mkisofs to build the cloud-init seed ISO "
+        "(the role installs xorriso; or install one manually)")
+
+
+def build_seed_iso(vm_dir: Path, vm_name: str, ssh_public_key_path: Path, *, dry_run: bool) -> Path:
+    """The NoCloud seed: a tiny ISO labeled `cidata` holding user-data +
+    meta-data; attached via the conf's `fixed_iso` (a plain CD-ROM to quickemu)."""
+    seed_content_dir: Path = vm_dir / "seed"
+    seed_iso_path: Path = vm_dir / "seed.iso"
+    if not dry_run:
+        seed_content_dir.mkdir(parents=True, exist_ok=True)
+        ssh_public_key_line: str = ssh_public_key_path.read_text().strip()
+        (seed_content_dir / "user-data").write_text(
+            render_cloud_init_user_data(vm_name, ssh_public_key_line))
+        (seed_content_dir / "meta-data").write_text(
+            f"instance-id: qvm-{vm_name}\nlocal-hostname: {vm_name}\n")
+    run([*find_seed_iso_tool(), "-volid", "cidata", "-joliet", "-rock",
+         "-o", str(seed_iso_path), str(seed_content_dir)], dry_run=dry_run)
+    return seed_iso_path
+
+
+def init_tumbleweed_disk(vm_dir: Path, vm_name: str, disk_size: str, *,
+                         dry_run: bool) -> Path | None:
+    """Tumbleweed: official Minimal-VM Cloud qcow2 -> disk.qcow2 (+resize) + the
+    cloud-init seed ISO. Returns the seed ISO path (becomes `fixed_iso`)."""
+    cached_image_path: Path = download_with_cache(TUMBLEWEED_CLOUD_QCOW2_URL, dry_run=dry_run)
+    disk_image_path: Path = vm_dir / "disk.qcow2"
+    print(f"+ cp {cached_image_path} {disk_image_path}", file=sys.stderr)
+    if not dry_run:
+        shutil.copyfile(cached_image_path, disk_image_path)
+    run(["qemu-img", "resize", str(disk_image_path), disk_size], dry_run=dry_run)
+    ssh_public_key_path: Path = generate_vm_ssh_keypair(vm_dir, dry_run=dry_run)
+    return build_seed_iso(vm_dir, vm_name, ssh_public_key_path, dry_run=dry_run)
+
+
+def init_virt_builder_disk(vm_dir: Path, vm_name: str, guest_os_label: str, disk_size: str, *,
+                           dry_run: bool) -> Path | None:
+    """Debian/Fedora: `virt-builder` (GPG-verified prebuilt image). qemu-guest-agent
+    + sshd installed INTO the image; the per-VM key goes on root. virt-builder's
+    default random root password is printed on ITS stdout (console fallback)."""
+    ssh_public_key_path: Path = generate_vm_ssh_keypair(vm_dir, dry_run=dry_run)
+    virt_builder_argv: list[str] = [
+        "virt-builder", VIRT_BUILDER_IMAGE_BY_OS[guest_os_label],
+        "--output", str(vm_dir / "disk.qcow2"), "--format", "qcow2",
+        "--size", disk_size, "--hostname", vm_name,
+        "--install", "qemu-guest-agent,openssh-server",
+        "--firstboot-command", "systemctl enable --now qemu-guest-agent sshd",
+        "--ssh-inject", f"{VIRT_BUILDER_SSH_USER}:file:{ssh_public_key_path}",
+    ]
+    if guest_os_label == "fedora":
+        virt_builder_argv.append("--selinux-relabel")  # key/agent files need correct labels
+    run(virt_builder_argv, dry_run=dry_run)
+    return None  # no seed ISO on this path
+
+
+def cmd_init(os_arguments: list[str], *, disk_size: str, ram: str,
+             cpu_cores: str, assume_yes: bool, dry_run: bool) -> None:
+    """Create a VM: prebuilt path for tumbleweed/debian/fedora (zero interactive
+    install; optional 2nd positional = VM name), `quickget` passthrough for
+    everything else (Windows is unattended; most Linux ISOs are interactive
+    ONCE - keep the installed disk around)."""
+    if not os_arguments:
+        die(f"init needs an OS: one of {', '.join(PREBUILT_OSES)} (prebuilt, no installer), "
+            "or any `quickget` OS (e.g. `qvm init windows 11`)")
+    guest_os_label: str = os_arguments[0]
+    if guest_os_label not in PREBUILT_OSES:
+        init_via_quickget(os_arguments, assume_yes=assume_yes, dry_run=dry_run)
+        return
+    if len(os_arguments) > 2:
+        die(f"`qvm init {guest_os_label}` takes at most a VM name after the OS "
+            f"(got: {os_arguments[1:]})")
+    vm_name: str = os_arguments[1] if len(os_arguments) == 2 else guest_os_label
+    if not VM_NAME_RE.match(vm_name):
+        die(f"bad VM name `{vm_name}` (want: alnum start, then [a-zA-Z0-9_-], <=63 chars)")
+    conf_path: Path = VMS_DIR / f"{vm_name}.conf"
+    vm_dir: Path = VMS_DIR / vm_name
+    if conf_path.exists() or vm_dir.exists():
+        die(f"VM `{vm_name}` already exists ({conf_path}) - pick another --name or `qvm delete` it")
+    ssh_user: str = TUMBLEWEED_SSH_USER if guest_os_label == "tumbleweed" else VIRT_BUILDER_SSH_USER
+    image_source_description: str = (TUMBLEWEED_CLOUD_QCOW2_URL if guest_os_label == "tumbleweed"
+                                     else f"virt-builder {VIRT_BUILDER_IMAGE_BY_OS[guest_os_label]}")
+    print("\n".join([
+        "qvm init preview:",
+        f"  name        {vm_name}",
+        f"  os          {guest_os_label} (prebuilt - NO interactive install)",
+        f"  image from  {image_source_description}",
+        f"  disk        {vm_dir}/disk.qcow2  (size {disk_size})",
+        f"  conf        {conf_path}" + (f"  (ram {ram})" if ram else ""),
+        f"  ssh user    {ssh_user} (per-VM key in {vm_dir}/ssh/)",
+        f"  bound to    {Path.cwd()}  (subcommands here resolve to this VM)",
+    ]), file=sys.stderr)
+    confirm_or_die("proceed?", assume_yes=assume_yes)
+    if not dry_run:
+        vm_dir.mkdir(parents=True, exist_ok=True)
+    if guest_os_label == "tumbleweed":
+        seed_iso_path: Path | None = init_tumbleweed_disk(vm_dir, vm_name, disk_size, dry_run=dry_run)
+    else:
+        seed_iso_path = init_virt_builder_disk(vm_dir, vm_name, guest_os_label, disk_size,
+                                               dry_run=dry_run)
+    conf_text: str = render_conf_text("linux", vm_dir / "disk.qcow2",
+                                      fixed_iso_path=seed_iso_path, disk_size=disk_size,
+                                      ram=ram, cpu_cores=cpu_cores)
+    print(f"+ write {conf_path}", file=sys.stderr)
+    if not dry_run:
+        conf_path.write_text(conf_text)
+        write_vm_meta(vm_dir, vm_name, guest_os_label, ssh_user)
+    print("\n".join([
+        f"==> {colorize_vm_name(vm_name)} created. Next:",
+        "",
+        "    qvm start",
+        "",
+        "  then `qvm exec -- uname -a` (guest agent; tumbleweed installs the agent on",
+        "  FIRST boot via cloud-init - allow a minute) or `qvm shell` (SSH).",
+    ]), file=sys.stderr)
+
+
+def write_vm_meta(vm_dir: Path, vm_name: str, guest_os_label: str, ssh_user: str) -> None:
+    (vm_dir / QVM_META_FILENAME).write_text(json.dumps({
+        "vm_name": vm_name,
+        "guest_os_label": guest_os_label,
+        "ssh_user": ssh_user,
+        "init_at_dir": str(Path.cwd()),
+    }, indent=2) + "\n")
+
+
+def init_via_quickget(quickget_arguments: list[str], *, assume_yes: bool, dry_run: bool) -> None:
+    """Anything qvm has no prebuilt path for: hand to `quickget` verbatim (it
+    downloads installer media + writes the conf; Windows install is unattended,
+    most others are interactive ONCE). The new conf is then adopted: meta written
+    so cwd binding + `qvm start/...` work on it."""
+    if shutil.which("quickget") is None:
+        die("`quickget` not found - install quickemu (Debian 13+/Fedora 41+: official "
+            "repo; openSUSE: not packaged, install manually)")
+    confirm_or_die(f"run `quickget {shlex.join(quickget_arguments)}` under {VMS_DIR}?",
+                   assume_yes=assume_yes)
+    if not dry_run:
+        VMS_DIR.mkdir(parents=True, exist_ok=True)
+    conf_paths_before: set[Path] = set(VMS_DIR.glob("*.conf"))
+    run(["quickget", *quickget_arguments], dry_run=dry_run, cwd=VMS_DIR)
+    if dry_run:
+        return
+    newly_written_confs: list[Path] = sorted(set(VMS_DIR.glob("*.conf")) - conf_paths_before)
+    if not newly_written_confs:
+        die("quickget wrote no new .conf - see its output above")
+    for new_conf_path in newly_written_confs:
+        quickget_vm_name: str = new_conf_path.stem
+        quickget_vm_dir: Path = VMS_DIR / quickget_vm_name
+        quickget_vm_dir.mkdir(exist_ok=True)
+        write_vm_meta(quickget_vm_dir, quickget_vm_name,
+                      guest_os_label=quickget_arguments[0], ssh_user="")
+        print(f"==> adopted {colorize_vm_name(quickget_vm_name)} "
+              f"(bound to {Path.cwd()}); `qvm start` boots the installer", file=sys.stderr)
+
+
+# ---------- lifecycle ----------
+
+
+def quickemu_argv(vm_record: VmRecord, *extra_quickemu_arguments: str) -> list[str]:
+    return ["quickemu", "--vm", str(vm_record.conf_path), *extra_quickemu_arguments]
+
+
+def cmd_start(vm_record: VmRecord, *, gui: bool, dry_run: bool) -> None:
+    """Boot via quickemu (qemu goes to the background; state lands in the VMDIR).
+    Headless `--display none` by default - the guest-agent socket needs
+    none/spice/spice-app, and that keeps `exec`/`push` working."""
+    if vm_pid_if_running(vm_record) is not None:
+        print(f"==> {colorize_vm_name(vm_record.vm_name)} is already running", file=sys.stderr)
+        return
+    display_mode: str = "spice" if gui else "none"
+    # cwd=VMS_DIR: quickget-written confs use paths relative to where quickget ran.
+    run(quickemu_argv(vm_record, "--display", display_mode), dry_run=dry_run, cwd=VMS_DIR)
+    ssh_port: int | None = read_ssh_port(vm_record)
+    if ssh_port is not None:
+        print(f"==> ssh forwarded on localhost:{ssh_port} (`qvm shell`)", file=sys.stderr)
+
+
+def read_ssh_port(vm_record: VmRecord) -> int | None:
+    try:
+        return parse_ssh_port((vm_record.vm_dir / f"{vm_record.vm_name}.ports").read_text())
+    except OSError:
+        return None
+
+
+def cmd_stop(vm_record: VmRecord, *, dry_run: bool) -> None:
+    """Clean ACPI shutdown via quickemu's HMP monitor socket (no agent needed,
+    works for Windows too). Hard fallback: `qvm kill`."""
+    if vm_pid_if_running(vm_record) is None:
+        print(f"==> {colorize_vm_name(vm_record.vm_name)} is not running", file=sys.stderr)
+        return
+    monitor_socket_path: Path = vm_record.vm_dir / f"{vm_record.vm_name}-monitor.socket"
+    print(f"+ (monitor) system_powerdown -> {monitor_socket_path}", file=sys.stderr)
+    if dry_run:
+        return
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as monitor_connection:
+            monitor_connection.settimeout(5.0)
+            monitor_connection.connect(str(monitor_socket_path))
+            monitor_connection.sendall(b"system_powerdown\n")
+    except OSError as monitor_error:
+        die(f"monitor socket failed ({monitor_error}) - `qvm kill` to force-stop")
+    print(f"==> ACPI powerdown sent to {colorize_vm_name(vm_record.vm_name)}", file=sys.stderr)
+
+
+def cmd_kill(vm_record: VmRecord, *, dry_run: bool) -> None:
+    run(quickemu_argv(vm_record, "--kill"), dry_run=dry_run, cwd=VMS_DIR)
+
+
+def cmd_delete(vm_record: VmRecord, *, assume_yes: bool, dry_run: bool) -> None:
+    """Remove the conf + the whole VMDIR (disk, snapshots inside the qcow2, ssh
+    keypair, state). Refuses while running."""
+    if vm_pid_if_running(vm_record) is not None:
+        die(f"`{vm_record.vm_name}` is running - `qvm stop` (or `qvm kill`) first")
+    print(f"DELETE preview: {vm_record.conf_path} + {vm_record.vm_dir}/ "
+          "(disk + all its internal snapshots + keys)", file=sys.stderr)
+    confirm_or_die(f"delete VM `{vm_record.vm_name}`?", assume_yes=assume_yes)
+    print(f"+ rm -rf {vm_record.vm_dir} {vm_record.conf_path}", file=sys.stderr)
+    if dry_run:
+        return
+    shutil.rmtree(vm_record.vm_dir, ignore_errors=True)
+    vm_record.conf_path.unlink(missing_ok=True)
+    print(f"==> deleted {colorize_vm_name(vm_record.vm_name)}", file=sys.stderr)
+
+
+def cmd_shell(vm_record: VmRecord, *, dry_run: bool) -> NoReturn | None:
+    """Interactive SSH through quickemu's auto-forwarded port, with the per-VM
+    key + per-VM known_hosts (host keys never touch ~/.ssh/known_hosts)."""
+    ssh_port: int | None = read_ssh_port(vm_record)
+    if ssh_port is None:
+        die("no ssh port recorded - is the VM running? (`qvm start`)")
+    ssh_user: str = str(vm_record.meta.get("ssh_user") or "") or "root"
+    ssh_argv: list[str] = [
+        "ssh", "-p", str(ssh_port),
+        "-i", str(vm_record.vm_dir / "ssh" / "id_ed25519"),
+        "-o", f"UserKnownHostsFile={vm_record.vm_dir / 'known_hosts'}",
+        "-o", "StrictHostKeyChecking=accept-new",
+        f"{ssh_user}@localhost",
+    ]
+    print("+ " + shlex.join(ssh_argv), file=sys.stderr)
+    if dry_run:
+        return None
+    os.execvp("ssh", ssh_argv)
+
+
+def cmd_snapshot(vm_record: VmRecord, snapshot_arguments: list[str], *, dry_run: bool) -> None:
+    """Passthrough to quickemu's qcow2-internal snapshots
+    (`--snapshot apply|create|delete <tag>` / `--snapshot info`). apply/create on
+    a RUNNING disk risks corruption -> refused (only `info` is safe live)."""
+    if not snapshot_arguments:
+        die("snapshot needs an action: apply/create/delete <tag>, or info")
+    if snapshot_arguments[0] != "info" and vm_pid_if_running(vm_record) is not None:
+        die(f"`{vm_record.vm_name}` is running - qcow2-internal snapshots need the VM "
+            "stopped (`qvm stop`); only `qvm snapshot info` is safe live")
+    run(quickemu_argv(vm_record, "--snapshot", *snapshot_arguments), dry_run=dry_run, cwd=VMS_DIR)
+
+
+def cmd_list() -> None:
+    vm_records: list[VmRecord] = list_vm_records()
+    if not vm_records:
+        print(f"(no VMs under {VMS_DIR} - `qvm init <os>` creates one)")
+        return
+    for vm_record in vm_records:
+        running_marker: str = "RUNNING" if vm_pid_if_running(vm_record) is not None else "stopped"
+        bound_dir: str = str(vm_record.meta.get("init_at_dir") or "(no cwd binding)")
+        print(f"{vm_record.vm_name:<24} {running_marker:<8} {bound_dir}")
+
+
+def cmd_info(vm_record: VmRecord) -> None:
+    parsed_conf: dict[str, str] = parse_conf_text(vm_record.conf_path.read_text())
+    qemu_pid: int | None = vm_pid_if_running(vm_record)
+    info_lines: list[str] = [
+        f"name        {colorize_vm_name(vm_record.vm_name, stream=sys.stdout)}",
+        f"state       {f'RUNNING (pid {qemu_pid})' if qemu_pid else 'stopped'}",
+        f"conf        {vm_record.conf_path}",
+        f"guest_os    {parsed_conf.get('guest_os', '?')}",
+        f"disk_img    {parsed_conf.get('disk_img', '?')}",
+        f"bound dir   {vm_record.meta.get('init_at_dir', '(none)')}",
+        f"ssh user    {vm_record.meta.get('ssh_user') or '(unknown - quickget VM?)'}",
+        f"agent sock  {guest_agent_socket_path(vm_record)}",
+    ]
+    ssh_port: int | None = read_ssh_port(vm_record)
+    if ssh_port is not None:
+        info_lines.append(f"ssh port    localhost:{ssh_port}")
+    disk_info_rc, disk_info_stdout, _ = run_capture(
+        ["qemu-img", "info", parsed_conf.get("disk_img", "")])
+    if disk_info_rc == 0:
+        for disk_info_line in disk_info_stdout.splitlines():
+            if disk_info_line.startswith(("virtual size", "disk size")):
+                info_lines.append(f"disk        {disk_info_line.strip()}")
+    print("\n".join(info_lines))
+
+
+# ---------- CLI ----------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="qvm",
+        description="quickemu VM launcher: prebuilt tumbleweed/debian/fedora images "
+                    "(no interactive install), quickget passthrough for the rest, "
+                    "QGA exec/push/pull, SSH shell.",
+        epilog="VM-acting subcommands resolve the target by the directory `init` ran in, "
+               "or take the global `--name <vm>`.")
+    parser.add_argument("--name", metavar="<vm>", default=None,
+                        help="target VM by name (overrides the cwd binding)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print every mutating command instead of running it")
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+
+    init_parser = subparsers.add_parser(
+        "init", help=f"create a VM: {'/'.join(PREBUILT_OSES)} [name] (prebuilt, "
+                     "zero-interaction) or any quickget OS (e.g. `init windows 11`)")
+    init_parser.add_argument("os_arguments", nargs="+", metavar="<os> [name | quickget args...]")
+    init_parser.add_argument("--disk-size", default=DEFAULT_DISK_SIZE,
+                             help=f"disk size for prebuilt images (default {DEFAULT_DISK_SIZE})")
+    init_parser.add_argument("--ram", default="", help="e.g. 8G (default: quickemu auto)")
+    init_parser.add_argument("--cpus", default="", help="cpu cores (default: quickemu auto)")
+    init_parser.add_argument("--yes", action="store_true", help="skip the y/N confirmation")
+
+    for vm_acting_subcommand, subcommand_help in (
+            ("start", "boot the VM headless (--gui for a SPICE desktop window)"),
+            ("stop", "clean ACPI shutdown (monitor socket; no agent needed)"),
+            ("kill", "force-stop the qemu process (quickemu --kill)"),
+            ("delete", "delete the VM: conf + disk + snapshots (confirms; --yes skips)"),
+            ("shell", "interactive SSH (quickemu's auto-forwarded port, per-VM key)"),
+            ("exec", "run a command in the guest via the QEMU Guest Agent (batch; root)"),
+            ("push", "copy one local file into the guest (guest agent)"),
+            ("pull", "copy one guest file out (guest agent)"),
+            ("snapshot", "qcow2-internal snapshots: apply/create/delete <tag>, info"),
+            ("info", "show the VM's state (conf, disk, ssh port, agent socket)")):
+        vm_acting_parser = subparsers.add_parser(vm_acting_subcommand, help=subcommand_help)
+        if vm_acting_subcommand == "start":
+            vm_acting_parser.add_argument("--gui", action="store_true",
+                                          help="SPICE display instead of headless")
+        elif vm_acting_subcommand == "delete":
+            vm_acting_parser.add_argument("--yes", action="store_true",
+                                          help="skip the y/N confirmation")
+        elif vm_acting_subcommand == "exec":
+            vm_acting_parser.add_argument("guest_argv", nargs=argparse.REMAINDER,
+                                          metavar="-- <command> [args...]")
+        elif vm_acting_subcommand == "push":
+            vm_acting_parser.add_argument("local_path")
+            vm_acting_parser.add_argument("guest_path")
+        elif vm_acting_subcommand == "pull":
+            vm_acting_parser.add_argument("guest_path")
+            vm_acting_parser.add_argument("local_path")
+        elif vm_acting_subcommand == "snapshot":
+            vm_acting_parser.add_argument("snapshot_arguments", nargs="+",
+                                          metavar="apply|create|delete <tag> | info")
+
+    subparsers.add_parser("list", help="list qvm-managed VMs (name, state, bound dir)")
+    return parser
+
+
+def main() -> None:
+    parsed_arguments: argparse.Namespace = build_parser().parse_args()
+    subcommand: str = parsed_arguments.subcommand
+    if subcommand == "init":
+        if parsed_arguments.name:
+            die("`--name` targets an EXISTING VM; for init give the name as a "
+                "positional: `qvm init <os> <name>`")
+        cmd_init(parsed_arguments.os_arguments,
+                 disk_size=parsed_arguments.disk_size, ram=parsed_arguments.ram,
+                 cpu_cores=parsed_arguments.cpus, assume_yes=parsed_arguments.yes,
+                 dry_run=parsed_arguments.dry_run)
+        return
+    if subcommand == "list":
+        cmd_list()
+        return
+    target_vm: VmRecord = resolve_target_vm(parsed_arguments.name)
+    if subcommand == "start":
+        cmd_start(target_vm, gui=parsed_arguments.gui, dry_run=parsed_arguments.dry_run)
+    elif subcommand == "stop":
+        cmd_stop(target_vm, dry_run=parsed_arguments.dry_run)
+    elif subcommand == "kill":
+        cmd_kill(target_vm, dry_run=parsed_arguments.dry_run)
+    elif subcommand == "delete":
+        cmd_delete(target_vm, assume_yes=parsed_arguments.yes, dry_run=parsed_arguments.dry_run)
+    elif subcommand == "shell":
+        cmd_shell(target_vm, dry_run=parsed_arguments.dry_run)
+    elif subcommand == "exec":
+        guest_argv: list[str] = list(parsed_arguments.guest_argv)
+        if guest_argv and guest_argv[0] == "--":
+            guest_argv = guest_argv[1:]
+        cmd_exec(target_vm, guest_argv)
+    elif subcommand == "push":
+        cmd_push(target_vm, parsed_arguments.local_path, parsed_arguments.guest_path)
+    elif subcommand == "pull":
+        cmd_pull(target_vm, parsed_arguments.guest_path, parsed_arguments.local_path)
+    elif subcommand == "snapshot":
+        cmd_snapshot(target_vm, parsed_arguments.snapshot_arguments,
+                     dry_run=parsed_arguments.dry_run)
+    elif subcommand == "info":
+        cmd_info(target_vm)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nqvm: interrupted", file=sys.stderr)
+        sys.exit(130)
+    except subprocess.CalledProcessError as command_failure:
+        failed_command: str = (shlex.join(command_failure.cmd)
+                               if isinstance(command_failure.cmd, list) else str(command_failure.cmd))
+        print(f"qvm: command failed (exit {command_failure.returncode}): {failed_command}",
+              file=sys.stderr)
+        sys.exit(command_failure.returncode or 1)
