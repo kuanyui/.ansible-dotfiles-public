@@ -193,6 +193,15 @@
   register: _incus_uninstall_delete_pool
   changed_when: "'RESULT: changed' in (_incus_uninstall_delete_pool.stdout | default(''))"
 
+# A `script` task's captured output is only auto-shown when the task FAILS (or at `-v`),
+# but delete-pool's stderr carries the `+ <argv>` transparency lines (profile root detach /
+# `incus storage delete` / umount / the fstab line removal) - destructive mutations must be
+# visible in a DEFAULT run, so print them explicitly.
+- name: Show the `incus_storage_pool.py delete-pool` output (the exact privileged commands it ran)
+  ansible.builtin.debug:
+    msg: "{{ (_incus_uninstall_delete_pool.stderr_lines | default([])) + (_incus_uninstall_delete_pool.stdout_lines | default([])) }}"
+  when: _incus_uninstall_delete_pool is not skipped
+
 # Parity with install's reboot-persistence drop-in: once the pool (and its loop mount)
 # is gone, the `RequiresMountsFor` drop-in would make incus.service REFUSE to start
 # (it requires a mount that no longer exists). Remove it under the same toggle.

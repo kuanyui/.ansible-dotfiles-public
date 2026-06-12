@@ -370,6 +370,11 @@
         driver = {{ incus_storage_pool_driver }}
         source = {{ incus_storage_pool_source | default('(incus default location)', true) }}
         size   = {{ incus_storage_pool_size | default('(empty)', true) }}
+        loop mountpoint = {{ incus_storage_pool_loop_mountpoint }}
+          (used only when the role builds a loop `.img`: first-time init writes its
+          /etc/fstab line - REPLACING any existing fstab line for this exact
+          mountpoint - and mounts the loop there, evicting a mount from a
+          different backing file)
         {{ '(a `default` pool ALREADY EXISTS - see its ACTUAL backend below; the above is NOT re-applied)' if (_incus_pool_already_initialized | bool) else '(no `default` pool yet - the above is created NOW)' }}
 
 # Show the CURRENT storage state HERE - before the confirm + driver-mismatch gates below,
@@ -469,6 +474,15 @@
   changed_when: "'RESULT: changed' in (_incus_build_loop.stdout | default(''))"
   when: _incus_pool_needs_build | bool
 
+# A `script` task's captured output is only auto-shown when the task FAILS (or at `-v`),
+# but build-loop's stderr carries the `+ <argv>` transparency lines (truncate /
+# mkfs.btrfs / the /etc/fstab write / a stale-mount eviction) - privileged mutations
+# must be visible in a DEFAULT run, so print them explicitly.
+- name: Show the `incus_storage_pool.py build-loop` output (the exact privileged commands it ran)
+  ansible.builtin.debug:
+    msg: "{{ (_incus_build_loop.stderr_lines | default([])) + (_incus_build_loop.stdout_lines | default([])) }}"
+  when: _incus_build_loop is not skipped
+
 # ---------- Initialize incus (idempotent: skipped if `default` storage pool already exists) ----------
 # Run as root via `become: true` because `incus admin init` requires the
 # admin socket (`/run/incus/unix.socket`, group `incus-admin`), and we
@@ -487,6 +501,13 @@
   become: true
   register: _incus_init
   changed_when: "'RESULT: changed' in (_incus_init.stdout | default(''))"
+
+# Same transparency print as build-loop above: init's stderr carries the argv + the
+# EXACT preseed document applied - show it in a default run, not just on failure / `-v`.
+- name: Show the `incus_storage_pool.py init` output (argv + the exact preseed applied)
+  ansible.builtin.debug:
+    msg: "{{ (_incus_init.stderr_lines | default([])) + (_incus_init.stdout_lines | default([])) }}"
+  when: _incus_init is not skipped
 
 # ---------- Surface a pre-existing `default` pool whose backend != `incus_storage_pool_driver` ----------
 # The preseed above runs ONLY when `default` does not already exist. So on a host
