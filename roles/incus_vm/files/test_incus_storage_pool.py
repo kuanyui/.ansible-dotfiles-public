@@ -21,6 +21,7 @@ import importlib.util
 import io
 import json
 import os
+import stat
 import tempfile
 import unittest
 from typing import Any
@@ -56,13 +57,20 @@ class TestEnsureLoopFileMkfsGuard(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp_dir.cleanup()
 
-    def _call_ensure_loop_file(self, *, file_exists: bool, blkid_result: tuple[int, str, str]
+    def _call_ensure_loop_file(self, *, file_exists: bool, blkid_result: tuple[int, str, str],
+                               prewritten_real_bytes: int = 0, sparse_logical_bytes: int = 0
                                ) -> tuple[bool | None, MagicMock, SystemExit | None]:
         """Run `ensure_loop_file` with `run_privileged` (recorder) + `run_capture` (canned
-        blkid) mocked. Returns `(return_value_or_None, run_privileged_mock, SystemExit_or_None)`."""
+        blkid) mocked. `prewritten_real_bytes` writes that much REAL data into the file
+        (allocated blocks); `sparse_logical_bytes` only grows its logical size (sparse).
+        Returns `(return_value_or_None, run_privileged_mock, SystemExit_or_None)`."""
         loop_img_path: str = os.path.join(self.tmp_dir, "incus-storage.img")
         if file_exists:
-            open(loop_img_path, "wb").close()
+            with open(loop_img_path, "wb") as loop_img_file:
+                if prewritten_real_bytes:
+                    loop_img_file.write(b"\x42" * prewritten_real_bytes)
+            if sparse_logical_bytes:
+                os.truncate(loop_img_path, sparse_logical_bytes)
         returned: bool | None = None
         raised_system_exit: SystemExit | None = None
         with patch.object(incus_storage_pool, "run_privileged") as run_privileged_mock, \
@@ -115,6 +123,26 @@ class TestEnsureLoopFileMkfsGuard(unittest.TestCase):
             file_exists=True, blkid_result=(8, "", ""))
         self.assertIsInstance(raised_system_exit, SystemExit)
         self.assertNotIn("mkfs.btrfs", _privileged_program_calls(run_privileged_mock))
+
+    def test_unsignatured_file_with_real_data_refuses_to_format(self) -> None:
+        # blkid exit 2 means "no filesystem SIGNATURE", not "no data": a headerless
+        # encrypted container (plain dm-crypt / VeraCrypt) or a raw blob also exits 2.
+        # Real on-disk allocation must therefore refuse the mkfs.
+        _returned, run_privileged_mock, raised_system_exit = self._call_ensure_loop_file(
+            file_exists=True, blkid_result=(2, "", ""),
+            prewritten_real_bytes=2 * 1024 * 1024)
+        self.assertIsInstance(raised_system_exit, SystemExit)
+        self.assertNotIn("mkfs.btrfs", _privileged_program_calls(run_privileged_mock))
+
+    def test_sparse_empty_file_is_still_formatted(self) -> None:
+        # A user-precreated sparse `.img` (`truncate --size=...`: big logical size, ZERO
+        # allocated blocks) is genuinely empty - the allocation guard must let it format.
+        returned, run_privileged_mock, raised_system_exit = self._call_ensure_loop_file(
+            file_exists=True, blkid_result=(2, "", ""),
+            sparse_logical_bytes=1024 * 1024 * 1024)
+        self.assertIsNone(raised_system_exit)
+        self.assertTrue(returned)
+        self.assertEqual(_privileged_program_calls(run_privileged_mock), ["mkfs.btrfs"])
 
 
 class TestResolveLayout(unittest.TestCase):
@@ -359,6 +387,18 @@ class TestFstabEditors(unittest.TestCase):
             remove_changed: bool = incus_storage_pool.remove_fstab_line(
                 "/var/lib/incus-storage", dry_run=False)
         self.assertFalse(remove_changed)
+
+    def test_atomic_rewrite_preserves_mode_and_leaves_no_temp_file(self) -> None:
+        # The rewrite goes through a temp file + os.replace (atomic) - it must keep the
+        # original fstab mode and never leave the temp file behind.
+        self._write_fstab("UUID=root-fs / ext4 defaults 0 1\n")
+        os.chmod(self.fstab_path, 0o600)
+        with contextlib.redirect_stderr(io.StringIO()):
+            incus_storage_pool.ensure_fstab_loop_line(
+                "/data/new.img", "/var/lib/incus-storage", dry_run=False)
+        self.assertEqual(stat.S_IMODE(os.stat(self.fstab_path).st_mode), 0o600)
+        sibling_file_names: list[str] = os.listdir(os.path.dirname(self.fstab_path))
+        self.assertEqual(sibling_file_names, [os.path.basename(self.fstab_path)])
 
 
 class TestVerdict(unittest.TestCase):

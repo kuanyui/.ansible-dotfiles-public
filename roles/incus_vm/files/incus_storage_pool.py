@@ -31,14 +31,23 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
 FSTAB_PATH: str = "/etc/fstab"
 PROC_MOUNTS_PATH: str = "/proc/mounts"
 FSTAB_LOOP_OPTIONS: str = "loop,nofail,noatime"
 INCUS_VAR_DIR: str = "/var/lib/incus"  # incus daemon state root; the `default` pool lives at storage-pools/default
+
+# `ensure_loop_file`: a PRE-EXISTING `.img` with no filesystem signature (blkid exit 2) is
+# auto-formatted only when it is also (near-)sparse-empty; at/above this many ALLOCATED
+# bytes it is treated as holding real data (a headerless encrypted container - plain
+# dm-crypt / VeraCrypt - or a raw blob has no signature either) and mkfs is REFUSED.
+# 1 MiB tolerates trivial allocation while catching any real payload.
+MKFS_REFUSE_ON_DISK_BYTES_THRESHOLD: int = 1024 * 1024
 
 
 def run_capture(argv: list[str]) -> tuple[int, str, str]:
@@ -593,12 +602,13 @@ def ensure_loop_file(source: str, size: str, *, dry_run: bool) -> bool:
     """`truncate` a sparse `.img` at `source` if absent, then `mkfs.btrfs` it. Returns
     True if it changed. A freshly-truncated file is formatted unconditionally; a
     PRE-EXISTING file is formatted ONLY when `blkid` positively confirms it holds no
-    filesystem (exit 2 = "nothing found"). Any OTHER `blkid` outcome - a reported
-    filesystem (exit 0 with a TYPE), an ambivalent multi-signature (exit 8), a usage
-    error (exit 4), or `blkid` missing (exit 127) - means we CANNOT prove the file is
-    empty, so we REFUSE to mkfs rather than risk erasing existing VM data. (The earlier
-    version keyed only on blkid's stdout being empty, which is ALSO what a missing /
-    erroring blkid returns - that would reformat a file that may hold the pool.)
+    filesystem (exit 2 = "nothing found") AND it is (near-)sparse-empty (see the
+    allocation guard below). Any OTHER `blkid` outcome - a reported filesystem (exit 0
+    with a TYPE), an ambivalent multi-signature (exit 8), a usage error (exit 4), or
+    `blkid` missing (exit 127) - means we CANNOT prove the file is empty, so we REFUSE
+    to mkfs rather than risk erasing existing VM data. (The earlier version keyed only
+    on blkid's stdout being empty, which is ALSO what a missing / erroring blkid
+    returns - that would reformat a file that may hold the pool.)
     `size` is the incus form e.g. `100GiB`; `truncate`'s binary `G`/`T` already mean
     GiB/TiB, so we just drop the `iB` (matches the old role's regex)."""
     if not os.path.exists(source):
@@ -630,14 +640,70 @@ def ensure_loop_file(source: str, size: str, *, dry_run: bool) -> bool:
             "=" * 60, "",
         ]))
         raise SystemExit(1)
-    run_privileged(["mkfs.btrfs", source], dry_run=dry_run)  # blkid exit 2 -> confirmed empty
+    # blkid exit 2 = "no recognizable filesystem SIGNATURE" - which is NOT "no data": a
+    # headerless encrypted container (plain dm-crypt / VeraCrypt) or a raw blob has no
+    # signature either. A file legitimately meant to become this pool's loop is either
+    # sparse-empty (`truncate` allocates nothing) or already a filesystem (caught above),
+    # so real on-disk allocation means real payload -> refuse to erase it.
+    preexisting_on_disk_bytes: int = loop_file_footprint(source)["on_disk_bytes"]
+    if preexisting_on_disk_bytes >= MKFS_REFUSE_ON_DISK_BYTES_THRESHOLD:
+        sys.stderr.write("\n".join([
+            "", "=" * 60,
+            " incus_storage_pool.py: REFUSING to mkfs.btrfs - the file has",
+            " no filesystem signature but HOLDS REAL DATA:",
+            f"   {source}",
+            f"   ({human_iec_bytes(preexisting_on_disk_bytes)} allocated on disk)",
+            "=" * 60,
+            " blkid found no filesystem (exit 2), yet the file is not",
+            " sparse-empty. A headerless encrypted container (plain",
+            " dm-crypt / VeraCrypt) or raw data looks exactly like this -",
+            " mkfs would ERASE it. If the file really is disposable,",
+            " pick ONE:",
+            "",
+            f"     rm {source}    # the role then recreates it sparse + formats it",
+            "",
+            f"     mkfs.btrfs {source}    # or format it yourself (reused as-is)",
+            "",
+            " then re-run:  make incus-install",
+            "=" * 60, "",
+        ]))
+        raise SystemExit(1)
+    run_privileged(["mkfs.btrfs", source], dry_run=dry_run)  # blkid exit 2 + sparse-empty -> confirmed empty
     return True
+
+
+def _replace_fstab_contents(new_fstab_text: str) -> None:
+    """Rewrite `/etc/fstab` ATOMICALLY: temp file in the same directory, fsync, then
+    `os.replace` onto the old file. The previous plain `open(FSTAB_PATH, "w")` truncated
+    in place, so a crash mid-write could leave a truncated/EMPTY fstab (= an unbootable
+    host). Readers only ever see the old or the new complete file. The original mode is
+    preserved (0644 for a new file - fstab must stay world-readable)."""
+    try:
+        fstab_mode: int = stat.S_IMODE(os.stat(FSTAB_PATH).st_mode)
+    except OSError:
+        fstab_mode = 0o644
+    temp_fd, temp_path = tempfile.mkstemp(prefix=".fstab.incus-storage-pool.",
+                                          dir=os.path.dirname(FSTAB_PATH) or ".")
+    try:
+        with os.fdopen(temp_fd, "w") as temp_fstab_file:
+            temp_fstab_file.write(new_fstab_text)
+            temp_fstab_file.flush()
+            os.fsync(temp_fstab_file.fileno())
+        os.chmod(temp_path, fstab_mode)
+        os.replace(temp_path, FSTAB_PATH)
+    except BaseException:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
 
 
 def ensure_fstab_loop_line(source: str, mountpoint: str, *, dry_run: bool) -> bool:
     """Ensure exactly one /etc/fstab line loop-mounts `source` at `mountpoint` as btrfs,
     replacing any stale line for that mountpoint (a changed source is corrected in
-    place). `nofail` so a missing disk never blocks boot. Returns True if changed."""
+    place; written atomically). `nofail` so a missing disk never blocks boot. Returns
+    True if changed."""
     wanted_line: str = f"{source} {mountpoint} btrfs {FSTAB_LOOP_OPTIONS} 0 0"
     try:
         current_lines: list[str] = open(FSTAB_PATH).read().splitlines()
@@ -652,13 +718,13 @@ def ensure_fstab_loop_line(source: str, mountpoint: str, *, dry_run: bool) -> bo
         return False
     print(f"+ write {FSTAB_PATH}: {wanted_line}", file=sys.stderr)
     if not dry_run:
-        with open(FSTAB_PATH, "w") as fstab_file:
-            fstab_file.write("\n".join(new_lines) + "\n")
+        _replace_fstab_contents("\n".join(new_lines) + "\n")
     return True
 
 
 def remove_fstab_line(mountpoint: str, *, dry_run: bool) -> bool:
-    """Remove any (non-comment) /etc/fstab line for `mountpoint`. Returns True if changed."""
+    """Remove any (non-comment) /etc/fstab line for `mountpoint` (written atomically).
+    Returns True if changed."""
     try:
         current_lines: list[str] = open(FSTAB_PATH).read().splitlines()
     except OSError:
@@ -671,8 +737,7 @@ def remove_fstab_line(mountpoint: str, *, dry_run: bool) -> bool:
         return False
     print(f"+ remove {FSTAB_PATH} line for {mountpoint}", file=sys.stderr)
     if not dry_run:
-        with open(FSTAB_PATH, "w") as fstab_file:
-            fstab_file.write("\n".join(kept_lines) + ("\n" if kept_lines else ""))
+        _replace_fstab_contents("\n".join(kept_lines) + ("\n" if kept_lines else ""))
     return True
 
 
