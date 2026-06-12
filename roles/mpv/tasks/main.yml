@@ -57,6 +57,5 @@
       loop:
         - mpv.conf
         - input.conf
-        - KDE_global_shortcuts_examples.sh
         - scripts/touchscreen-seek.lua
-        - scripts/touchscreen-drag-seek.lua.disable
+        - scripts/touchscreen-drag-seek.lua
