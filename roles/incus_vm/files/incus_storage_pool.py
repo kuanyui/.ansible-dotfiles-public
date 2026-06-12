@@ -707,10 +707,17 @@ def cmd_build_loop(source: str, size: str, mountpoint: str, *, dry_run: bool) ->
     return 0
 
 
-def build_preseed(driver: str, pool_source: str, pool_size: str) -> dict[str, Any]:
+def build_preseed(driver: str, pool_source: str, pool_size: str, *,
+                  include_incusbr0: bool = True,
+                  include_default_profile: bool = True) -> dict[str, Any]:
     """The `incus admin init --preseed` document: the `default` storage pool (with the
     EFFECTIVE source/size), the `incusbr0` managed bridge, and a `default` profile wiring
-    eth0->incusbr0 + root-disk->default pool. Same content the old
+    eth0->incusbr0 + root-disk->default pool. A preseed OVERWRITES entities that already
+    exist - upstream: "The provided YAML configuration overwrites existing entities"
+    (https://linuxcontainers.org/incus/docs/main/howto/initialize/) - so `cmd_init` passes
+    `include_*=False` for any entity that must be PRESERVED (an existing `incusbr0`, a
+    customized `default` profile); only the pool entry is unconditional (the caller
+    guarantees no `default` pool exists). Same content the old
     templates/incus_preseed.yml.j2 produced - now one source of truth, in Python."""
     pool: dict[str, Any] = {"name": "default", "driver": driver}
     pool_config: dict[str, str] = {}
@@ -723,26 +730,83 @@ def build_preseed(driver: str, pool_source: str, pool_size: str) -> dict[str, An
     return {
         "config": {},
         "networks": [{"name": "incusbr0", "type": "bridge",
-                      "config": {"ipv4.address": "auto", "ipv6.address": "auto"}}],
+                      "config": {"ipv4.address": "auto", "ipv6.address": "auto"}}] if include_incusbr0 else [],
         "storage_pools": [pool],
         "profiles": [{"name": "default", "devices": {
             "eth0": {"name": "eth0", "network": "incusbr0", "type": "nic"},
             "root": {"path": "/", "pool": "default", "type": "disk"},
-        }}],
+        }}] if include_default_profile else [],
         "projects": [],
         "cluster": None,
     }
 
 
+def _default_profile_is_pristine() -> tuple[bool, str]:
+    """Whether the `default` profile (always present - incus forbids renaming/removing it)
+    still has EMPTY config + devices, i.e. fresh and never touched. Only then may the
+    preseed include it: a preseed OVERWRITES existing entities wholesale, so including a
+    customized profile would wipe its config/devices. Read via `incus query` (raw API ->
+    JSON, stdlib-parseable; `incus profile show` is YAML, which stdlib can't parse).
+    Returns `(pristine, reason_when_not)`. Unreadable/unparseable -> NOT pristine
+    (refuse to guess; preserving is the safe direction)."""
+    query_rc, query_stdout, query_stderr = run_capture(["incus", "query", "/1.0/profiles/default"])
+    if query_rc != 0:
+        return False, f"could not read it (incus query exit {query_rc}: {query_stderr.strip() or 'no stderr'})"
+    try:
+        profile: Any = json.loads(query_stdout)
+    except ValueError:
+        return False, "unparseable `incus query /1.0/profiles/default` output"
+    if not isinstance(profile, dict):
+        return False, "unexpected `incus query /1.0/profiles/default` output shape"
+    profile_config: dict[str, Any] = profile.get("config") or {}
+    profile_devices: dict[str, Any] = profile.get("devices") or {}
+    if profile_config or profile_devices:
+        customized_parts: list[str] = []
+        if profile_config:
+            customized_parts.append(f"config keys {sorted(profile_config)}")
+        if profile_devices:
+            customized_parts.append(f"devices {sorted(profile_devices)}")
+        return False, "it already has " + " + ".join(customized_parts)
+    return True, ""
+
+
 def cmd_init(driver: str, pool_source: str, pool_size: str, *, dry_run: bool) -> int:
     """First-time `incus admin init --preseed` (storage pool + incusbr0 + default
-    profile). No-op if a `default` pool already exists (never re-points one).
+    profile). No-op if a `default` pool already exists (never re-points one). Because a
+    preseed OVERWRITES entities that already exist (see `build_preseed`), pre-existing
+    entities are DROPPED from it first: an existing `incusbr0` keeps its config (the
+    role's separate `incus network create` task already tolerates it existing), and a
+    non-pristine `default` profile is kept as-is with the manual wiring commands printed.
     `pool_source`/`pool_size` are the EFFECTIVE values (for a role-built loop: the mount
     point + empty size). The preseed is fed as JSON, which incus parses as YAML."""
     if live_default_pool()["present"]:
         print("RESULT: noop  (a `default` pool already exists - incus admin init skipped)")
         return 0
-    preseed_json: str = json.dumps(build_preseed(driver, pool_source, pool_size), indent=2)
+    incusbr0_already_exists: bool = run_capture(["incus", "network", "show", "incusbr0"])[0] == 0
+    if incusbr0_already_exists:
+        print("+ keeping the EXISTING `incusbr0` network OUT of the preseed (a preseed"
+              " overwrites existing entities; its current config is preserved)", file=sys.stderr)
+    default_profile_pristine, not_pristine_reason = _default_profile_is_pristine()
+    if not default_profile_pristine:
+        bar: str = "=" * 60
+        sys.stderr.write("\n".join([
+            bar,
+            " NOT touching the `default` profile - " + not_pristine_reason + ".",
+            bar,
+            " A preseed OVERWRITES existing entities wholesale (upstream:",
+            " https://linuxcontainers.org/incus/docs/main/howto/initialize/),",
+            " so including the profile would WIPE that customization. The role",
+            " therefore does NOT wire root/eth0 into it. If the profile lacks",
+            " them, wire manually:",
+            "",
+            "     incus profile device add default root disk path=/ pool=default",
+            "     incus profile device add default eth0 nic network=incusbr0",
+            bar, "",
+        ]))
+    preseed_json: str = json.dumps(build_preseed(
+        driver, pool_source, pool_size,
+        include_incusbr0=not incusbr0_already_exists,
+        include_default_profile=default_profile_pristine), indent=2)
     print("+ incus admin init --preseed  with this preseed (JSON is valid YAML):", file=sys.stderr)
     print(preseed_json, file=sys.stderr)
     if not dry_run:

@@ -400,7 +400,11 @@
     prompt: |
 
       The storage pool above is created NOW and cannot be re-pointed later without
-      `make incus-teardown-host`. Type 'yes' to proceed (anything else aborts).
+      `make incus-teardown-host`. First-time init also creates the `incusbr0` bridge
+      and wires the `default` profile (root disk + eth0) - each ONLY when still
+      missing/pristine: an existing `incusbr0` or a customized `default` profile is
+      PRESERVED, never overwritten (the init output says so when it skips one).
+      Type 'yes' to proceed (anything else aborts).
   register: _incus_install_confirm
   when:
     - not (_incus_pool_already_initialized | bool)
@@ -490,7 +494,7 @@
 # only the lower-privilege `incus` group). Root bypasses the group check, so
 # init works without needing any user-level group membership.
 
-- name: Initialize incus via `incus admin init --preseed` (pool + incusbr0 + default profile; preseed rendered by `incus_storage_pool.py init`, only if no `default` pool yet)
+- name: Initialize incus via `incus admin init --preseed` (pool + incusbr0 + default profile; preseed rendered by `incus_storage_pool.py init`, which DROPS an already-existing `incusbr0` / customized `default` profile from it - a preseed overwrites existing entities; only if no `default` pool yet)
   ansible.builtin.script:
     cmd: >-
       incus_storage_pool.py init

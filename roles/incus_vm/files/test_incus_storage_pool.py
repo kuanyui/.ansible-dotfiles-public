@@ -410,6 +410,99 @@ class TestVerdict(unittest.TestCase):
         self.assertEqual(reasons, [])
 
 
+class TestBuildPreseed(unittest.TestCase):
+    """A preseed OVERWRITES entities that already exist (upstream-documented:
+    https://linuxcontainers.org/incus/docs/main/howto/initialize/), so the `include_*`
+    flags must really drop the corresponding entries - that is what protects an existing
+    `incusbr0` / customized `default` profile from being wiped at first-time init."""
+
+    def test_full_preseed_includes_pool_network_and_profile(self) -> None:
+        preseed = incus_storage_pool.build_preseed("btrfs", "/var/lib/incus-storage", "")
+        self.assertEqual(preseed["storage_pools"][0]["name"], "default")
+        self.assertEqual(preseed["networks"][0]["name"], "incusbr0")
+        self.assertEqual(preseed["profiles"][0]["name"], "default")
+
+    def test_include_incusbr0_false_drops_the_network_but_keeps_the_pool(self) -> None:
+        preseed = incus_storage_pool.build_preseed(
+            "btrfs", "/var/lib/incus-storage", "", include_incusbr0=False)
+        self.assertEqual(preseed["networks"], [])
+        self.assertEqual(preseed["storage_pools"][0]["name"], "default")
+
+    def test_include_default_profile_false_drops_the_profile_but_keeps_the_pool(self) -> None:
+        preseed = incus_storage_pool.build_preseed(
+            "btrfs", "/var/lib/incus-storage", "", include_default_profile=False)
+        self.assertEqual(preseed["profiles"], [])
+        self.assertEqual(preseed["storage_pools"][0]["name"], "default")
+
+
+class TestCmdInitEntityPreservation(unittest.TestCase):
+    """`cmd_init` must DROP an already-existing `incusbr0` and a non-pristine `default`
+    profile from the preseed it applies: a preseed overwrites existing entities, so
+    including them would silently wipe the user's network/profile config."""
+
+    PRISTINE_PROFILE_JSON: str = json.dumps(
+        {"name": "default", "config": {}, "devices": {}})
+    CUSTOMIZED_PROFILE_JSON: str = json.dumps(
+        {"name": "default", "config": {"limits.cpu": "4"},
+         "devices": {"root": {"type": "disk", "path": "/", "pool": "ssd"}}})
+
+    def _run_cmd_init(self, *, incusbr0_exists: bool,
+                      profile_query_result: tuple[int, str, str]) -> str:
+        """Run `cmd_init` (dry-run, so nothing executes) with `run_capture` faked per
+        argv; returns captured stderr - the decisions + the exact preseed JSON."""
+        def fake_run_capture(argv: list[str]) -> tuple[int, str, str]:
+            if argv[:3] == ["incus", "storage", "list"]:
+                return 0, "", ""  # no `default` pool -> init proceeds
+            if argv[:3] == ["incus", "storage", "show"]:
+                return 1, "", "not found"
+            if argv[:3] == ["incus", "network", "show"]:
+                return (0, "name: incusbr0\n", "") if incusbr0_exists else (1, "", "not found")
+            if argv[:2] == ["incus", "query"]:
+                return profile_query_result
+            raise AssertionError(f"unexpected run_capture argv: {argv}")
+        with patch.object(incus_storage_pool, "run_capture", side_effect=fake_run_capture), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as captured_stderr:
+            exit_code: int = incus_storage_pool.cmd_init(
+                "btrfs", "/var/lib/incus-storage", "", dry_run=True)
+        self.assertEqual(exit_code, 0)
+        return captured_stderr.getvalue()
+
+    def _applied_preseed(self, captured_stderr_text: str) -> dict[str, Any]:
+        """Parse the preseed JSON out of cmd_init's stderr (it is the last thing printed
+        there, right after the `+ incus admin init --preseed` marker line)."""
+        marker_position: int = captured_stderr_text.index("incus admin init --preseed")
+        preseed_start: int = captured_stderr_text.index("{", marker_position)
+        return json.loads(captured_stderr_text[preseed_start:])
+
+    def test_fresh_host_preseed_includes_network_and_profile(self) -> None:
+        captured_stderr_text = self._run_cmd_init(
+            incusbr0_exists=False, profile_query_result=(0, self.PRISTINE_PROFILE_JSON, ""))
+        applied_preseed = self._applied_preseed(captured_stderr_text)
+        self.assertEqual(applied_preseed["networks"][0]["name"], "incusbr0")
+        self.assertEqual(applied_preseed["profiles"][0]["name"], "default")
+
+    def test_existing_incusbr0_is_kept_out_of_the_preseed(self) -> None:
+        captured_stderr_text = self._run_cmd_init(
+            incusbr0_exists=True, profile_query_result=(0, self.PRISTINE_PROFILE_JSON, ""))
+        self.assertEqual(self._applied_preseed(captured_stderr_text)["networks"], [])
+        self.assertIn("keeping the EXISTING `incusbr0`", captured_stderr_text)
+
+    def test_customized_default_profile_is_kept_out_of_the_preseed(self) -> None:
+        captured_stderr_text = self._run_cmd_init(
+            incusbr0_exists=False, profile_query_result=(0, self.CUSTOMIZED_PROFILE_JSON, ""))
+        self.assertEqual(self._applied_preseed(captured_stderr_text)["profiles"], [])
+        # The manual wiring commands must be shown so the user can finish the setup.
+        self.assertIn("incus profile device add default root disk", captured_stderr_text)
+
+    def test_unreadable_default_profile_is_preserved_not_guessed(self) -> None:
+        # `incus query` failing must count as NOT pristine: refuse to guess; preserving
+        # (= dropping the profile from the preseed) is the safe direction.
+        captured_stderr_text = self._run_cmd_init(
+            incusbr0_exists=False, profile_query_result=(1, "", "some API error"))
+        self.assertEqual(self._applied_preseed(captured_stderr_text)["profiles"], [])
+
+
 class TestCmdResolveSafetyContract(unittest.TestCase):
     """`cmd_resolve` is what ansible's `script` task runs; these lock the exit-code
     contract the install path depends on: a vanished `.img` -> exit 2 (loud STOP), a
