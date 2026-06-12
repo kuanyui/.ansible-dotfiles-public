@@ -61,17 +61,24 @@
 # Record the storage pool layout so `ivm info` + the create/delete preview can show
 # the REAL on-disk path - the unprivileged `incus`-group user can't read incus's own
 # pool config (admin-only), so ivm reads this instead. Written only when the role set up
-# the host (`not incus_vm_skip_host_setup`). The record content is `_storage.record`,
-# decided by `incus_storage_pool.py resolve` in tasks/incus_host_install.yml: on a re-run
-# of an initialized host it is the EXISTING record echoed back (so this write is a no-op),
-# never re-derived from the passed/default vars - that is what stops a no-var re-run from
-# repointing the record at the wrong `.img`.
-- name: Record the storage pool layout to `{{ incus_vm_ivm_dir }}/storage-info.json` (so `ivm info` shows the real `.img` / path even to the unprivileged user)
+# the host (`not incus_vm_skip_host_setup`) AND `_storage.write_record` is true. The record
+# content is `_storage.record`, decided by `incus_storage_pool.py resolve` in
+# tasks/incus_host_install.yml: on a re-run of an initialized host it is the EXISTING record
+# echoed back (so this write is a no-op), never re-derived from the passed/default vars -
+# that is what stops a no-var re-run from repointing the record at the wrong `.img`.
+# `_storage.write_record` is false when a `default` pool exists WITHOUT a usable record
+# (a hand-initialized host, or after `make incus-uninstall-ivm` wiped the subdir): there
+# `_storage.record` is just the passed/default VARS - not the live pool - and persisting it
+# would make every later run FOLLOW that lie (e.g. the loud loop-img-missing STOP for an
+# `.img` that never existed). Such hosts simply keep no record; `status` says "(none)".
+- name: Record the storage pool layout to `{{ incus_vm_ivm_dir }}/storage-info.json` (so `ivm info` shows the real `.img` / path even to the unprivileged user; skipped when `_storage.write_record` is false - never record a layout the live pool may not have)
   ansible.builtin.copy:
     dest: "{{ incus_vm_ivm_dir }}/storage-info.json"
     mode: "0644"
     content: "{{ _storage.record | to_nice_json }}\n"
-  when: not (incus_vm_skip_host_setup | default(false) | bool)
+  when:
+    - not (incus_vm_skip_host_setup | default(false) | bool)
+    - _storage.write_record | bool
 
 # Shared fcitx5 user-config setup script: `ivm` embeds + runs it in a guest with
 # `sys.input_method: fcitx5`, and you can run this same copy on the HOST

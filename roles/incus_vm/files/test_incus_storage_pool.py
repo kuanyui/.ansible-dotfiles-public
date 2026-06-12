@@ -223,6 +223,46 @@ class TestResolveLayout(unittest.TestCase):
             driver="btrfs", source="", size="", mountpoint="")
         self.assertFalse(following)
 
+    # ---- `write_record`: may ansible persist the resolved record? ----
+    # False exactly when a `default` pool exists WITHOUT a usable record: there the resolved
+    # layout is just the passed/default vars, NOT the live pool, and persisting it would make
+    # every later run FOLLOW that lie (e.g. a loud loop-img-missing STOP for an `.img` that
+    # never existed - the "record pollution" bug).
+
+    def test_first_install_write_record_is_true(self) -> None:
+        resolved, _following, _missing = incus_storage_pool.resolve_layout(
+            self.root, already_initialized=False,
+            driver="btrfs", source=os.path.join(self.root, "new.img"), size="500GiB",
+            mountpoint="/var/lib/incus-storage")
+        self.assertTrue(resolved["write_record"])
+
+    def test_following_write_record_is_true(self) -> None:
+        recorded_loop_img: str = os.path.join(self.root, "recorded.img")
+        open(recorded_loop_img, "wb").close()
+        self._write_record({"driver": "btrfs", "build_loop": True, "loop_file": recorded_loop_img,
+                            "mountpoint": "/var/lib/incus-storage", "source": "/var/lib/incus-storage",
+                             "size": "500GiB"})
+        resolved, following, _missing = incus_storage_pool.resolve_layout(
+            self.root, already_initialized=True,
+            driver="btrfs", source="", size="", mountpoint="/var/lib/incus-storage")
+        self.assertTrue(following)
+        self.assertTrue(resolved["write_record"])  # echoing the record back is a no-op write
+
+    def test_pool_exists_but_no_record_write_record_is_false(self) -> None:
+        resolved, following, _missing = incus_storage_pool.resolve_layout(
+            self.root, already_initialized=True,
+            driver="btrfs", source=os.path.join(self.root, "x.img"), size="500GiB",
+            mountpoint="/var/lib/incus-storage")
+        self.assertFalse(following)
+        self.assertFalse(resolved["write_record"])
+
+    def test_pool_exists_with_unusable_record_write_record_is_false(self) -> None:
+        self._write_record({"driver": "", "build_loop": False})  # blank driver -> not followable
+        resolved, _following, _missing = incus_storage_pool.resolve_layout(
+            self.root, already_initialized=True,
+            driver="btrfs", source="", size="", mountpoint="")
+        self.assertFalse(resolved["write_record"])
+
 
 class TestEnsureMountedFromSource(unittest.TestCase):
     """The stale-loop eviction decision: mounting the new pool on top of a leftover loop
@@ -412,6 +452,21 @@ class TestCmdResolveSafetyContract(unittest.TestCase):
         resolved_json: dict[str, Any] = json.loads(captured_stdout.getvalue())
         self.assertTrue(resolved_json["following"])
         self.assertEqual(resolved_json["warnings"], [])
+
+    def test_pool_without_record_resolves_with_write_record_false(self) -> None:
+        # The ansible-facing JSON contract for the "record pollution" fix: a `default` pool
+        # with NO storage-info.json resolves fine (exit 0) but tells ansible NOT to persist
+        # the derived record (it describes the vars, not the live pool).
+        with contextlib.redirect_stdout(io.StringIO()) as captured_stdout, \
+                contextlib.redirect_stderr(io.StringIO()):
+            exit_code: int = incus_storage_pool.cmd_resolve(
+                self.root, already_initialized=True, driver="btrfs",
+                source=os.path.join(self.root, "x.img"), size="500GiB",
+                mountpoint="/var/lib/incus-storage", overrides_passed=False)
+        self.assertEqual(exit_code, 0)
+        resolved_json: dict[str, Any] = json.loads(captured_stdout.getvalue())
+        self.assertFalse(resolved_json["following"])
+        self.assertFalse(resolved_json["write_record"])
 
     def test_ignored_override_keeps_a_warning(self) -> None:
         present_loop_img: str = os.path.join(self.root, "present.img")

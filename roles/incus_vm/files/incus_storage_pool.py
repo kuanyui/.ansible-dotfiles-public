@@ -446,7 +446,8 @@ def resolve_layout(root: str, already_initialized: bool, driver: str, source: st
     disk) -> the layout the pool was BUILT with, taken verbatim from the record; otherwise (first
     install / no record yet) -> derived from the request. `resolved` carries everything the install
     needs downstream: the effective preseed `pool_source`/`pool_size`, the role-built-loop facts
-    (`build_loop`/`loop_file`/`mountpoint`), and the exact `storage-info.json` `record` dict. Only
+    (`build_loop`/`loop_file`/`mountpoint`), the exact `storage-info.json` `record` dict, and
+    `write_record` (whether ansible may PERSIST that record - see the comment at the key). Only
     reads the record + `stat`s the loop file; never mutates."""
     record: dict[str, Any] | None = read_storage_info(root)
     following: bool = bool(already_initialized and record and str(record.get("driver") or ""))
@@ -484,6 +485,14 @@ def resolve_layout(root: str, already_initialized: bool, driver: str, source: st
         "pool_source": effective_source,
         "pool_size": preseed_size,
         "declared_size": declared_size,
+        # May ansible PERSIST `record` to storage-info.json? True on a first install (the
+        # record IS what this run builds + then verifies) and when FOLLOWING (the existing
+        # record echoed back - a no-op write). False when a `default` pool exists WITHOUT a
+        # usable record (a hand-initialized host, or the record was wiped by
+        # `make incus-uninstall-ivm`): the derived layout describes the passed/default VARS,
+        # not the live pool, and persisting it would make every later run FOLLOW that lie -
+        # e.g. the loud loop-img-missing STOP for an `.img` that never existed.
+        "write_record": following or not already_initialized,
         "record": {
             "driver": effective_driver,
             "build_loop": build_loop,
