@@ -29,4 +29,10 @@ profile local_pathbased_mpv /usr/bin/mpv {
     deny /dev/dri/renderD* wr,
     deny /dev/nvidiactl wr,
     deny /dev/udmabuf wr,
+    # KMS primary node: mpv's `--vo=gpu` Wayland context opens this for GBM and
+    # deadlocks at mp_rendezvous when it is unavailable (mpv#8506), which presents
+    # as "no window, audio still plays, must be killed". The no-GPU path is
+    # `--vo=wlshm` (Wayland shared-memory output, needs no DRM node at all). This
+    # deny only silences the probe; wlshm is what actually makes playback work.
+    deny /dev/dri/card[0-9]* wr,
 }

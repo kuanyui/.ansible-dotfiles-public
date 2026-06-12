@@ -1,0 +1,62 @@
+---
+- name: Skip `mpv` role unless `setup_mpv` is true
+  ansible.builtin.debug:
+    msg: "Skipping mpv (setup_mpv={{ setup_mpv | default(false) }})."
+  when: not setup_mpv | default(false) | bool
+
+- when: setup_mpv | default(false) | bool
+  block:
+    - name: Verify required variables are set
+      ansible.builtin.assert:
+        that:
+          - target_home != ""
+          - target_user != ""
+          - target_group != ""
+        msg: "target_home, target_user, target_group must all be set by the calling playbook"
+
+    - name: Stat `~/.config/mpv` paths a legacy stow checkout may have symlinked
+      ansible.builtin.stat:
+        path: "{{ target_home }}/{{ item }}"
+      loop:
+        - .config/mpv
+        - .config/mpv/mpv.conf
+        - .config/mpv/input.conf
+        - .config/mpv/scripts
+      register: _mpv_legacy_stow_stat_results
+
+    - name: Refuse to deploy over legacy stow symlinks (unstow the old `mpv/` package first)
+      ansible.builtin.assert:
+        that: not (item.stat.islnk | default(false))
+        msg: >-
+          {{ target_home }}/{{ item.item }} is a symlink - it looks stow-managed by the
+          legacy dotfiles repo. Deploying through it would write INTO that repo instead
+          of materializing real files. Run `stow --delete mpv` in the old stow dotfiles
+          repo first, then re-run this playbook.
+      loop: "{{ _mpv_legacy_stow_stat_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Create `~/.config/mpv/` and `~/.config/mpv/scripts/`
+      ansible.builtin.file:
+        path: "{{ target_home }}/{{ item }}"
+        state: directory
+        owner: "{{ target_user }}"
+        group: "{{ target_group }}"
+        mode: "0755"
+      loop:
+        - .config/mpv
+        - .config/mpv/scripts
+
+    - name: Deploy mpv config files into `~/.config/mpv/` (`mpv.conf` sets `vo=wlshm` - see role README)
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ target_home }}/.config/mpv/{{ item }}"
+        owner: "{{ target_user }}"
+        group: "{{ target_group }}"
+        mode: "0644"
+      loop:
+        - mpv.conf
+        - input.conf
+        - KDE_global_shortcuts_examples.sh
+        - scripts/touchscreen-seek.lua
+        - scripts/touchscreen-drag-seek.lua.disable

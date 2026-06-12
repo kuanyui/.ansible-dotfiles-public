@@ -55,3 +55,8 @@ setup_trusted_pubkeys: false
 # off the SSD) to every Firefox profile of the current user via
 # `roles/firefox_tunes`, by writing a per-profile user.js. Off by default - opt-in.
 setup_firefox_tunes: false
+# `setup_mpv`: deploy mpv player config (`mpv.conf` with `vo=wlshm` + `input.conf`
+# + Lua scripts) into ~/.config/mpv/ via `roles/mpv`. `vo=wlshm` pairs with the
+# no-GPU AppArmor profile `local_pathbased_mpv` (denies X11 + /dev/dri) - see
+# `roles/mpv/README.md`. Off by default - opt-in per host.
+setup_mpv: false

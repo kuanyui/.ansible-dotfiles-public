@@ -28,7 +28,8 @@ playbooks/                # entry playbooks
   ├─ incus_vm_uninstall.yml      # ├─ uninstall flow (removes `ivm` + role subdir)
   ├─ apparmor.yml         # ├─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
   ├─ trusted_pubkeys.yml  # ├─ dedicated entry: pin GitHub/GitLab SSH host keys + Debian CD signing keys
-  └─ firefox_tunes.yml    # └─ dedicated entry: write per-profile user.js (session-store + cache off the SSD)
+  ├─ firefox_tunes.yml    # ├─ dedicated entry: write per-profile user.js (session-store + cache off the SSD)
+  └─ mpv.yml              # └─ dedicated entry: deploy mpv config (`vo=wlshm` + keybindings + Lua scripts)
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
 callback_plugins/         # local ansible callback plugins (profile_tasks for per-task timing)
@@ -58,6 +59,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
 | [`trusted_pubkeys/`](roles/trusted_pubkeys/) | Pin well-known public keys for the current user (hardcoded in-repo for audit, not fetched): GitHub/GitLab SSH host keys into `~/.ssh/known_hosts` (no TOFU prompt on `git clone git@...`), plus Debian CD signing GPG keys into a dedicated keyring for verifying Debian images. |
 | [`firefox_tunes/`](roles/firefox_tunes/) | Cut Firefox SSD writes for the current user: write a per-profile `user.js` (enumerated from `profiles.ini`) that lengthens the session-store interval and keeps the cache off the SSD (RAM-only, or disk cache on a tmpfs dir). |
+| [`mpv/`](roles/mpv/) | Deploy mpv player config to `~/.config/mpv/` (migrated from the legacy stow dotfiles): `mpv.conf` with `vo=wlshm` (pairs with the no-GPU AppArmor profile - no X11, no `/dev/dri`), keybindings, touchscreen Lua scripts. |
 
 ## Installation
 

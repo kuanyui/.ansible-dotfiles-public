@@ -940,6 +940,48 @@ one shot" possible, distro_packages bundles gained an OPTIONAL `post_install` ke
   path would need the real-user (not `user`) convention. Same bucket as the thirdparty
   host-runner above.
 
+## mpv config: migrate dotfiles into ansible (new `mpv` role)
+
+User keeps an mpv config in a separate dotfiles repo, not yet migrated into this
+ansible project. The apparmor work this session pinned a HARD requirement that the
+migration must carry, so record it before it is lost.
+
+Why it matters (this session): `roles/apparmor/templates/mpv/local_pathbased_mpv.aa.j2`
+is the no-GPU (software) profile for plain `mpv`. After `9e942af` gated X11 behind
+`apparmor_allow_x11=false`, plain `mpv` on a Wayland session showed NO window but kept
+audio and had to be `pkill`ed. Chain: `vo=gpu` (default) probes the X11 context first
+(now xauth-denied, silently), falls back to the Wayland context, which opens
+`/dev/dri/card1` for GBM and DEADLOCKS at mp_rendezvous (mpv#8506). `card1` was the
+visible AVC; the X11 cutoff was the root. Proven by controlled comparison (Tuesday->now
+only xauth changed) + `mpv --vo=wlshm` playing fine under the broken profile on Wayland.
+
+- [x] **Create an `mpv` config role (migrate from the separate dotfiles).** DONE:
+  `roles/mpv` deploys 5 files from the legacy stow `mpv/` package (source:
+  `REFS/STOW_DOTFILES`, untracked) to `~/.config/mpv/`: `mpv.conf` (now `vo=wlshm` +
+  rationale comment; `sub-ass-force-style` renamed to `sub-ass-style-overrides` - kills
+  the startup warning), `input.conf`, `KDE_global_shortcuts_examples.sh`, 2 touchscreen
+  Lua scripts. SANITIZATION DROPS (see `roles/mpv/README.md`): per-machine hostname
+  profiles (device fingerprint; HOSTNAME-env mechanism broken on Linux; its
+  `input-ipc-server` carried commented-out at top level), `lib-for-conf.lua` (served
+  only those profiles + printed per-launch log noise), the `p` binding (personal helper
+  path, macOS-era, dead on Linux). Wired: `playbooks/mpv.yml`, `setup_mpv: false` gate,
+  `user.yml` entry, `make apply-mpv`/`check-mpv`, README tree + role table. VERIFIED:
+  syntax-check; end-to-end on a throwaway `target_home` (all 5 files land, run2
+  `changed=0`); stow-symlink guard refuses with the `stow --delete mpv` hint and writes
+  0 files through the link. PENDING on the real host: unstow old `mpv/`, `make
+  apply-mpv`, then plain `mpv <file>` must open a window (X11 stays denied). Note:
+  `profile=sw-fast` NOT set - wlshm alone proved fine in the user's test; add only if
+  high-res playback stutters.
+- [ ] **GPU-launcher interaction** - `ansible-mpv-gpu.desktop`'s Exec has no `--vo`, so
+  a global `vo=wlshm` makes the GPU launcher run software too (it no longer hangs, but
+  gets no hardware). TRUE hardware via the launcher needs a SEPARATE decision: grant
+  `local_attachmentless_mpv_gpu` the `/dev/dri/card[0-9]* rw` modesetting node (KWin
+  advertises the card node here, not renderD) AND add `--vo=gpu` to the launcher Exec to
+  override the wlshm default. Deferred until hardware is actually wanted.
+- [x] **apparmor side done this session** - added `deny /dev/dri/card[0-9]* wr,` to
+  `local_pathbased_mpv.aa.j2` (silences the card1 audit noise; completes the existing
+  renderD/nvidiactl/udmabuf deny block). Uncommitted in the working tree.
+
 ## Notes / future
 
 - [ ] **container_apps -> one engine + declarative templates** (parallel to what

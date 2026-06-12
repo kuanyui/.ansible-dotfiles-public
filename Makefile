@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes incus-install incus-check incus-sandbox incus-uninstall-ivm incus-teardown-host incus-push-dotfiles check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv incus-install incus-check incus-sandbox incus-uninstall-ivm incus-teardown-host incus-push-dotfiles check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -71,6 +71,9 @@ apply-trusted-pubkeys:  ## Pin GitHub/GitLab SSH host keys (~/.ssh/known_hosts) 
 
 apply-firefox-tunes:  ## Apply Firefox about:config tweaks (session-store interval + cache off the SSD) to every profile of the current user (bypasses `setup_firefox_tunes` gate). Writes user.js per profile; restart Firefox to apply. No sudo.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/firefox_tunes.yml
+
+apply-mpv:  ## Deploy mpv config (mpv.conf with `vo=wlshm` + input.conf + Lua scripts) to ~/.config/mpv/ (bypasses `setup_mpv` gate). Refuses to overwrite legacy stow symlinks. No sudo.
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/mpv.yml
 
 ### -------------------------------------------------------------------------
 ### Incus (host daemon + the `ivm` VM launcher)
@@ -169,6 +172,9 @@ check-trusted-pubkeys:  ## Dry-run diff for trusted_pubkeys (SSH host keys + Deb
 
 check-firefox-tunes:  ## Dry-run diff for firefox_tunes (per-profile user.js)
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/firefox_tunes.yml
+
+check-mpv:  ## Dry-run diff for mpv config deployment (~/.config/mpv/)
+	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/mpv.yml
 
 ### -------------------------------------------------------------------------
 ### AppArmor runtime helpers (live denial inspection)

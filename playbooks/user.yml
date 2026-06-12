@@ -17,3 +17,4 @@
     - apparmor         # gated by `setup_apparmor` (default false in group_vars/all.yml)
     - trusted_pubkeys  # gated by `setup_trusted_pubkeys` (default false in group_vars/all.yml)
     - firefox_tunes    # gated by `setup_firefox_tunes` (default false in group_vars/all.yml)
+    - mpv              # gated by `setup_mpv` (default false in group_vars/all.yml)
