@@ -956,10 +956,13 @@ visible AVC; the X11 cutoff was the root. Proven by controlled comparison (Tuesd
 only xauth changed) + `mpv --vo=wlshm` playing fine under the broken profile on Wayland.
 
 - [x] **Create an `mpv` config role (migrate from the separate dotfiles).** DONE:
-  `roles/mpv` deploys 4 files from the legacy stow `mpv/` package (source:
-  `REFS/STOW_DOTFILES`, untracked) to `~/.config/mpv/`: `mpv.conf` (now `vo=wlshm` +
-  rationale comment; `sub-ass-force-style` renamed to `sub-ass-style-overrides` - kills
-  the startup warning), `input.conf`, 2 touchscreen Lua scripts.
+  `roles/mpv` deploys 6 files to `~/.config/mpv/`. From the legacy stow `mpv/`
+  package (source: `REFS/STOW_DOTFILES`, untracked): `mpv.conf` (now `vo=wlshm` +
+  rationale comment + `window-dragging=no`; `sub-ass-force-style` renamed to
+  `sub-ass-style-overrides` - kills the startup warning), `input.conf`. Plus vendored
+  touch-gesture scripts (see swap item below): `scripts/pointer-event.lua`,
+  `scripts/touch-gestures.lua`, `script-opts/pointer-event.conf`,
+  `script-opts/touch-gestures.conf`.
   (`KDE_global_shortcuts_examples.sh` was migrated then REMOVED at user request -
   reference-only socat snippets, unused; the socat pattern lives on inline in
   `mpv.conf`'s IPC comment.) SANITIZATION DROPS (see `roles/mpv/README.md`): per-machine hostname
@@ -971,23 +974,29 @@ only xauth changed) + `mpv --vo=wlshm` playing fine under the broken profile on 
   only those profiles + printed per-launch log noise), the `p` binding (personal helper
   path, macOS-era, dead on Linux). Wired: `playbooks/mpv.yml`, `setup_mpv: false` gate,
   `user.yml` entry, `make apply-mpv`/`check-mpv`, README tree + role table. VERIFIED:
-  syntax-check; end-to-end on a throwaway `target_home` (all 4 files land, run2
+  syntax-check; end-to-end on a throwaway `target_home` (all 6 files land, run2
   `changed=0`); stow-symlink guard refuses with the `stow --delete mpv` hint and writes
   0 files through the link. PENDING on the real host: unstow old `mpv/`, `make
   apply-mpv`, then plain `mpv <file>` must open a window (X11 stays denied). Note:
   `profile=sw-fast` NOT set - wlshm alone proved fine in the user's test; add only if
   high-res playback stutters.
-- [x] **drag-seek gesture script security-reviewed + enabled** - both Lua scripts
-  audited (grep + read): pure mpv playback-control API (seek/volume/speed/property/
-  timers/key-bindings), `mp.command` interpolates only clamped numbers, ZERO
-  `os.*`/`io.*`/`subprocess`/`run`/`load*`/`socket` - safe. Renamed
-  `touchscreen-drag-seek.lua.disable` -> `.lua` so mpv loads it (left-drag = seek/
-  volume w/ inertia, middle-drag = speed; `script-message toggle` to flip at runtime).
-  Synergy with `window-dragging=no`: left-drag now gestures instead of moving the
-  window. NOTE the upstream Lua quirk: `autostart = 0` is TRUTHY in Lua (only nil/false
-  are falsy), so gestures auto-start on load - intended here. If a host applied the old
-  `.disable` name, the stale file lingers harmlessly (mpv ignores non-`.lua`); `rm` it
-  to tidy.
+- [x] **touch gestures: swapped the old scripts for christoph-heinrich's** - user found
+  the old `mpv-gestures` seek hard to control (absolute position) and SLUGGISH. Root
+  cause: it did `seek absolute exact` every drag tick (exact = frame-accurate = slow).
+  Surveyed upstream; christoph-heinrich's [`mpv-touch-gestures`] does a fast
+  `keyframes` seek WHILE dragging and one `exact` seek when you stop - smooth, and the
+  responsive feedback itself cures the overshoot. (Rejected a custom velocity/momentum
+  model: momentum overshoots for SEEK - it is literally what the old script's inertia
+  did and the user disliked.) Vendored 2 `.lua` (pointer-event 1.2.1 + touch-gestures
+  1.1.0) + 2 `.conf`; retired `touchscreen-seek.lua` + `touchscreen-drag-seek.lua`;
+  removed the dangling `MBTN_LEFT_DBL script-binding touchscreen-seek` from `input.conf`
+  (pointer-event owns the left button via forced binding). Both `.lua` SECURITY-REVIEWED
+  (grep + full read): pure mpv API, args numeric/hardcoded verbs, ZERO
+  `os/io/subprocess/run/load/socket/package` - safe. Set `horizontal_drag=seek` in
+  `touch-gestures.conf` (upstream default is `playlist`); `seek_scale` is the
+  overshoot/sensitivity knob (lower = finer). `left_long` -> uosc menu (harmless warning
+  if no uosc). `.lua` kept verbatim (track upstream), only `.conf` tuned. FEEL is
+  on-device only (no mpv/touchscreen here) - user tests + tunes `seek_scale`.
 - [ ] **GPU-launcher interaction** - `ansible-mpv-gpu.desktop`'s Exec has no `--vo`, so
   a global `vo=wlshm` makes the GPU launcher run software too (it no longer hangs, but
   gets no hardware). TRUE hardware via the launcher needs a SEPARATE decision: grant

@@ -13,13 +13,36 @@ Gate: `setup_mpv` (default `false` in `group_vars/all.yml`). Dedicated entry:
 
 | File | Purpose |
 | --- | --- |
-| `mpv.conf` | player defaults; `vo=wlshm` (see below) |
-| `input.conf` | keybindings |
-| `scripts/touchscreen-seek.lua` | double-tap left/center/right = seek/pause |
-| `scripts/touchscreen-drag-seek.lua` | drag gestures: left-drag = seek (horizontal) / volume (vertical) with inertia, middle-drag = speed. Pairs with `window-dragging=no`. Toggle at runtime with `script-message toggle` |
+| `mpv.conf` | player defaults; `vo=wlshm` (see below) + `window-dragging=no` |
+| `input.conf` | keybindings (left button is left to the gesture scripts) |
+| `scripts/pointer-event.lua` | low-latency tap/double/long/drag detection (vendored, see below) |
+| `scripts/touch-gestures.lua` | maps those events to seek / volume / speed / fullscreen (vendored) |
+| `script-opts/pointer-event.conf` | wires pointer-event events -> touch-gestures; tap = pause, long = uosc menu |
+| `script-opts/touch-gestures.conf` | tuning - `horizontal_drag=seek`, `seek_scale` (lower = finer) |
 
 Uninstall: delete the files listed above from `~/.config/mpv/` (leave the rest
 of the dir - mpv keeps user state like `watch_later/` there).
+
+## Touch gestures
+
+Vendored from christoph-heinrich's scripts (chosen for a SMOOTH seek - it does a
+fast keyframe seek while you drag and a single exact seek when you stop, instead
+of an exact seek every frame, which is what made the old script feel sluggish):
+
+- [`mpv-pointer-event`](https://github.com/christoph-heinrich/mpv-pointer-event) `1.2.1` -> `scripts/pointer-event.lua`
+- [`mpv-touch-gestures`](https://github.com/christoph-heinrich/mpv-touch-gestures) `1.1.0` -> `scripts/touch-gestures.lua` + both `script-opts/*.conf`
+
+Gestures (with `horizontal_drag=seek`): horizontal drag = seek (proportional to
+duration), vertical drag = speed (left half) / volume (right half), double-tap
+zones = -10s / fullscreen / +10s, single tap = pause, long press = uosc menu (no
+uosc -> harmless warning). The `.lua` files are kept verbatim; only the `.conf`
+files are tuned (see their headers). `seek_scale=0.5` in `touch-gestures.conf`
+tames overshoot if a full-screen drag jumps too far.
+
+Security review (both `.lua`, this session): pure mpv playback-control API
+(`seek`/`set volume`/`set speed`/property/timers/key-bindings/`assdraw`), all
+command args numeric or hardcoded verbs; ZERO `os.*` / `io.*` / `subprocess` /
+`run` / `load*` / `socket` / `package`. Safe.
 
 ## Why `vo=wlshm`
 
@@ -43,3 +66,4 @@ this default AND the profile needs a card-node grant - deferred, see `TODO.md`.
 | `input.conf` `p` binding | personal helper path from the macOS era - leaked home layout, dead on Linux |
 | `sub-ass-force-style` | renamed upstream; carried as `sub-ass-style-overrides` |
 | `KDE_global_shortcuts_examples.sh` | reference-only socat snippets, unused; the IPC socket they drive stays commented out. The socat usage pattern is preserved inline in `mpv.conf`'s IPC comment, so nothing is lost |
+| `scripts/touchscreen-seek.lua` + `touchscreen-drag-seek.lua` | replaced by christoph-heinrich's `pointer-event` + `touch-gestures` (smoother seek, proper touch/mouse split) - see the Touch gestures section above |
