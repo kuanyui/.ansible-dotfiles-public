@@ -14,4 +14,5 @@
     - provision_distro_packages
     - zsh
     - emacs
-    - dotfiles
+    - bash
+    - tmux

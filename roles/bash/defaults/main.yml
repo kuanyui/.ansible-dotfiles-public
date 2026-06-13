@@ -1,0 +1,9 @@
+---
+# Must be set by the calling playbook/role.
+target_home: ""
+target_user: ""
+target_group: ""
+
+# true  -> deploy root's trimmed `.bashrc`
+# false -> deploy the user's full `.bashrc` (see templates/.bashrc.j2)
+is_root: false

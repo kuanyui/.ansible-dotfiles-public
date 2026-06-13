@@ -1,0 +1,23 @@
+---
+# Deploy `~/.bashrc`. Split out of the former generic `roles/dotfiles` grab-bag so
+# each shell config is its own explicit role (like `roles/zsh` / `roles/emacs`).
+# The caller sets `target_home` / `target_user` / `target_group` + `is_root` (root
+# gets a trimmed `.bashrc` - see `templates/.bashrc.j2`). Consumed by
+# `playbooks/{user,root}.yml` and `roles/vm_incus`'s dotfiles staging.
+
+- name: Assert `target_home` / `target_user` / `target_group` are set by the caller
+  ansible.builtin.assert:
+    that:
+      - target_home | default('') | length > 0
+      - target_user | default('') | length > 0
+      - target_group | default('') | length > 0
+    fail_msg: "target_home, target_user, target_group must be set by the calling playbook/role."
+
+- name: "Deploy `.bashrc` to `{{ target_home }}/.bashrc`"
+  ansible.builtin.template:
+    src: .bashrc.j2
+    dest: "{{ target_home }}/.bashrc"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0644"
+    force: true

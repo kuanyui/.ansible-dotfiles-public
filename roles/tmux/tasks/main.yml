@@ -1,0 +1,22 @@
+---
+# Deploy `~/.tmux.conf`. Split out of the former generic `roles/dotfiles` grab-bag.
+# Static config - identical for user and root, so NO `is_root` branch (unlike
+# `roles/bash`). The caller sets `target_home` / `target_user` / `target_group`.
+# Consumed by `playbooks/{user,root}.yml` and `roles/vm_incus`'s dotfiles staging.
+
+- name: Assert `target_home` / `target_user` / `target_group` are set by the caller
+  ansible.builtin.assert:
+    that:
+      - target_home | default('') | length > 0
+      - target_user | default('') | length > 0
+      - target_group | default('') | length > 0
+    fail_msg: "target_home, target_user, target_group must be set by the calling playbook/role."
+
+- name: "Deploy `.tmux.conf` to `{{ target_home }}/.tmux.conf`"
+  ansible.builtin.copy:
+    src: .tmux.conf
+    dest: "{{ target_home }}/.tmux.conf"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0644"
+    force: true

@@ -47,9 +47,10 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 
 | Role | Purpose |
 |---|---|
-| [`_shared/`](roles/_shared/) | Byte-identical dotfile fragments included by `dotfiles` / `zsh` / etc. Templates only, no tasks. |
+| [`_shared/`](roles/_shared/) | Byte-identical dotfile fragments included by `bash` / `zsh` / etc. Templates only, no tasks. |
 | [`_install_distro_packages/`](roles/_install_distro_packages/) | Cross-distro package install (zypper / apt / dnf); ansible-core-only, avoids `community.general.zypper`. |
-| [`dotfiles/`](roles/dotfiles/) | `.bashrc`, `.tmux.conf`, and friends. |
+| [`bash/`](roles/bash/) | Deploy `~/.bashrc` (root gets a trimmed variant via `is_root`). |
+| [`tmux/`](roles/tmux/) | Deploy `~/.tmux.conf` (static; identical for user + root). |
 | [`zsh/`](roles/zsh/) | Install zsh + plugins, deploy `.zshrc`, run `chsh`. |
 | [`emacs/`](roles/emacs/) | Install Emacs + elisp packages. |
 | [`provision_distro_packages/`](roles/provision_distro_packages/) | Frequently-used distro package bundles (basic / net / sys / Wayland tools); delegates installs to `_install_distro_packages`. |
@@ -110,7 +111,7 @@ make apply-essentials-user   # current user only
 make apply-essentials-root   # root only (requires sudo)
 ```
 
-## Using the `c-<template>-<runtime>` launchers without applying `roles/dotfiles` / `roles/zsh`
+## Using the `c-<template>-<runtime>` launchers without applying `roles/bash` / `roles/tmux` / `roles/zsh`
 
 If you already have your own `.bashrc` / `.zshrc` and only want the container app launchers (`c-claude-crun`, `c-claude-krun`, ...) from `make apply-container-apps`, three things need to be wired up in your shell rc manually. The dotfiles role does these for you automatically; this section is for users who maintain their own shell config.
 

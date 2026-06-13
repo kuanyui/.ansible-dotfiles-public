@@ -22,7 +22,7 @@ Tick a box when the phase is finished + verified + committed.
 - [x] Phase 0a - `provision_*` registry role rename
 - [x] Phase 0b - `vm_*` role rename (commands stay `ivm`/`qvm`/`pvm`)
 - [x] Phase 0c - `essentials` Makefile targets
-- [ ] Phase 0d - split `roles/dotfiles` -> `bash` + `tmux`
+- [x] Phase 0d - split `roles/dotfiles` -> `bash` + `tmux`
 - [ ] Phase 0e - retire `setup_*` gates / config-model cleanup
 - [ ] Phase 1 - shared assets foundation (`__common__`, `_shared_prebuilt_provision_assets`, `ivm` consumes)
 - [ ] Phase 2 - `qvm provision`

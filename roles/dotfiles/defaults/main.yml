@@ -1,9 +1,0 @@
----
-# Must be set by the calling playbook
-target_home: ""
-target_user: ""
-target_group: ""
-
-# true  → deploy root's config (minimal, audited)
-# false → deploy user's config (root base + user-specific extras)
-is_root: false

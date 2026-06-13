@@ -36,7 +36,7 @@ container_apps_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
 # this dir to fpath BEFORE compinit so completions are picked up automatically.
 container_apps_zsh_completion_dir: "{{ container_apps_root }}/zsh-completions"
 
-# Where to drop bash completion files. `roles/dotfiles`'s rendered `.bashrc`
+# Where to drop bash completion files. `roles/bash`'s rendered `.bashrc`
 # eagerly sources every file here. (We don't reuse the XDG bash-completion
 # dynamic-loader path because that would couple us to bash-completion's
 # package availability on every target distro.)
