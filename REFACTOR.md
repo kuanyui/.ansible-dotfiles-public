@@ -40,6 +40,7 @@ tab-complete together; (b) the two provisioning-registry roles get a shared
 | install gates (`group_vars/`) | `distro_packages_install_*` | `provision_distro_packages_install_*` |
 | config role split | `roles/dotfiles` (bash+tmux grab-bag) | `roles/bash` + `roles/tmux` |
 | essentials targets | `apply-{user,root,all-users}` / `check-*` | `apply-essentials-{user,root,all-users}` / `check-essentials-*` |
+| config role rename | `roles/local_pkgs` | `roles/local_lang_pkg_managers` (TBD: vs `redirect_lang_pkgs`) |
 
 **Why the registry vars MUST rename (not just cosmetics):** ansible-lint
 `var-naming[no-role-prefix]` - "Variables names from within roles should use
@@ -165,6 +166,46 @@ naturally.
 Verify: host `apply` still drops `.bashrc` + `.tmux.conf` for user AND root;
 `grep -r 'name: dotfiles'` == 0; syntax-check.
 
+### Phase 0e - retire `setup_*` gates; roles own their vars; playbooks select roles
+
+The gate pattern is cruft at this scale: `setup_zsh` is already DEAD (declared in
+group_vars, consumed nowhere); every optional role BOTH self-gates
+(`when: setup_X`) AND has its own dedicated playbook + Makefile target - two
+switches for one feature. Replace it with explicit role selection.
+
+Two kinds of var are currently mixed in `group_vars/all.yml`:
+
+- **on/off gates** (`setup_apparmor` / `setup_vm_incus` / `setup_mpv` / ... incl. the
+  dead `setup_zsh`) -> DELETE, plus each role's self-skip preamble AND apparmor's
+  scattered mid-task `when: setup_apparmor` (5 occurrences in its main.yml).
+- **genuine config** -> MOVE into the owning role's `defaults/`: `has_gui_support`,
+  `provision_distro_packages_install_*` (bundle selection),
+  `podman_runtime` / `podman_runtime_scope` (-> `podman_oci_runtimes`; note
+  `setup_podman_oci_runtimes` is already duplicated in that role's defaults).
+  group_vars overrides only when a host differs from the default.
+
+Model (confirmed - Option A): **optional features ONLY via their dedicated
+playbook / Makefile target.** NO per-host selection machinery in THIS repo - it is
+public; large-scale/multi-host deployment belongs in a SEPARATE PRIVATE ansible
+project with hardcoded hostnames (keeps hostnames out of this public repo). The
+dedicated playbooks drop their `setup_X: true` bypass line (just list the role).
+
+essentials playbooks (`user.yml`/`root.yml`, Phase 0c) list always-on roles
+directly: `local_lang_pkg_managers` (FIRST - PATH redirect before downstream
+installs), `zsh`, `emacs`, `bash`, `tmux`. Optional roles are REMOVED from
+`user.yml`. Folds in the `roles/local_pkgs` rename + move-to-essentials.
+
+**Behavior change to confirm:** `local_pkgs` is currently opt-in
+(`setup_local_pkgs: false`); as an essentials role it ALWAYS runs - the
+npm/pip/pipx/cargo/go global-install redirect becomes standard.
+
+Result: `group_vars/all.yml` shrinks from ~25 lines to just genuine cross-role
+config (the `shared_*` template fragments, maybe `has_gui_support`).
+
+Verify: `grep -rn 'setup_'` across roles/playbooks/group_vars finds none of the
+deleted gates; `apply-essentials-*` deploys the same essentials; each optional
+target still works standalone; syntax-check; ansible-lint.
+
 ### Phase 1 - shared assets foundation (`vmi` behavior preserved)
 
 1. Rename keys to `__common__` + `Debian/Suse/RedHat` across the registry defaults
@@ -234,11 +275,14 @@ only that VM's kernel - the run-time warning can soften/skip there.
 
 ## Deferred / out of scope (recorded so it is not re-derived)
 
-- **`podman_oci_runtimes` -> `vm_podman/tasks/` (e.g. `oci_runtime_krun`).** Was
-  considered: fold the OCI-runtime install into the container engine as tasks
-  (install krun, no "default"). **Not doing it:** the user no longer plans to use
-  `krun`, and a heavier kata-containers path is not worth a role. Leave
-  `roles/podman_oci_runtimes` as-is for now.
+- **`podman_oci_runtimes` rethink (deferred; user unused).** Considered: fold into
+  `vm_podman` as `tasks/` (e.g. `oci_runtime_krun`, or fetch a gvisor binary), and
+  DROP the "default runtime" concept entirely - setting a default runtime is
+  impractical (`krun` has poor compatibility with existing container images); the
+  role should just INSTALL a runtime, not make it the default. **Not doing it
+  now:** the user uses neither `krun` nor gvisor, and a heavier kata path is not
+  worth a role. (Phase 0e still moves `podman_runtime`/`podman_runtime_scope` into
+  the role's `defaults/` as part of the gate retirement; this deeper rethink waits.)
 
 ## CLAUDE.md amendment needed (Phase 1)
 
