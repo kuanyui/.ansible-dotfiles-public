@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-local-lang-pkg-managers vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -74,6 +74,9 @@ apply-firefox-tunes:  ## Apply Firefox about:config tweaks (session-store interv
 
 apply-mpv:  ## Deploy mpv config (mpv.conf with `vo=wlshm` + input.conf + Lua scripts) to ~/.config/mpv/ (bypasses `setup_mpv` gate). Refuses to overwrite legacy stow symlinks. No sudo.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/mpv.yml
+
+apply-local-lang-pkg-managers:  ## Redirect npm/pip/pipx/cargo/go global installs into ~/.local-lang-pkg-managers/ (deploys the env file sourced by .bashrc/.zshrc + pip.conf). Opt-in; rewrites PATH + pip behaviour. No sudo.
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/local_lang_pkg_managers.yml
 
 ### -------------------------------------------------------------------------
 ### Incus (host daemon + the `ivm` VM launcher)

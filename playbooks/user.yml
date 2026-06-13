@@ -9,7 +9,6 @@
     target_group: "{{ ansible_facts['user_id'] }}"
     is_root: false
   roles:
-    - local_pkgs       # gated by `setup_local_pkgs` (default false in group_vars/all.yml); first so PATH redirection is in place before downstream roles run any user-level package install
     - zsh
     - emacs
     - bash

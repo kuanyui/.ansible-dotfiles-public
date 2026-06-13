@@ -54,7 +54,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`zsh/`](roles/zsh/) | Install zsh + plugins, deploy `.zshrc`, run `chsh`. |
 | [`emacs/`](roles/emacs/) | Install Emacs + elisp packages. |
 | [`provision_distro_packages/`](roles/provision_distro_packages/) | Frequently-used distro package bundles (basic / net / sys / Wayland tools); delegates installs to `_install_distro_packages`. |
-| [`local_pkgs/`](roles/local_pkgs/) | Redirect npm / pip / pipx / cargo / go global installs from `~/.local/` into `~/.local-pkgs/<tool>/`, so XDG + ansible-managed dotfiles stay separable from language-level package state. |
+| [`local_lang_pkg_managers/`](roles/local_lang_pkg_managers/) | Redirect npm / pip / pipx / cargo / go global installs from `~/.local/` into `~/.local-lang-pkg-managers/<tool>/`, so XDG + ansible-managed dotfiles stay separable from language-level package state. Opt-in via `make apply-local-lang-pkg-managers`. |
 | [`podman_oci_runtimes/`](roles/podman_oci_runtimes/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |
 | [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |

@@ -1,4 +1,0 @@
----
-# Off by default. Opt in via `setup_local_pkgs: true` in group_vars or
-# host_vars. See `roles/local_pkgs/README.md` for the rationale.
-setup_local_pkgs: false

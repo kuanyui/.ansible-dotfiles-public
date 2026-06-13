@@ -1,0 +1,5 @@
+---
+# Must be set by the calling playbook/role (same interface as roles/bash etc.).
+target_home: ""
+target_user: ""
+target_group: ""
