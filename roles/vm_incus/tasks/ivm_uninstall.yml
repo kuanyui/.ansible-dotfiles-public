@@ -9,7 +9,23 @@
     path: "{{ vm_incus_bin_dir }}/ivm"
     state: absent
 
-- name: Wipe `vm_incus`'s subdir `{{ vm_incus_root }}` (schema, templates, dotfiles staging; siblings under `ansible-managed/` untouched)
+- name: Wipe `vm_incus`'s subdir `{{ vm_incus_root }}` (ivm binary data - schema, templates, fcitx5 script, storage-info - plus the completion dirs)
   ansible.builtin.file:
     path: "{{ vm_incus_root }}"
+    state: absent
+
+# The SHARED provision-asset cache (shared-prebuilt-provision-assets/) is produced by
+# `vm_incus` apply (via roles/_shared_prebuilt_provision_assets) but lives OUTSIDE
+# vm_incus_root because qvm/pvm will consume it too. While `ivm` is the SOLE consumer,
+# its uninstall removes the cache (apply/uninstall symmetric; the cache is regenerable,
+# so low-stakes). WHEN qvm/pvm co-produce it (Phase 2/3), this MUST become conditional /
+# ref-counted - one consumer's uninstall must not delete a cache another still needs
+# (see CLAUDE.md "Shared prebuilt-asset dirs"). Path comes from the producer's defaults.
+- name: Load the shared-asset producer's defaults (for `_shared_prebuilt_provision_assets_dir`)
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../_shared_prebuilt_provision_assets/defaults/main.yml"
+
+- name: Wipe the SHARED provision-asset cache `{{ _shared_prebuilt_provision_assets_dir }}` (sole consumer today; see note above)
+  ansible.builtin.file:
+    path: "{{ _shared_prebuilt_provision_assets_dir }}"
     state: absent
