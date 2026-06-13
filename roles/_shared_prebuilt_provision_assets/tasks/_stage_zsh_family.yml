@@ -1,0 +1,35 @@
+---
+# Stage one ansible_os_family's `.zshrc` (user + root) into
+# `dotfiles/zsh/{{ _shared_prebuilt_provision_assets_family }}/{home/user,root}`.
+# Included once per family by stage_dotfiles.yml. `override_os_family` makes
+# `roles/zsh`'s `.zshrc.j2` pick THIS family's min-install helper (apt-min /
+# zypper-min / dnf-min) instead of leaking the host's ansible_os_family.
+
+- name: "Ensure `dotfiles/zsh/{{ _shared_prebuilt_provision_assets_family }}/{home/user,root}` dirs exist"
+  ansible.builtin.file:
+    path: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/zsh/{{ _shared_prebuilt_provision_assets_family }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [home/user, root]
+
+- name: "Stage `{{ _shared_prebuilt_provision_assets_family }}` `user` `.zshrc` (via roles/zsh deploy-zsh-config.yml)"
+  ansible.builtin.include_role:
+    name: zsh
+    tasks_from: deploy-zsh-config.yml
+  vars:
+    target_home: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/zsh/{{ _shared_prebuilt_provision_assets_family }}/home/user"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: false
+    override_os_family: "{{ _shared_prebuilt_provision_assets_family }}"
+
+- name: "Stage `{{ _shared_prebuilt_provision_assets_family }}` `root` `.zshrc` (via roles/zsh deploy-zsh-config.yml)"
+  ansible.builtin.include_role:
+    name: zsh
+    tasks_from: deploy-zsh-config.yml
+  vars:
+    target_home: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/zsh/{{ _shared_prebuilt_provision_assets_family }}/root"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: true
+    override_os_family: "{{ _shared_prebuilt_provision_assets_family }}"

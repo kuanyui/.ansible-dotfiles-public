@@ -1,0 +1,91 @@
+---
+# Stage the FEATURE-FIRST dotfiles tree under
+# `{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/<feature>/<bucket>/<who>/`:
+#   <feature> = bash / tmux / zsh / emacs   (== the JSON key where it overlaps)
+#   <bucket>  = __common__ (always-applied) OR an ansible_os_family (Debian/Suse/RedHat)
+#   <who>     = home/user (is_root=false) OR root (is_root=true)
+# A consumer provisioning <feature> copies `<feature>/__common__` then `<feature>/<VM family>`
+# (distro overlays common). A feature populates only the buckets/sides it needs - the
+# push side `.get()`s each, so an absent bucket is just skipped.
+#
+# Family split (audited per file):
+#   - bash  (`.bashrc`, template, is_root branch) - family-INDEPENDENT  -> __common__, user + root
+#   - tmux  (`.tmux.conf`, static, no is_root)     - family-INDEPENDENT  -> __common__, user + root (same file)
+#   - emacs (`.emacs.d`, distro-independent)       - family-INDEPENDENT  -> __common__, user ONLY
+#   - zsh   (`.zshrc`, template, override_os_family) - family-SPECIFIC    -> <family>, user + root
+# `user` and `root` are different identities, so each gets its own is_root render
+# (root: trimmed `.bashrc`, red prompt, no redundant sudo).
+
+# ---------- bash: __common__, user + root (family-independent) ----------
+- name: Ensure `dotfiles/bash/__common__/{home/user,root}` dirs exist
+  ansible.builtin.file:
+    path: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/bash/__common__/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [home/user, root]
+
+- name: "Stage `user` `.bashrc` into `dotfiles/bash/__common__/home/user` (via roles/bash)"
+  ansible.builtin.include_role:
+    name: bash
+  vars:
+    target_home: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/bash/__common__/home/user"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: false
+
+- name: "Stage `root` `.bashrc` into `dotfiles/bash/__common__/root` (via roles/bash)"
+  ansible.builtin.include_role:
+    name: bash
+  vars:
+    target_home: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/bash/__common__/root"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: true
+
+# ---------- tmux: __common__, user + root (static; identical file both sides) ----------
+- name: Ensure `dotfiles/tmux/__common__/{home/user,root}` dirs exist
+  ansible.builtin.file:
+    path: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/tmux/__common__/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [home/user, root]
+
+- name: "Stage `user` `.tmux.conf` into `dotfiles/tmux/__common__/home/user` (via roles/tmux)"
+  ansible.builtin.include_role:
+    name: tmux
+  vars:
+    target_home: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/tmux/__common__/home/user"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+
+- name: "Stage `root` `.tmux.conf` into `dotfiles/tmux/__common__/root` (via roles/tmux)"
+  ansible.builtin.include_role:
+    name: tmux
+  vars:
+    target_home: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/tmux/__common__/root"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+
+# ---------- emacs: __common__, user ONLY (distro-independent .emacs.d) ----------
+- name: Ensure `dotfiles/emacs/__common__/home/user` dir exists
+  ansible.builtin.file:
+    path: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/emacs/__common__/home/user"
+    state: directory
+    mode: "0755"
+
+- name: "Stage `user` `.emacs.d` into `dotfiles/emacs/__common__/home/user` (via roles/emacs deploy-emacs-config.yml)"
+  ansible.builtin.include_role:
+    name: emacs
+    tasks_from: deploy-emacs-config.yml
+  vars:
+    target_home: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/emacs/__common__/home/user"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: false
+
+# ---------- zsh: per ansible_os_family (family-specific .zshrc) ----------
+- name: "Stage `.zshrc` per ansible_os_family (tasks/_stage_zsh_family.yml)"
+  ansible.builtin.include_tasks: _stage_zsh_family.yml
+  loop: "{{ _shared_prebuilt_provision_assets_ansible_os_families }}"
+  loop_control:
+    loop_var: _shared_prebuilt_provision_assets_family

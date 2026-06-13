@@ -1,0 +1,71 @@
+---
+# Producer of the SHARED, regenerable provision-asset cache that every provisioning
+# backend consumes: `ivm` guests (now), `qvm` guests + `pvm` images (later). The host
+# itself reads the registry VARS directly (no JSON); the non-ansible consumers have no
+# ansible at provision time, so this role snapshots the registries to JSON + stages the
+# dotfiles ONCE, host-side, into a shared dir they all read.
+#
+# Internal `_`-role: `include_role`-only (no playbook / Makefile target). Output lives
+# under `_shared_prebuilt_provision_assets_dir`:
+#   distro-package-groups.json   `provision_distro_packages` registry, serialized
+#   thirdparty-software.json     `provision_thirdparty_software` registry, serialized
+#   dotfiles/<feature>/{__common__,Debian,Suse,RedHat}/{home/user,root}/  feature-first
+#
+# Single source of truth stays the registry roles' `defaults/`; the JSON is ONLY a
+# serialization. THIS render dict is the single place that lists the feature keys -
+# adding a bundle means adding it here AND in the owning registry's `defaults/`.
+
+- name: Ensure the shared asset dir `{{ _shared_prebuilt_provision_assets_dir }}` exists
+  ansible.builtin.file:
+    path: "{{ _shared_prebuilt_provision_assets_dir }}"
+    state: directory
+    mode: "0755"
+
+# ---------- Serialize the provision_distro_packages registry ----------
+- name: Load the `provision_distro_packages` bundle registry (sibling role's defaults)
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../provision_distro_packages/defaults/main.yml"
+
+- name: Render the bundle registry to `{{ _shared_prebuilt_provision_assets_dir }}/distro-package-groups.json`
+  ansible.builtin.copy:
+    dest: "{{ _shared_prebuilt_provision_assets_dir }}/distro-package-groups.json"
+    mode: "0644"
+    content: |
+      {{ {
+        'basic_tools': provision_distro_packages_basic_tools,
+        'sys_tools': provision_distro_packages_sys_tools,
+        'net_tools': provision_distro_packages_net_tools,
+        'wayland_tools': provision_distro_packages_wayland_tools,
+        'gui_x11': provision_distro_packages_gui_x11,
+        'gui_wayland': provision_distro_packages_gui_wayland,
+        'cjk_fonts': provision_distro_packages_cjk_fonts,
+        'cjk_input': provision_distro_packages_cjk_input,
+        'incus_guest_baseline': provision_distro_packages_incus_guest_baseline,
+        'emacs': provision_distro_packages_emacs,
+        'dev_qt': provision_distro_packages_dev_qt,
+        'dev_android': provision_distro_packages_dev_android,
+        'icewm_desktop': provision_distro_packages_icewm_desktop,
+        'lxqt_desktop': provision_distro_packages_lxqt_desktop,
+        'podman_rootless': provision_distro_packages_podman_rootless,
+      } | to_nice_json }}
+
+# ---------- Serialize the provision_thirdparty_software registry ----------
+- name: Load the `provision_thirdparty_software` recipe registry (sibling role's defaults)
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../provision_thirdparty_software/defaults/main.yml"
+
+- name: Render the recipe registry to `{{ _shared_prebuilt_provision_assets_dir }}/thirdparty-software.json`
+  ansible.builtin.copy:
+    dest: "{{ _shared_prebuilt_provision_assets_dir }}/thirdparty-software.json"
+    mode: "0644"
+    content: |
+      {{ {
+        'claude': provision_thirdparty_software_claude,
+        'codex': provision_thirdparty_software_codex,
+        'dev_rust': provision_thirdparty_software_dev_rust,
+        'dev_android': provision_thirdparty_software_dev_android,
+      } | to_nice_json }}
+
+# ---------- Stage the feature-first dotfiles tree ----------
+- name: Stage the feature-first dotfiles tree (tasks/stage_dotfiles.yml)
+  ansible.builtin.include_tasks: stage_dotfiles.yml

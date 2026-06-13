@@ -1,0 +1,19 @@
+---
+# `roles/_shared_prebuilt_provision_assets` - vars. Internal `_`-role, so its vars
+# carry the full (underscore-prefixed) role name to satisfy ansible-lint
+# var-naming[no-role-prefix].
+
+# The shared, REGENERABLE asset cache. A top-level `ansible-managed/` subdir owned by
+# THIS internal producer role and consumed by several face roles (`vm_incus` now;
+# `vm_quickemu` / `vm_podman` later) - the sanctioned "shared prebuilt-asset dir"
+# exception to the one-subdir-per-face-role rule (see CLAUDE.md). Regenerable: any
+# consumer's apply rebuilds it; it holds no unique state. NOT removed by any single
+# consumer's uninstall (others may still need it).
+_shared_prebuilt_provision_assets_dir: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/shared-prebuilt-provision-assets"
+
+# Which `ansible_os_family` dotfile trees to stage for the FAMILY-specific features.
+# Only `.zshrc` differs per family today (the min-install helper apt-min/zypper-min/
+# dnf-min, selected via `override_os_family`); bash/tmux/emacs are family-independent
+# (`__common__`). The JSON registries always carry all families regardless of this -
+# it only bounds the per-family dotfiles staging breadth.
+_shared_prebuilt_provision_assets_ansible_os_families: [Debian, Suse, RedHat]
