@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -41,13 +41,13 @@ unstow:  ## [Legacy] Remove existing stow symlinks from ~/ and /root
 ### -------------------------------------------------------------------------
 
 
-apply-user:  ## Provision current user (zsh + emacs + dotfiles)
+apply-essentials-user:  ## Provision current user (zsh + emacs + dotfiles)
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/user.yml
 
-apply-root:  ## Provision root (distro_packages + zsh + emacs + dotfiles; needs sudo)
+apply-essentials-root:  ## Provision root (distro_packages + zsh + emacs + dotfiles; needs sudo)
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/root.yml
 
-apply-all-users:  ## Provision both current user and root (i.e. `apply-user` + `apply-root`)
+apply-essentials-all-users:  ## Provision both current user and root (i.e. `apply-essentials-user` + `apply-essentials-root`)
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/all.yml
 
 apply-podman-oci-runtimes:  ## Provision crun + libkrun, assert crun has `+LIBKRUN`, write `containers.conf`, assert `podman info` shows krun active
@@ -162,13 +162,13 @@ vm-quickemu-uninstall-qvm:  ## Uninstall `qvm` + its `~/.local/share/ansible-man
 ### Dry-run (--check --diff)
 ### -------------------------------------------------------------------------
 
-check-user:  ## Dry-run diff for current user provisioning
+check-essentials-user:  ## Dry-run diff for current user provisioning
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/user.yml
 
-check-root:  ## Dry-run diff for root provisioning
+check-essentials-root:  ## Dry-run diff for root provisioning
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/root.yml
 
-check-all-users:  ## Dry-run diff for both user and root (i.e. `check-user` + `check-root`)
+check-essentials-all-users:  ## Dry-run diff for both user and root (i.e. `check-essentials-user` + `check-essentials-root`)
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/all.yml
 
 check-podman-oci-runtimes:  ## Dry-run diff for podman OCI runtime config
@@ -237,10 +237,10 @@ SANDBOX_RUNTIME ?= crun
 # rebuild the image (~1-2 min on warm apt cache); subsequent runs reuse the
 # tmpfs cache. `make sandbox-clean` wipes the tmpfs dirs.
 
-sandbox-user:  ## Dry-run `apply-user` (zsh + emacs + dotfiles deploy) in a throwaway podman+systemd sandbox
+sandbox-essentials-user:  ## Dry-run `apply-essentials-user` (zsh + emacs + dotfiles deploy) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) user
 
-sandbox-root:  ## Dry-run `apply-root` (distro_packages + zsh + emacs + dotfiles, is_root=true) in a throwaway podman+systemd sandbox
+sandbox-essentials-root:  ## Dry-run `apply-essentials-root` (distro_packages + zsh + emacs + dotfiles, is_root=true) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) root
 
 sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtime> launcher install) in a throwaway podman+systemd sandbox

@@ -100,14 +100,14 @@ sudo pacman -S --noconfirm git make ansible
 ```bash
 git clone https://github.com/kuanyui/.ansible-dotfiles.git
 cd .ansible-dotfiles
-make apply-all-users
+make apply-essentials-all-users
 ```
 
 This deploys dotfiles for both the current user and root. To deploy separately:
 
 ```bash
-make apply-user   # current user only
-make apply-root   # root only (requires sudo)
+make apply-essentials-user   # current user only
+make apply-essentials-root   # root only (requires sudo)
 ```
 
 ## Using the `c-<template>-<runtime>` launchers without applying `roles/dotfiles` / `roles/zsh`

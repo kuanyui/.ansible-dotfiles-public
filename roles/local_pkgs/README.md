@@ -40,7 +40,7 @@ inline:
 setup_local_pkgs: true
 ```
 
-Then run `make apply-user` (or `apply-all-users`).
+Then run `make apply-essentials-user` (or `apply-essentials-all-users`).
 
 ## What this role configures
 
