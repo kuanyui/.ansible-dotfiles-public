@@ -13,6 +13,23 @@ Companion docs: `roles/quickemu_vm/TODO.md`, `roles/incus_vm/REDESIGN.md`,
 
 ---
 
+## Progress
+
+Durable, git-tracked tracker (the in-session task tool is ephemeral / not
+committed - use it only for the fine-grained steps WHILE executing a phase).
+Tick a box when the phase is finished + verified + committed.
+
+- [ ] Phase 0a - `provision_*` registry role rename
+- [ ] Phase 0b - `vm_*` roles + `vmi`/`vmq` commands
+- [ ] Phase 0c - `essentials` Makefile targets
+- [ ] Phase 0d - split `roles/dotfiles` -> `bash` + `tmux`
+- [ ] Phase 0e - retire `setup_*` gates / config-model cleanup
+- [ ] Phase 1 - shared assets foundation (`__common__`, `_shared_prebuilt_provision_assets`, `vmi` consumes)
+- [ ] Phase 2 - `vmq provision`
+- [ ] Phase 3 - `vmp` / container engine
+
+---
+
 ## Naming decisions (LOCKED)
 
 Two themes: (a) launcher roles/commands become a `vm*` family so they sort +
@@ -40,7 +57,8 @@ tab-complete together; (b) the two provisioning-registry roles get a shared
 | install gates (`group_vars/`) | `distro_packages_install_*` | `provision_distro_packages_install_*` |
 | config role split | `roles/dotfiles` (bash+tmux grab-bag) | `roles/bash` + `roles/tmux` |
 | essentials targets | `apply-{user,root,all-users}` / `check-*` | `apply-essentials-{user,root,all-users}` / `check-essentials-*` |
-| config role rename | `roles/local_pkgs` | `roles/local_lang_pkg_managers` (TBD: vs `redirect_lang_pkgs`) |
+| config role rename | `roles/local_pkgs` | `roles/local_lang_pkg_managers` |
+| its managed dir | `~/.local-pkgs/` | `~/.local_lang_pkg_managers/` (no migration - role never run) |
 
 **Why the registry vars MUST rename (not just cosmetics):** ansible-lint
 `var-naming[no-role-prefix]` - "Variables names from within roles should use
@@ -191,13 +209,15 @@ project with hardcoded hostnames (keeps hostnames out of this public repo). The
 dedicated playbooks drop their `setup_X: true` bypass line (just list the role).
 
 essentials playbooks (`user.yml`/`root.yml`, Phase 0c) list always-on roles
-directly: `local_lang_pkg_managers` (FIRST - PATH redirect before downstream
-installs), `zsh`, `emacs`, `bash`, `tmux`. Optional roles are REMOVED from
-`user.yml`. Folds in the `roles/local_pkgs` rename + move-to-essentials.
+directly: `zsh`, `emacs`, `bash`, `tmux`. ALL optional roles are REMOVED from
+`user.yml`.
 
-**Behavior change to confirm:** `local_pkgs` is currently opt-in
-(`setup_local_pkgs: false`); as an essentials role it ALWAYS runs - the
-npm/pip/pipx/cargo/go global-install redirect becomes standard.
+`roles/local_pkgs` -> `roles/local_lang_pkg_managers` (its managed tree
+`~/.local-pkgs/` -> `~/.local_lang_pkg_managers/`; NO migration/idempotence
+needed - the role has never been run). It stays OPT-IN, NOT in essentials (the
+user does not want the npm/pip/pipx/cargo/go global-install redirect always-on),
+so it gains its OWN dedicated playbook + Makefile target (it has none today).
+Bonus: out of essentials, its old "must run FIRST" ordering coupling disappears.
 
 Result: `group_vars/all.yml` shrinks from ~25 lines to just genuine cross-role
 config (the `shared_*` template fragments, maybe `has_gui_support`).
