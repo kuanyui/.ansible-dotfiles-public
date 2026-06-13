@@ -340,3 +340,29 @@ provision_distro_packages_lxqt_desktop:
     install:
       - lightdm-gtk         # Fedora's greeter package (NOT lightdm-gtk-greeter)
       - lxqt-x11-session    # Fedora-only: the X11 session .desktop subpackage (else autologin has no session to enter)
+
+# Rootless podman INSIDE a guest (nested containers). The pieces the official rootless
+# tutorial requires (github.com/containers/podman .../tutorials/rootless_tutorial.md):
+# `pasta` (from `passt`) for the unprivileged network namespace; newuidmap/newgidmap
+# (the `uidmap` package on Debian - bundled in shadow-utils/shadow on Fedora/openSUSE);
+# and /etc/subuid + /etc/subgid ranges for `user`. `fuse-overlayfs` covers rootless
+# overlay storage on older kernels (native otherwise). GUEST-ONLY (dict form: `post_install`
+# runs as ROOT in an ivm guest). Package names verified via repology 2026-06 (`passt`
+# Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three); the Debian-only `uidmap`
+# split is the one divergence. (No HOST toggle - dict-form bundles are guest-only.)
+provision_distro_packages_podman_rootless:
+  common:
+    install:
+      - podman
+      - passt
+      - fuse-overlayfs
+    post_install: |
+      # rootless podman maps `user` into a userns via /etc/subuid + /etc/subgid;
+      # `useradd` usually pre-allocates these, so add only if missing (idempotent).
+      grep -q '^user:' /etc/subuid || usermod --add-subuids 100000-165535 user
+      grep -q '^user:' /etc/subgid || usermod --add-subgids 100000-165535 user
+      # cgroup delegation without an interactive login session (headless guest).
+      loginctl enable-linger user
+  debian:
+    install:
+      - uidmap   # newuidmap/newgidmap; Fedora/openSUSE ship these in shadow-utils/shadow (base)

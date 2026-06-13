@@ -119,6 +119,7 @@
         'dev_android': provision_distro_packages_dev_android,
         'icewm_desktop': provision_distro_packages_icewm_desktop,
         'lxqt_desktop': provision_distro_packages_lxqt_desktop,
+        'podman_rootless': provision_distro_packages_podman_rootless,
       } | to_nice_json }}
 
 # ---------- Materialize the thirdparty_software recipe registry for `ivm` ----------
