@@ -17,8 +17,8 @@ Gate: `setup_mpv` (default `false` in `group_vars/all.yml`). Dedicated entry:
 | `input.conf` | keybindings (left button is left to the gesture scripts) |
 | `scripts/pointer-event.lua` | low-latency tap/double/long/drag detection (vendored, see below) |
 | `scripts/touch-gestures.lua` | maps those events to seek / volume / speed / fullscreen (vendored + one local accel patch, see below) |
-| `script-opts/pointer-event.conf` | wires pointer-event events -> touch-gestures; tap = pause, long = uosc menu |
-| `script-opts/touch-gestures.conf` | tuning - `horizontal_drag=seek`, `seek_scale` (lower = finer) |
+| `script-opts/pointer-event.conf` | wires pointer-event events -> touch-gestures; margins + `left_single` routing |
+| `script-opts/touch-gestures.conf` | tuning - zones, speed presets, `horizontal_drag=seek`, seek feel |
 
 Uninstall: delete the files listed above from `~/.config/mpv/` (leave the rest
 of the dir - mpv keeps user state like `watch_later/` there).
@@ -32,12 +32,36 @@ of an exact seek every frame, which is what made the old script feel sluggish):
 - [`mpv-pointer-event`](https://github.com/christoph-heinrich/mpv-pointer-event) `1.2.1` -> `scripts/pointer-event.lua`
 - [`mpv-touch-gestures`](https://github.com/christoph-heinrich/mpv-touch-gestures) `1.1.0` -> `scripts/touch-gestures.lua` + both `script-opts/*.conf`
 
-Gestures (with `horizontal_drag=seek`): horizontal drag = seek, vertical drag =
-speed (left half) / volume (right half), double-tap zones = -10s / fullscreen /
-+10s, single tap = pause, long press = uosc menu (no uosc -> harmless warning).
+**Drags** (anywhere): horizontal = seek (accelerated, see below), vertical = speed
+(left half) / volume (right half). Long press = uosc menu (no uosc -> harmless warning).
 
-`pointer-event.lua` is verbatim upstream. `touch-gestures.lua` is upstream PLUS one
-clearly-marked LOCAL patch (search `LOCAL ADDITION`) - see below.
+**Taps** are dispatched by POSITION (a local addition - see "Tap zones" below):
+
+```
++-----------+-----------+-----------+
+| speed -   |   1.0x    | speed +   |  top_zone_fraction (0.25) = speed row, OSD shows x
++-----------+-----------+-----------+
+| 1x -3s    | 1x pause  | 1x +3s    |
+| 2x -10s   | 2x full   | 2x +10s   |  rest = seek/pause row (1x = single, 2x = double tap)
++-----------+-----------+-----------+
+|        on-screen controller        |  bottom margin_bottom (130 px), taps fall through
++-----------------------------------+
+```
+
+`pointer-event.lua` is verbatim upstream. `touch-gestures.lua` is upstream PLUS
+clearly-marked LOCAL additions (search `LOCAL ADDITION`) - the tap-zone dispatch and
+the drag-seek tuning below.
+
+### Tap zones
+
+`left_single`/`left_double` (in `pointer-event.conf`) are routed to touch-gestures so a
+tap acts by where it lands. `touch-gestures.conf` knobs:
+
+- `top_zone_fraction` (`0.25`) - height fraction of the top speed row.
+- `speed_presets` (`0.25,0.5,1,1.5,2,3,4`) - levels the top-left/right taps step through (clamped at the ends); top-center resets to `1.0x`.
+
+Margins are 0 except `margin_bottom=130` (left to the on-screen controller). Single tap
+has the usual double-tap-detection delay (mpv waits to rule out a double).
 
 ### Drag-seek acceleration
 

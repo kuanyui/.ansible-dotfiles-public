@@ -1035,6 +1035,18 @@ only xauth changed) + `mpv --vo=wlshm` playing fine under the broken profile on 
   a seek scrub is active so volume/speed drags are untouched). Knob
   `seek_pause_while_dragging` (default yes). Restores to the PRIOR state, so a paused video
   stays paused. README + conf updated. Verified deploy + idempotent.
+- [x] **positional TAP-zone system** - user wanted a grid: top 25% = speed row
+  (left/center/right tap = prev preset / 1.0x / next preset, OSD shows x), rest = seek/pause
+  row (l/c/r single = -3s/pause/+3s, double = -10s/fullscreen/+10s), bottom strip = OSC.
+  Implemented in touch-gestures.lua: routed `left_single` through the script (was a plain
+  `cycle pause`) so BOTH single & double dispatch by `tap_zone()` (reads mouse-pos -> row by
+  `top_zone_fraction`, col by thirds). Speed steps a discrete `speed_presets`
+  list (`0.25,0.5,1,1.5,2,3,4`, clamped). pointer-event.conf margins -> left/right/top 0
+  (full-width thirds + active top), `margin_bottom=130` KEPT (user first asked for 20% then
+  reverted to 130, so NO pointer-event.lua fractional-margin patch was needed - it stays
+  verbatim). Drags (h-seek / v-speed-volume) untouched & still work everywhere. Pure mpv API
+  (safe). Verified deploy + idempotent. NOTE: single-tap inherits mpv's ~300 ms double-tap
+  wait (status quo). FEEL on-device - user can tune `top_zone_fraction` / `speed_presets`.
 - [ ] **GPU-launcher interaction** - `ansible-mpv-gpu.desktop`'s Exec has no `--vo`, so
   a global `vo=wlshm` makes the GPU launcher run software too (it no longer hangs, but
   gets no hardware). TRUE hardware via the launcher needs a SEPARATE decision: grant

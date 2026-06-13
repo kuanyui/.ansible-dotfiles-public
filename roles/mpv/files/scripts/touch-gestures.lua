@@ -20,12 +20,24 @@ local opts = {
     seek_accel_pixels_ref = 10,   -- per-event px speed where acceleration starts
     seek_accel_max_gain = 5,      -- fast-flick ceiling: effective cap = seek_scale * this
     seek_pause_while_dragging = true,  -- pause playback during a scrub, restore on release
+    -- LOCAL ADDITION: positional tap zones (top = speed row, below = seek/pause row).
+    top_zone_fraction = 0.25,                -- top this fraction of the height is the speed row
+    speed_presets = '0.25,0.5,1,1.5,2,3,4',  -- discrete speeds the top-left/right taps step through
 }
 options.read_options(opts, 'touch-gestures')
 
 if opts.horizontal_drag ~= 'playlist' and opts.horizontal_drag ~= 'seek' then
     msg.error('The option "horizontal_drag" supports the values "playlist" and "seek"')
 end
+
+-- LOCAL ADDITION: parse speed_presets ("0.25,0.5,1,...") into a sorted number list
+local speed_levels = {}
+for token in tostring(opts.speed_presets):gmatch('[^,%s]+') do
+    local n = tonumber(token)
+    if n and n > 0 then speed_levels[#speed_levels + 1] = n end
+end
+table.sort(speed_levels)
+if #speed_levels == 0 then speed_levels = {1} end
 
 local osd = mp.create_osd_overlay('ass-events')
 
@@ -227,16 +239,66 @@ local function drag_end()
     osd:update()
 end
 
-local function double()
-    w, _, _ = mp.get_osd_size()
+-- LOCAL ADDITION: positional tap dispatch. The (x,y) is read from mouse-pos at tap
+-- time, so single & double taps act by zone. Top `top_zone_fraction` of the height is
+-- the speed row (left/center/right = slower / 1.0x / faster, OSD shows the multiplier);
+-- below it is the seek/pause row (left/center/right single = -3s / pause / +3s, double
+-- = -10s / fullscreen / +10s). The bottom strip is excluded by pointer-event's
+-- margin_bottom, so taps there fall through to the on-screen controller.
+local function show_speed()
+    mp.commandv('show-text', string.format('Speed: %gx', mp.get_property_number('speed') or 1))
+end
+local function change_speed(direction)  -- -1 = previous preset, +1 = next, 0 = reset to 1.0x
+    if direction == 0 then
+        mp.set_property_number('speed', 1)
+    else
+        local cur = mp.get_property_number('speed') or 1
+        local target
+        if direction > 0 then
+            for _, lv in ipairs(speed_levels) do
+                if lv > cur + 1e-6 then target = lv break end
+            end
+        else
+            for i = #speed_levels, 1, -1 do
+                if speed_levels[i] < cur - 1e-6 then target = speed_levels[i] break end
+            end
+        end
+        mp.set_property_number('speed', target or (direction > 0 and speed_levels[#speed_levels] or speed_levels[1]))
+    end
+    show_speed()
+end
+
+local function tap_zone()  -- returns row ('top'/'middle'), col ('left'/'center'/'right')
+    local w, h = mp.get_osd_size()
     local mouse = mp.get_property_native('mouse-pos')
-    if mouse.x < w / 3  then
-        mp.commandv(osd_pref, 'seek', -10, 'relative+exact')
+    if not (w and h and mouse) or w == 0 or h == 0 then return nil, nil end
+    local col = mouse.x < w / 3 and 'left' or mouse.x < w * 2 / 3 and 'center' or 'right'
+    local row = mouse.y < h * opts.top_zone_fraction and 'top' or 'middle'
+    return row, col
+end
+
+local function single()
+    local row, col = tap_zone()
+    if not row then return end
+    if row == 'top' then
+        change_speed(col == 'left' and -1 or col == 'right' and 1 or 0)
+    elseif col == 'center' then
+        mp.commandv('cycle', 'pause')
+    else
+        mp.commandv(osd_pref, 'seek', col == 'left' and -3 or 3, 'relative+exact')
         if uosc then mp.commandv('script-binding', 'uosc/flash-timeline') end
-    elseif mouse.x < w * 2 / 3 then
+    end
+end
+
+local function double()
+    local row, col = tap_zone()
+    if not row then return end
+    if row == 'top' then  -- top row has no distinct double action; treat like a single speed tap
+        change_speed(col == 'left' and -1 or col == 'right' and 1 or 0)
+    elseif col == 'center' then
         mp.commandv('cycle', 'fullscreen')
     else
-        mp.commandv(osd_pref, 'seek', 10, 'relative+exact')
+        mp.commandv(osd_pref, 'seek', col == 'left' and -10 or 10, 'relative+exact')
         if uosc then mp.commandv('script-binding', 'uosc/flash-timeline') end
     end
 end
@@ -244,6 +306,7 @@ end
 mp.register_script_message('drag', drag)
 mp.register_script_message('drag_start', drag_start)
 mp.register_script_message('drag_end', drag_end)
+mp.register_script_message('single', single)
 mp.register_script_message('double', double)
 
 -- check if uosc is running
