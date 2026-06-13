@@ -301,17 +301,23 @@ provision_distro_packages_icewm_desktop:
 # (both ride on gui_x11: `ivm provision gui_x11 lxqt_desktop`). Difference from icewm_desktop:
 # a full lightweight Qt DE (session + panel + file manager + terminal over the openbox WM)
 # rather than a bare WM, so it ships the file manager + terminal a desktop actually needs.
-# `__common__.install` holds the parts whose package names match on all three families (verified):
-# `lxqt-session` + `lxqt-panel`, `openbox` (LXQt's default X11 WM - NOT pulled by lxqt-session
-# with weak-deps off, so explicit), `pcmanfm-qt` (file manager), `qterminal` (terminal), plus
-# `lightdm` + `spice-vdagent` (as icewm_desktop). Per-family `install` carries only the name
-# divergences, all EXPLICIT because ivm installs with recommends OFF: the lightdm GREETER
-# (Debian/openSUSE `lightdm-gtk-greeter`, Fedora `lightdm-gtk`) and, on Fedora ONLY,
-# `lxqt-x11-session` (Fedora splits the X11 session `.desktop` into that subpackage;
-# Debian/openSUSE ship it inside `lxqt-session`). Unlike icewm, LXQt is a real DE that HONORS
-# XDG autostart, so spice-vdagent (it ships its own `/etc/xdg/autostart` entry) starts itself
-# - no manual WM-startup hack, and no icewm-style Ctrl+Alt+T keys file (LXQt launches
-# `qterminal` from its panel application menu; shortcuts are configurable in LXQt settings).
+# `__common__.install` = the session/panel/WM/file-manager/terminal + the stack that makes
+# it actually USABLE (added after real use surfaced the gaps; ivm installs with recommends
+# OFF, so none of these get auto-pulled): `gvfs` + per-family `gvfs-backends` (pcmanfm-qt's
+# Computer/Network/Trash are GIO virtual filesystems - without them opening "Computer"
+# errors "operation not supported"; dietpi.com/forum .../13591), `udisks2` (drive mount
+# backend) + `lxqt-policykit` (polkit agent for mount/admin auth), `lxqt-globalkeys` (the
+# global-shortcut DAEMON - without it NO shortcut fires; it also ships the default
+# /etc/xdg/lxqt/globalkeyshortcuts.conf that already binds Ctrl+Alt+T -> qterminal),
+# `lxqt-runner` (the Alt+F2 launcher), `lxqt-qtplugin` (the "lxqt" Qt platform theme - what
+# makes Qt apps USE the icon theme; without it pcmanfm-qt + file pickers show no icons), and
+# `papirus-icon-theme` for the icons themselves - the flat/modern theme the LXQt flagship
+# (Lubuntu) ships, replacing LXQt's dated technical default "oxygen"; one pkg name on all 3
+# families, so it sits in __common__. Per-family `install` carries the name divergences (all
+# EXPLICIT, recommends OFF): the lightdm GREETER (Debian/openSUSE `lightdm-gtk-greeter`,
+# Fedora `lightdm-gtk`); `gvfs-backends` (Debian/openSUSE one pkg; Fedora splits it); and
+# Fedora-only `lxqt-x11-session` (the X11 session `.desktop`). Unlike icewm, LXQt HONORS XDG
+# autostart, so spice-vdagent + the lxqt daemons (globalkeys/runner/policykit) start themselves.
 # The autologin session name is DETECTED at runtime (`/usr/share/xsessions/*lxqt*.desktop`,
 # normally `lxqt`) rather than hardcoded, same as icewm_desktop. CAVEAT: verified-shaped for
 # Debian + openSUSE (the common ivm targets); Fedora is best-effort - same lightdm-autologin /
@@ -327,6 +333,13 @@ provision_distro_packages_lxqt_desktop:
       - qterminal        # terminal emulator
       - lightdm
       - spice-vdagent
+      - gvfs             # GIO backend: pcmanfm-qt Computer/Network/Trash (else opening "Computer" = "operation not supported")
+      - udisks2          # drive enumeration + mount backend behind "Computer"
+      - lxqt-globalkeys  # global-shortcut DAEMON: without it NO shortcut fires; ships the default Ctrl+Alt+T -> qterminal
+      - lxqt-runner      # the Alt+F2 application launcher (autostarts, registers Alt+F2 via the daemon)
+      - lxqt-qtplugin    # the "lxqt" Qt platform theme: makes Qt apps (pcmanfm-qt + file pickers) USE the icon theme (else no icons)
+      - lxqt-policykit   # polkit agent: authenticate mounting drives / admin actions
+      - papirus-icon-theme  # icons: the LXQt-flagship (Lubuntu) default - flat/modern, full Qt+GTK coverage; replaces LXQt's dated technical default "oxygen". SAME pkg name on all 3 families -> __common__
     post_install: |
       systemctl set-default graphical.target
       mkdir -p /etc/lightdm/lightdm.conf.d
@@ -336,16 +349,25 @@ provision_distro_packages_lxqt_desktop:
       printf '[Seat:*]\nautologin-user=user\nautologin-session=%s\n' "$lxqt_session_name" > /etc/lightdm/lightdm.conf.d/autologin.conf
       # --force: openSUSE pre-aliases display-manager.service; harmless on Debian/Fedora.
       systemctl enable --force lightdm
+      # Icon theme: Papirus (the LXQt-flagship default, installed in __common__; LXQt's
+      # own technical default is the dated "oxygen"). Set it explicitly for `user` so Qt
+      # apps pick it up even if the default lxqt.conf was not deployed (recommends OFF);
+      # lxqt-session merges this on first login.
+      su - user -c 'mkdir -p ~/.config/lxqt && printf "[General]\nicon_theme=Papirus\n" > ~/.config/lxqt/lxqt.conf'
   Debian:
     install:
       - lightdm-gtk-greeter
+      - gvfs-backends      # gvfsd-computer/trash/network + smb/mtp/sftp/... (Debian: single pkg)
   Suse:
     install:
       - lightdm-gtk-greeter
+      - gvfs-backends      # Debian/openSUSE ship gvfs backends as one pkg (Fedora splits them)
   RedHat:
     install:
       - lightdm-gtk         # Fedora's greeter package (NOT lightdm-gtk-greeter)
       - lxqt-x11-session    # Fedora-only: the X11 session .desktop subpackage (else autologin has no session to enter)
+      # Fedora SPLITS gvfs backends (gvfs-smb / gvfs-mtp / gvfs-archive / ...) - no single
+      # `gvfs-backends`; add the ones you need (best-effort - this bundle targets Debian/TW).
 
 # Rootless podman INSIDE a guest (nested containers). The pieces the official rootless
 # tutorial requires (github.com/containers/podman .../tutorials/rootless_tutorial.md):
