@@ -145,12 +145,32 @@ tests green; a fresh apply produces the new dir; real-host `ivm init` (host-only
 Verify: `qvm provision --dry-run`; unit tests for the resolver; real-host QGA run
 (TW first-boot agent, then `qvm provision basic_tools`).
 
-### Phase 3 - podman consumes the assets (separate, larger)
+### Phase 3 - podman consumes the assets == the container-engine redesign
 
-`Dockerfile.j2` reads the assets at BUILD time (today it hardcodes an apt-only
-package list). Decide: keep apt-only or generalize to per-family. Tangles with
-`roles/container_apps/REDESIGN.md` (the capp engine) - schedule as its own effort,
-not bundled with Phases 1-2.
+This is NOT separate work bolted on - it IS the already-planned engine redesign
+in `roles/container_apps/REDESIGN.md`: fold `container_templates` +
+`container_apps` into ONE engine (working name `capp`; final TBD `capp`/`cax`/`coci`)
+that reads declarative templates, and have its image build consume the shared
+assets:
+
+- packages: the `Dockerfile` build step reads `distro-package-groups.json` (today
+  it hardcodes an apt-only list - decide: keep apt-only, or generalize per-family).
+- dotfiles: `COPY dotfiles/<feature>/{__common__,<distro>}` into the image at
+  build time (REDESIGN already says "reuse `roles/zsh`, stage like ivm").
+
+**Ordering: AFTER Phase 1, not before.** capp will consume the dotfiles structure
+Phase 1 reshapes (feature-first + `__common__`). Building capp first would bind it
+to the old per-family `rootfs/`, forcing rework. So Phase 1 is the prerequisite;
+the capp build then subsumes this phase.
+
+**Naming: NOT `podman_vm`.** podman launches CONTAINERS, not VMs - on Linux it is
+namespaces; `libkrun` is a per-container microVM runtime opt-in (unused here by
+choice); on macOS/Windows `podman machine` runs a Linux VM only to HOST the
+daemon, but the artifacts are still containers. An `_vm` name next to `ivm`/`qvm`
+(real guest-OS launchers) would mislead. Keep the container-honest `capp`/`cax`/`coci`
+(REDESIGN.md owns the final pick). The macOS/Windows value is real, but it is a
+`podman machine` (remote / VM-backed daemon) FEATURE of the engine - not a reason
+to name it a VM.
 
 ## CLAUDE.md amendment needed
 
