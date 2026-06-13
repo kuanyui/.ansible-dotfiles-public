@@ -89,15 +89,15 @@
     dest: "{{ incus_vm_ivm_dir }}/setup-fcitx5-input.sh"
     mode: "0755"
 
-# ---------- Materialize the distro_packages bundle registry for `ivm` ----------
+# ---------- Materialize the provision_distro_packages bundle registry for `ivm` ----------
 # `ivm` runs host-side at `init` time, where ansible (and thus the
-# `distro_packages_*` vars) no longer exist. So snapshot the registry to JSON at
+# `provision_distro_packages_*` vars) no longer exist. So snapshot the registry to JSON at
 # apply time; `ivm` reads it to resolve a template's `distro_package_groups` +
 # the always-on `incus_guest_baseline` into a flat per-ansible_os_family package list.
-# Single source of truth stays in `roles/distro_packages/defaults/main.yml`.
-- name: Load the `distro_packages` bundle registry (sibling role's defaults)
+# Single source of truth stays in `roles/provision_distro_packages/defaults/main.yml`.
+- name: Load the `provision_distro_packages` bundle registry (sibling role's defaults)
   ansible.builtin.include_vars:
-    file: "{{ role_path }}/../distro_packages/defaults/main.yml"
+    file: "{{ role_path }}/../provision_distro_packages/defaults/main.yml"
 
 - name: Render the bundle registry to `{{ incus_vm_ivm_dir }}/distro-package-groups.json`
   ansible.builtin.copy:
@@ -105,20 +105,20 @@
     mode: "0644"
     content: |
       {{ {
-        'basic_tools': distro_packages_basic_tools,
-        'sys_tools': distro_packages_sys_tools,
-        'net_tools': distro_packages_net_tools,
-        'wayland_tools': distro_packages_wayland_tools,
-        'gui_x11': distro_packages_gui_x11,
-        'gui_wayland': distro_packages_gui_wayland,
-        'cjk_fonts': distro_packages_cjk_fonts,
-        'cjk_input': distro_packages_cjk_input,
-        'incus_guest_baseline': distro_packages_incus_guest_baseline,
-        'emacs': distro_packages_emacs,
-        'dev_qt': distro_packages_dev_qt,
-        'dev_android': distro_packages_dev_android,
-        'icewm_desktop': distro_packages_icewm_desktop,
-        'lxqt_desktop': distro_packages_lxqt_desktop,
+        'basic_tools': provision_distro_packages_basic_tools,
+        'sys_tools': provision_distro_packages_sys_tools,
+        'net_tools': provision_distro_packages_net_tools,
+        'wayland_tools': provision_distro_packages_wayland_tools,
+        'gui_x11': provision_distro_packages_gui_x11,
+        'gui_wayland': provision_distro_packages_gui_wayland,
+        'cjk_fonts': provision_distro_packages_cjk_fonts,
+        'cjk_input': provision_distro_packages_cjk_input,
+        'incus_guest_baseline': provision_distro_packages_incus_guest_baseline,
+        'emacs': provision_distro_packages_emacs,
+        'dev_qt': provision_distro_packages_dev_qt,
+        'dev_android': provision_distro_packages_dev_android,
+        'icewm_desktop': provision_distro_packages_icewm_desktop,
+        'lxqt_desktop': provision_distro_packages_lxqt_desktop,
       } | to_nice_json }}
 
 # ---------- Materialize the thirdparty_software recipe registry for `ivm` ----------

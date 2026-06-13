@@ -23,9 +23,9 @@
 # (so `su - user` works), idempotent (re-runs each `ivm provision <bundle>`). GUEST-ONLY: the
 # host install path runs only the package lists (a snippet assumes the guest `user`), so the
 # host toggle loop holds bare-list bundles only. Most bundles never need the dict form -
-# `distro_packages_icewm_desktop` / `distro_packages_lxqt_desktop` (the desktop bundles) are the ones that do.
+# `provision_distro_packages_icewm_desktop` / `provision_distro_packages_lxqt_desktop` (the desktop bundles) are the ones that do.
 
-distro_packages_basic_tools:
+provision_distro_packages_basic_tools:
   common:
     - git
     - make
@@ -33,7 +33,7 @@ distro_packages_basic_tools:
     - tmux
     - stow
 
-distro_packages_sys_tools:
+provision_distro_packages_sys_tools:
   common:
     - htop
     - iotop
@@ -45,14 +45,14 @@ distro_packages_sys_tools:
   suse: []   # `common` names carry over to openSUSE; no Suse-only extra needed
   redhat: []
 
-distro_packages_net_tools:
+provision_distro_packages_net_tools:
   common:
     - nethogs
     - traceroute
     - net-tools
     - tcpdump
 
-distro_packages_wayland_tools:
+provision_distro_packages_wayland_tools:
   common:
     - wl-clipboard
 
@@ -60,7 +60,7 @@ distro_packages_wayland_tools:
 # `ivm` stages once and pushes (see roles/incus_vm) - so `ivm provision emacs` =
 # this package + that config set. `emacs` is the package name in all three families'
 # default repos.
-distro_packages_emacs:
+provision_distro_packages_emacs:
   common:
     - emacs
 
@@ -68,7 +68,7 @@ distro_packages_emacs:
 # input driver (without it X gets no mouse/keyboard events). Video needs no
 # package - the server's built-in modesetting drives virtio-gpu/std-VGA. The
 # WM/DE and display-manager stay per-template. Names diverge per family.
-distro_packages_gui_x11:
+provision_distro_packages_gui_x11:
   debian:
     - xserver-xorg-core
     - xinit
@@ -87,7 +87,7 @@ distro_packages_gui_x11:
 
 # Xwayland only - the one compositor-agnostic Wayland piece (runs X apps under
 # any Wayland compositor); the compositor itself stays per-template.
-distro_packages_gui_wayland:
+provision_distro_packages_gui_wayland:
   debian:
     - xwayland
   suse:
@@ -97,7 +97,7 @@ distro_packages_gui_wayland:
 
 # Noto Sans CJK: one font covers all CJK; JP/TC/SC differ only in default Han
 # glyphs, not coverage. openSUSE OSS has no combined pkg, so use the JP variant.
-distro_packages_cjk_fonts:
+provision_distro_packages_cjk_fonts:
   debian:
     - fonts-noto-cjk
   suse:
@@ -109,7 +109,7 @@ distro_packages_cjk_fonts:
 # template's `sys.input_method: fcitx5` (env vars) + autostart to take effect.
 # Frontend names diverge per family; config tool: Debian `fcitx5-config-qt` vs
 # openSUSE/Fedora `fcitx5-configtool`.
-distro_packages_cjk_input:
+provision_distro_packages_cjk_input:
   common:
     - fcitx5
     - fcitx5-mozc
@@ -132,7 +132,7 @@ distro_packages_cjk_input:
     - fcitx5-configtool
 
 # Baseline for an `ivm` guest VM (roles/incus_vm). NOT a host-toggleable bundle
-# like the ones above (no `distro_packages_install_*` switch); it is rendered
+# like the ones above (no `provision_distro_packages_install_*` switch); it is rendered
 # into `<incus_vm_root>/package-groups.json` and the `ivm` program installs it
 # on EVERY guest at first provision, regardless of the template. It is the
 # floor that makes a VM usable as an ivm guest: zsh (+ plugins) because the
@@ -151,7 +151,7 @@ distro_packages_cjk_input:
 #     in the default Tumbleweed OSS repo -> deliberately OMITTED from `suse:`
 #     until verified on a real Tumbleweed box (`zypper search <name>`). Until
 #     then an openSUSE guest's zsh just runs without those two plugins.
-distro_packages_incus_guest_baseline:
+provision_distro_packages_incus_guest_baseline:
   common:
     - curl
     - git
@@ -181,7 +181,7 @@ distro_packages_incus_guest_baseline:
 # `qt6-<module>-devel`; Fedora prefixes `qt6-qt<module>-devel`). The Linguist package
 # also differs: Debian splits GUI (`linguist-qt6`) from CLI tools (`qt6-l10n-tools`,
 # = lrelease/lupdate); openSUSE `qt6-linguist-devel`; Fedora `qt6-linguist`.
-distro_packages_dev_qt:
+provision_distro_packages_dev_qt:
   common:
     - cmake
     - make
@@ -220,7 +220,7 @@ distro_packages_dev_qt:
 #   - The emulator: heavy + GUI + needs host nested virt (`hw.nested_virt: true`); add it
 #     yourself with `sdkmanager emulator` when wanted.
 # JDK is JDK 21 (current LTS; Debian `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+.
-distro_packages_dev_android:
+provision_distro_packages_dev_android:
   common:
     - unzip   # extract the Android command-line tools zip (the dev_android thirdparty step)
   debian:
@@ -248,7 +248,7 @@ distro_packages_dev_android:
 # ivm target) + openSUSE (mirrors templates/webbrowser.yaml); Fedora is best-effort - SELinux
 # Enforcing has known lightdm-autologin issues; a fix, once verified on a real box, lands as a
 # `redhat: {post_install: ...}` here (the per-family slot is exactly for that). See TODO.md.
-distro_packages_icewm_desktop:
+provision_distro_packages_icewm_desktop:
   common:
     install:
       - icewm
@@ -281,7 +281,7 @@ distro_packages_icewm_desktop:
     install:
       - lightdm-gtk          # Fedora's greeter package (NOT lightdm-gtk-greeter)
 
-# A complete, autologin LXQt desktop - sibling of `distro_packages_icewm_desktop`; pick ONE
+# A complete, autologin LXQt desktop - sibling of `provision_distro_packages_icewm_desktop`; pick ONE
 # (both ride on gui_x11: `ivm provision gui_x11 lxqt_desktop`). Difference from icewm_desktop:
 # a full lightweight Qt DE (session + panel + file manager + terminal over the openbox WM)
 # rather than a bare WM, so it ships the file manager + terminal a desktop actually needs.
@@ -301,7 +301,7 @@ distro_packages_icewm_desktop:
 # Debian + openSUSE (the common ivm targets); Fedora is best-effort - same lightdm-autologin /
 # SELinux-Enforcing caveat as icewm_desktop (a verified fix lands as a
 # `redhat: {post_install: ...}` here). See TODO.md.
-distro_packages_lxqt_desktop:
+provision_distro_packages_lxqt_desktop:
   common:
     install:
       - lxqt-session

@@ -11,7 +11,7 @@
     target_group: root
     is_root: true
   roles:
-    - distro_packages
+    - provision_distro_packages
     - zsh
     - emacs
     - dotfiles
