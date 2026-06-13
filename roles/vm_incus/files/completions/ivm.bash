@@ -1,28 +1,29 @@
 # ivm bash completion (ansible-managed by roles/vm_incus). bashrc sources every
 # file under `~/.local/share/ansible-managed/*/bash-completions/` - see
-# roles/dotfiles/.bashrc.j2. Two levels: subcommands, then their args - template
+# roles/bash/templates/.bashrc.j2. Two levels: subcommands, then their args - template
 # names for `init`/`env`, unit names for `provision`, `snapshot` actions + snapshot
 # names, `user`/`root`.
 # All installable unit names for `provision`: keys of the materialized distro-bundle
-# + thirdparty-recipe registries (python3 is an ivm dependency, so always present).
+# + thirdparty-recipe registries + dotfiles feature dirs, from the SHARED provision-asset
+# cache (python3 is an ivm dependency, so always present).
 _ivm_unit_names() {
-    local root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}"
-    python3 - "$root" 2>/dev/null <<'PY'
+    local shared_root="${SHARED_PREBUILT_PROVISION_ASSETS_ROOT:-$HOME/.local/share/ansible-managed/shared-prebuilt-provision-assets}"
+    python3 - "$shared_root" 2>/dev/null <<'PY'
 import json, os, sys
-root = sys.argv[1]
+shared_root = sys.argv[1]
 names = []
 for f in ("distro-package-groups.json", "thirdparty-software.json"):
-    p = os.path.join(root, f)
+    p = os.path.join(shared_root, f)
     if os.path.exists(p):
         try:
             names += list(json.load(open(p)))
         except Exception:
             pass
-cfg = os.path.join(root, "config-files")
-if os.path.isdir(cfg):
-    names += sorted(os.listdir(cfg))
-# A name can be in two registries (e.g. `emacs` is a package bundle AND a config
-# set) - dedupe so it is offered once, order preserved.
+dotfiles = os.path.join(shared_root, "dotfiles")
+if os.path.isdir(dotfiles):
+    names += sorted(os.listdir(dotfiles))
+# A name can be in two registries (e.g. `emacs` is a package bundle AND a dotfiles
+# feature) - dedupe so it is offered once, order preserved.
 print("\n".join(dict.fromkeys(names)))
 PY
 }

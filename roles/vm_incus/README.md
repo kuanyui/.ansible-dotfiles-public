@@ -118,14 +118,18 @@ staged user/root dotfiles. Linux on Debian / openSUSE / Fedora.
 | `ivm` binary | `~/.local/bin/ivm` |
 | Schema | `~/.local/share/ansible-managed/vm-incus/ivm/template.schema.json` |
 | Templates | `~/.local/share/ansible-managed/vm-incus/ivm/templates/*.yaml` |
-| Package-group snapshot | `~/.local/share/ansible-managed/vm-incus/ivm/distro-package-groups.json` |
-| Staged VM dotfiles | `~/.local/share/ansible-managed/vm-incus/ivm/rootfs/<family>/{home/user,root}/` |
+| Provision-asset cache (SHARED w/ qvm/pvm) | `~/.local/share/ansible-managed/shared-prebuilt-provision-assets/{distro-package-groups,thirdparty-software}.json` |
+| Staged VM dotfiles (feature-first, in the shared cache) | `.../shared-prebuilt-provision-assets/dotfiles/<feature>/{__common__,<family>}/{home/user,root}/` |
 | zsh / bash completion | `~/.local/share/ansible-managed/vm-incus/{zsh,bash}-completions/` |
 | VM disk / snapshots (incus default pool) | `/var/lib/incus/storage-pools/default/virtual-machines[-snapshots]/<vm>/` |
 
-`ivm --root` (env `IVM_ROOT`) points at the `vm-incus/ivm/` dir; the completion
-dirs are siblings so the shell rc globs (`ansible-managed/*/{zsh,bash}-completions`)
-discover them. Storage layout details: [`docs/incus-host-setup.md`](docs/incus-host-setup.md).
+`ivm --root` (env `IVM_ROOT`) points at the `vm-incus/ivm/` dir (ivm-only assets:
+schema, templates, fcitx5 script, storage-info). The package-group/thirdparty JSON +
+the dotfiles tree live in the SHARED `shared-prebuilt-provision-assets/` cache
+(`ivm --shared-assets-root`, env `SHARED_PREBUILT_PROVISION_ASSETS_ROOT`; default is
+standard, rarely set) because qvm/pvm consume them too. The completion dirs are
+siblings so the shell rc globs (`ansible-managed/*/{zsh,bash}-completions`) discover
+them. Storage layout details: [`docs/incus-host-setup.md`](docs/incus-host-setup.md).
 
 ## Cleanup
 

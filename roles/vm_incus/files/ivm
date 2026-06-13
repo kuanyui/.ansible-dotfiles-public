@@ -51,7 +51,20 @@ if TYPE_CHECKING:
 Template = dict[str, Any]
 
 DEFAULT_ROOT: Path = Path(
-    os.environ.get("IVM_ROOT", str(Path.home() / ".local/share/ansible-managed/incus-vm/ivm"))
+    os.environ.get("IVM_ROOT", str(Path.home() / ".local/share/ansible-managed/vm-incus/ivm"))
+)
+
+# The SHARED, regenerable provision-asset cache (produced by
+# roles/_shared_prebuilt_provision_assets): distro-package-groups.json +
+# thirdparty-software.json + the feature-first dotfiles/ tree. SEPARATE from
+# DEFAULT_ROOT (which keeps ivm-ONLY assets: templates, schema, fcitx5 script,
+# storage-info) because qvm/pvm consume this SAME dir - hence its name carries no
+# `ivm` tie. Default is the standard location; rarely overridden (env
+# SHARED_PREBUILT_PROVISION_ASSETS_ROOT or --shared-assets-root, for testing /
+# non-standard installs) - the role never needs to set it.
+DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
+    os.environ.get("SHARED_PREBUILT_PROVISION_ASSETS_ROOT",
+                   str(Path.home() / ".local/share/ansible-managed/shared-prebuilt-provision-assets"))
 )
 
 # Subcommands that act on an EXISTING VM, resolved by cwd (`user.ivm_init_at_dir`)
@@ -118,8 +131,8 @@ INCUS_VAR_DIR: str = "/var/lib/incus"
 
 # Map a template's `os.distro` to the ansible fact `ansible_os_family` (values:
 # Debian/Suse/RedHat - NOT the distro name like `opensuse`). It keys both the
-# dotfiles staging (rootfs/<Debian|Suse|RedHat>/) and the package-group
-# overlays (__common__ + per-family) in distro-package-groups.json. debian/ubuntu share the
+# feature-first dotfiles staging (shared dotfiles/<feature>/<Debian|Suse|RedHat>/) and the
+# package-group overlays (__common__ + per-family) in distro-package-groups.json. debian/ubuntu share the
 # Debian family today; if ubuntu package names ever diverge from debian, that
 # needs a finer distro-level key, not just ansible_os_family.
 DISTRO_TO_ANSIBLE_OS_FAMILY: dict[str, str] = {
@@ -202,24 +215,24 @@ def load_and_validate(template_name: str, root: Path) -> Template:
 
 # ---------- distro_packages bundle registry ----------
 
-def load_package_groups(root: Path) -> dict[str, Any]:
-    """Load distro-package-groups.json (rendered at apply time from the distro_packages
-    registry; see roles/incus_vm/tasks/install.yml)."""
-    path: Path = root / "distro-package-groups.json"
+def load_package_groups(shared_root: Path) -> dict[str, Any]:
+    """Load distro-package-groups.json (rendered at apply time from the
+    provision_distro_packages registry; see roles/_shared_prebuilt_provision_assets)."""
+    path: Path = shared_root / "distro-package-groups.json"
     if not path.is_file():
-        die(f"distro-package-groups.json not found: {path}; re-run `make apply-incus-vm`")
+        die(f"distro-package-groups.json not found: {path}; re-run `make vm-incus-install`")
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
         die(f"distro-package-groups.json is not a mapping: {path}")
     return loaded
 
 
-def load_thirdparty_software(root: Path) -> dict[str, Any]:
+def load_thirdparty_software(shared_root: Path) -> dict[str, Any]:
     """Load thirdparty-software.json (rendered at apply time from the
-    thirdparty_software registry; see roles/incus_vm/tasks/ivm_install.yml)."""
-    path: Path = root / "thirdparty-software.json"
+    provision_thirdparty_software registry; see roles/_shared_prebuilt_provision_assets)."""
+    path: Path = shared_root / "thirdparty-software.json"
     if not path.is_file():
-        die(f"thirdparty-software.json not found: {path}; re-run `make apply-incus-vm`")
+        die(f"thirdparty-software.json not found: {path}; re-run `make vm-incus-install`")
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
         die(f"thirdparty-software.json is not a mapping: {path}")
@@ -545,7 +558,7 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
         "--config", f"user.ivm_template={doc['template_name']}",
         "--config", f"user.ivm_init_at_dir={cwd}",
         # Record the dotfiles ansible_os_family so `overwrite-dotfiles` can pick the
-        # right rootfs/<family>/ subtree without re-reading the template.
+        # right per-family dotfiles bucket (dotfiles/<feature>/<family>/) without re-reading the template.
         "--config", f"user.ivm_ansible_os_family={ansible_os_family_of(doc)}",
     ]
     if "disk" in hw:
@@ -705,7 +718,7 @@ def input_method_provision(doc: Template, root: Path) -> str:
                    f"|| echo {shlex.quote(env_line)} >> /etc/environment\n")
     setup_path: Path = root / FCITX5_SETUP_SCRIPT
     if not setup_path.is_file():
-        die(f"{FCITX5_SETUP_SCRIPT} not found in {root}; re-run `make apply-incus-vm`")
+        die(f"{FCITX5_SETUP_SCRIPT} not found in {root}; re-run `make vm-incus-install`")
     setup_body: str = setup_path.read_text()
     if not setup_body.endswith("\n"):
         setup_body += "\n"
@@ -875,38 +888,45 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: P
     return script
 
 
-def push_dotfiles_commands(ansible_os_family: str, name: str, root: Path) -> list[list[str]]:
-    """Push the host-staged user/root dotfile trees (rendered at apply time by
-    roles/incus_vm tasks/stage_dotfiles.yml) into the guest. The staging is keyed by
-    ansible_os_family (apt-min vs zypper-min vs dnf-min differ), so pick the subtree
-    matching this VM's distro (init: from the template; overwrite-dotfiles: from
-    the `user.ivm_ansible_os_family` tag)."""
-    staging: Path = root / "rootfs" / ansible_os_family
-    return [
-        ["incus", "file", "push", "--recursive", "--create-dirs",
-         "--uid", "1000", "--gid", "1000", str(staging / "home/user"), f"{name}/home/"],
-        ["incus", "file", "push", "--recursive", "--create-dirs",
-         "--uid", "0", "--gid", "0", str(staging / "root"), f"{name}/"],
-    ]
+# Baseline dotfile features pushed at `init` (and re-pushed by `overwrite-dotfiles`):
+# the shell configs EVERY ivm guest gets. Other features (e.g. emacs) are pushed on
+# demand by `provision <feature>`. Each is a top dir under the shared dotfiles/ tree
+# (roles/_shared_prebuilt_provision_assets).
+BASELINE_DOTFILE_FEATURES: tuple[str, ...] = ("bash", "tmux", "zsh")
 
 
-def config_sets_dir(root: Path) -> Path:
-    """Where apply-time staging puts each pushable config-file set (one subdir per
-    set, e.g. `emacs/.emacs.d`). Distro-independent - staged ONCE, unlike the
-    per-family shell dotfiles in `rootfs/<family>/`."""
-    return root / "config-files"
+def push_feature_dotfiles_commands(feature: str, ansible_os_family: str, name: str,
+                                   shared_root: Path) -> list[list[str]]:
+    """Push one feature's staged dotfiles into the guest: the `__common__` bucket then
+    the VM's `<ansible_os_family>` bucket (distro overlays common), each with its
+    `home/user` (uid 1000) + `root` (uid 0) side. Buckets/sides a feature does not
+    populate are skipped - emacs has only `__common__/home/user`; `.zshrc` is per-family
+    with no `__common__`. Source: `<shared_root>/dotfiles/<feature>/<bucket>/<who>/`.
+    A `home/user` dir is pushed INTO `{name}/home/` (so it lands as /home/user/...);
+    a `root` dir INTO `{name}/` (lands as /root/...)."""
+    feature_dir: Path = shared_root / "dotfiles" / feature
+    cmds: list[list[str]] = []
+    for bucket in ("__common__", ansible_os_family):
+        user_side: Path = feature_dir / bucket / "home" / "user"
+        root_side: Path = feature_dir / bucket / "root"
+        if user_side.is_dir():
+            cmds.append(["incus", "file", "push", "--recursive", "--create-dirs",
+                         "--uid", "1000", "--gid", "1000", str(user_side), f"{name}/home/"])
+        if root_side.is_dir():
+            cmds.append(["incus", "file", "push", "--recursive", "--create-dirs",
+                         "--uid", "0", "--gid", "0", str(root_side), f"{name}/"])
+    return cmds
 
 
-def push_config_set_commands(set_name: str, name: str, root: Path) -> list[list[str]]:
-    """Push one staged config-file set into the guest's /home/user. Each top-level
-    entry under `config-files/<set>/` (e.g. `.emacs.d`) lands directly in /home/user,
-    owned by `user` (uid/gid 1000) - mirrors push_dotfiles_commands."""
-    set_dir: Path = config_sets_dir(root) / set_name
-    return [
-        ["incus", "file", "push", "--recursive", "--create-dirs",
-         "--uid", "1000", "--gid", "1000", str(entry), f"{name}/home/user/"]
-        for entry in sorted(set_dir.iterdir())
-    ]
+def push_baseline_dotfiles_commands(ansible_os_family: str, name: str,
+                                    shared_root: Path) -> list[list[str]]:
+    """All baseline shell dotfiles (bash/tmux/zsh) for `init` / `overwrite-dotfiles`,
+    keyed by this VM's ansible_os_family (init: from the template; overwrite-dotfiles:
+    from the `user.ivm_ansible_os_family` tag)."""
+    cmds: list[list[str]] = []
+    for feature in BASELINE_DOTFILE_FEATURES:
+        cmds += push_feature_dotfiles_commands(feature, ansible_os_family, name, shared_root)
+    return cmds
 
 
 def wait_until(name: str, probe: str, timeout: int) -> bool:
@@ -1266,7 +1286,7 @@ def confirm_create(doc: Template, name: str, cwd: Path, root: Path, *, assume_ye
         die("aborted; no VM created")
 
 
-def cmd_init(template_name: str, given_name: str | None, root: Path, *,
+def cmd_init(template_name: str, given_name: str | None, root: Path, shared_root: Path, *,
              assume_yes: bool, dry_run: bool) -> None:
     """Create a VM from `<template>`, bound to the current directory: validate the
     template, prompt for + confirm the instance name, then `incus create` (stopped)
@@ -1277,7 +1297,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
     doc: Template = load_and_validate(template_name, root)
     if doc["os"]["type"] != "linux":
         die(f"`init` supports linux only for now; '{template_name}' is os.type={doc['os']['type']}")
-    registry: dict[str, Any] = load_package_groups(root)
+    registry: dict[str, Any] = load_package_groups(shared_root)
     warn_if_host_nesting_disabled(doc)
     name: str = choose_instance_name(template_name, cwd, given_name, doc,
                                      dry_run=dry_run, assume_yes=assume_yes)
@@ -1299,7 +1319,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, *,
         run(["incus", "start", name], dry_run=dry_run)
         wait_ready(name, dry_run=dry_run)
         run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd, root)], dry_run=dry_run)
-        for push_cmd in push_dotfiles_commands(ansible_os_family_of(doc), name, root):
+        for push_cmd in push_baseline_dotfiles_commands(ansible_os_family_of(doc), name, shared_root):
             run(push_cmd, dry_run=dry_run)
         if is_gui:
             # Provisioning set graphical.target + enabled the display manager, but
@@ -1386,10 +1406,11 @@ def cmd_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> Non
     run(["incus", "delete", "--force", name], dry_run=dry_run)
 
 
-def cmd_overwrite_dotfiles(name: str, root: Path, *, dry_run: bool) -> None:
-    """Re-push the host-staged dotfiles into an existing VM (no re-provision)."""
+def cmd_overwrite_dotfiles(name: str, shared_root: Path, *, dry_run: bool) -> None:
+    """Re-push the host-staged baseline dotfiles (bash/tmux/zsh) into an existing VM
+    (no re-provision)."""
     ensure_up(name, dry_run=dry_run)
-    for push_cmd in push_dotfiles_commands(vm_ansible_os_family(name, dry_run=dry_run), name, root):
+    for push_cmd in push_baseline_dotfiles_commands(vm_ansible_os_family(name, dry_run=dry_run), name, shared_root):
         run(push_cmd, dry_run=dry_run)
     print(f"==> dotfiles re-pushed into {colorize_vm_name(name)} (/home/user + /root).", file=sys.stderr)
 
@@ -1466,21 +1487,21 @@ def cmd_update(name: str, *, dry_run: bool) -> None:
         dry_run=dry_run)
 
 
-def cmd_provision(name: str, unit_names: list[str], root: Path, *, dry_run: bool) -> None:
+def cmd_provision(name: str, unit_names: list[str], shared_root: Path, *, dry_run: bool) -> None:
     """Install named units onto an EXISTING VM - the post-`init` "add more software"
     path. A name can be a `distro_package_groups` bundle, a `thirdparty_software`
-    recipe, AND/OR a config-file set - all that match are applied (e.g. `emacs` is
-    BOTH the `emacs` package bundle AND the `~/.emacs.d` config set, so both happen).
+    recipe, AND/OR a dotfiles feature - all that match are applied (e.g. `emacs` is
+    BOTH the `emacs` package bundle AND the `dotfiles/emacs` config, so both happen).
     Distro bundles install via the VM's package manager, thirdparty recipes run their
-    (probe-guarded) script as root, config sets are pushed into /home/user.
+    (probe-guarded) script as root, dotfiles features are pushed into /home/user (+ /root).
     Idempotent. Target is the cwd-bound VM or `--name`, like the other VM subcommands."""
     ensure_up(name, dry_run=dry_run)
-    distro_registry: dict[str, Any] = load_package_groups(root)
-    thirdparty_registry: dict[str, Any] = load_thirdparty_software(root)
-    config_root: Path = config_sets_dir(root)
+    distro_registry: dict[str, Any] = load_package_groups(shared_root)
+    thirdparty_registry: dict[str, Any] = load_thirdparty_software(shared_root)
+    dotfiles_root: Path = shared_root / "dotfiles"
     distro_bundles: list[str] = []
     thirdparty_names: list[str] = []
-    config_sets: list[str] = []
+    dotfiles_features: list[str] = []
     for unit in unit_names:
         matched: bool = False
         if unit in distro_registry:
@@ -1489,19 +1510,19 @@ def cmd_provision(name: str, unit_names: list[str], root: Path, *, dry_run: bool
         if unit in thirdparty_registry:
             thirdparty_names.append(unit)
             matched = True
-        if (config_root / unit).is_dir():
-            config_sets.append(unit)
+        if (dotfiles_root / unit).is_dir():
+            dotfiles_features.append(unit)
             matched = True
         if not matched:
-            available_sets: list[str] = sorted(p.name for p in config_root.iterdir()) if config_root.is_dir() else []
+            available_features: list[str] = sorted(p.name for p in dotfiles_root.iterdir()) if dotfiles_root.is_dir() else []
             die(f"unknown unit '{unit}' - not a distro_package_groups bundle, a "
-                f"thirdparty_software recipe, nor a config-file set.\n"
+                f"thirdparty_software recipe, nor a dotfiles feature.\n"
                 f"  distro bundles:      {', '.join(sorted(distro_registry))}\n"
                 f"  thirdparty software: {', '.join(sorted(thirdparty_registry))}\n"
-                f"  config sets:         {', '.join(available_sets)}")
+                f"  dotfiles features:   {', '.join(available_features)}")
     if dry_run:
         print(f"+ (incus exec {name} -- install distro bundles {distro_bundles or '[]'} + "
-              f"thirdparty {thirdparty_names or '[]'}; push config sets {config_sets or '[]'})",
+              f"thirdparty {thirdparty_names or '[]'}; push dotfiles {dotfiles_features or '[]'})",
               file=sys.stderr)
         return
     ansible_os_family: str = vm_ansible_os_family(name, dry_run=dry_run)
@@ -1522,8 +1543,8 @@ def cmd_provision(name: str, unit_names: list[str], root: Path, *, dry_run: bool
         )
     if script:
         run(["incus", "exec", name, "--", "bash", "-ec", script], dry_run=dry_run)
-    for set_name in config_sets:
-        for push_cmd in push_config_set_commands(set_name, name, root):
+    for feature in dotfiles_features:
+        for push_cmd in push_feature_dotfiles_commands(feature, ansible_os_family, name, shared_root):
             run(push_cmd, dry_run=dry_run)
     print(f"==> provisioned {', '.join(unit_names)} into {colorize_vm_name(name)}.", file=sys.stderr)
 
@@ -2082,7 +2103,10 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="Most subcommands act on ONE VM, resolved by the current directory "
                "(`user.ivm_init_at_dir`) or `--name <vm>`; `init`/`env`/`list` do not.")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
-                        help=f"install root (schema + templates + rootfs). Default: {DEFAULT_ROOT}")
+                        help=f"ivm install root (schema + templates + fcitx5 script). Default: {DEFAULT_ROOT}")
+    parser.add_argument("--shared-assets-root", type=Path, default=DEFAULT_SHARED_ASSETS_ROOT,
+                        help=f"shared provision-asset cache (package-group + thirdparty JSON, "
+                             f"feature-first dotfiles/); rarely overridden. Default: {DEFAULT_SHARED_ASSETS_ROOT}")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the incus commands that would run, without executing")
     parser.add_argument("-y", "--yes", action="store_true",
@@ -2126,7 +2150,7 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("username", help="guest account to set/lock the password for (e.g. `user`, `root`)")
         if name == "provision":
             sp.add_argument("names", nargs="+",
-                            help="unit(s) to install: a distro_package_groups bundle or a thirdparty_software recipe")
+                            help="unit(s) to install: a distro_package_groups bundle, a thirdparty_software recipe, or a dotfiles feature")
         if name == "resize":
             sp.add_argument("--cpu", type=int, metavar="N", help="new vCPU count")
             sp.add_argument("--memory", metavar="NG", help="new RAM, whole GiB with a G suffix (e.g. 16G)")
@@ -2170,6 +2194,7 @@ def main() -> None:
     extras: list[str]
     args, extras = parser.parse_known_args()
     root: Path = args.root
+    shared_root: Path = args.shared_assets_root
     # init / env / list don't act on an existing VM, so they don't resolve a target.
     if args.subcommand == "list":
         cmd_list(extras, dry_run=args.dry_run)  # raw passthrough to `incus list`
@@ -2177,7 +2202,7 @@ def main() -> None:
     if extras:  # every other subcommand is strict about unknown args
         parser.error("unrecognized arguments: " + " ".join(extras))
     if args.subcommand == "init":
-        cmd_init(args.template, args.name, root, assume_yes=args.yes, dry_run=args.dry_run)
+        cmd_init(args.template, args.name, root, shared_root, assume_yes=args.yes, dry_run=args.dry_run)
         return
     if args.subcommand == "env":
         cmd_env(args.template, root)
@@ -2209,7 +2234,7 @@ def main() -> None:
     elif args.subcommand == "delete":
         cmd_delete(name, root, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "overwrite-dotfiles":
-        cmd_overwrite_dotfiles(name, root, dry_run=args.dry_run)
+        cmd_overwrite_dotfiles(name, shared_root, dry_run=args.dry_run)
     elif args.subcommand == "set-password":
         cmd_set_password(name, args.username, dry_run=args.dry_run)
     elif args.subcommand == "unset-password":
@@ -2221,7 +2246,7 @@ def main() -> None:
     elif args.subcommand == "update":
         cmd_update(name, dry_run=args.dry_run)
     elif args.subcommand == "provision":
-        cmd_provision(name, args.names, root, dry_run=args.dry_run)
+        cmd_provision(name, args.names, shared_root, dry_run=args.dry_run)
     elif args.subcommand == "snapshot":
         cmd_snapshot(name, args.snapshot_args, dry_run=args.dry_run)
     elif args.subcommand == "gui":

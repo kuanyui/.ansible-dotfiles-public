@@ -15,11 +15,14 @@ vm_incus_state: present
 vm_incus_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/vm-incus"
 vm_incus_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
 
-# `ivm`'s own data root == what `ivm --root` (its DEFAULT_ROOT) points at. Holds
-# `template.schema.json`, `templates/`, `rootfs/<ansible_os_family>/` (staged
-# dotfiles), and `distro-package-groups.json`. Nested under `vm_incus_root` so the shell
-# completions stay a SIBLING (`vm-incus/{zsh,bash}-completions/`, matched by the
-# rc globs) - program data and completions kept separate.
+# `ivm`'s own data root == what `ivm --root` (its DEFAULT_ROOT) points at. Holds the
+# ivm-ONLY assets: `template.schema.json`, `templates/`, the fcitx5 setup script, and
+# `storage-info.json`. The package-group / thirdparty JSON + the dotfiles tree are NOT
+# here - they live in the SHARED cache (`shared-prebuilt-provision-assets/`, produced by
+# `roles/_shared_prebuilt_provision_assets`) because qvm/pvm consume them too. Nested
+# under `vm_incus_root` so the shell completions stay a SIBLING
+# (`vm-incus/{zsh,bash}-completions/`, matched by the rc globs) - program data and
+# completions kept separate.
 vm_incus_ivm_dir: "{{ vm_incus_root }}/ivm"
 
 # `ivm` shell completion. Both dirs live inside `vm_incus_root` so uninstall's

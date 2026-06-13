@@ -89,94 +89,18 @@
     dest: "{{ vm_incus_ivm_dir }}/setup-fcitx5-input.sh"
     mode: "0755"
 
-# ---------- Materialize the provision_distro_packages bundle registry for `ivm` ----------
-# `ivm` runs host-side at `init` time, where ansible (and thus the
-# `provision_distro_packages_*` vars) no longer exist. So snapshot the registry to JSON at
-# apply time; `ivm` reads it to resolve a template's `distro_package_groups` +
-# the always-on `incus_guest_baseline` into a flat per-ansible_os_family package list.
-# Single source of truth stays in `roles/provision_distro_packages/defaults/main.yml`.
-- name: Load the `provision_distro_packages` bundle registry (sibling role's defaults)
-  ansible.builtin.include_vars:
-    file: "{{ role_path }}/../provision_distro_packages/defaults/main.yml"
-
-- name: Render the bundle registry to `{{ vm_incus_ivm_dir }}/distro-package-groups.json`
-  ansible.builtin.copy:
-    dest: "{{ vm_incus_ivm_dir }}/distro-package-groups.json"
-    mode: "0644"
-    content: |
-      {{ {
-        'basic_tools': provision_distro_packages_basic_tools,
-        'sys_tools': provision_distro_packages_sys_tools,
-        'net_tools': provision_distro_packages_net_tools,
-        'wayland_tools': provision_distro_packages_wayland_tools,
-        'gui_x11': provision_distro_packages_gui_x11,
-        'gui_wayland': provision_distro_packages_gui_wayland,
-        'cjk_fonts': provision_distro_packages_cjk_fonts,
-        'cjk_input': provision_distro_packages_cjk_input,
-        'incus_guest_baseline': provision_distro_packages_incus_guest_baseline,
-        'emacs': provision_distro_packages_emacs,
-        'dev_qt': provision_distro_packages_dev_qt,
-        'dev_android': provision_distro_packages_dev_android,
-        'icewm_desktop': provision_distro_packages_icewm_desktop,
-        'lxqt_desktop': provision_distro_packages_lxqt_desktop,
-        'podman_rootless': provision_distro_packages_podman_rootless,
-      } | to_nice_json }}
-
-# ---------- Materialize the thirdparty_software recipe registry for `ivm` ----------
-# Same rationale as the distro bundles above: `ivm` has no ansible at `init` time,
-# so snapshot the `roles/provision_thirdparty_software` registry to JSON. `ivm` reads it to run
-# a template's `thirdparty_software:` recipes in the guest (probe-then-install, as
-# root). Source of truth stays in `roles/provision_thirdparty_software/defaults/main.yml`;
-# adding a recipe means adding it to BOTH that file and this render dict.
-- name: Load the `thirdparty_software` recipe registry (sibling role's defaults)
-  ansible.builtin.include_vars:
-    file: "{{ role_path }}/../provision_thirdparty_software/defaults/main.yml"
-
-- name: Render the recipe registry to `{{ vm_incus_ivm_dir }}/thirdparty-software.json`
-  ansible.builtin.copy:
-    dest: "{{ vm_incus_ivm_dir }}/thirdparty-software.json"
-    mode: "0644"
-    content: |
-      {{ {
-        'claude': provision_thirdparty_software_claude,
-        'codex': provision_thirdparty_software_codex,
-        'dev_rust': provision_thirdparty_software_dev_rust,
-        'dev_android': provision_thirdparty_software_dev_android,
-      } | to_nice_json }}
-
-# ---------- Stage VM dotfiles (user + root variants, per ansible_os_family) ----------
-# Rendered host-side by tasks/stage_dotfiles.yml into
-# `{{ vm_incus_ivm_dir }}/rootfs/<ansible_os_family>/{home/user,root}`; at init `ivm`
-# pushes the subtree matching the template's `os.distro` -> ansible_os_family (the
-# min-install helper differs: apt-min / zypper-min / dnf-min). We stage every
-# family `ivm` can target so any template's distro has its tree ready.
-- name: Stage VM dotfiles per ansible_os_family (tasks/stage_dotfiles.yml)
-  ansible.builtin.include_tasks: stage_dotfiles.yml
-  vars:
-    vm_incus_dotfiles_staging_root: "{{ vm_incus_ivm_dir }}"
-    vm_incus_dotfiles_ansible_os_families: [Debian, Suse, RedHat]
-
-# ---------- Stage emacs config ONCE (distro-independent; NOT per-family) ----------
-# The shell dotfiles are staged per ansible_os_family (because `.zshrc`'s min-install
-# helper differs: apt-min/zypper-min/dnf-min). The emacs `.el` files are IDENTICAL on
-# every distro, so stage ONE copy under config-files/emacs/ (no per-family duplication).
-# `ivm` pushes it into a guest's ~/.emacs.d when the `emacs` config set is provisioned
-# (`ivm provision emacs`). `user` variant only (is_root=false) - emacs is used as `user`.
-- name: Ensure `{{ vm_incus_ivm_dir }}/config-files/emacs` exists (single, distro-independent emacs config tree)
-  ansible.builtin.file:
-    path: "{{ vm_incus_ivm_dir }}/config-files/emacs"
-    state: directory
-    mode: "0755"
-
-- name: "Stage emacs config into `{{ vm_incus_ivm_dir }}/config-files/emacs/.emacs.d` (via `roles/emacs deploy-emacs-config.yml`)"
+# ---------- Produce the SHARED provision-asset cache (JSON registries + dotfiles) ----------
+# `ivm` runs host-side at `init`/`provision` time, where ansible (and the `provision_*`
+# registry vars) no longer exist. The shared producer role snapshots both registries to
+# JSON + stages the feature-first dotfiles tree into
+# `~/.local/share/ansible-managed/shared-prebuilt-provision-assets/`; `ivm` reads from
+# there (its DEFAULT_SHARED_ASSETS_ROOT). That dir is SHARED with qvm/pvm, so it is
+# produced by the internal `_shared_prebuilt_provision_assets` role - NOT staged here
+# (which is why vm_incus no longer renders its own JSON or stages rootfs/ + config-files/).
+# Single source of truth stays in the provision_* roles' defaults/.
+- name: Produce the shared provision-asset cache (`roles/_shared_prebuilt_provision_assets`)
   ansible.builtin.include_role:
-    name: emacs
-    tasks_from: deploy-emacs-config.yml
-  vars:
-    target_home: "{{ vm_incus_ivm_dir }}/config-files/emacs"
-    target_user: "{{ ansible_facts['user_id'] }}"
-    target_group: "{{ ansible_facts['user_id'] }}"
-    is_root: false
+    name: _shared_prebuilt_provision_assets
 
 # ---------- `ivm` shell completion (subcommands, then their args) ----------
 # Auto-discovered by the rc globs (no rc edits): zsh via the
