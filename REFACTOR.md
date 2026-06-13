@@ -20,32 +20,28 @@ committed - use it only for the fine-grained steps WHILE executing a phase).
 Tick a box when the phase is finished + verified + committed.
 
 - [x] Phase 0a - `provision_*` registry role rename
-- [ ] Phase 0b - `vm_*` roles + `vmi`/`vmq` commands
+- [ ] Phase 0b - `vm_*` role rename (commands stay `ivm`/`qvm`/`pvm`)
 - [ ] Phase 0c - `essentials` Makefile targets
 - [ ] Phase 0d - split `roles/dotfiles` -> `bash` + `tmux`
 - [ ] Phase 0e - retire `setup_*` gates / config-model cleanup
-- [ ] Phase 1 - shared assets foundation (`__common__`, `_shared_prebuilt_provision_assets`, `vmi` consumes)
-- [ ] Phase 2 - `vmq provision`
-- [ ] Phase 3 - `vmp` / container engine
+- [ ] Phase 1 - shared assets foundation (`__common__`, `_shared_prebuilt_provision_assets`, `ivm` consumes)
+- [ ] Phase 2 - `qvm provision`
+- [ ] Phase 3 - `pvm` / container engine
 
 ---
 
 ## Naming decisions (LOCKED)
 
-Two themes: (a) launcher roles/commands become a `vm*` family so they sort +
-tab-complete together; (b) the two provisioning-registry roles get a shared
-`provision_` prefix so the siblings sort together.
+Two themes: (a) the launcher ROLES become a `vm_*` family so they sort together
+in `roles/` (the commands STAY `ivm`/`qvm`/`pvm` - see note below); (b) the two
+provisioning-registry roles get a shared `provision_` prefix so the siblings sort
+together.
 
 | concern | old | new |
 | --- | --- | --- |
 | launcher role dir | `roles/incus_vm` | `roles/vm_incus` |
 | launcher role dir | `roles/quickemu_vm` | `roles/vm_quickemu` |
 | launcher role dir | (new, Phase 3) | `roles/vm_podman` |
-| launcher binary | `ivm` | `vmi` |
-| launcher binary | `qvm` | `vmq` |
-| launcher binary | (new, Phase 3) | `vmp` |
-| env var | `IVM_ROOT` | `VMI_ROOT` |
-| env var | `QVM_HOME` | `VMQ_HOME` |
 | ansible-managed subdir | `incus-vm/` | `vm-incus/` |
 | ansible-managed subdir | `quickemu-vm/` | `vm-quickemu/` |
 | setup gate | `setup_incus_vm` | `setup_vm_incus` |
@@ -60,6 +56,17 @@ tab-complete together; (b) the two provisioning-registry roles get a shared
 | config role rename | `roles/local_pkgs` | `roles/local_lang_pkg_managers` |
 | its managed dir | `~/.local-pkgs/` | `~/.local-lang-pkg-managers/` (hyphens = path convention, vs the underscore role dir; no migration - role never run) |
 
+**Commands (and on-VM data) are UNCHANGED - only role-level names move.** The
+binaries stay `ivm` / `qvm` / `pvm`, as do their env vars (`IVM_ROOT` / `QVM_HOME`),
+completions, inner data dirs (`vm-incus/ivm/`), and crucially every identifier
+PERSISTED on real VMs: the `user.ivm_*` tags (cwd binding etc.) and the
+`ivm_mount_*` / `ivm_shadow_*` device names. Keeping the command name `ivm` is
+exactly what makes those stay self-consistent, so there is NO VM migration / no
+back-compat shim. The only thing forgone vs renaming commands to `vm*` is `vm<TAB>`
+grouping - judged not worth the migration (and `ivm` = "incus vm" reads fine).
+The role dir `vm_incus` installing a command named `ivm` is a deliberate, normal
+package-name != binary-name split. Revisit a command rename later only if wanted.
+
 **Why the registry vars MUST rename (not just cosmetics):** ansible-lint
 `var-naming[no-role-prefix]` - "Variables names from within roles should use
 `role_name_` as a prefix" (docs.ansible.com/projects/lint/rules/var-naming/).
@@ -70,11 +77,11 @@ live in `group_vars/all.yml`, which the rule does NOT cover, so renaming THOSE i
 a consistency choice (breaks any existing host_vars/group_vars that set them -
 acceptable: the user's own config).
 
-**Launcher binary `vmp` (podman) is NOT a VM by default** - keep the
-container-honest description (`vmp - podman container launcher (rootless;
+**Launcher binary `pvm` (podman) is NOT a VM by default** - keep the
+container-honest description (`pvm - podman container launcher (rootless;
 optional libkrun microVM)`); the `vm` prefix is the family label, the help text
 carries the honesty. See Phase 3 guardrails. (Supersedes the `capp`/`cax`/`coci`
-working name in `container_apps/REDESIGN.md`: `s/capp/vmp/` when Phase 3 starts.)
+working name in `container_apps/REDESIGN.md`: `s/capp/pvm/` when Phase 3 starts.)
 
 ---
 
@@ -82,8 +89,8 @@ working name in `container_apps/REDESIGN.md`: `s/capp/vmp/` when Phase 3 starts.
 
 `provision_distro_packages` + `provision_thirdparty_software` + the guest
 dotfiles become ONE source of truth, consumed by every provisioning backend: the
-host, `vmi` guests, `vmq` guests, and `vmp` containers. Today only the host
-(directly) and `vmi` (via a hand-maintained JSON render) consume them.
+host, `ivm` guests, `qvm` guests, and `pvm` containers. Today only the host
+(directly) and `ivm` (via a hand-maintained JSON render) consume them.
 
 ### Target: one shared, regenerable asset dir
 
@@ -106,7 +113,7 @@ shared-prebuilt-provision-assets/
 - **Unified key scheme everywhere:** `__common__` (always-applied bucket) + the
   exact `ansible_os_family` values `Debian`/`Suse`/`RedHat`. Kills the current
   lowercase-`common/debian/...` vs Capitalized-`rootfs/Debian/...` split and lets
-  `vmi` drop its `ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY` map (family value IS the key).
+  `ivm` drop its `ANSIBLE_OS_FAMILY_TO_OVERLAY_KEY` map (family value IS the key).
 - **Feature-first dotfiles** (decided over family-first / tool-matrix):
   `provision <feature>` = install `json[feature]` pkgs + run `thirdparty[feature]`
   recipe + `cp dotfiles/<feature>/__common__` then `.../<distro>` (two copies,
@@ -120,9 +127,9 @@ shared-prebuilt-provision-assets/
 | Consumer | When | How | Status |
 | --- | --- | --- | --- |
 | host | ansible apply | reads the registry VARS directly (no JSON) | done |
-| `vmi` | runtime, in guest | JSON + cp dotfiles; install via `incus exec` | done (migrate to shared dir) |
-| `vmq` | runtime, in guest | JSON + push dotfiles; install via QGA `guest-exec` | to build (`vmq provision`) |
-| `vmp` | build time, in image | `Dockerfile` reads the assets at image build | not started; apt-only today |
+| `ivm` | runtime, in guest | JSON + cp dotfiles; install via `incus exec` | done (migrate to shared dir) |
+| `qvm` | runtime, in guest | JSON + push dotfiles; install via QGA `guest-exec` | to build (`qvm provision`) |
+| `pvm` | build time, in image | `Dockerfile` reads the assets at image build | not started; apt-only today |
 
 Source of truth stays the role `defaults/`; the JSON is only a serialization for
 the non-ansible consumers.
@@ -137,23 +144,40 @@ Rename `roles/distro_packages` -> `roles/provision_distro_packages` and
 `roles/thirdparty_software` -> `roles/provision_thirdparty_software`; rename their
 `defaults/` vars to match (lint-required); rename the `group_vars` install gates
 for consistency. Update every reference: playbooks, Makefile, `group_vars/all.yml`,
-the `vmi` `include_vars` path + render-dict VALUES, the new shared role.
+the `ivm` `include_vars` path + render-dict VALUES, the new shared role.
 
 Verify: `grep` old names == 0; `ansible-lint` clean on the two roles;
 `ansible-playbook --syntax-check`; a host `apply` still installs the same packages.
 
-### Phase 0b - `vm_*` launcher rename + `vmi`/`vmq` commands
+### Phase 0b - `vm_*` role rename (ROLE-LEVEL ONLY; commands unchanged)
 
-Rename `roles/incus_vm` -> `roles/vm_incus`, `roles/quickemu_vm` ->
-`roles/vm_quickemu`; binaries `ivm` -> `vmi`, `qvm` -> `vmq` (+ their source files,
-task files, completions `_ivm`->`_vmi` etc.); env `IVM_ROOT`->`VMI_ROOT`,
-`QVM_HOME`->`VMQ_HOME`; ansible-managed subdirs `incus-vm/`->`vm-incus/` etc.;
-`setup_*` gates; Makefile targets `incus-*`->`vm-incus-*`; all docs/READMEs.
-(`vmp`/`vm_podman` is born already-named in Phase 3.)
+Rename ONLY the `incus_vm` / `quickemu_vm` ROLE token (a distinctive token - no
+3-letter `ivm` ambiguity, no `user.ivm_*` collision):
 
-Verify: `grep` old names == 0; both playbooks `--syntax-check`; completions load
-(`zsh -n`/`bash -n`); `vmi --help` / `vmq --help` run; the unit tests
-(`test_incus_storage_pool.py`, `test_qvm.py`) pass under the new paths.
+- `roles/incus_vm` -> `roles/vm_incus`, `roles/quickemu_vm` -> `roles/vm_quickemu`
+- role-internal vars `incus_vm_*` -> `vm_incus_*` (21, incl. the `incus_vm_uninstall_*`
+  teardown toggles; `incus_vm_ivm_dir` -> `vm_incus_ivm_dir` - the `ivm` part STAYS)
+  and `quickemu_vm_*` -> `vm_quickemu_*` (6) - lint var-naming[no-role-prefix]
+- ansible-managed subdirs `incus-vm/` -> `vm-incus/`, `quickemu-vm/` -> `vm-quickemu/`
+  (the inner `ivm/` / `qvm` command-data dirs STAY)
+- `setup_incus_vm` -> `setup_vm_incus`, `setup_quickemu_vm` -> `setup_vm_quickemu`
+- Makefile targets `incus-*` -> `vm-incus-*`, `quickemu-*` -> `vm-quickemu-*`;
+  var `INCUS_VM_HOST_TEARDOWN_*` -> `VM_INCUS_HOST_TEARDOWN_*`
+- playbook files `incus_vm.yml`/`incus_vm_uninstall.yml` -> `vm_incus.yml`/...;
+  `quickemu_vm*.yml` -> `vm_quickemu*.yml`
+- docs/READMEs
+
+NOT touched (commands + persisted data, per the Naming note): `ivm`/`qvm` binaries,
+`files/ivm`/`files/qvm`, completions `_ivm`/`ivm.bash`/etc., `IVM_ROOT`/`QVM_HOME`,
+the inner `ivm/`/`qvm` dirs, and ALL `user.ivm_*` tags + `ivm_mount_*`/`ivm_shadow_*`
+device names. `incus_storage_pool*` vars + the `incus_storage_pool.py` script also
+stay (Option A) - and all incus-PRODUCT tokens (`incus.service`, `incusbr0`, etc.).
+So NO `s/incus/.../`, NO `s/ivm/.../` - only the `incus_vm`/`quickemu_vm` tokens move.
+
+Verify: `grep` for `incus_vm`/`quickemu_vm` (the role token) == 0 in functional
+files; `user.ivm_*` / `ivm_mount_` / `ivm_shadow_` / `IVM_ROOT` still present
+(unchanged); both playbooks `--syntax-check`; completions `zsh -n`/`bash -n`;
+`ivm --help` / `qvm --help` run; unit tests pass.
 
 ### Phase 0c - `essentials` Makefile-target rename
 
@@ -227,7 +251,7 @@ Verify: `grep -rn 'setup_'` across roles/playbooks/group_vars finds none of the
 deleted gates; `apply-essentials-*` deploys the same essentials; each optional
 target still works standalone; syntax-check; ansible-lint.
 
-### Phase 1 - shared assets foundation (`vmi` behavior preserved)
+### Phase 1 - shared assets foundation (`ivm` behavior preserved)
 
 1. Rename keys to `__common__` + `Debian/Suse/RedHat` across the registry defaults
    + every consumer.
@@ -235,27 +259,27 @@ target still works standalone; syntax-check; ansible-lint.
    place that lists feature keys) + stage the feature-first dotfiles tree
    (absorbing `vm_incus`'s `stage_dotfiles.yml`/`_stage_family.yml` + the emacs
    `config-files` case as `dotfiles/emacs/__common__/`).
-3. `vm_incus` consumes the shared dir; `vmi` reads from it and pushes per-feature
+3. `vm_incus` consumes the shared dir; `ivm` reads from it and pushes per-feature
    (`__common__` + `<distro>`).
 4. CLAUDE.md amendment (below).
 
-Verify: `vmi env`/`--dry-run` resolves identical package lists pre/post; JSONs
-equivalent modulo key rename; syntax-check; `vmi` unit tests green; fresh apply
-produces the new dir; real-host `vmi init` (host-only).
+Verify: `ivm env`/`--dry-run` resolves identical package lists pre/post; JSONs
+equivalent modulo key rename; syntax-check; `ivm` unit tests green; fresh apply
+produces the new dir; real-host `ivm init` (host-only).
 
-### Phase 2 - `vmq` consumes the registry + `vmq provision`
+### Phase 2 - `qvm` consumes the registry + `qvm provision`
 
-`roles/vm_quickemu` includes the shared role; `vmq provision <feature...>` reads
+`roles/vm_quickemu` includes the shared role; `qvm provision <feature...>` reads
 the JSON, resolves `__common__` + the VM's recorded distro family, installs via
 QGA `guest-exec`, runs `thirdparty[feature]` recipes, pushes
 `dotfiles/<feature>/{__common__,<distro>}`. Resolves the base-box question:
-`vmq init <distro>` + optional `--provision basic_tools`.
+`qvm init <distro>` + optional `--provision basic_tools`.
 
-Verify: `vmq provision --dry-run`; resolver unit tests; real-host QGA run.
+Verify: `qvm provision --dry-run`; resolver unit tests; real-host QGA run.
 
-### Phase 3 - `vmp` / container engine (== `container_apps/REDESIGN.md`)
+### Phase 3 - `pvm` / container engine (== `container_apps/REDESIGN.md`)
 
-Fold `container_templates` + `container_apps` into ONE engine (`vmp`, role
+Fold `container_templates` + `container_apps` into ONE engine (`pvm`, role
 `vm_podman`) that reads declarative templates, and have its image build consume
 the shared assets: `Dockerfile` reads `distro-package-groups.json` (decide:
 keep apt-only vs generalize per-family) + `COPY dotfiles/<feature>/{__common__,<distro>}`.
@@ -264,12 +288,12 @@ keep apt-only vs generalize per-family) + `COPY dotfiles/<feature>/{__common__,<
 `__common__` dotfiles, not the old per-family `rootfs/`).
 
 **Isolation guardrails (the `vm` name must be EARNED):** the default runtime
-(crun/namespaces) is shared-HOST-kernel - the boundary `vmi` exists to avoid. So
-`vmp` steers to the VM-grade runtime:
+(crun/namespaces) is shared-HOST-kernel - the boundary `ivm` exists to avoid. So
+`pvm` steers to the VM-grade runtime:
 
 - **install-time, on Linux:** warn that a shared-kernel container is weaker than a
-  real VM - for kernel isolation use `vmi`; if using `vmp`, prefer `libkrun`.
-- **`vmp init`, on Linux, runtime != `libkrun`** (crun/runc): an interactive
+  real VM - for kernel isolation use `ivm`; if using `pvm`, prefer `libkrun`.
+- **`pvm init`, on Linux, runtime != `libkrun`** (crun/runc): an interactive
   `[y/N]` confirm gate (default No), **strongly not recommended**; `--yes`
   bypasses, non-TTY without `--yes` aborts.
 - **every later run of a non-libkrun container** (`start`/`exec`/`shell`/...):
@@ -291,8 +315,7 @@ only that VM's kernel - the run-time warning can soften/skip there.
   likely `__common__` - confirm).
 - **`user` vs `root` variants** stay (`is_root` render differs) - keep the
   `{root,home/user}` split per feature.
-- **Makefile target form** - `vm-incus-install` (matches role dir) chosen; revisit
-  if `vmi-install` reads better.
+- **Makefile target form** - `vm-incus-install` (matches role dir) chosen.
 
 ## Deferred / out of scope (recorded so it is not re-derived)
 
