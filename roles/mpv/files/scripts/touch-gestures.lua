@@ -11,6 +11,13 @@ local opts = {
     horizontal_drag = 'playlist',
     proportional_seek = true,
     seek_scale = 1,
+    -- LOCAL ADDITIONS (not upstream christoph-heinrich): touch-friendly drag-seek.
+    -- See roles/mpv/README.md "Drag-seek acceleration". Defaults tuned for KDE
+    -- Wayland default touch (noisy mouse-pos when the finger is nearly still).
+    seek_deadzone_pixels = 6,     -- ignore movement below this (kills touch jitter)
+    seek_accel_exponent = 1.7,    -- how steeply a fast flick ramps to the ceiling; 1 = none
+    seek_accel_pixels_ref = 10,   -- per-event px speed where acceleration starts
+    seek_accel_max_gain = 5,      -- fast-flick ceiling: effective cap = seek_scale * this
 }
 options.read_options(opts, 'touch-gestures')
 
@@ -30,6 +37,8 @@ mp.observe_property('display-hidpi-scale', 'number', function(_, val)
 end)
 
 local drag_total = 0
+-- LOCAL ADDITION: raw px accumulated below the seek deadzone (reset per drag)
+local seek_pending = 0
 -- ds is short for drag_start
 local ds_w = nil
 local ds_h = nil
@@ -97,7 +106,27 @@ seek_timer = mp.add_timeout(0.05, seek)
 seek_timer:kill()
 local function drag_seek(dx)
     if not ds_dur then return end
-    drag_total = drag_total + dx
+
+    -- LOCAL ADDITION (not upstream): touch-friendly drag-seek.
+    -- 1) Deadzone - accumulate raw movement and skip until it clears the deadzone.
+    --    Touch jitter oscillates around zero so it never accumulates past the
+    --    threshold (no back-and-forth shaking when dragging slowly), but a slow
+    --    *steady* drag keeps adding up and still seeks.
+    seek_pending = seek_pending + dx
+    if math.abs(seek_pending) < opts.seek_deadzone_pixels then return end
+    local move = seek_pending
+    seek_pending = 0
+    -- 2) Velocity acceleration on the cleared chunk: amplify fast flicks, keep slow
+    --    drags gentle. Clamp the gain so a touch noise spike can't explode the seek.
+    --    exponent 1 = linear (upstream). Guard ref > 0 to avoid divide-by-zero.
+    if opts.seek_accel_exponent ~= 1 and opts.seek_accel_pixels_ref > 0 then
+        local gain = (math.abs(move) / opts.seek_accel_pixels_ref) ^ (opts.seek_accel_exponent - 1)
+        if gain < 1 then gain = 1 end  -- amplify only: a slow drag stays at the seek_scale base ratio
+        if gain > opts.seek_accel_max_gain then gain = opts.seek_accel_max_gain end
+        move = move * gain
+    end
+
+    drag_total = drag_total + move
 
     if opts.proportional_seek then
         time = math.max(drag_total / ds_w * ds_dur * opts.seek_scale + ds_time, 0)
@@ -166,6 +195,7 @@ end
 
 local function drag_start()
     drag_total = 0
+    seek_pending = 0
     drag_kind = nil
 end
 

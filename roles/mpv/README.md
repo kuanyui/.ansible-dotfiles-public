@@ -16,7 +16,7 @@ Gate: `setup_mpv` (default `false` in `group_vars/all.yml`). Dedicated entry:
 | `mpv.conf` | player defaults; `vo=wlshm` (see below) + `window-dragging=no` |
 | `input.conf` | keybindings (left button is left to the gesture scripts) |
 | `scripts/pointer-event.lua` | low-latency tap/double/long/drag detection (vendored, see below) |
-| `scripts/touch-gestures.lua` | maps those events to seek / volume / speed / fullscreen (vendored) |
+| `scripts/touch-gestures.lua` | maps those events to seek / volume / speed / fullscreen (vendored + one local accel patch, see below) |
 | `script-opts/pointer-event.conf` | wires pointer-event events -> touch-gestures; tap = pause, long = uosc menu |
 | `script-opts/touch-gestures.conf` | tuning - `horizontal_drag=seek`, `seek_scale` (lower = finer) |
 
@@ -32,17 +32,46 @@ of an exact seek every frame, which is what made the old script feel sluggish):
 - [`mpv-pointer-event`](https://github.com/christoph-heinrich/mpv-pointer-event) `1.2.1` -> `scripts/pointer-event.lua`
 - [`mpv-touch-gestures`](https://github.com/christoph-heinrich/mpv-touch-gestures) `1.1.0` -> `scripts/touch-gestures.lua` + both `script-opts/*.conf`
 
-Gestures (with `horizontal_drag=seek`): horizontal drag = seek (proportional to
-duration), vertical drag = speed (left half) / volume (right half), double-tap
-zones = -10s / fullscreen / +10s, single tap = pause, long press = uosc menu (no
-uosc -> harmless warning). The `.lua` files are kept verbatim; only the `.conf`
-files are tuned (see their headers). `seek_scale=0.5` in `touch-gestures.conf`
-tames overshoot if a full-screen drag jumps too far.
+Gestures (with `horizontal_drag=seek`): horizontal drag = seek, vertical drag =
+speed (left half) / volume (right half), double-tap zones = -10s / fullscreen /
++10s, single tap = pause, long press = uosc menu (no uosc -> harmless warning).
+
+`pointer-event.lua` is verbatim upstream. `touch-gestures.lua` is upstream PLUS one
+clearly-marked LOCAL patch (search `LOCAL ADDITION`) - see below.
+
+### Drag-seek acceleration
+
+Upstream drag-seek is LINEAR (drag distance maps 1:1 to a time offset) and seeks on
+EVERY pointer event - on a touchscreen that means touch jitter shakes a slow drag
+back and forth, and there is no fast-flick reach. The local patch in `drag_seek`
+adds, in order:
+
+1. **Deadzone** - accumulate raw movement and seek only once it clears
+   `seek_deadzone_pixels`. Touch jitter oscillates around zero and never accumulates
+   past it (a still/slow finger stops shaking), but a steady drag still adds up.
+2. **Base ratio + capped acceleration** - a slow drag uses `seek_scale` as the
+   finger:seek-bar ratio (`0.2` = drag 5, the bar moves 1 -> precise). The cleared
+   chunk is multiplied by `(|move| / ref) ^ (exp - 1)`, **floored at 1** (acceleration
+   only ever speeds UP from the base, never finer) and **capped at `seek_accel_max_gain`**.
+   So the seek rate runs from `seek_scale` (slow) to `seek_scale * seek_accel_max_gain`
+   (fast ceiling, default `0.2 * 5 = 1.0` = a fast full-screen swipe scrubs the whole video).
+
+Tune in `script-opts/touch-gestures.conf`:
+
+- `seek_scale` - the SLOW/base finger:bar ratio. Lower = finer slow dragging (`0.1` = 10:1).
+- `seek_accel_max_gain` - the FAST ceiling (cap = `seek_scale * this`). Lower to cap the fast rate lower.
+- `seek_accel_exponent` - how fast it ramps between the two (`1` = no acceleration, just the base ratio).
+- `seek_deadzone_pixels` - raise if a slow drag still jitters. `seek_accel_pixels_ref` (>0) - speed where accel starts.
+- `proportional_seek=no` - on LONG videos the base feels coarse (bar spans the whole film); `no` gives fixed px->seconds.
+
+The FEEL is untestable in CI (no touchscreen) - expect to tune these on the device.
+Defaults are set for KDE Wayland default touch.
 
 Security review (both `.lua`, this session): pure mpv playback-control API
 (`seek`/`set volume`/`set speed`/property/timers/key-bindings/`assdraw`), all
 command args numeric or hardcoded verbs; ZERO `os.*` / `io.*` / `subprocess` /
-`run` / `load*` / `socket` / `package`. Safe.
+`run` / `load*` / `socket` / `package`. The local acceleration patch is pure
+arithmetic on the drag delta - no new API surface. Safe.
 
 ## Why `vo=wlshm`
 

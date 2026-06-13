@@ -997,6 +997,38 @@ only xauth changed) + `mpv --vo=wlshm` playing fine under the broken profile on 
   overshoot/sensitivity knob (lower = finer). `left_long` -> uosc menu (harmless warning
   if no uosc). `.lua` kept verbatim (track upstream), only `.conf` tuned. FEEL is
   on-device only (no mpv/touchscreen here) - user tests + tunes `seek_scale`.
+- [x] **drag-seek velocity acceleration (local patch on touch-gestures.lua)** - user
+  noticed christoph's drag-seek is still LINEAR (1:1 drag distance -> time, just smooth).
+  No upstream accel hook + no off-the-shelf script does velocity-based seek, so added a
+  marked `LOCAL ADDITION` in `drag_seek`: `dx = dx * (|dx|/ref)^(exp-1)` - amplifies fast
+  flicks, attenuates slow drags (reach + precision from one gesture). Tunable in
+  `touch-gestures.conf`: `seek_accel_exponent` (default 1.5; =1 restores upstream linear),
+  `seek_accel_pixels_ref` (default 10, neutral-speed px, guarded > 0). Pure arithmetic on
+  the drag delta - no new API, still safe. touch-gestures.lua is now upstream+1-patch (NOT
+  verbatim) - README "Drag-seek acceleration" + the `LOCAL ADDITION` comments flag it for
+  any future upstream re-sync. FEEL untestable here - user tunes exponent/ref on-device.
+- [x] **drag-seek touch-jitter fix (deadzone) + gentler accel defaults** - on-device
+  (KDE Wayland default touch): slow drag SHOOK back and forth, fast flicks overshot. Root
+  cause: noisy touch `mouse-pos` + a seek on EVERY event + keyframe snapping (and accel
+  amplified the noise spikes; `proportional_seek=yes` makes it worse on long videos). Fix
+  in `drag_seek`: (1) DEADZONE - accumulate raw px into `seek_pending`, seek only once it
+  clears `seek_deadzone_pixels` (default 6); jitter oscillates around 0 and never crosses,
+  a steady drag does. Reset in `drag_start`. (2) accel now runs on the cleared chunk, gain
+  CLAMPED to `seek_accel_max_gain` (default 4), exponent default lowered 1.5 -> 1.25. New
+  conf knobs + README updated, incl. the `proportional_seek=no` tip for long videos. Still
+  pure arithmetic (safe). Verified: deploy + idempotent. FEEL still on-device - user dials
+  `seek_deadzone_pixels` (jitter) / `seek_accel_exponent` (overshoot).
+- [x] **drag-seek: explicit slow-ratio base + amplify-only accel + fast ceiling** - jitter
+  was fixed but user wanted (a) a strong fixed reduction when slow ("drag 5cm, bar moves
+  1cm" = 5:1) and (b) a fast rate cap. Key realization: with `proportional_seek=yes`,
+  `seek_scale` IS the finger:seek-bar ratio, so set `seek_scale=0.2` (5:1) as the slow
+  base. Changed the accel to AMPLIFY-ONLY (floor gain at 1, `if gain < 1 then gain = 1`)
+  so a slow drag stays exactly at the base ratio and accel only speeds up from there, up
+  to the ceiling `seek_scale * seek_accel_max_gain` (0.2 * 5 = 1.0 = fast full-screen swipe
+  = whole video). Knobs are now intuitive: `seek_scale` = slow ratio, `seek_accel_max_gain`
+  = fast cap. conf default `seek_scale 1 -> 0.2`, `seek_accel_max_gain 4 -> 5`; README model
+  section rewritten. Verified deploy + idempotent. On-device: tune `seek_scale` (slow) /
+  `seek_accel_max_gain` (fast cap).
 - [ ] **GPU-launcher interaction** - `ansible-mpv-gpu.desktop`'s Exec has no `--vo`, so
   a global `vo=wlshm` makes the GPU launcher run software too (it no longer hangs, but
   gets no hardware). TRUE hardware via the launcher needs a SEPARATE decision: grant
