@@ -1,6 +1,6 @@
-# roles/thirdparty_software
+# roles/provision_thirdparty_software
 
-Registry of **non-distro install recipes** - the sibling of `roles/distro_packages`
+Registry of **non-distro install recipes** - the sibling of `roles/provision_distro_packages`
 for everything that is NOT an `apt`/`zypper`/`dnf` package name: 3rd-party repos
 (vscode), `curl|bash` installers (claude), npm/pip globals (codex).
 
@@ -11,8 +11,8 @@ host-side executor can be added later if a host playbook ever needs these.
 
 ## Entry shape
 
-Each `thirdparty_software_<name>` is a per-`ansible_os_family` dict. Resolution is
-**OVERRIDE, not additive** (UNLIKE `distro_packages`, which concatenates `common`
+Each `provision_thirdparty_software_<name>` is a per-`ansible_os_family` dict. Resolution is
+**OVERRIDE, not additive** (UNLIKE `provision_distro_packages`, which concatenates `common`
 + the family overlay): a piece of software has one install method, maybe varying
 by family - so use the family's entry if defined, else `common`.
 
@@ -22,13 +22,13 @@ by family - so use the family's entry if defined, else `common`.
 | `already_installed` | no | probe run as root; rc 0 = skip (idempotency). Omit = always run. Prefer a check that only succeeds when truly installed (a file test beats `command -v` when the bin dir is off the login PATH) |
 
 ```yaml
-thirdparty_software_claude:          # curl|bash installer, same on every distro
+provision_thirdparty_software_claude:          # curl|bash installer, same on every distro
   common:
     already_installed: su - user -c 'command -v claude'
     install_script: |
       su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
-thirdparty_software_vscode:          # 3rd-party repo, per-family (illustrative)
+provision_thirdparty_software_vscode:          # 3rd-party repo, per-family (illustrative)
   debian:
     already_installed: command -v code
     install_script: |
@@ -44,7 +44,7 @@ update` (apt/zypper upgrade) keeps it current.
 
 ## Adding a recipe
 
-1. Define `thirdparty_software_<name>` in `defaults/main.yml`.
+1. Define `provision_thirdparty_software_<name>` in `defaults/main.yml`.
 2. Add it to the render list in `roles/incus_vm/tasks/ivm_install.yml`
    (`thirdparty-software.json`) - same explicit-list pattern as the distro bundles.
 3. Reference it from a template's `thirdparty_software: [<name>]`.

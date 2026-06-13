@@ -1,10 +1,10 @@
 ---
-# Registry of NON-distro install recipes - the sibling of `roles/distro_packages`
+# Registry of NON-distro install recipes - the sibling of `roles/provision_distro_packages`
 # for everything that is NOT an apt/zypper/dnf package name: 3rd-party repos
 # (vscode), `curl|bash` installers (claude), npm/pip globals (codex).
 #
-# Each `thirdparty_software_<name>` is a per-`ansible_os_family` dict. Resolution
-# is OVERRIDE, not additive (UNLIKE `distro_packages`, which concatenates
+# Each `provision_thirdparty_software_<name>` is a per-`ansible_os_family` dict. Resolution
+# is OVERRIDE, not additive (UNLIKE `provision_distro_packages`, which concatenates
 # `common` + the family overlay): a piece of software has ONE install method,
 # possibly varying by family - so use the host/guest family's entry if defined,
 # else `common`. Each entry:
@@ -24,7 +24,7 @@
 # it to the render list in `roles/incus_vm/tasks/ivm_install.yml` (same explicit
 # pattern as the distro bundles).
 
-thirdparty_software_claude:
+provision_thirdparty_software_claude:
   common:
     already_installed: su - user -c 'command -v claude'
     install_script: |
@@ -32,13 +32,13 @@ thirdparty_software_claude:
       # `[[ =~ ]]` - pipe to `bash` (present in the guest), NOT `sh` (dash chokes).
       su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
-thirdparty_software_codex:
+provision_thirdparty_software_codex:
   common:
     # File test, not `command -v`: codex lands in ~/.local/npm_global/bin, which is
     # not necessarily on the login PATH, so a PATH probe could wrongly re-install.
     already_installed: su - user -c 'test -x ~/.local/npm_global/bin/codex'
     install_script: |
-      # Needs nodejs + npm from the template's `distro_packages`. npm prefix kept at
+      # Needs nodejs + npm from the template's `provision_distro_packages`. npm prefix kept at
       # ~/.local/npm_global for now; switch to the centralize_lang_pkgs_dir tree when
       # that role rename lands (see TODO.md).
       su - user -c 'mkdir -p ~/.local/npm_global && npm config set prefix ~/.local/npm_global && npm install -g @openai/codex'
@@ -49,7 +49,7 @@ thirdparty_software_codex:
 # rust-analyzer (editor LSP) is added on top - it is NOT in the default profile. Distro
 # rustc/cargo are intentionally NOT used: they lag Rust's 6-week stable cadence and can't
 # manage toolchains/targets/components the way Rust development expects.
-thirdparty_software_dev_rust:
+provision_thirdparty_software_dev_rust:
   common:
     already_installed: su - user -c 'test -x ~/.cargo/bin/cargo'
     install_script: |
@@ -65,7 +65,7 @@ thirdparty_software_dev_rust:
 # `./gradlew assembleDebug`. NOT the emulator (heavy/GUI/needs host nested virt; add via
 # `sdkmanager emulator`). Set ANDROID_HOME=~/Android/Sdk (or a project local.properties) to
 # point Gradle/AGP at it.
-thirdparty_software_dev_android:
+provision_thirdparty_software_dev_android:
   common:
     already_installed: su - user -c 'test -x ~/Android/Sdk/platform-tools/adb'
     install_script: |
