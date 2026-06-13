@@ -183,9 +183,18 @@ VM-grade runtime with two warnings:
 - **install-time, on Linux:** warn that a shared-kernel container is weaker
   isolation than a real VM - for kernel isolation use `ivm`; if using pvm,
   prefer the `libkrun` runtime.
-- **run-time, when the effective runtime is NOT `libkrun`** (crun / runc): warn
-  **strongly not recommended** (sharing the host kernel; kernel attack surface),
-  pointing at `libkrun` or `ivm`.
+- **`pvm init`, on Linux, when the chosen runtime is NOT `libkrun`** (crun /
+  runc): an interactive `[y/N]` confirm gate - **strongly not recommended** (the
+  container shares the host kernel; kernel attack surface), pointing at `libkrun`
+  or `ivm`. `--yes` bypasses (automation); non-TTY without `--yes` aborts. (Default
+  No, because the action is discouraged - the user wrote `Y/n`; flip to default-Yes
+  if preferred.)
+- **every later run of a non-libkrun container** (`start` / `exec` / `shell` /
+  ...): PRINT the same warning each time, non-blocking - a standing reminder, no
+  prompt (the gate already happened at `init`).
+
+A `libkrun` runtime gets neither the prompt nor the nag (see Scope below for the
+macOS/Windows case).
 
 Scope: this is a Linux / native-podman concern (the shared kernel is the HOST's).
 On macOS/Windows podman already runs inside a `podman machine` VM, so a
