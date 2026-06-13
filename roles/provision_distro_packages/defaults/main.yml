@@ -2,11 +2,17 @@
 # Named bundles of frequently-used distro packages. Each bundle is a dict of
 # per-`os_family` overlays: `__common__` applies to every family, `Debian` /
 # `Suse` / `RedHat` add family-specific extras on top. `tasks/main.yml`
-# concatenates `common + <host family overlay>` and hands the result to
+# concatenates `__common__ + <host family overlay>` and hands the result to
 # `roles/_install_distro_packages`, the single multi-distro install engine
 # (ansible-core-only: it shells `zypper --non-interactive` on openSUSE instead
 # of `ansible.builtin.package`, which would dispatch to
 # `community.general.zypper`).
+#
+# These bundle keys are also serialized to the shared distro-package-groups.json by
+# `roles/_shared_prebuilt_provision_assets` (its render dict is the ONE hand-maintained
+# list of feature keys, read by ivm/qvm/pvm). Adding a bundle = define it here AND add
+# it there. Launcher completions auto-track it (they read the rendered JSON at runtime)
+# - no completion edit needed.
 #
 # Each family overlay (`__common__` / `Debian` / `Suse` / `RedHat`) is EITHER a bare package
 # list (the usual case), OR - when that family ALSO needs setup - a dict

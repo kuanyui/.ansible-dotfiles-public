@@ -18,11 +18,13 @@
 #                               more robust than `command -v` when the bin dir is
 #                               not on the login PATH).
 #
-# `roles/vm_incus` materializes this to `thirdparty-software.json` at apply time;
-# `ivm` reads it and runs the recipes in a guest via `incus exec`. A template opts
-# in with `thirdparty_software: [<name>]`. Adding a recipe = define it here AND add
-# it to the render list in `roles/vm_incus/tasks/ivm_install.yml` (same explicit
-# pattern as the distro bundles).
+# `roles/_shared_prebuilt_provision_assets` materializes this to the shared
+# `thirdparty-software.json` at apply time; `ivm` (later qvm/pvm) reads it and runs
+# the recipes in a guest via `incus exec`. A template opts in with
+# `thirdparty_software: [<name>]`. Adding a recipe = define it here AND add it to the
+# render dict in `roles/_shared_prebuilt_provision_assets/tasks/main.yml` (same
+# explicit pattern as the distro bundles). Launcher completions auto-track it (they
+# read the rendered JSON at runtime) - no completion edit needed.
 
 provision_thirdparty_software_claude:
   __common__:
