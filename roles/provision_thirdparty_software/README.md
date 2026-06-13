@@ -4,7 +4,7 @@ Registry of **non-distro install recipes** - the sibling of `roles/provision_dis
 for everything that is NOT an `apt`/`zypper`/`dnf` package name: 3rd-party repos
 (vscode), `curl|bash` installers (claude), npm/pip globals (codex).
 
-Data-only role (ships no tasks). `roles/incus_vm` materializes this registry to
+Data-only role (ships no tasks). `roles/vm_incus` materializes this registry to
 `thirdparty-software.json` at apply time; `ivm` reads it and runs the recipes in a
 guest via `incus exec` when a template lists them under `thirdparty_software:`. A
 host-side executor can be added later if a host playbook ever needs these.
@@ -45,6 +45,6 @@ update` (apt/zypper upgrade) keeps it current.
 ## Adding a recipe
 
 1. Define `provision_thirdparty_software_<name>` in `defaults/main.yml`.
-2. Add it to the render list in `roles/incus_vm/tasks/ivm_install.yml`
+2. Add it to the render list in `roles/vm_incus/tasks/ivm_install.yml`
    (`thirdparty-software.json`) - same explicit-list pattern as the distro bundles.
 3. Reference it from a template's `thirdparty_software: [<name>]`.

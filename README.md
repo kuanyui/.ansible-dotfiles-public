@@ -24,10 +24,10 @@ playbooks/                # entry playbooks
   ├─ podman_oci_runtimes.yml  # ├─ dedicated entry: configure podman OCI runtime(s)
   ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
   ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
-  ├─ incus_vm.yml         # ├─ dedicated entry: install the `ivm` Incus VM launcher
-  ├─ incus_vm_uninstall.yml      # ├─ uninstall flow (removes `ivm` + role subdir)
-  ├─ quickemu_vm.yml      # ├─ dedicated entry: install the `qvm` quickemu VM launcher
-  ├─ quickemu_vm_uninstall.yml   # ├─ uninstall flow (removes `qvm` + role subdir; VMs untouched)
+  ├─ vm_incus.yml         # ├─ dedicated entry: install the `ivm` Incus VM launcher
+  ├─ vm_incus_uninstall.yml      # ├─ uninstall flow (removes `ivm` + role subdir)
+  ├─ vm_quickemu.yml      # ├─ dedicated entry: install the `qvm` quickemu VM launcher
+  ├─ vm_quickemu_uninstall.yml   # ├─ uninstall flow (removes `qvm` + role subdir; VMs untouched)
   ├─ apparmor.yml         # ├─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
   ├─ trusted_pubkeys.yml  # ├─ dedicated entry: pin GitHub/GitLab SSH host keys + Debian CD signing keys
   ├─ firefox_tunes.yml    # ├─ dedicated entry: write per-profile user.js (session-store + cache off the SSD)
@@ -57,8 +57,8 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`podman_oci_runtimes/`](roles/podman_oci_runtimes/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |
 | [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
-| [`incus_vm/`](roles/incus_vm/) | Install `ivm`: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |
-| [`quickemu_vm/`](roles/quickemu_vm/) | Install `qvm`: quickemu wrapper for the axis `ivm` doesn't cover (Windows/macOS guests, 3D desktop Linux). Prebuilt tumbleweed/debian/fedora images (zero interactive install), `quickget` passthrough for the rest, guest-agent `exec`/`push`/`pull`, SSH `shell`. |
+| [`vm_incus/`](roles/vm_incus/) | Install `ivm`: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |
+| [`vm_quickemu/`](roles/vm_quickemu/) | Install `qvm`: quickemu wrapper for the axis `ivm` doesn't cover (Windows/macOS guests, 3D desktop Linux). Prebuilt tumbleweed/debian/fedora images (zero interactive install), `quickget` passthrough for the rest, guest-agent `exec`/`push`/`pull`, SSH `shell`. |
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
 | [`trusted_pubkeys/`](roles/trusted_pubkeys/) | Pin well-known public keys for the current user (hardcoded in-repo for audit, not fetched): GitHub/GitLab SSH host keys into `~/.ssh/known_hosts` (no TOFU prompt on `git clone git@...`), plus Debian CD signing GPG keys into a dedicated keyring for verifying Debian images. |
 | [`firefox_tunes/`](roles/firefox_tunes/) | Cut Firefox SSD writes for the current user: write a per-profile `user.js` (enumerated from `profiles.ini`) that lengthens the session-store interval and keeps the cache off the SSD (RAM-only, or disk cache on a tmpfs dir). |
@@ -153,7 +153,7 @@ Add to **`~/.zshrc`**, **before** any `compinit` call (the `fpath` change is onl
 ```zsh
 # Ansible-managed zsh completions. Each managed role drops `_<cmd>` files
 # under its own `~/.local/share/ansible-managed/<role>/zsh-completions/`
-# subdir (`container-apps/zsh-completions/_c-*`, `incus-vm/zsh-completions/_ivm`,
+# subdir (`container-apps/zsh-completions/_c-*`, `vm-incus/zsh-completions/_ivm`,
 # ...); the glob auto-discovers across all roles. `(N)` is null-glob so it's
 # safe even before any role has installed completions.
 fpath=(${HOME}/.local/share/ansible-managed/*/zsh-completions(N) $fpath)
@@ -180,19 +180,19 @@ which _c-claude-crun                           # should resolve to the completio
 c-claude-crun <TAB>                            # should list subcommands with descriptions
 ```
 
-## VM-isolated launchers via `roles/incus_vm` (the `ivm` launcher)
+## VM-isolated launchers via `roles/vm_incus` (the `ivm` launcher)
 
-For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/incus_vm` installs `ivm`, a launcher that spins up a full Incus KVM VM from a declarative YAML template. The project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, a stronger isolation boundary than libkrun's in-process virtio-fs).
+For workloads where a podman container's shared-kernel boundary feels too thin (e.g. running AI agents that touch source code while sensitive credentials sit on the same host), `roles/vm_incus` installs `ivm`, a launcher that spins up a full Incus KVM VM from a declarative YAML template. The project dir is virtio-fs shared into `/workspaces/<name>` (Incus uses standalone `virtiofsd` with `pivot_root` + seccomp, a stronger isolation boundary than libkrun's in-process virtio-fs).
 
-You describe the VM once (OS/distro, hardware, mounts, packages, dotfiles, post-install) in a template under `~/.local/share/ansible-managed/incus-vm/ivm/templates/<name>.yaml`, then:
+You describe the VM once (OS/distro, hardware, mounts, packages, dotfiles, post-install) in a template under `~/.local/share/ansible-managed/vm-incus/ivm/templates/<name>.yaml`, then:
 
 ```bash
-make incus-install          # install `ivm` + example templates
+make vm-incus-install          # install `ivm` + example templates
 ivm init claude              # create a VM from the `claude` template, bound to the current dir
 ivm shell                    # enter it (zsh); `ivm` from a subdir offers the parent's VM
 ```
 
-`make incus-install` auto-installs the `incus` package, starts + enables `incus.service` AND `incus-user.socket`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus` group (the lower-privilege user-socket group, NOT the root-equivalent `incus-admin`; the `incus` CLI auto-detects `/run/incus/unix.socket.user` and routes your operations into a per-user project `user-<UID>` for isolation). Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password. (Host-level prep is in `roles/incus_vm` `tasks/host_setup.yml`; details in [`roles/incus_vm/docs/incus-host-setup.md`](roles/incus_vm/docs/incus-host-setup.md).)
+`make vm-incus-install` auto-installs the `incus` package, starts + enables `incus.service` AND `incus-user.socket`, runs `incus admin init --preseed` (creates a `default` storage pool + `incusbr0` bridge if not already done), and adds your user to the `incus` group (the lower-privilege user-socket group, NOT the root-equivalent `incus-admin`; the `incus` CLI auto-detects `/run/incus/unix.socket.user` and routes your operations into a per-user project `user-<UID>` for isolation). Each step is gated on a no-`sudo` probe, so on an already-set-up host it does nothing privileged and won't prompt for the become password. (Host-level prep is in `roles/vm_incus` `tasks/host_setup.yml`; details in [`roles/vm_incus/docs/incus-host-setup.md`](roles/vm_incus/docs/incus-host-setup.md).)
 
 If your user was just added to `incus`, **log out + back in** (or `newgrp incus` in this shell) before running `ivm` - the role hard-aborts on this condition so it can't be missed, with the exact remediation steps printed; Linux only refreshes a session's supplementary group set at login time.
 

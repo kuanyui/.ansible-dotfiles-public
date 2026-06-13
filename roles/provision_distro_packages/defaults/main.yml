@@ -57,7 +57,7 @@ provision_distro_packages_wayland_tools:
     - wl-clipboard
 
 # The emacs PACKAGE only. Its `~/.emacs.d` config is a SEPARATE config-file set that
-# `ivm` stages once and pushes (see roles/incus_vm) - so `ivm provision emacs` =
+# `ivm` stages once and pushes (see roles/vm_incus) - so `ivm provision emacs` =
 # this package + that config set. `emacs` is the package name in all three families'
 # default repos.
 provision_distro_packages_emacs:
@@ -131,9 +131,9 @@ provision_distro_packages_cjk_input:
     - fcitx5-qt
     - fcitx5-configtool
 
-# Baseline for an `ivm` guest VM (roles/incus_vm). NOT a host-toggleable bundle
+# Baseline for an `ivm` guest VM (roles/vm_incus). NOT a host-toggleable bundle
 # like the ones above (no `provision_distro_packages_install_*` switch); it is rendered
-# into `<incus_vm_root>/package-groups.json` and the `ivm` program installs it
+# into `<vm_incus_root>/package-groups.json` and the `ivm` program installs it
 # on EVERY guest at first provision, regardless of the template. It is the
 # floor that makes a VM usable as an ivm guest: zsh (+ plugins) because the
 # pushed dotfiles set zsh as the login shell, `sudo` for the opt-in

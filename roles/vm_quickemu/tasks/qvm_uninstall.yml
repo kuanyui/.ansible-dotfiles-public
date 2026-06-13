@@ -1,0 +1,15 @@
+---
+# Remove `qvm` + this role's subdir. Does NOT delete any VMs: qvm's runtime
+# data (`~/.local/share/qvm/` - disks, confs, keys) is deliberately OUTSIDE
+# `vm_quickemu_root`, so this rm can never erase a VM. Per-VM removal:
+# `qvm delete`. Packages are never removed (system-shared).
+
+- name: Remove the `qvm` binary `{{ vm_quickemu_bin_dir }}/qvm`
+  ansible.builtin.file:
+    path: "{{ vm_quickemu_bin_dir }}/qvm"
+    state: absent
+
+- name: Wipe `vm_quickemu`'s subdir `{{ vm_quickemu_root }}` (completions; siblings under `ansible-managed/` untouched; `~/.local/share/qvm/` VM data untouched)
+  ansible.builtin.file:
+    path: "{{ vm_quickemu_root }}"
+    state: absent

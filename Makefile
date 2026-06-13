@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv incus-install incus-check incus-sandbox incus-uninstall-ivm incus-teardown-host incus-push-dotfiles quickemu-install quickemu-check quickemu-uninstall-qvm check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-user apply-root apply-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm check-user check-root check-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-user sandbox-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -79,17 +79,17 @@ apply-mpv:  ## Deploy mpv config (mpv.conf with `vo=wlshm` + input.conf + Lua sc
 ### Incus (host daemon + the `ivm` VM launcher)
 ### -------------------------------------------------------------------------
 
-## Incus storage pool backend (available: dir|btrfs|zfs|lvm-thin, default: `btrfs`). Details: roles/incus_vm/defaults/main/incus_host_install.yml
+## Incus storage pool backend (available: dir|btrfs|zfs|lvm-thin, default: `btrfs`). Details: roles/vm_incus/defaults/main/incus_host_install.yml
 INCUS_STORAGE_POOL_DRIVER ?=
-## Incus storage pool source path (default: `/home/incus-storage.img`). Details: roles/incus_vm/defaults/main/incus_host_install.yml
+## Incus storage pool source path (default: `/home/incus-storage.img`). Details: roles/vm_incus/defaults/main/incus_host_install.yml
 INCUS_STORAGE_POOL_SOURCE ?=
-## Incus storage pool size; empty for `dir` (default: `500GiB`). Details: roles/incus_vm/defaults/main/incus_host_install.yml
+## Incus storage pool size; empty for `dir` (default: `500GiB`). Details: roles/vm_incus/defaults/main/incus_host_install.yml
 INCUS_STORAGE_POOL_SIZE ?=
 
 # Which of the three INCUS_STORAGE_POOL_* the user actually set (origin = command
 # line / environment) -> passed through to ansible as `-e` only for those (validation,
 # the storage-layout preview, and the first-time confirm now all live in the role:
-# roles/incus_vm/tasks/incus_host_install.yml).
+# roles/vm_incus/tasks/incus_host_install.yml).
 _pool_drv_set  := $(filter command line environment,$(origin INCUS_STORAGE_POOL_DRIVER))
 _pool_src_set  := $(filter command line environment,$(origin INCUS_STORAGE_POOL_SOURCE))
 _pool_size_set := $(filter command line environment,$(origin INCUS_STORAGE_POOL_SIZE))
@@ -108,14 +108,14 @@ _incus_storage_overrides := \
   $(if $(_pool_size_set),-e incus_storage_pool_size=$(INCUS_STORAGE_POOL_SIZE)) \
   $(if $(_pool_any_set),-e incus_storage_pool_overrides_passed=true)
 
-incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/incus_vm`; bypasses `setup_incus_vm` gate). On first-time init the role confirms the storage pool layout before `incus admin init` (skipped once a `default` pool exists). Sudo only for the host steps that actually run.
-	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm.yml $(_incus_storage_overrides)
+vm-incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/vm_incus`; bypasses `setup_vm_incus` gate). On first-time init the role confirms the storage pool layout before `incus admin init` (skipped once a `default` pool exists). Sudo only for the host steps that actually run.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/vm_incus.yml $(_incus_storage_overrides)
 
-incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (run `incus-install` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.
+vm-incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (run `vm-incus-install` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.
 	@set -e; \
-	WORKS="$$HOME/.local/share/ansible-managed/incus-vm/ivm/rootfs/Debian"; \
+	WORKS="$$HOME/.local/share/ansible-managed/vm-incus/ivm/rootfs/Debian"; \
 	if [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
-	else echo "No staged dotfiles found -- run 'make incus-install' first" >&2; exit 1; fi; \
+	else echo "No staged dotfiles found -- run 'make vm-incus-install' first" >&2; exit 1; fi; \
 	echo "Source (Debian tree; the only buildable guest family today): $$SRC"; \
 	VMS=$$(incus list user.ansible_managed=true --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
 	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
@@ -127,36 +127,36 @@ incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (ru
 	    incus file push --recursive --create-dirs --uid 0 --gid 0 "$$SRC/root" "$$vm/"; \
 	done
 
-incus-uninstall-ivm:  ## Uninstall `ivm` + its `~/.local/share/ansible-managed/incus-vm/` subdir ONLY; leaves incus daemon, pool, networks, VMs, and your `incus` group intact. Host-level teardown: `incus-teardown-host` (or `-e incus_vm_uninstall_*=true` here).
-	$(PLAYBOOK) --diff $(PLAYBOOKS)/incus_vm_uninstall.yml
+vm-incus-uninstall-ivm:  ## Uninstall `ivm` + its `~/.local/share/ansible-managed/vm-incus/` subdir ONLY; leaves incus daemon, pool, networks, VMs, and your `incus` group intact. Host-level teardown: `vm-incus-teardown-host` (or `-e vm_incus_uninstall_*=true` here).
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/vm_incus_uninstall.yml
 
-## Extra `-e incus_vm_uninstall_*=true` flags appended to `incus-teardown-host` (default: none). e.g. ALSO leave the `incus` group (forces a re-login):  make incus-teardown-host INCUS_VM_HOST_TEARDOWN_EXTRA="-e incus_vm_uninstall_remove_user_from_incus_group=true"
-INCUS_VM_HOST_TEARDOWN_EXTRA ?=
+## Extra `-e vm_incus_uninstall_*=true` flags appended to `vm-incus-teardown-host` (default: none). e.g. ALSO leave the `incus` group (forces a re-login):  make vm-incus-teardown-host VM_INCUS_HOST_TEARDOWN_EXTRA="-e vm_incus_uninstall_remove_user_from_incus_group=true"
+VM_INCUS_HOST_TEARDOWN_EXTRA ?=
 
-## `incus-teardown-host`'s ansible flags: every destructive `incus_vm_uninstall_*` step EXCEPT `incus` group removal, plus $(INCUS_VM_HOST_TEARDOWN_EXTRA). To customize, set that var above - don't edit this line.
-INCUS_VM_HOST_TEARDOWN_FLAGS := -e incus_vm_uninstall_delete_all_instances=true -e incus_vm_uninstall_delete_autocreated_user_projects=true -e incus_vm_uninstall_delete_incusbr0_network=true -e incus_vm_uninstall_delete_default_storage_pool=true -e incus_vm_uninstall_disable_incus_daemon_and_socket=true -e incus_vm_uninstall_revert_firewalld_incusbr0_zone=true $(INCUS_VM_HOST_TEARDOWN_EXTRA)
+## `vm-incus-teardown-host`'s ansible flags: every destructive `vm_incus_uninstall_*` step EXCEPT `incus` group removal, plus $(VM_INCUS_HOST_TEARDOWN_EXTRA). To customize, set that var above - don't edit this line.
+VM_INCUS_HOST_TEARDOWN_FLAGS := -e vm_incus_uninstall_delete_all_instances=true -e vm_incus_uninstall_delete_autocreated_user_projects=true -e vm_incus_uninstall_delete_incusbr0_network=true -e vm_incus_uninstall_delete_default_storage_pool=true -e vm_incus_uninstall_disable_incus_daemon_and_socket=true -e vm_incus_uninstall_revert_firewalld_incusbr0_zone=true $(VM_INCUS_HOST_TEARDOWN_EXTRA)
 
-incus-teardown-host:  ## DESTRUCTIVE host-level incus teardown: deletes ALL VMs, the `default` pool (ERASES disks), `incusbr0`, `user-*` projects + `incusbr-*` bridges, and disables the daemon. Keeps packages + your `incus` group. Needs sudo.
-	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/incus_vm_uninstall.yml $(INCUS_VM_HOST_TEARDOWN_FLAGS)
+vm-incus-teardown-host:  ## DESTRUCTIVE host-level incus teardown: deletes ALL VMs, the `default` pool (ERASES disks), `incusbr0`, `user-*` projects + `incusbr-*` bridges, and disables the daemon. Keeps packages + your `incus` group. Needs sudo.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/vm_incus_uninstall.yml $(VM_INCUS_HOST_TEARDOWN_FLAGS)
 
-incus-check:  ## Dry-run `incus-install` (`--check --diff`). Honors the same INCUS_STORAGE_POOL_* overrides.
-	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/incus_vm.yml $(_incus_storage_overrides)
+vm-incus-check:  ## Dry-run `vm-incus-install` (`--check --diff`). Honors the same INCUS_STORAGE_POOL_* overrides.
+	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/vm_incus.yml $(_incus_storage_overrides)
 
-incus-sandbox:  ## Dry-run `incus-install` in a throwaway podman+systemd sandbox (`incus` binary stubbed).
-	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) incus_vm
+vm-incus-sandbox:  ## Dry-run `vm-incus-install` in a throwaway podman+systemd sandbox (`incus` binary stubbed).
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) vm_incus
 
 ### -------------------------------------------------------------------------
-### Quickemu (the `qvm` launcher; desktop/Windows/macOS axis - roles/quickemu_vm)
+### Quickemu (the `qvm` launcher; desktop/Windows/macOS axis - roles/vm_quickemu)
 ### -------------------------------------------------------------------------
 
-quickemu-install:  ## Install quickemu host packages + the `qvm` launcher (`roles/quickemu_vm`; bypasses `setup_quickemu_vm` gate). Prebuilt tumbleweed/debian/fedora images = no interactive install. openSUSE hosts: `quickemu` itself is NOT packaged - the play warns with manual steps. Sudo only for package installs.
-	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/quickemu_vm.yml
+vm-quickemu-install:  ## Install quickemu host packages + the `qvm` launcher (`roles/vm_quickemu`; bypasses `setup_vm_quickemu` gate). Prebuilt tumbleweed/debian/fedora images = no interactive install. openSUSE hosts: `quickemu` itself is NOT packaged - the play warns with manual steps. Sudo only for package installs.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/vm_quickemu.yml
 
-quickemu-check:  ## Dry-run `quickemu-install` (`--check --diff`).
-	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/quickemu_vm.yml
+vm-quickemu-check:  ## Dry-run `vm-quickemu-install` (`--check --diff`).
+	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/vm_quickemu.yml
 
-quickemu-uninstall-qvm:  ## Uninstall `qvm` + its `~/.local/share/ansible-managed/quickemu-vm/` subdir ONLY; VM data (`~/.local/share/qvm/`) and packages untouched.
-	$(PLAYBOOK) --diff $(PLAYBOOKS)/quickemu_vm_uninstall.yml
+vm-quickemu-uninstall-qvm:  ## Uninstall `qvm` + its `~/.local/share/ansible-managed/vm-quickemu/` subdir ONLY; VM data (`~/.local/share/qvm/`) and packages untouched.
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/vm_quickemu_uninstall.yml
 
 ### -------------------------------------------------------------------------
 ### Dry-run (--check --diff)

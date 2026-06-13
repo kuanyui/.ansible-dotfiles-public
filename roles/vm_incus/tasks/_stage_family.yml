@@ -1,0 +1,60 @@
+---
+# Stage one ansible_os_family's dotfile trees (user + root). Included once per entry in
+# `vm_incus_dotfiles_ansible_os_families` by stage_dotfiles.yml; the current family is
+# `vm_incus_dotfiles_ansible_os_family` (set as the loop_var). Renders into:
+#   {{ vm_incus_dotfiles_staging_root }}/rootfs/{{ vm_incus_dotfiles_ansible_os_family }}/{home/user,root}
+# `override_os_family` makes `.zshrc.j2` pick this family's min-install helper
+# (apt-min / zypper-min / dnf-min) instead of leaking the HOST's ansible_os_family.
+
+- name: "Set `_vm_incus_dotfiles_family_base` for `{{ vm_incus_dotfiles_ansible_os_family }}`"
+  ansible.builtin.set_fact:
+    _vm_incus_dotfiles_family_base: "{{ vm_incus_dotfiles_staging_root }}/rootfs/{{ vm_incus_dotfiles_ansible_os_family }}"
+
+- name: "Ensure `{{ vm_incus_dotfiles_ansible_os_family }}` staging dirs (`home/user` + `root`) exist (roles/dotfiles only creates SUB-dirs of `target_home`, not `target_home` itself)"
+  ansible.builtin.file:
+    path: "{{ _vm_incus_dotfiles_family_base }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - home/user
+    - root
+
+- name: "Stage `{{ vm_incus_dotfiles_ansible_os_family }}` `user` dotfiles via `roles/dotfiles` into `home/user/`"
+  ansible.builtin.include_role:
+    name: dotfiles
+  vars:
+    target_home: "{{ _vm_incus_dotfiles_family_base }}/home/user"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: false
+
+- name: "Stage `{{ vm_incus_dotfiles_ansible_os_family }}` `user` `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `home/user/.zshrc`"
+  ansible.builtin.include_role:
+    name: zsh
+    tasks_from: deploy-zsh-config.yml
+  vars:
+    target_home: "{{ _vm_incus_dotfiles_family_base }}/home/user"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: false
+    override_os_family: "{{ vm_incus_dotfiles_ansible_os_family }}"
+
+- name: "Stage `{{ vm_incus_dotfiles_ansible_os_family }}` `root` dotfiles via `roles/dotfiles` into `root/`"
+  ansible.builtin.include_role:
+    name: dotfiles
+  vars:
+    target_home: "{{ _vm_incus_dotfiles_family_base }}/root"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: true
+
+- name: "Stage `{{ vm_incus_dotfiles_ansible_os_family }}` `root` `.zshrc` via `roles/zsh tasks_from: deploy-zsh-config.yml` into `root/.zshrc`"
+  ansible.builtin.include_role:
+    name: zsh
+    tasks_from: deploy-zsh-config.yml
+  vars:
+    target_home: "{{ _vm_incus_dotfiles_family_base }}/root"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+    is_root: true
+    override_os_family: "{{ vm_incus_dotfiles_ansible_os_family }}"

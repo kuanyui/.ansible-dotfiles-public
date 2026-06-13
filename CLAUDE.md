@@ -81,7 +81,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - "Print the command, then execute": when pointing the user at a next command (Claude replies, Makefile recipes, script error helpers), first echo the exact bare starter on its own plain-text line - that's what they copy-paste (inline execution leaves the string nowhere). Bare invocation only (`python3 scripts/foo.py`, not `... --help`) so they can append args; no placeholder garbage like `<path> [...]` (breaks double-click). Script "next-command" helpers: `echo "Run:"`, blank line, the bare command, blank line, a divider, blank line, then exec the script with `--help` so its full usage prints as reference.
 - Ansible: use ansible-core only, no community.general or other collections.
 - Python: every function signature needs type annotations (params + return). Modern syntax (`list[str]`, `tuple[int, str]`, `X | None`), not the deprecated `typing` aliases (`List`, `Tuple`, `Optional`).
-- Ansible task names: name the controlling variables directly (e.g. "Packages to install when `distro_packages_install_basic_tools` is true") so debugging needs no reverse-engineering. Conventions:
+- Ansible task names: name the controlling variables directly (e.g. "Packages to install when `provision_distro_packages_install_basic_tools` is true") so debugging needs no reverse-engineering. Conventions:
   - Backtick anything from code, not prose: var names (`setup_podman_oci_runtimes`), values (`libkrun`, `user`, `system`), binaries (`zypper`, `podman`, `crun`), flags (`+LIBKRUN`), filenames/paths (`containers.conf`, `~/.config/containers/containers.conf`, `/etc/containers/containers.conf`), Jinja (`` `{{ _podman_containers_conf_path }}` ``). Otherwise they blur into the English.
   - Tasks that write/remove a file: name the destination (the literal path, or `` `{{ var }}` `` if computed earlier) so the name answers "`~/...` or `/etc/...`?" without reading the module args.
 - Target hosts are usually VMs, not bare metal. So VM-in-VM features (notably `podman_runtime: libkrun`) stay off by default (`setup_podman_oci_runtimes: false`) - nested KVM in a guest is rarely wanted. Keep them opt-in; don't enable globally without an explicit request.
@@ -93,7 +93,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
   ```
   ~/.local/share/ansible-managed/container-apps/       <- roles/container_apps
-  ~/.local/share/ansible-managed/incus-vm/             <- roles/incus_vm
+  ~/.local/share/ansible-managed/vm-incus/             <- roles/vm_incus
   ```
 
   - Subdir uses hyphens, the role dir uses underscores - on purpose (XDG-ish path vs Ansible role-name convention).

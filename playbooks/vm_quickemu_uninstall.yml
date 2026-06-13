@@ -1,0 +1,10 @@
+---
+- name: Uninstall the `qvm` quickemu VM launcher via `roles/vm_quickemu` (VM data + packages untouched)
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    setup_vm_quickemu: true  # dedicated entry point: bypass the host-level opt-in gate
+    vm_quickemu_state: absent
+  roles:
+    - vm_quickemu

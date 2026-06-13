@@ -1,0 +1,26 @@
+---
+# vm_quickemu vars: the `qvm` launcher install + host-level quickemu deps.
+
+# `vm_quickemu_state`:
+#   - `present` (default): install `qvm` + completions (+ host packages unless
+#     `vm_quickemu_skip_host_setup`).
+#   - `absent`: remove the `qvm` binary + this role's subdir. Does NOT touch
+#     VM data under `~/.local/share/qvm/` (the user's VMs; `qvm delete` per-VM)
+#     and does NOT remove packages (system-shared; same policy as roles/vm_incus).
+vm_quickemu_state: present
+
+# `vm_quickemu_skip_host_setup`: skip tasks/quickemu_host_install.yml (the
+# `quickemu` / `guestfs-tools` / `xorriso` package installs) - for hosts that
+# manage those themselves. Only the user-space `qvm` install runs. Off by default.
+vm_quickemu_skip_host_setup: false
+
+# This role's own subdir under `~/.local/share/ansible-managed/` (holds the
+# completion dirs; uninstall = `rm -rf` it). VM data deliberately lives OUTSIDE
+# (`~/.local/share/qvm/`) so uninstalling the role can never erase a VM disk.
+vm_quickemu_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/vm-quickemu"
+vm_quickemu_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+
+# Auto-discovered by the rc globs (`ansible-managed/*/zsh-completions` in
+# .zshrc.j2; `*/bash-completions/*` sourced by .bashrc.j2) - no rc edits.
+vm_quickemu_zsh_completion_dir: "{{ vm_quickemu_root }}/zsh-completions"
+vm_quickemu_bash_completion_dir: "{{ vm_quickemu_root }}/bash-completions"

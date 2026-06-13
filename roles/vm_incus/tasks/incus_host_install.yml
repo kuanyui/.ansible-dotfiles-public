@@ -1,0 +1,842 @@
+---
+# Host-level incus daemon prep for `roles/vm_incus`. Included via
+# `include_tasks: incus_host_install.yml` from tasks/main.yml (gated on
+# `not vm_incus_skip_host_setup`). Reversed by tasks/incus_host_uninstall.yml
+# (run on `vm_incus_state: absent`, step-by-step via `vm_incus_uninstall_*`
+# toggles). Each step is gated on a no-`become`
+# probe, so on a fully-set-up host this whole file becomes a no-op that
+# doesn't even prompt for sudo; only steps that actually need elevation
+# invoke `become`.
+
+# ---------- Pre-flight asserts ----------
+# Only distros that ship `incus` in their OFFICIAL repo are supported. We
+# intentionally do NOT configure third-party repos here (Zabbly for Ubuntu,
+# COPR for RHEL/Rocky/Alma) - that conflicts with the project's
+# ansible-core-only / no-curl-pipe-sh posture. Escape hatch:
+# `vm_incus_skip_host_setup: true` gates the `include_tasks: incus_host_install.yml`
+# in tasks/main.yml. The user then provisions `incus` manually.
+
+- name: Assert host distribution ships `incus` in its official repo (Fedora / Debian / openSUSE)
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] in _incus_supported_distributions
+    fail_msg: >-
+      `{{ ansible_facts["distribution"] }}` does not ship `incus` in its
+      official repo (as of 2026-05). Supported: Fedora 43+, Debian trixie+
+      (or bookworm-backports), openSUSE Tumbleweed, openSUSE Leap 15.6+.
+      To run on an unsupported distro, set the calling role's
+      `*_skip_host_setup` var to true (e.g. `vm_incus_skip_host_setup: true`)
+      and provision `incus` manually.
+  vars:
+    _incus_supported_distributions:
+      - Fedora
+      - Debian
+      - openSUSE Leap
+      - openSUSE Tumbleweed
+
+# ---------- Storage pool config validation (fail fast, before any mutation) ----------
+# Was inline shell in the `vm-incus-install` Makefile recipe; moved here so the role is
+# the single source of truth (no shell-side re-derivation / YAML scraping).
+
+- name: Assert `incus_storage_pool_driver` is one of `dir` / `btrfs` / `zfs` / `lvm-thin`
+  ansible.builtin.assert:
+    that:
+      - incus_storage_pool_driver in ['dir', 'btrfs', 'zfs', 'lvm-thin']
+    fail_msg: >-
+      `incus_storage_pool_driver` is '{{ incus_storage_pool_driver }}' - must be one
+      of dir / btrfs / zfs / lvm-thin.
+
+- name: Assert the `dir` driver has an empty `incus_storage_pool_size` (a directory pool takes no size)
+  ansible.builtin.assert:
+    that:
+      - not ((incus_storage_pool_driver == 'dir') and (incus_storage_pool_size | length > 0))
+    fail_msg: >-
+      `incus_storage_pool_driver` is `dir` but `incus_storage_pool_size` is
+      '{{ incus_storage_pool_size }}' - the dir driver needs an empty size
+      (set `incus_storage_pool_size: ""`, or pass `INCUS_STORAGE_POOL_SIZE=`).
+
+# ---------- Probe phase (no become) ----------
+
+- name: Probe whether `incus.service` is active
+  ansible.builtin.command: systemctl is-active incus.service
+  register: _incus_svc_check
+  changed_when: false
+  failed_when: false
+
+# Why `incus-user.socket`: upstream Incus daemon listens on TWO sockets at once -
+# `/run/incus/unix.socket` (owned by group `incus-admin`, full daemon admin access,
+# documented by upstream as "root-equivalent for Incus") and
+# `/run/incus/unix.socket.user` (owned by group `incus`, restricted to a per-user
+# project auto-named `user-<UID>`). The `incus` CLI auto-detects: if the admin
+# socket is not writable but the user socket is, the client transparently switches
+# (verified in `client/connection.go` upstream: `if !PathIsWritable(path) &&
+# PathIsWritable(userPath) { path = userPath; projectName = "user-<UID>" }`).
+# `ivm` uses this fallback - no code change in ivm needed, the user's VMs simply
+# land in the `user-<UID>` project instead of `default`. This role therefore
+# gives the user only the `incus` group (least-privilege), and the user socket
+# must be active so that membership is meaningful. Debian's package preset
+# enables it by default; Fedora and openSUSE ship it disabled - upstream
+# maintainers have acknowledged this as a packaging gap. So this role
+# unconditionally ensures enable+start.
+- name: Probe whether `incus-user.socket` is active
+  ansible.builtin.command: systemctl is-active incus-user.socket
+  register: _incus_user_socket_check
+  changed_when: false
+  failed_when: false
+
+# IMPORTANT: `id -nG` is invoked with NO user argument on purpose. `id` has
+# two distinct modes:
+#   `id -nG`           -> prints the CALLING PROCESS's supplementary group set
+#                         (inherited from the shell ansible-playbook was forked
+#                         from, set at LOGIN time by PAM). This is what we
+#                         actually want - "does THIS shell currently have the
+#                         group active?".
+#   `id -nG <user>`    -> looks the user up via NSS and prints /etc/group state.
+#                         This is NOT what we want - it would return "in incus
+#                         group" even when the shell hasn't refreshed yet,
+#                         silently bypassing the abort gate further down and
+#                         letting `ivm` fail later with "permission denied".
+- name: Probe whether `incus` is active in THIS shell's supplementary group set (`id -nG` with no user arg reads the calling process's groups, NOT /etc/group state - this is the gate input the abort task below depends on)
+  ansible.builtin.command: id -nG
+  register: _incus_groups_check
+  changed_when: false
+
+# Why a separate `incus-admin` probe: previous versions of this role added the
+# user to `incus-admin` (root-equivalent) instead of `incus`. We now remove that
+# legacy membership as part of the option-B migration to least-privilege. The
+# probe reads /etc/group directly (NOT the shell-stale `id` set), because we
+# want to know "is the user CONFIGURED as a member" regardless of whether the
+# current shell has the group active yet.
+- name: Probe whether `{{ ansible_facts['user_id'] }}` is a legacy member of `incus-admin` group (will be removed as part of the switch to lower-privilege `incus` group)
+  ansible.builtin.shell:
+    cmd: |
+      getent group incus-admin 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -Fxq -- {{ ansible_facts['user_id'] | quote }}
+  register: _incus_admin_legacy_check
+  changed_when: false
+  failed_when: false
+
+# ---------- Mutation phase (become only when probe says so) ----------
+
+- name: Install `incus` package via official distro repo (only if `incus` binary is missing)
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+  vars:
+    install_distro_packages:
+      Debian:
+        install: [incus]
+        probe: command -v incus
+      Suse:
+        install: [incus]
+        probe: command -v incus
+      RedHat:
+        install: [incus]
+        probe: command -v incus
+
+# `guestfs-tools` (Red Hat / libguestfs) provides `virt-builder`, used as a
+# safer alternative to `curl`-ing raw ISOs when bringing in a custom VM disk
+# image (GPG-verified, pre-built qcow2 from libguestfs.org/builder/). All
+# three supported families ship this under the same package name since
+# libguestfs split its tools out in 2022.
+- name: Install `guestfs-tools` package (provides `virt-builder` for GPG-verified VM disk image fetch; only if `virt-builder` binary is missing)
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+  vars:
+    install_distro_packages:
+      Debian:
+        install: [guestfs-tools]
+        probe: command -v virt-builder
+      Suse:
+        install: [guestfs-tools]
+        probe: command -v virt-builder
+      RedHat:
+        install: [guestfs-tools]
+        probe: command -v virt-builder
+
+- name: Ensure `incus.service` is started + enabled (only if not already active)
+  ansible.builtin.systemd:
+    name: incus.service
+    state: started
+    enabled: true
+  become: true
+  when: _incus_svc_check.stdout | trim != 'active'
+
+- name: Ensure `incus-user.socket` is started + enabled (the lower-privilege `incus` group socket at `/run/incus/unix.socket.user`; Fedora / openSUSE ship it disabled by default)
+  ansible.builtin.systemd:
+    name: incus-user.socket
+    state: started
+    enabled: true
+  become: true
+  when: _incus_user_socket_check.stdout | trim != 'active'
+
+- name: Add `{{ ansible_facts['user_id'] }}` to `incus` group (lower-privilege; the `incus` CLI auto-detects the `.user` socket and lands VMs in a per-user project)
+  ansible.builtin.user:
+    name: "{{ ansible_facts['user_id'] }}"
+    groups: incus
+    append: true
+  become: true
+  when: "'incus' not in (_incus_groups_check.stdout.split())"
+  register: _incus_group_add
+
+- name: Remove `{{ ansible_facts['user_id'] }}` from legacy `incus-admin` group (option-B migration; the role used to add to `incus-admin` (root-equivalent for Incus); switch to least-privilege `incus` group means stale `incus-admin` membership should be cleaned up)
+  ansible.builtin.command:
+    cmd: gpasswd --delete {{ ansible_facts['user_id'] | quote }} incus-admin
+  become: true
+  when: _incus_admin_legacy_check.rc == 0
+  register: _incus_admin_remove
+
+# ---------- Hard gate: abort if `incus` is in /etc/group but not active in this shell ----------
+# Linux supplementary group membership is set at LOGIN time by PAM
+# (`pam_unix.so` -> `initgroups(3)`). `usermod -aG` (or `ansible.builtin.user`
+# with `append: true`) updates `/etc/group` but does NOT retroactively refresh
+# existing sessions / processes. So the `ansible-playbook` process - which
+# inherited its group set from the user's interactive shell at fork time -
+# will still NOT carry `incus` until the user re-logins or runs `newgrp incus`.
+#
+# The remaining tasks below all use `become: true`, so they would COMPLETE
+# successfully even without the active group. BUT after the playbook ends,
+# the user's `ivm` calls from this same shell would still fail with
+# "permission denied talking to the incus daemon socket" - a silent trap
+# where the playbook reports success but interactive use is broken.
+#
+# Why ABORT, not WARN: a warning at the end of a long playbook is easy to
+# miss in the scrollback. Aborting forces a deterministic remediation step
+# (newgrp / re-login) before any further work proceeds. On a re-run after
+# remediation, the `id -nG` probe captures the now-active group, the add
+# task, the legacy-remove task, and this abort task all evaluate their
+# `when` to false, and the role continues to incus init + firewalld as
+# normal.
+
+- name: Abort if `incus` is in /etc/group but not active in this shell's group set (login required to refresh; see `id -nG` probe above)
+  ansible.builtin.fail:
+    msg: |2
+
+      ============================================================
+       NOT AN ERROR - intentional verification gate.
+      ============================================================
+
+       Linux only refreshes a session's supplementary group set at
+       LOGIN time. The role just updated /etc/group, but THIS shell
+       (the one running ansible-playbook) was forked before that,
+       so it still has the stale pre-update group set. If we let
+       the playbook continue, the remaining tasks would run fine
+       via `become: true` and the playbook would report success -
+       but `ivm` from this shell would then silently fail with
+       "permission denied talking to the incus daemon socket".
+       So we stop HERE to force an explicit refresh.
+
+       Mutations that already completed in THIS run (no rollback):
+         * `{{ ansible_facts['user_id'] }}` added to `incus` group in /etc/group
+         * `{{ ansible_facts['user_id'] }}` removed from legacy `incus-admin` group
+           (if previously a member)
+         * `incus-user.socket` enabled + started
+
+      ============================================================
+       ACTION REQUIRED - refresh your shell, then re-run.
+      ============================================================
+
+       Pick ONE of:
+
+           newgrp incus
+
+         (recommended; refreshes THIS shell, no logout needed)
+
+         ...OR log out of your desktop session and log back in
+         ...OR reboot
+
+       Then re-run:
+
+           make vm-incus-install
+
+      ============================================================
+  when: "'incus' not in (_incus_groups_check.stdout.split())"
+
+# ---------- Filesystem-level warning ----------
+# Warn (don't fail) when defaulting incus storage to /var/lib/incus and /
+# is btrfs. qcow2 VM images + btrfs CoW = bad combo: every write triggers
+# block-level CoW, leading to space waste and write amplification. User
+# is better off pointing `incus_storage_pool_source` at an ext4/xfs path
+# OR `chattr +C` on /var/lib/incus/storage-pools/ to disable CoW for that
+# subtree.
+
+- name: Probe `/` filesystem type (CoW warning)
+  ansible.builtin.command: stat -fc '%T' /
+  register: _root_fs_type
+  changed_when: false
+  when: not incus_storage_pool_source
+
+- name: Warn about btrfs CoW + qcow2 if defaulting to /var/lib/incus on btrfs
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  `incus_storage_pool_source` is empty AND `/` is btrfs.
+      VM disks would land at /var/lib/incus/storage-pools/default/ on a CoW
+      filesystem, which is a known bad combo for qcow2 (random writes amplify,
+      space accounting balloons).
+      Either:
+        (a) Set `incus_storage_pool_source` to an ext4/xfs path
+            (e.g. `/data/vm/incus` or `/home/{{ ansible_facts['user_id'] }}/incus-storage`)
+            via host_vars/<hostname>.yml, or
+        (b) After this playbook finishes, disable CoW for the storage dir:
+              sudo chattr -R +C /var/lib/incus/storage-pools/
+            (only affects newly-written files; existing ones need re-cp to
+            inherit the flag)
+  when:
+    - not incus_storage_pool_source
+    - _root_fs_type is defined
+    - (_root_fs_type.stdout | trim) == 'btrfs'
+
+# ---------- Probe init state EARLY: the storage build below must be first-time-only ----------
+# The `incus admin init --preseed` further down is already guarded to run ONLY when no
+# `default` pool exists. The btrfs loop-file BUILD below (truncate + mkfs + fstab +
+# mount) must obey the SAME guard - otherwise a later `make vm-incus-install` that does
+# not re-pass the original INCUS_STORAGE_POOL_* (so the role falls back to its DEFAULT
+# `incus_storage_pool_source`) would: build a second, EMPTY `.img`, then - because the
+# fstab line is keyed on the shared `incus_storage_pool_loop_mountpoint`, identical for
+# any source - REWRITE the fstab line to that empty img and (if the mountpoint was free)
+# mount it, silently shadowing the real pool data. So probe init state HERE, before the
+# build, and gate the build on "no `default` pool yet". `_incus_storage_list` is also
+# consumed by the preseed + driver-mismatch tasks further down (one probe, not three).
+- name: Probe whether incus is already initialized (`default` storage pool present) - gates BOTH the loop-file build below and the preseed init further down
+  ansible.builtin.command:
+    cmd: incus storage list --format csv
+  register: _incus_storage_list
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Set `_incus_pool_already_initialized` (true = a `default` pool exists -> the role must not build, reformat, or repoint storage)
+  ansible.builtin.set_fact:
+    _incus_pool_already_initialized: "{{ 'default,' in (_incus_storage_list.stdout | default('')) }}"
+
+# ---------- Resolve the effective storage layout (decided in `incus_storage_pool.py`, not Jinja) ----------
+# ONE call answers "what storage does THIS run use?": on a reconcile (a `default` pool already exists
+# with a recorded layout) it FOLLOWS that record and ignores the passed/default vars - so a re-run
+# (commonly just to redeploy `ivm`) never re-derives storage from the role defaults nor pollutes
+# storage-info.json; on a first install it derives from the request. The script also exits non-zero
+# (loud STOP) if the recorded loop `.img` has vanished, and returns a WARNING (in `.warnings`) when an
+# override cannot apply. Everything below + ivm_install.yml's record now consume `_storage.*`, so the
+# storage-layout LOGIC lives in the script (readable, unit-tested) and ansible just wires it.
+- name: Resolve the effective incus storage layout via `incus_storage_pool.py resolve` (follows the recorded layout once a `default` pool exists; reads storage-info.json under `{{ vm_incus_ivm_dir }}`)
+  ansible.builtin.script:
+    cmd: >-
+      incus_storage_pool.py --root {{ vm_incus_ivm_dir | quote }} resolve
+      --already-initialized {{ _incus_pool_already_initialized | bool | string | lower }}
+      --driver {{ incus_storage_pool_driver | quote }}
+      --source {{ incus_storage_pool_source | quote }}
+      --size {{ incus_storage_pool_size | quote }}
+      --mountpoint {{ incus_storage_pool_loop_mountpoint | quote }}
+      {{ '--overrides-passed' if (incus_storage_pool_overrides_passed | default(false) | bool) else '' }}
+  become: true
+  changed_when: false
+  # Read-only (reads storage-info.json + stats the `.img`; no incus, no mutation), and EVERY task
+  # below consumes `_storage`, so it must run even under `--check` / `make vm-incus-check` - otherwise a
+  # `script` task is skipped in check mode and `_storage` is undefined.
+  check_mode: false
+  register: _incus_resolve
+
+- name: Set `_storage` (the effective layout the rest of the run uses - driver / build_loop / loop_file / mountpoint / effective preseed source+size / the storage-info.json record)
+  ansible.builtin.set_fact:
+    _storage: "{{ _incus_resolve.stdout | from_json }}"
+
+- name: Surface any storage-layout WARNING (e.g. an INCUS_STORAGE_POOL_* override ignored because a `default` pool already exists - the record is kept)
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop: "{{ _storage.warnings | default([]) }}"
+
+# ---------- First-time storage-pool preview + confirmation ----------
+# Was an inline shell prompt in the `vm-incus-install` Makefile recipe (which also
+# `sed`-scraped these defaults out of this very file). Now the role owns it: show the
+# layout `incus admin init` is about to BAKE IN (it cannot be re-pointed later without
+# a teardown) and require a typed `yes`. First-time ONLY - skipped once a `default`
+# pool exists (a re-run reconciles, applies no storage). Skipped in `--check`
+# (`ansible_check_mode`) and when `incus_install_assume_yes` is set (CI / cron). Same
+# pause+assume_yes+assert shape as the teardown confirm in tasks/incus_host_uninstall.yml.
+# Note vs. the old Makefile prompt: this runs DURING the play (after the become-pass
+# prompt + the benign package/daemon/group steps), so it gates the STORAGE COMMITMENT
+# specifically, not the whole run; aborting here leaves incus installed but no pool.
+
+- name: Note that incus is already initialized (storage config is NOT re-applied; reconciling host + `ivm` only)
+  ansible.builtin.debug:
+    msg: >-
+      Incus `default` pool already exists - storage config is NOT re-applied;
+      reconciling host + `ivm` only.
+  when: _incus_pool_already_initialized | bool
+
+- name: Show the REQUESTED incus storage pool layout (ALWAYS printed - so a re-run also shows what was asked for; only actually applied at first-time `incus admin init`, an existing pool is never re-pointed)
+  ansible.builtin.debug:
+    msg: |
+      Requested incus storage pool layout
+      (applied ONLY at first-time `incus admin init`; an existing pool is never
+      re-pointed - to change it later: `make vm-incus-teardown-host` + reinstall):
+        driver = {{ incus_storage_pool_driver }}
+        source = {{ incus_storage_pool_source | default('(incus default location)', true) }}
+        size   = {{ incus_storage_pool_size | default('(empty)', true) }}
+        loop mountpoint = {{ incus_storage_pool_loop_mountpoint }}
+          (used only when the role builds a loop `.img`: first-time init writes its
+          /etc/fstab line - REPLACING any existing fstab line for this exact
+          mountpoint - and mounts the loop there, evicting a mount from a
+          different backing file)
+        {{ '(a `default` pool ALREADY EXISTS - see its ACTUAL backend below; the above is NOT re-applied)' if (_incus_pool_already_initialized | bool) else '(no `default` pool yet - the above is created NOW)' }}
+
+# Show the CURRENT storage state HERE - before the confirm + driver-mismatch gates below,
+# either of which can abort the run. The end-of-play status print would never be reached on
+# such an abort (the exact reason a user with a pre-existing `dir` pool + an explicit override
+# never saw any state), so print it up front too. Same read-only `incus_storage_pool.py status`.
+- name: Print the CURRENT incus storage state (mount / fstab / `incus storage list` + verdict) BEFORE any change, so `make vm-incus-install` ALWAYS shows it even if it then aborts below
+  ansible.builtin.script:
+    cmd: "incus_storage_pool.py --root {{ vm_incus_ivm_dir | quote }} status"
+  become: true
+  register: _incus_storage_status_before
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Show the CURRENT storage state (before any change)
+  ansible.builtin.debug:
+    msg: "{{ _incus_storage_status_before.stdout | default('(status unavailable)') }}"
+  when: not ansible_check_mode
+
+- name: Confirm the storage pool layout before first-time init (type `yes` to proceed)
+  ansible.builtin.pause:
+    prompt: |
+
+      The storage pool above is created NOW and cannot be re-pointed later without
+      `make vm-incus-teardown-host`. First-time init also creates the `incusbr0` bridge
+      and wires the `default` profile (root disk + eth0) - each ONLY when still
+      missing/pristine: an existing `incusbr0` or a customized `default` profile is
+      PRESERVED, never overwritten (the init output says so when it skips one).
+      Type 'yes' to proceed (anything else aborts).
+  register: _incus_install_confirm
+  when:
+    - not (_incus_pool_already_initialized | bool)
+    - not (incus_install_assume_yes | bool)
+    - not ansible_check_mode
+
+- name: Abort unless the storage pool layout was confirmed with `yes`
+  ansible.builtin.assert:
+    that:
+      - (_incus_install_confirm.user_input | default('') | trim | lower) == 'yes'
+    fail_msg: >-
+      Aborted - storage pool layout not confirmed. incus may already be installed and
+      its daemon started, but NO storage pool was created and NO VM was touched.
+  when:
+    - not (_incus_pool_already_initialized | bool)
+    - not (incus_install_assume_yes | bool)
+    - not ansible_check_mode
+
+# ---------- btrfs loop file on a custom disk (the role builds it; incus won't) ----------
+# incus only ever CREATES a btrfs loop file at its OWN `/var/lib/incus/disks/<pool>.img`
+# (on `/`). To put a CoW loop on another disk (the project's `/home` goal), the role
+# makes it: when the pool is `btrfs` and `incus_storage_pool_source` is a `.img` path
+# (a regular file, or one that doesn't exist yet) with a `size`, we `truncate` +
+# `mkfs.btrfs` the file and loop-mount it (via /etc/fstab) at
+# `incus_storage_pool_loop_mountpoint`, then hand incus that mount (an existing btrfs
+# FS, which incus accepts). Idempotent + reboot-persistent; never re-`mkfs`-es an
+# already-formatted file, so a teardown+reinstall cycle reuses the same `.img`.
+
+# `_storage.build_loop` (decided by `incus_storage_pool.py resolve`, which `stat`s the source) =
+# "the effective layout is a role-built btrfs loop". `_incus_pool_needs_build` adds the first-time
+# guard: only actually truncate/mkfs/fstab/mount when the loop is wanted AND incus is not yet
+# initialized. On any re-run of an initialized host this is false, so the whole build is a no-op
+# (the pool, its fstab line, and its mount are left exactly as the first run made them).
+- name: Set `_incus_pool_needs_build` (build the loop file ONLY first time = effective layout is a loop AND no `default` pool exists yet)
+  ansible.builtin.set_fact:
+    _incus_pool_needs_build: "{{ (_storage.build_loop | bool) and not (_incus_pool_already_initialized | bool) }}"
+
+- name: Install `btrfs-progs` for `mkfs.btrfs` (only when the role must build a btrfs loop file)
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+  vars:
+    install_distro_packages:
+      Debian:
+        install: [btrfs-progs]
+        probe: command -v mkfs.btrfs
+      Suse:
+        install: [btrfsprogs]
+        probe: command -v mkfs.btrfs
+      RedHat:
+        install: [btrfs-progs]
+        probe: command -v mkfs.btrfs
+  when: _incus_pool_needs_build | bool
+
+# The btrfs loop-file lifecycle - truncate the sparse `.img` if absent, `mkfs.btrfs` it
+# if unformatted, ensure the mount point + the /etc/fstab line, then a SOURCE-AWARE mount
+# that evicts any stale/ghost loop (a prior pool's `.img`, possibly already `(deleted)`,
+# left mounted here would otherwise shadow the new one and the pool would silently sit on
+# the wrong filesystem) - now lives in `files/incus_storage_pool.py build-loop`: one
+# readable, unit-tested place instead of six interlocking command/shell/lineinfile tasks.
+# Run via the `script` module (resolves from the role `files/`; no install dependency, so
+# it works before `ivm_install.yml` copies the script). `RESULT: changed` -> changed_when.
+- name: Build + mount the btrfs loop file `{{ _storage.loop_file }}` -> `{{ _storage.mountpoint }}` (truncate + mkfs.btrfs + fstab + source-aware mount, via `incus_storage_pool.py build-loop`)
+  ansible.builtin.script:
+    cmd: >-
+      incus_storage_pool.py build-loop
+      --source {{ _storage.loop_file | quote }}
+      --size {{ _storage.declared_size | quote }}
+      --mountpoint {{ _storage.mountpoint | quote }}
+  become: true
+  register: _incus_build_loop
+  changed_when: "'RESULT: changed' in (_incus_build_loop.stdout | default(''))"
+  when: _incus_pool_needs_build | bool
+
+# A `script` task's captured output is only auto-shown when the task FAILS (or at `-v`),
+# but build-loop's stderr carries the `+ <argv>` transparency lines (truncate /
+# mkfs.btrfs / the /etc/fstab write / a stale-mount eviction) - privileged mutations
+# must be visible in a DEFAULT run, so print them explicitly.
+- name: Show the `incus_storage_pool.py build-loop` output (the exact privileged commands it ran)
+  ansible.builtin.debug:
+    msg: "{{ (_incus_build_loop.stderr_lines | default([])) + (_incus_build_loop.stdout_lines | default([])) }}"
+  when: _incus_build_loop is not skipped
+
+# ---------- Initialize incus (idempotent: skipped if `default` storage pool already exists) ----------
+# Run as root via `become: true` because `incus admin init` requires the
+# admin socket (`/run/incus/unix.socket`, group `incus-admin`), and we
+# intentionally do NOT add the user to `incus-admin` (the role gives the user
+# only the lower-privilege `incus` group). Root bypasses the group check, so
+# init works without needing any user-level group membership.
+
+- name: Initialize incus via `incus admin init --preseed` (pool + incusbr0 + default profile; preseed rendered by `incus_storage_pool.py init`, which DROPS an already-existing `incusbr0` / customized `default` profile from it - a preseed overwrites existing entities; only if no `default` pool yet)
+  ansible.builtin.script:
+    cmd: >-
+      incus_storage_pool.py init
+      --driver {{ _storage.driver | quote }}
+      --pool-source {{ _storage.pool_source | default('') | quote }}
+      --pool-size {{ _storage.pool_size | default('') | quote }}
+  when: "'default,' not in _incus_storage_list.stdout"
+  become: true
+  register: _incus_init
+  changed_when: "'RESULT: changed' in (_incus_init.stdout | default(''))"
+
+# Same transparency print as build-loop above: init's stderr carries the argv + the
+# EXACT preseed document applied - show it in a default run, not just on failure / `-v`.
+- name: Show the `incus_storage_pool.py init` output (argv + the exact preseed applied)
+  ansible.builtin.debug:
+    msg: "{{ (_incus_init.stderr_lines | default([])) + (_incus_init.stdout_lines | default([])) }}"
+  when: _incus_init is not skipped
+
+# ---------- Surface a pre-existing `default` pool whose backend != `incus_storage_pool_driver` ----------
+# The preseed above runs ONLY when `default` does not already exist. So on a host
+# where incus was initialized outside this role (e.g. a hand-run `incus admin init`
+# that accepted the `dir` default), the `incus_storage_pool_{driver,source,size}`
+# vars are SILENTLY ignored - the pool keeps whatever backend it was first created
+# with. Never clobbering an existing pool is deliberate (see the preseed `when:`),
+# but the mismatch used to be invisible: you ask for a btrfs loop file on `/home`
+# and quietly get `dir` on `/`. Detect it and WARN (we never auto-destroy data);
+# the opt-in rebuild is `make vm-incus-teardown-host` + `make vm-incus-install`.
+# (lvm note: incus reports a thin-LVM pool's driver as `lvm`, so an `lvm-thin`
+# config value would warn spuriously here - harmless, and unused by the defaults.)
+
+- name: Probe the existing `default` storage pool's `driver` (only when preseed was skipped because the pool already exists)
+  ansible.builtin.command:
+    cmd: incus storage show default
+  register: _incus_default_pool_show
+  changed_when: false
+  failed_when: false
+  become: true
+  when: "'default,' in _incus_storage_list.stdout"
+
+- name: Set `_existing_default_pool_driver` (backend of the pre-existing `default` pool; empty when no pool / unreadable) - drives the mismatch fail + warn below
+  ansible.builtin.set_fact:
+    _existing_default_pool_driver: "{{ (_incus_default_pool_show.stdout | default('') | from_yaml | default({}, true)).driver | default('', true) }}"
+
+# The user EXPLICITLY passed `INCUS_STORAGE_POOL_*` (the Makefile sets
+# `incus_storage_pool_overrides_passed=true` when any was given) but a `default` pool
+# already exists, so `incus admin init --preseed` was skipped and those settings had
+# ZERO effect - you asked for e.g. a btrfs loop and silently kept a `dir` pool. That
+# silent wrong "success" is exactly what this project forbids, so FAIL LOUDLY with the
+# exact rebuild command. (A plain reconcile run with NO override falls through to the
+# softer debug warning below.)
+- name: FAIL when an explicit `incus_storage_pool_*` override cannot apply because the `default` pool already exists with a different backend (an existing pool is never re-pointed)
+  ansible.builtin.fail:
+    msg: |2
+
+      ============================================================
+       incus `default` pool ALREADY EXISTS - your storage override
+       had NO effect (an existing pool is never re-pointed).
+      ============================================================
+       You passed INCUS_STORAGE_POOL_* on the command line, but a
+       `default` pool already exists, so `incus admin init --preseed`
+       was SKIPPED and the pool kept its ORIGINAL backend:
+
+         wanted (`incus_storage_pool_driver`): {{ incus_storage_pool_driver }}
+         actual (existing `default` pool):     {{ _existing_default_pool_driver }}
+         wanted (`incus_storage_pool_source`): {{ incus_storage_pool_source | default('(incus default location)', true) }}
+
+       To REBUILD the pool as configured (DESTROYS every incus VM +
+       the current pool + all its disks, then recreates it). Run:
+
+           make vm-incus-teardown-host && make vm-incus-install INCUS_STORAGE_POOL_DRIVER={{ incus_storage_pool_driver }} INCUS_STORAGE_POOL_SOURCE={{ incus_storage_pool_source }} INCUS_STORAGE_POOL_SIZE={{ incus_storage_pool_size }}
+      ============================================================
+  when:
+    - _existing_default_pool_driver | length > 0
+    - _existing_default_pool_driver != incus_storage_pool_driver
+    - incus_storage_pool_overrides_passed | default(false) | bool
+    # When FOLLOWING a record, `resolve` already warned the override is ignored (Q1) - don't ALSO
+    # hard-fail; this guard keeps the loud fail for the no-record case (a pre-existing hand-made pool).
+    - not (_storage.following | default(false) | bool)
+
+- name: Warn (reconcile run, NO explicit override) when the existing `default` pool's backend differs from `incus_storage_pool_driver` (preseed cannot re-point an already-initialized pool; rebuild via `make vm-incus-teardown-host` + `make vm-incus-install`)
+  ansible.builtin.debug:
+    msg: |
+      ============================================================
+       WARNING - incus `default` pool backend does NOT match config
+      ============================================================
+       incus's `default` storage pool already existed, so
+       `incus admin init --preseed` was SKIPPED. The pool keeps
+       whatever backend it was first created with.
+
+         config (`incus_storage_pool_driver`): {{ incus_storage_pool_driver }}
+         actual (existing `default` pool):     {{ _existing_default_pool_driver }}
+
+       This role never clobbers an existing pool. To REBUILD it as
+       configured (DESTROYS every incus VM + the current pool):
+           make vm-incus-teardown-host && make vm-incus-install
+      ============================================================
+  when:
+    - _existing_default_pool_driver | length > 0
+    - _existing_default_pool_driver != incus_storage_pool_driver
+    - not (incus_storage_pool_overrides_passed | default(false) | bool)
+    # On the FOLLOWING path the effective driver IS the record's, so there is no mismatch to warn
+    # about; this only fires on a no-record reconcile whose live driver differs from the config.
+    - not (_storage.following | default(false) | bool)
+
+# ---------- Make incus wait for the loop-file pool mount on boot (reboot persistence) ----------
+# When the `default` pool's source is the role's loop MOUNTPOINT, incus is useless until
+# that loop is mounted. The /etc/fstab entry is `nofail` so a missing VM disk never blocks
+# BOOT - but per systemd.mount(5) `nofail` ALSO drops the mount's ordering before
+# local-fs.target, so incus.service (started via multi-user.target, after local-fs.target)
+# can win the race and start on an EMPTY mountpoint dir: the pool looks wiped and every VM
+# is "gone" until the next mount. This is the reboot failure mode. Fix: a RequiresMountsFor=
+# drop-in adds a Requires= + After= from incus.service onto that .mount unit (systemd.unit(5)),
+# so incus WAITS for - and refuses to start without - its pool storage. Scoped to incus only;
+# BOOT stays resilient. Decided from the pool's REAL source (read post-init), not from the
+# passed-in vars, so a re-run without the original INCUS_STORAGE_POOL_* still does the right
+# thing and a `dir`/external pool never gets a drop-in pointing at a mount that won't exist.
+- name: Probe the `default` pool's real `config.source` (root; read AFTER init so it sees a freshly-created pool too) to decide whether incus must wait for a loop mount
+  ansible.builtin.command:
+    cmd: incus storage show default
+  register: _incus_pool_show_post_init
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Set `_incus_pool_real_source` (the `default` pool's actual `config.source`, or empty when no pool is readable) - drives the boot-mount-wait drop-in below
+  ansible.builtin.set_fact:
+    _incus_pool_real_source: >-
+      {{ ((_incus_pool_show_post_init.stdout | default('') | from_yaml | default({}, true)).config | default({}, true)).source | default('') }}
+
+- name: Ensure the `/etc/systemd/system/incus.service.d/` drop-in directory exists (only when the `default` pool's source IS the role's loop mountpoint)
+  ansible.builtin.file:
+    path: /etc/systemd/system/incus.service.d
+    state: directory
+    mode: "0755"
+  become: true
+  when:
+    - (_storage.mountpoint | default('') | length) > 0
+    - _incus_pool_real_source == _storage.mountpoint
+
+- name: Write the `incus.service` drop-in `/etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf` (`RequiresMountsFor={{ _storage.mountpoint }}`; makes incus wait for + require the loop pool mount so a `nofail` boot race can't start it on an empty pool dir)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/vm_incus) - do not edit.
+      # The `default` incus pool lives on the loop mount {{ _storage.mountpoint }}.
+      # Its /etc/fstab entry is `nofail` (a missing VM disk must never block BOOT), but per
+      # systemd.mount(5) `nofail` also drops the mount's ordering before local-fs.target, so
+      # incus.service could otherwise win the boot race and start on an EMPTY mountpoint dir
+      # (every VM looks "gone" until the loop is mounted). RequiresMountsFor= adds a Requires=
+      # + After= on that .mount unit (systemd.unit(5)): incus waits for, and refuses to start
+      # without, its pool storage. Scoped to incus only; BOOT stays resilient.
+      [Unit]
+      RequiresMountsFor={{ _storage.mountpoint }}
+  become: true
+  when:
+    - (_storage.mountpoint | default('') | length) > 0
+    - _incus_pool_real_source == _storage.mountpoint
+  register: _incus_pool_mount_wait_dropin
+
+# Remove only when we POSITIVELY know the pool is NOT on the loop mount (a real,
+# non-mountpoint source). An empty `_incus_pool_real_source` means the probe could not
+# read the pool (transient / daemon hiccup), in which case we touch nothing rather than
+# delete a still-valid drop-in.
+- name: Remove the `incus.service` pool-mount drop-in `/etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf` when the pool has a real source that is NOT the loop mountpoint (e.g. `dir`/external pool; a stale `RequiresMountsFor` would block incus)
+  ansible.builtin.file:
+    path: /etc/systemd/system/incus.service.d/10-wait-for-pool-storage-mount.conf
+    state: absent
+  become: true
+  when:
+    - _incus_pool_real_source | length > 0
+    - _incus_pool_real_source != (_storage.mountpoint | default(''))
+  register: _incus_pool_mount_wait_dropin_absent
+
+- name: Reload systemd so the `incus.service` drop-in dependency change applies on the next start / reboot (we deliberately do NOT restart incus now - that would disrupt running VMs)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  when: (_incus_pool_mount_wait_dropin is changed) or (_incus_pool_mount_wait_dropin_absent is changed)
+
+# ---------- Per-user networking: route `user-<uid>` VMs through the standard incusbr0 ----------
+# Unprivileged `incus`-group users get a per-user restricted project `user-<uid>`
+# whose AUTO-created bridge `incusbr-<uid>` can come up with NO IPv4 (empty
+# config) on some hosts -> VMs get an IPv6 ULA but never a DHCPv4 lease, so
+# `ivm init` aborts in wait_ready ("no default route or DNS"). Instead of
+# fighting that flaky auto-bridge, point the user project at the standard,
+# well-tested `incusbr0` (managed bridge, IPv4 NAT + DNS).
+#
+# IMPORTANT: the `incus admin init --preseed` task above is SKIPPED whenever a
+# `default` storage pool already exists (its own `when:` guard). So on any host
+# where incus was set up outside this preseed - e.g. a `default` pool created by
+# hand with the `dir` backend - the preseed's `incusbr0` is never created. Rather
+# than ASSUME the preseed made it, ensure `incusbr0` exists here. All steps are
+# NON-FATAL where they touch the (optional) per-user project, so this never
+# breaks a non-unprivileged or already-correct host.
+
+- name: Ensure the standard `incusbr0` managed bridge exists with IPv4 NAT (preseed init is skipped on auto-initialized hosts, so incusbr0 may be missing)
+  ansible.builtin.command:
+    cmd: incus network create incusbr0 ipv4.address=auto ipv4.nat=true ipv6.address=auto
+  become: true
+  register: _incus_incusbr0_create
+  changed_when: _incus_incusbr0_create.rc == 0
+  failed_when:
+    - _incus_incusbr0_create.rc != 0
+    - "'already exists' not in _incus_incusbr0_create.stderr"
+
+- name: Trigger per-user project auto-creation (run `incus list` as `{{ ansible_facts['user_id'] }}` so `user-<uid>` + its default profile exist before we configure them)
+  ansible.builtin.command: incus list
+  changed_when: false
+  failed_when: false
+
+- name: Get the invoking user's UID (the per-user restricted project is `user-<uid>`)
+  ansible.builtin.command: id -u
+  register: _incus_user_uid
+  changed_when: false
+
+- name: Probe whether the per-user project `user-{{ _incus_user_uid.stdout | trim }}` exists (only the unprivileged `incus`-group path has one)
+  ansible.builtin.command:
+    cmd: incus project show user-{{ _incus_user_uid.stdout | trim }}
+  register: _incus_user_project_show
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Route `user-{{ _incus_user_uid.stdout | trim }}` VMs through `incusbr0` (grant `restricted.networks.access` + repoint the project default profile `eth0`; sidesteps the flaky auto-created `incusbr-<uid>`)
+  ansible.builtin.shell: |
+    set -eu
+    incus_project="user-{{ _incus_user_uid.stdout | trim }}"
+    per_user_bridge="incusbr-{{ _incus_user_uid.stdout | trim }}"
+    # Keep the per-user bridge in the access list too (if it still exists) so the
+    # profile that currently references it stays valid during the switch.
+    networks_access="incusbr0"
+    if incus network show "$per_user_bridge" >/dev/null 2>&1; then
+      networks_access="incusbr0,${per_user_bridge}"
+    fi
+    incus project set "$incus_project" restricted.networks.access="$networks_access"
+    incus --project "$incus_project" profile device set default eth0 network=incusbr0
+    echo ROUTED_VIA_INCUSBR0
+  become: true
+  when: _incus_user_project_show.rc == 0
+  register: _incus_user_net_route
+  changed_when: "'ROUTED_VIA_INCUSBR0' in _incus_user_net_route.stdout"
+  failed_when: false
+
+- name: Warn (do NOT fail) if routing `user-{{ _incus_user_uid.stdout | trim }}` through incusbr0 did not succeed
+  ansible.builtin.debug:
+    msg: >-
+      Could not route user-{{ _incus_user_uid.stdout | trim }} through incusbr0
+      (rc={{ _incus_user_net_route.rc }}). stderr: {{ _incus_user_net_route.stderr | default('') }}
+  when:
+    - _incus_user_net_route.rc is defined
+    - _incus_user_net_route.rc != 0
+
+# ---------- firewalld: trust the incusbr0 bridge (only on firewalld hosts) ----------
+# On firewalld-managed hosts (Fedora, openSUSE) the `incusbr0` bridge is NOT
+# assigned to any zone, so it falls into the default zone (usually `public`),
+# which DROPs DHCP (udp/67) on INPUT. Symptom: VMs get an IPv6 SLAAC address
+# (ICMPv6 RA is permitted) but never obtain an IPv4 lease, so apt fails with
+# "Temporary failure resolving deb.debian.org".
+#
+# Fix: put `incusbr0` into the built-in `trusted` zone. Scope is this ONE
+# interface - a private internal NAT segment (10.x/24) carrying only our own
+# VMs - so trusting it does NOT widen the host's real NICs (still in `public`).
+# `incusbr0` is the fixed bridge name from the preseed (`incus_storage_pool.py` `build_preseed`).
+#
+# Detection MUST use `systemctl is-active firewalld`, NOT `firewall-cmd`. Any
+# `firewall-cmd` call as a non-root user goes through polkit; under Ansible
+# (non-interactive, no polkit agent attached) that call BLOCKS FOREVER waiting
+# for an auth that never comes - a hang, not just a prompt. `systemctl
+# is-active` needs neither root nor polkit (same idiom as the incus probe
+# above), so it is the safe no-`become` detector. Hosts without firewalld
+# (Debian + bare nftables) report non-active here and skip the apply task -
+# incus manages its own rules there.
+- name: Probe whether `firewalld` is active (the `incusbr0` zone fix only applies to firewalld hosts)
+  ansible.builtin.command: systemctl is-active firewalld
+  register: _incus_firewalld_active
+  changed_when: false
+  failed_when: false
+
+# Everything that touches `firewall-cmd` is done HERE, in ONE `become: true`
+# task running fully as root. Root bypasses polkit entirely, so there is no
+# hang and no second password prompt (the become password is already cached
+# from `--ask-become-pass`). The read-decide-change-reload is collapsed into a
+# single privileged invocation so idempotency is decided in-script: if
+# `incusbr0` is already in `trusted` it is a true no-op (changed_when false).
+- name: Ensure `incusbr0` is in the firewalld `trusted` zone (fixes VMs not getting a DHCPv4 lease; no-op if already trusted)
+  ansible.builtin.shell: |
+    set -eu
+    current_zone_of_incusbr0="$(firewall-cmd --get-zone-of-interface=incusbr0 2>/dev/null || true)"
+    if [ "$current_zone_of_incusbr0" = "trusted" ]; then
+        echo "INCUSBR0_ALREADY_TRUSTED"
+        exit 0
+    fi
+    firewall-cmd --permanent --zone=trusted --change-interface=incusbr0
+    firewall-cmd --reload
+    echo "INCUSBR0_MOVED_TO_TRUSTED"
+  become: true
+  register: _incus_firewalld_zone_apply
+  changed_when: "'INCUSBR0_MOVED_TO_TRUSTED' in _incus_firewalld_zone_apply.stdout"
+  when: _incus_firewalld_active.stdout | trim == 'active'
+
+# ---------- Post-install storage verification (assert the result; final-state print) ----------
+# `make vm-incus-install` historically reported success even when the `default` pool ended up
+# `dir` (an existing pool is never re-pointed) or sat on a stale/ghost loop - a silent wrong
+# "success". The storage state is SHOWN via files/incus_storage_pool.py `status` (the SAME
+# inspector `ivm storage-status` runs) at TWO points: an EARLY "current state" print up near
+# the probes (so `make vm-incus-install` ALWAYS shows it, even when it then aborts at the confirm
+# or the driver-mismatch gate), and HERE the FINAL state. First-time runs print the final
+# state through the loud `verify` (asserts the live pool IS exactly what was requested,
+# non-zero exit -> task fails); reconcile runs print it through the plain `status` task -
+# the two are mutually exclusive on `_incus_pool_already_initialized`, so no double print.
+# Run via the `script` module so it works before `ivm_install.yml` installs the script
+# (storage-info.json may not exist yet, hence verify passes the expected layout EXPLICITLY).
+- name: Print the FINAL incus storage-pool status at the end of a RECONCILE run (first-time runs show it via the verify below) via `incus_storage_pool.py status`
+  ansible.builtin.script:
+    cmd: "incus_storage_pool.py --root {{ vm_incus_ivm_dir | quote }} status"
+  become: true
+  register: _incus_storage_status_print
+  changed_when: false
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - _incus_pool_already_initialized | bool
+
+- name: Show the final storage-pool status output (reconcile runs)
+  ansible.builtin.debug:
+    msg: "{{ _incus_storage_status_print.stdout | default('(status unavailable)') }}"
+  when:
+    - not ansible_check_mode
+    - _incus_pool_already_initialized | bool
+
+- name: Verify the freshly-created pool IS the requested layout (first-time init only; FAILS loudly if install produced the wrong storage - silent `dir`, wrong source, or a stale/ghost loop)
+  ansible.builtin.script:
+    cmd: >-
+      incus_storage_pool.py --root {{ vm_incus_ivm_dir | quote }} verify
+      --expect-driver {{ _storage.driver | quote }}
+      --expect-source {{ _storage.pool_source | default('') | quote }}
+      --expect-loop-backing {{ _storage.loop_file | default('') | quote }}
+  become: true
+  register: _incus_storage_verify
+  changed_when: false
+  failed_when: _incus_storage_verify.rc != 0
+  when:
+    - not ansible_check_mode
+    - not (_incus_pool_already_initialized | bool)

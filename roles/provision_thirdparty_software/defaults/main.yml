@@ -18,10 +18,10 @@
 #                               more robust than `command -v` when the bin dir is
 #                               not on the login PATH).
 #
-# `roles/incus_vm` materializes this to `thirdparty-software.json` at apply time;
+# `roles/vm_incus` materializes this to `thirdparty-software.json` at apply time;
 # `ivm` reads it and runs the recipes in a guest via `incus exec`. A template opts
 # in with `thirdparty_software: [<name>]`. Adding a recipe = define it here AND add
-# it to the render list in `roles/incus_vm/tasks/ivm_install.yml` (same explicit
+# it to the render list in `roles/vm_incus/tasks/ivm_install.yml` (same explicit
 # pattern as the distro bundles).
 
 provision_thirdparty_software_claude:

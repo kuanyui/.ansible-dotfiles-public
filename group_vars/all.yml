@@ -36,18 +36,18 @@ podman_runtime_scope: "user"  # "user" | "system"
 # VMs, fresh installs) shouldn't pull in podman + libkrun + npm globals
 # automatically. The dedicated `playbooks/container_apps.yml` overrides this.
 setup_container_apps: false
-# `setup_incus_vm`: install the `ivm` Incus VM launcher engine via
-# `roles/incus_vm`. Off by default - Incus is a heavier dep than podman (host
+# `setup_vm_incus`: install the `ivm` Incus VM launcher engine via
+# `roles/vm_incus`. Off by default - Incus is a heavier dep than podman (host
 # needs `sudo apt install incus`, `sudo incus admin init`, and the user in the
 # lower-privilege `incus` group + `incus-user.socket` enabled so the CLI can
-# auto-route through it). Dedicated playbook `playbooks/incus_vm.yml` overrides this.
-setup_incus_vm: false
-# `setup_quickemu_vm`: install the `qvm` quickemu VM launcher via
-# `roles/quickemu_vm` (the desktop/Windows/macOS axis `ivm` doesn't cover;
+# auto-route through it). Dedicated playbook `playbooks/vm_incus.yml` overrides this.
+setup_vm_incus: false
+# `setup_vm_quickemu`: install the `qvm` quickemu VM launcher via
+# `roles/vm_quickemu` (the desktop/Windows/macOS axis `ivm` doesn't cover;
 # prebuilt tumbleweed/debian/fedora images, guest-agent exec). Off by default -
 # pulls qemu via the `quickemu` package (openSUSE: not packaged, the play warns).
-# Dedicated playbook `playbooks/quickemu_vm.yml` overrides this.
-setup_quickemu_vm: false
+# Dedicated playbook `playbooks/vm_quickemu.yml` overrides this.
+setup_vm_quickemu: false
 # `setup_apparmor`: deploy AppArmor profiles for desktop GUI apps (Firefox /
 # Chromium / VLC / mpv / VSCode / Telegram / etc.) via `roles/apparmor`. Off by
 # default because target hosts are usually VMs where these profiles don't apply.

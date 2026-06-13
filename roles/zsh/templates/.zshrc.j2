@@ -80,7 +80,7 @@ function dotfiles-public-update () {
 {# `override_os_family` is an OPTIONAL caller-provided override of the
    gather-time `ansible_facts['os_family']`. Host-side callers
    (`playbooks/user.yml` etc.) don't set it, so the default kicks in -
-   behavior unchanged. `roles/incus_vm`'s dotfiles staging
+   behavior unchanged. `roles/vm_incus`'s dotfiles staging
    (`tasks/_stage_family.yml`) sets it per TARGET family (Debian / Suse /
    RedHat) when staging `.zshrc` for VM consumption, because the guest's
    distro may differ from the HOST running ansible (e.g. openSUSE host,

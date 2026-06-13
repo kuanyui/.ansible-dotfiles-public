@@ -1,6 +1,6 @@
 # container_apps redesign - one engine + declarative templates (parallel to `ivm`)
 
-Status: DESIGN / not started. This mirrors what `roles/incus_vm` did to the old
+Status: DESIGN / not started. This mirrors what `roles/vm_incus` did to the old
 `incus_agents` bash launchers, applied to the podman side.
 
 > **Naming is OPEN.** This doc uses `capp` as a *working name only* for the
@@ -46,7 +46,7 @@ templates and drives podman from the host. It subsumes:
 - `container_templates`'s render step (folded into the engine role).
 
 And reuses `roles/zsh` for guest dotfiles (stage host-side like
-`roles/incus_vm/tasks/stage_dotfiles.yml`, then `COPY` into the image), with a
+`roles/vm_incus/tasks/stage_dotfiles.yml`, then `COPY` into the image), with a
 small container-only overlay for the `/workspaces` auto-cd.
 
 ## NOT a copy of `ivm` - real differences

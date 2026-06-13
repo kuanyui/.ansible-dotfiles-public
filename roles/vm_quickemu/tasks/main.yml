@@ -1,0 +1,27 @@
+---
+- name: Skip `vm_quickemu` role unless `setup_vm_quickemu` is true
+  ansible.builtin.debug:
+    msg: "Skipping vm_quickemu (setup_vm_quickemu={{ setup_vm_quickemu | default(false) }})."
+  when: not setup_vm_quickemu | default(false) | bool
+
+- when: setup_vm_quickemu | default(false) | bool
+  block:
+    - name: Validate `vm_quickemu_state` is `present` or `absent`
+      ansible.builtin.assert:
+        that: vm_quickemu_state in ['present', 'absent']
+        fail_msg: "vm_quickemu_state must be `present` or `absent`, got `{{ vm_quickemu_state }}`."
+
+    - name: Run host-level prep (quickemu + guestfs-tools + xorriso packages) via tasks/quickemu_host_install.yml
+      ansible.builtin.include_tasks: quickemu_host_install.yml
+      when:
+        - vm_quickemu_state == 'present'
+        - not (vm_quickemu_skip_host_setup | default(false) | bool)
+
+    - ansible.builtin.include_tasks: qvm_install.yml
+      when: vm_quickemu_state == 'present'
+
+    # `absent` removes only the user-space `qvm` + this role's subdir. There is
+    # no host-level teardown: packages are never removed (system-shared), and
+    # quickemu has no daemon/pool/group state to revert (unlike roles/vm_incus).
+    - ansible.builtin.include_tasks: qvm_uninstall.yml
+      when: vm_quickemu_state == 'absent'
