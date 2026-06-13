@@ -58,7 +58,7 @@ tab-complete together; (b) the two provisioning-registry roles get a shared
 | config role split | `roles/dotfiles` (bash+tmux grab-bag) | `roles/bash` + `roles/tmux` |
 | essentials targets | `apply-{user,root,all-users}` / `check-*` | `apply-essentials-{user,root,all-users}` / `check-essentials-*` |
 | config role rename | `roles/local_pkgs` | `roles/local_lang_pkg_managers` |
-| its managed dir | `~/.local-pkgs/` | `~/.local_lang_pkg_managers/` (no migration - role never run) |
+| its managed dir | `~/.local-pkgs/` | `~/.local-lang-pkg-managers/` (hyphens = path convention, vs the underscore role dir; no migration - role never run) |
 
 **Why the registry vars MUST rename (not just cosmetics):** ansible-lint
 `var-naming[no-role-prefix]` - "Variables names from within roles should use
@@ -213,8 +213,9 @@ directly: `zsh`, `emacs`, `bash`, `tmux`. ALL optional roles are REMOVED from
 `user.yml`.
 
 `roles/local_pkgs` -> `roles/local_lang_pkg_managers` (its managed tree
-`~/.local-pkgs/` -> `~/.local_lang_pkg_managers/`; NO migration/idempotence
-needed - the role has never been run). It stays OPT-IN, NOT in essentials (the
+`~/.local-pkgs/` -> `~/.local-lang-pkg-managers/` - hyphenated path vs the
+underscore role dir, matching the `incus_vm` <-> `incus-vm/` convention; NO
+migration/idempotence needed - the role has never been run). It stays OPT-IN, NOT in essentials (the
 user does not want the npm/pip/pipx/cargo/go global-install redirect always-on),
 so it gains its OWN dedicated playbook + Makefile target (it has none today).
 Bonus: out of essentials, its old "must run FIRST" ordering coupling disappears.
