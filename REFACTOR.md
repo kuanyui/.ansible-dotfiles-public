@@ -38,6 +38,8 @@ tab-complete together; (b) the two provisioning-registry roles get a shared
 | registry role dir | `roles/thirdparty_software` | `roles/provision_thirdparty_software` |
 | registry vars (role `defaults/`) | `distro_packages_*` / `thirdparty_software_*` | `provision_distro_packages_*` / `provision_thirdparty_software_*` |
 | install gates (`group_vars/`) | `distro_packages_install_*` | `provision_distro_packages_install_*` |
+| config role split | `roles/dotfiles` (bash+tmux grab-bag) | `roles/bash` + `roles/tmux` |
+| essentials targets | `apply-{user,root,all-users}` / `check-*` | `apply-essentials-{user,root,all-users}` / `check-essentials-*` |
 
 **Why the registry vars MUST rename (not just cosmetics):** ansible-lint
 `var-naming[no-role-prefix]` - "Variables names from within roles should use
@@ -134,6 +136,35 @@ Verify: `grep` old names == 0; both playbooks `--syntax-check`; completions load
 (`zsh -n`/`bash -n`); `vmi --help` / `vmq --help` run; the unit tests
 (`test_incus_storage_pool.py`, `test_qvm.py`) pass under the new paths.
 
+### Phase 0c - `essentials` Makefile-target rename
+
+`apply-{user,root,all-users}` -> `apply-essentials-{user,root,all-users}` (+ the
+`check-*` dry-run parallels; `sandbox-{user,root}` similarly). Names the base
+user/root provisioning ("essentials" = bash/tmux/zsh/emacs dotfiles), distinct
+from the specific `apply-apparmor` / `vm-incus-*` / ... targets. Pure Makefile
+rename (+ `.PHONY`, `make help`). Sub-decision: targets only (lean), OR also
+rename the playbooks `user.yml`/`root.yml`/`all.yml` -> `essentials_*.yml` (more
+churn: README playbook tree). Tradeoff: the renamed targets are longer to type
+for the most common daily command.
+
+Verify: `make -n` the new targets; `make help`; `grep` old target names == 0.
+
+### Phase 0d - split `roles/dotfiles` -> `roles/bash` + `roles/tmux`
+
+`roles/dotfiles` is a vague grab-bag holding exactly `.bashrc.j2` (bash) +
+`.tmux.conf` (tmux) behind a generic glob-and-deploy. Split into two explicit
+config-only roles (consistent with the per-tool `roles/zsh` / `roles/emacs`):
+`roles/bash` deploys `.bashrc` (keeps the `is_root` branch), `roles/tmux` deploys
+`.tmux.conf` (static, no `is_root`). Drop the generic find/loop for one explicit
+deploy each (net simpler). Update the 3 consumers: `playbooks/user.yml`,
+`playbooks/root.yml`, and `vm_incus`'s `_stage_family.yml`. (tmux the PACKAGE
+already comes from `basic_tools`; these roles are config-only.) RESOLVES the
+Phase 1 feature-first open detail - `dotfiles/bash/` + `dotfiles/tmux/` fall out
+naturally.
+
+Verify: host `apply` still drops `.bashrc` + `.tmux.conf` for user AND root;
+`grep -r 'name: dotfiles'` == 0; syntax-check.
+
 ### Phase 1 - shared assets foundation (`vmi` behavior preserved)
 
 1. Rename keys to `__common__` + `Debian/Suse/RedHat` across the registry defaults
@@ -190,10 +221,9 @@ only that VM's kernel - the run-time warning can soften/skip there.
 
 ## Open details to settle during execution
 
-- **feature != role name, 1:N.** `roles/dotfiles` renders bash + tmux together
-  into one `target_home`. Feature-first wants `dotfiles/bash/` + `dotfiles/tmux/`
-  separable - decide in Phase 1: split that role's staging per feature, OR keep a
-  coarser feature for its bundle. (Confirm with the user before deciding.)
+- **feature != role name, 1:N.** RESOLVED by Phase 0d: splitting `roles/dotfiles`
+  into `roles/bash` + `roles/tmux` makes each a clean per-tool feature (zsh/emacs
+  already are). So Phase 1's feature dirs map 1:1 to per-tool roles.
 - **Which dotfiles are `__common__` vs family-specific** - audit per file
   (`.zshrc` = family, via `override_os_family`; `.emacs.d`/`.tmux.conf`/`.bashrc`
   likely `__common__` - confirm).
