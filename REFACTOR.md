@@ -24,7 +24,7 @@ Tick a box when the phase is finished + verified + committed.
 - [x] Phase 0c - `essentials` Makefile targets
 - [x] Phase 0d - split `roles/dotfiles` -> `bash` + `tmux`
 - [x] Phase 0e - retire `setup_*` gates / config-model cleanup
-- [ ] Phase 1 - shared assets foundation (`__common__`, `_shared_prebuilt_provision_assets`, `ivm` consumes)
+- [x] Phase 1 - shared assets foundation (`__common__`, `_shared_prebuilt_provision_assets`, `ivm` consumes)
 - [ ] Phase 2 - `qvm provision`
 - [ ] Phase 3 - `pvm` / container engine
 
@@ -333,7 +333,7 @@ only that VM's kernel - the run-time warning can soften/skip there.
   0e only dropped the group_vars `libkrun` override, so the default reverts to
   `default` - aligned with "don't force a runtime".)
 
-## CLAUDE.md amendment needed (Phase 1)
+## CLAUDE.md amendment (Phase 1) - APPLIED
 
 The namespace rule ("every face role owns exactly one hyphenated subdir; utility
 roles must NOT own a top-level subdir") has no slot for a dir SHARED by multiple
