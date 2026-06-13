@@ -19,7 +19,7 @@ Durable, git-tracked tracker (the in-session task tool is ephemeral / not
 committed - use it only for the fine-grained steps WHILE executing a phase).
 Tick a box when the phase is finished + verified + committed.
 
-- [ ] Phase 0a - `provision_*` registry role rename
+- [x] Phase 0a - `provision_*` registry role rename
 - [ ] Phase 0b - `vm_*` roles + `vmi`/`vmq` commands
 - [ ] Phase 0c - `essentials` Makefile targets
 - [ ] Phase 0d - split `roles/dotfiles` -> `bash` + `tmux`
