@@ -1,4 +1,9 @@
 ---
+# Whether this host has a GUI (decides GUI `emacs` vs the `-nox` build below). A
+# host property whose sole consumer is this role, so it lives here; override in
+# group_vars / host_vars for a headless host.
+has_gui_support: true
+
 _emacs_itself_nox_package_names:
   Debian: emacs-nox
   RedHat: emacs-nw

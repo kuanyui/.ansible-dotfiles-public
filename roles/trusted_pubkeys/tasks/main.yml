@@ -1,21 +1,14 @@
 ---
-- name: Skip `trusted_pubkeys` role unless `setup_trusted_pubkeys` is true
-  ansible.builtin.debug:
-    msg: "Skipping trusted_pubkeys (setup_trusted_pubkeys={{ setup_trusted_pubkeys | default(false) }})."
-  when: not setup_trusted_pubkeys | default(false) | bool
+- name: Verify required variables are set
+  ansible.builtin.assert:
+    that:
+      - target_home != ""
+      - target_user != ""
+      - target_group != ""
+    msg: "target_home, target_user, target_group must all be set by the calling playbook"
 
-- when: setup_trusted_pubkeys | default(false) | bool
-  block:
-    - name: Verify required variables are set
-      ansible.builtin.assert:
-        that:
-          - target_home != ""
-          - target_user != ""
-          - target_group != ""
-        msg: "target_home, target_user, target_group must all be set by the calling playbook"
+- name: Pin GitHub/GitLab SSH host keys into the user's known_hosts
+  ansible.builtin.include_tasks: import_ssh_host_keys.yml
 
-    - name: Pin GitHub/GitLab SSH host keys into the user's known_hosts
-      ansible.builtin.include_tasks: import_ssh_host_keys.yml
-
-    - name: Import Debian CD signing keys into a dedicated GPG keyring
-      ansible.builtin.include_tasks: import_debian_cd_keys.yml
+- name: Import Debian CD signing keys into a dedicated GPG keyring
+  ansible.builtin.include_tasks: import_debian_cd_keys.yml

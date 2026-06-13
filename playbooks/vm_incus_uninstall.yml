@@ -4,7 +4,6 @@
   connection: local
   gather_facts: true
   vars:
-    setup_vm_incus: true
     vm_incus_state: absent
   roles:
     - vm_incus

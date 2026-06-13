@@ -9,12 +9,10 @@
     target_group: "{{ ansible_facts['user_id'] }}"
     is_root: false
   roles:
+    # Essentials only. Optional features (container_apps, apparmor, trusted_pubkeys,
+    # firefox_tunes, mpv, local_lang_pkg_managers, ...) are no longer gated here -
+    # run each via its own `make` target / playbook when a host wants it.
     - zsh
     - emacs
     - bash
     - tmux
-    - container_apps   # gated by `setup_container_apps` (default false in group_vars/all.yml)
-    - apparmor         # gated by `setup_apparmor` (default false in group_vars/all.yml)
-    - trusted_pubkeys  # gated by `setup_trusted_pubkeys` (default false in group_vars/all.yml)
-    - firefox_tunes    # gated by `setup_firefox_tunes` (default false in group_vars/all.yml)
-    - mpv              # gated by `setup_mpv` (default false in group_vars/all.yml)

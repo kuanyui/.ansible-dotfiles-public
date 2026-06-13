@@ -9,55 +9,11 @@ shared_bash_ps1_line: "{{ lookup('template', playbook_dir + '/../roles/_shared/t
 shared_aliases_ls: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/aliases_ls.j2') }}"
 shared_aliases_cd_shortcuts: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/aliases_cd_shortcuts.j2') }}"
 
-has_gui_support: true
-setup_emacs: true
-setup_zsh: true
-provision_distro_packages_install_basic_tools: true
-provision_distro_packages_install_sys_tools: true
-provision_distro_packages_install_net_tools: true
-provision_distro_packages_install_wayland_tools: false
-# Dev toolchains - opt-in per host (most hosts don't build Qt/Android). These install the
-# DISTRO half on the host (`dev_qt` = full Qt6+cmake+compiler; `dev_android` = JDK+unzip).
-# The thirdparty halves (rustup, Android SDK) have NO host runner yet - see TODO.md; on a
-# host run rustup / sdkmanager by hand. In an `ivm` guest, `ivm provision dev_*` does both.
-provision_distro_packages_install_dev_qt: false
-provision_distro_packages_install_dev_android: false
-setup_podman_oci_runtimes: false
-podman_runtime: "libkrun"  # "default" | "libkrun"
-podman_runtime_scope: "user"  # "user" | "system"
-# `setup_container_apps`: install c-claude-*, c-codex-* launchers (and the
-# associated rendered Makefile/Dockerfile/dotfiles trees) under ~/.local/. Off
-# by default - containerised AI agents are a heavy opt-in, most hosts (servers,
-# VMs, fresh installs) shouldn't pull in podman + libkrun + npm globals
-# automatically. The dedicated `playbooks/container_apps.yml` overrides this.
-setup_container_apps: false
-# `setup_vm_incus`: install the `ivm` Incus VM launcher engine via
-# `roles/vm_incus`. Off by default - Incus is a heavier dep than podman (host
-# needs `sudo apt install incus`, `sudo incus admin init`, and the user in the
-# lower-privilege `incus` group + `incus-user.socket` enabled so the CLI can
-# auto-route through it). Dedicated playbook `playbooks/vm_incus.yml` overrides this.
-setup_vm_incus: false
-# `setup_vm_quickemu`: install the `qvm` quickemu VM launcher via
-# `roles/vm_quickemu` (the desktop/Windows/macOS axis `ivm` doesn't cover;
-# prebuilt tumbleweed/debian/fedora images, guest-agent exec). Off by default -
-# pulls qemu via the `quickemu` package (openSUSE: not packaged, the play warns).
-# Dedicated playbook `playbooks/vm_quickemu.yml` overrides this.
-setup_vm_quickemu: false
-# `setup_apparmor`: deploy AppArmor profiles for desktop GUI apps (Firefox /
-# Chromium / VLC / mpv / VSCode / Telegram / etc.) via `roles/apparmor`. Off by
-# default because target hosts are usually VMs where these profiles don't apply.
-setup_apparmor: false
-# `setup_trusted_pubkeys`: pin well-known PUBLIC keys for the current user via
-# `roles/trusted_pubkeys` - GitHub/GitLab SSH host keys into ~/.ssh/known_hosts
-# so `git clone git@...` skips the TOFU prompt. Keys are hardcoded in-repo (not
-# fetched) for an auditable, frozen record. Off by default - opt-in per host.
-setup_trusted_pubkeys: false
-# `setup_firefox_tunes`: apply about:config tweaks (session-store interval + cache
-# off the SSD) to every Firefox profile of the current user via
-# `roles/firefox_tunes`, by writing a per-profile user.js. Off by default - opt-in.
-setup_firefox_tunes: false
-# `setup_mpv`: deploy mpv player config (`mpv.conf` with `vo=wlshm` + `input.conf`
-# + Lua scripts) into ~/.config/mpv/ via `roles/mpv`. `vo=wlshm` pairs with the
-# no-GPU AppArmor profile `local_pathbased_mpv` (denies X11 + /dev/dri) - see
-# `roles/mpv/README.md`. Off by default - opt-in per host.
-setup_mpv: false
+# NOTE: this file is now ONLY the cross-role `shared_*` fragments. The former
+# `setup_*` opt-in gates are GONE - a feature runs by running its role's
+# playbook / `make` target, not by flipping a gate (essentials: zsh/emacs/bash/
+# tmux via `apply-essentials-*`; everything else via its dedicated target).
+# Per-role config moved into each role's `defaults/main.yml` (override here or in
+# host_vars only when a host differs): `has_gui_support` -> roles/emacs,
+# `provision_distro_packages_install_*` -> roles/provision_distro_packages,
+# `podman_runtime` / `podman_runtime_scope` -> roles/podman_oci_runtimes.

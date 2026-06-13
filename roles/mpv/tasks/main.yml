@@ -1,81 +1,74 @@
 ---
-- name: Skip `mpv` role unless `setup_mpv` is true
-  ansible.builtin.debug:
-    msg: "Skipping mpv (setup_mpv={{ setup_mpv | default(false) }})."
-  when: not setup_mpv | default(false) | bool
+- name: Verify required variables are set
+  ansible.builtin.assert:
+    that:
+      - target_home != ""
+      - target_user != ""
+      - target_group != ""
+    msg: "target_home, target_user, target_group must all be set by the calling playbook"
 
-- when: setup_mpv | default(false) | bool
-  block:
-    - name: Verify required variables are set
-      ansible.builtin.assert:
-        that:
-          - target_home != ""
-          - target_user != ""
-          - target_group != ""
-        msg: "target_home, target_user, target_group must all be set by the calling playbook"
+- name: Stat `~/.config/mpv` paths a legacy stow checkout may have symlinked
+  ansible.builtin.stat:
+    path: "{{ target_home }}/{{ item }}"
+  loop:
+    - .config/mpv
+    - .config/mpv/mpv.conf
+    - .config/mpv/input.conf
+    - .config/mpv/scripts
+    - .config/mpv/script-opts
+  register: _mpv_legacy_stow_stat_results
 
-    - name: Stat `~/.config/mpv` paths a legacy stow checkout may have symlinked
-      ansible.builtin.stat:
-        path: "{{ target_home }}/{{ item }}"
-      loop:
-        - .config/mpv
-        - .config/mpv/mpv.conf
-        - .config/mpv/input.conf
-        - .config/mpv/scripts
-        - .config/mpv/script-opts
-      register: _mpv_legacy_stow_stat_results
+- name: Refuse to deploy over legacy stow symlinks (unstow the old `mpv/` package first)
+  ansible.builtin.assert:
+    that: not (item.stat.islnk | default(false))
+    msg: >-
+      {{ target_home }}/{{ item.item }} is a symlink - it looks stow-managed by the
+      legacy dotfiles repo. Deploying through it would write INTO that repo instead
+      of materializing real files. Run `stow --delete mpv` in the old stow dotfiles
+      repo first, then re-run this playbook.
+  loop: "{{ _mpv_legacy_stow_stat_results.results }}"
+  loop_control:
+    label: "{{ item.item }}"
 
-    - name: Refuse to deploy over legacy stow symlinks (unstow the old `mpv/` package first)
-      ansible.builtin.assert:
-        that: not (item.stat.islnk | default(false))
-        msg: >-
-          {{ target_home }}/{{ item.item }} is a symlink - it looks stow-managed by the
-          legacy dotfiles repo. Deploying through it would write INTO that repo instead
-          of materializing real files. Run `stow --delete mpv` in the old stow dotfiles
-          repo first, then re-run this playbook.
-      loop: "{{ _mpv_legacy_stow_stat_results.results }}"
-      loop_control:
-        label: "{{ item.item }}"
+- name: Create `~/.config/mpv/`, `~/.config/mpv/scripts/`, `~/.config/mpv/script-opts/`
+  ansible.builtin.file:
+    path: "{{ target_home }}/{{ item }}"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+  loop:
+    - .config/mpv
+    - .config/mpv/scripts
+    - .config/mpv/script-opts
 
-    - name: Create `~/.config/mpv/`, `~/.config/mpv/scripts/`, `~/.config/mpv/script-opts/`
-      ansible.builtin.file:
-        path: "{{ target_home }}/{{ item }}"
-        state: directory
-        owner: "{{ target_user }}"
-        group: "{{ target_group }}"
-        mode: "0755"
-      loop:
-        - .config/mpv
-        - .config/mpv/scripts
-        - .config/mpv/script-opts
+- name: Deploy mpv config files into `~/.config/mpv/` (`mpv.conf` sets `vo=wlshm` - see role README)
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ target_home }}/.config/mpv/{{ item }}"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0644"
+  loop:
+    - mpv.conf
+    - input.conf
+    # christoph-heinrich touch gestures: pointer-event.lua detects taps/drags
+    # and (via script-opts/pointer-event.conf) drives touch-gestures.lua.
+    - scripts/pointer-event.lua
+    - scripts/touch-gestures.lua
+    - script-opts/pointer-event.conf
+    - script-opts/touch-gestures.conf
 
-    - name: Deploy mpv config files into `~/.config/mpv/` (`mpv.conf` sets `vo=wlshm` - see role README)
-      ansible.builtin.copy:
-        src: "{{ item }}"
-        dest: "{{ target_home }}/.config/mpv/{{ item }}"
-        owner: "{{ target_user }}"
-        group: "{{ target_group }}"
-        mode: "0644"
-      loop:
-        - mpv.conf
-        - input.conf
-        # christoph-heinrich touch gestures: pointer-event.lua detects taps/drags
-        # and (via script-opts/pointer-event.conf) drives touch-gestures.lua.
-        - scripts/pointer-event.lua
-        - scripts/touch-gestures.lua
-        - script-opts/pointer-event.conf
-        - script-opts/touch-gestures.conf
-
-    # An earlier version of THIS role deployed these scripts. `copy` does not
-    # remove them, and a stale `touchscreen-drag-seek.lua` force-binds the same
-    # left button as `pointer-event.lua` (they would fight). So remove the names
-    # the role used to ship. (Old stow-managed copies are handled by the user's
-    # `stow --delete mpv`, not here.)
-    - name: Remove retired touch scripts the role used to deploy (superseded by pointer-event/touch-gestures)
-      ansible.builtin.file:
-        path: "{{ target_home }}/.config/mpv/scripts/{{ item }}"
-        state: absent
-      loop:
-        - touchscreen-seek.lua
-        - touchscreen-drag-seek.lua
-        - touchscreen-drag-seek.lua.disable
+# An earlier version of THIS role deployed these scripts. `copy` does not
+# remove them, and a stale `touchscreen-drag-seek.lua` force-binds the same
+# left button as `pointer-event.lua` (they would fight). So remove the names
+# the role used to ship. (Old stow-managed copies are handled by the user's
+# `stow --delete mpv`, not here.)
+- name: Remove retired touch scripts the role used to deploy (superseded by pointer-event/touch-gestures)
+  ansible.builtin.file:
+    path: "{{ target_home }}/.config/mpv/scripts/{{ item }}"
+    state: absent
+  loop:
+    - touchscreen-seek.lua
+    - touchscreen-drag-seek.lua
+    - touchscreen-drag-seek.lua.disable

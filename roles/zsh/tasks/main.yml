@@ -3,4 +3,3 @@
   when: is_root
 
 - ansible.builtin.include_tasks: deploy-zsh-config.yml
-  when: setup_zsh

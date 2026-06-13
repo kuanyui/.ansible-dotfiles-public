@@ -3,7 +3,5 @@
   hosts: localhost
   connection: local
   gather_facts: true
-  vars:
-    setup_vm_incus: true  # dedicated entry point: bypass the host-level opt-in gate
   roles:
     - vm_incus

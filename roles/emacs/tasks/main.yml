@@ -3,4 +3,3 @@
   when: is_root
 
 - ansible.builtin.include_tasks: deploy-emacs-config.yml
-  when: setup_emacs

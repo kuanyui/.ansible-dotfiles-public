@@ -25,6 +25,16 @@
 # host toggle loop holds bare-list bundles only. Most bundles never need the dict form -
 # `provision_distro_packages_icewm_desktop` / `provision_distro_packages_lxqt_desktop` (the desktop bundles) are the ones that do.
 
+# Which bundles to install on the HOST (apply-essentials-root / -user). Override in
+# group_vars / host_vars per host. (Guest installs via `ivm provision <bundle>` ignore
+# these - they select bundles explicitly.) Only bare-list bundles belong here (see above).
+provision_distro_packages_install_basic_tools: true
+provision_distro_packages_install_sys_tools: true
+provision_distro_packages_install_net_tools: true
+provision_distro_packages_install_wayland_tools: false
+provision_distro_packages_install_dev_qt: false
+provision_distro_packages_install_dev_android: false
+
 provision_distro_packages_basic_tools:
   common:
     - git

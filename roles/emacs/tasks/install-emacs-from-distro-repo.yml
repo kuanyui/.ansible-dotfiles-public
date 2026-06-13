@@ -3,7 +3,6 @@
   ansible.builtin.package:
     name: "{{ emacs_itself_package_name }}"
     state: present
-  when: setup_emacs
 
 - name: Install emacs packages (Debian)
   ansible.builtin.apt:
@@ -12,7 +11,6 @@
     update_cache: true
     cache_valid_time: 3600
   when:
-    - setup_emacs
     - ansible_facts['os_family'] == 'Debian'
     - emacs_packages_debian | length > 0
 
@@ -21,6 +19,5 @@
     name: "{{ emacs_packages_redhat }}"
     state: present
   when:
-    - setup_emacs
     - ansible_facts['os_family'] == 'RedHat'
     - emacs_packages_redhat | length > 0

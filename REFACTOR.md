@@ -23,7 +23,7 @@ Tick a box when the phase is finished + verified + committed.
 - [x] Phase 0b - `vm_*` role rename (commands stay `ivm`/`qvm`/`pvm`)
 - [x] Phase 0c - `essentials` Makefile targets
 - [x] Phase 0d - split `roles/dotfiles` -> `bash` + `tmux`
-- [ ] Phase 0e - retire `setup_*` gates / config-model cleanup
+- [x] Phase 0e - retire `setup_*` gates / config-model cleanup
 - [ ] Phase 1 - shared assets foundation (`__common__`, `_shared_prebuilt_provision_assets`, `ivm` consumes)
 - [ ] Phase 2 - `qvm provision`
 - [ ] Phase 3 - `pvm` / container engine
@@ -325,8 +325,13 @@ only that VM's kernel - the run-time warning can soften/skip there.
   impractical (`krun` has poor compatibility with existing container images); the
   role should just INSTALL a runtime, not make it the default. **Not doing it
   now:** the user uses neither `krun` nor gvisor, and a heavier kata path is not
-  worth a role. (Phase 0e still moves `podman_runtime`/`podman_runtime_scope` into
-  the role's `defaults/` as part of the gate retirement; this deeper rethink waits.)
+  worth a role. **Its `setup_podman_oci_runtimes` gate was KEPT** (the ONE role 0e
+  did not de-gate) - its gate is woven through compound `when:`s + task names, and
+  retiring it belongs with this rethink. The gate now lives only in the role's
+  `defaults/` (+ the dedicated playbook's bypass), no longer in group_vars.
+  (`podman_runtime`/`podman_runtime_scope` were already in the role `defaults/`;
+  0e only dropped the group_vars `libkrun` override, so the default reverts to
+  `default` - aligned with "don't force a runtime".)
 
 ## CLAUDE.md amendment needed (Phase 1)
 

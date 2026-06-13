@@ -18,9 +18,10 @@ Managed with Ansible roles, following is Ansible directory structure conventions
 
 ```sh
 playbooks/                # entry playbooks
-  ├─ user.yml             # ├─ deploy dotfiles + emacs + zsh + container_apps + apparmor + trusted_pubkeys for current user
-  ├─ root.yml             # ├─ same for root (no container_apps/apparmor/trusted_pubkeys)
+  ├─ user.yml             # ├─ ESSENTIALS for current user: zsh + emacs + bash + tmux (via `make apply-essentials-user`)
+  ├─ root.yml             # ├─ same essentials for root (+ provision_distro_packages)
   ├─ all.yml              # ├─ user.yml + root.yml
+  # Everything below is OPTIONAL - run its own target; no `setup_*` gate any more.
   ├─ podman_oci_runtimes.yml  # ├─ dedicated entry: configure podman OCI runtime(s)
   ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
   ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
@@ -31,12 +32,13 @@ playbooks/                # entry playbooks
   ├─ apparmor.yml         # ├─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
   ├─ trusted_pubkeys.yml  # ├─ dedicated entry: pin GitHub/GitLab SSH host keys + Debian CD signing keys
   ├─ firefox_tunes.yml    # ├─ dedicated entry: write per-profile user.js (session-store + cache off the SSD)
+  ├─ local_lang_pkg_managers.yml  # ├─ dedicated entry: redirect npm/pip/pipx/cargo/go globals into ~/.local-lang-pkg-managers/
   └─ mpv.yml              # └─ dedicated entry: deploy mpv config (`vo=wlshm` + keybindings + Lua scripts)
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
 callback_plugins/         # local ansible callback plugins (profile_tasks for per-task timing)
 group_vars/
-  └─ all.yml              # global variables + `setup_*` opt-in gates + `shared_*` partials
+  └─ all.yml              # cross-role `shared_*` template fragments (per-feature config now lives in each role's defaults; `setup_*` gates retired)
 roles/                    # see Roles table below
 scripts/                  # standalone helper scripts (apparmor profile gen / sandbox dry-run)
 ```

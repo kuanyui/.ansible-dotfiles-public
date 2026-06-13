@@ -1,4 +1,8 @@
 ---
+# NOTE: unlike the other roles, this one KEEPS its `setup_podman_oci_runtimes` gate
+# for now - its full gate-retirement is deferred together with the
+# podman_oci_runtimes rethink (see REFACTOR.md "Deferred"). The gate lives here +
+# `make apply-podman-oci-runtimes` sets it true; it is no longer in group_vars.
 setup_podman_oci_runtimes: false
 podman_runtime: "default"  # "default" (remove managed config, let distro decide) | "libkrun"
 podman_runtime_scope: "user"  # "user" or "system"
