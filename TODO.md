@@ -1029,6 +1029,12 @@ only xauth changed) + `mpv --vo=wlshm` playing fine under the broken profile on 
   = fast cap. conf default `seek_scale 1 -> 0.2`, `seek_accel_max_gain 4 -> 5`; README model
   section rewritten. Verified deploy + idempotent. On-device: tune `seek_scale` (slow) /
   `seek_accel_max_gain` (fast cap).
+- [x] **pause-while-scrubbing** - user: video keeps playing under the finger during a
+  drag-seek. Added (touch-gestures.lua): in `drag_init`'s seek branch capture pause state
+  + `set pause=true`; restore in `drag_end` (guarded var `seek_paused_by_drag`, nil unless
+  a seek scrub is active so volume/speed drags are untouched). Knob
+  `seek_pause_while_dragging` (default yes). Restores to the PRIOR state, so a paused video
+  stays paused. README + conf updated. Verified deploy + idempotent.
 - [ ] **GPU-launcher interaction** - `ansible-mpv-gpu.desktop`'s Exec has no `--vo`, so
   a global `vo=wlshm` makes the GPU launcher run software too (it no longer hangs, but
   gets no hardware). TRUE hardware via the launcher needs a SEPARATE decision: grant

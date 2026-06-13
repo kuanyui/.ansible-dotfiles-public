@@ -1,5 +1,6 @@
 -- touch-gestures 1.1.0 - 2023-Feb-03
--- https://github.com/christoph-heinrich/mpv-touch-gestures
+-- Forked from https://github.com/christoph-heinrich/mpv-touch-gestures
+-- This file is licensed under GNU General Public License v2.0
 --
 -- Touch gestures for mpv
 
@@ -18,6 +19,7 @@ local opts = {
     seek_accel_exponent = 1.7,    -- how steeply a fast flick ramps to the ceiling; 1 = none
     seek_accel_pixels_ref = 10,   -- per-event px speed where acceleration starts
     seek_accel_max_gain = 5,      -- fast-flick ceiling: effective cap = seek_scale * this
+    seek_pause_while_dragging = true,  -- pause playback during a scrub, restore on release
 }
 options.read_options(opts, 'touch-gestures')
 
@@ -39,6 +41,8 @@ end)
 local drag_total = 0
 -- LOCAL ADDITION: raw px accumulated below the seek deadzone (reset per drag)
 local seek_pending = 0
+-- LOCAL ADDITION: pre-scrub pause state while pause-while-dragging is active (nil = not scrubbing)
+local seek_paused_by_drag = nil
 -- ds is short for drag_start
 local ds_w = nil
 local ds_h = nil
@@ -178,6 +182,12 @@ local function drag_init(dx, dy)
         elseif opts.horizontal_drag == 'seek' then
             ds_time = mp.get_property_number('playback-time')
             ds_dur = mp.get_property_number('duration')
+            -- LOCAL ADDITION: pause playback while scrubbing so the video does not keep
+            -- playing under the finger; the pre-drag state is restored in drag_end.
+            if opts.seek_pause_while_dragging then
+                seek_paused_by_drag = mp.get_property_native('pause')
+                mp.set_property_native('pause', true)
+            end
             return 'seek'
         end
     end
@@ -201,6 +211,11 @@ end
 
 local function drag_end()
     if drag_kind == 'playlist' then drag_playlist_end() end
+    -- LOCAL ADDITION: restore the pre-scrub pause state (set in drag_init's seek branch)
+    if seek_paused_by_drag ~= nil then
+        mp.set_property_native('pause', seek_paused_by_drag)
+        seek_paused_by_drag = nil
+    end
     drag_total = 0
     ds_vol = nil
     ds_vol_max = nil

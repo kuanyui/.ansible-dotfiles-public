@@ -63,6 +63,7 @@ Tune in `script-opts/touch-gestures.conf`:
 - `seek_accel_exponent` - how fast it ramps between the two (`1` = no acceleration, just the base ratio).
 - `seek_deadzone_pixels` - raise if a slow drag still jitters. `seek_accel_pixels_ref` (>0) - speed where accel starts.
 - `proportional_seek=no` - on LONG videos the base feels coarse (bar spans the whole film); `no` gives fixed px->seconds.
+- `seek_pause_while_dragging` - `yes` pauses playback for the duration of a scrub and restores the prior play/pause state on release (so the video does not keep playing under your finger). `no` keeps playing.
 
 The FEEL is untestable in CI (no touchscreen) - expect to tune these on the device.
 Defaults are set for KDE Wayland default touch.
