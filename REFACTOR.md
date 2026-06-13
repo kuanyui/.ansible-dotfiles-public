@@ -163,14 +163,36 @@ Phase 1 reshapes (feature-first + `__common__`). Building capp first would bind 
 to the old per-family `rootfs/`, forcing rework. So Phase 1 is the prerequisite;
 the capp build then subsumes this phase.
 
-**Naming: NOT `podman_vm`.** podman launches CONTAINERS, not VMs - on Linux it is
-namespaces; `libkrun` is a per-container microVM runtime opt-in (unused here by
-choice); on macOS/Windows `podman machine` runs a Linux VM only to HOST the
-daemon, but the artifacts are still containers. An `_vm` name next to `ivm`/`qvm`
-(real guest-OS launchers) would mislead. Keep the container-honest `capp`/`cax`/`coci`
-(REDESIGN.md owns the final pick). The macOS/Windows value is real, but it is a
-`podman machine` (remote / VM-backed daemon) FEATURE of the engine - not a reason
-to name it a VM.
+**Naming: `pvm`** (decided - family consistency wins). The launcher family is
+`ivm` (incus) / `qvm` (quickemu) / `pvm` (podman); the parallel `p`+`vm` name is
+what stays memorable, weighted above taxonomic purity. The `vm` suffix has a real
+basis here: the repo ships the `libkrun` runtime option (`podman_runtime: libkrun`),
+a per-container microVM, and on macOS/Windows podman runs via a `podman machine`
+Linux VM. CAVEAT so the name does not deceive: podman's DEFAULT is namespaces, not
+a VM, so the one-line description / `pvm --help` / README first line MUST say it
+plainly, e.g. `pvm - podman container launcher (rootless; optional libkrun microVM)`.
+The name is the memorable family label; the help text carries the honesty.
+(Supersedes the `capp`/`cax`/`coci` working name in `roles/container_apps/REDESIGN.md`
+- do the `s/capp/pvm/` there when that redesign actually starts.)
+
+**pvm isolation guardrails (the `vm` name must be EARNED, not assumed).** The
+default runtime (crun / namespaces) is shared-HOST-kernel - exactly the boundary
+the user rejects (the reason `ivm` exists). So pvm actively steers to the
+VM-grade runtime with two warnings:
+
+- **install-time, on Linux:** warn that a shared-kernel container is weaker
+  isolation than a real VM - for kernel isolation use `ivm`; if using pvm,
+  prefer the `libkrun` runtime.
+- **run-time, when the effective runtime is NOT `libkrun`** (crun / runc): warn
+  **strongly not recommended** (sharing the host kernel; kernel attack surface),
+  pointing at `libkrun` or `ivm`.
+
+Scope: this is a Linux / native-podman concern (the shared kernel is the HOST's).
+On macOS/Windows podman already runs inside a `podman machine` VM, so a
+non-libkrun runtime there shares only that VM's kernel, not the host's - the
+run-time warning can soften/skip on those platforms. These warnings turn the
+honest-help caveat above into an ACTIVE guardrail, which is what justifies the
+`vm` suffix.
 
 ## CLAUDE.md amendment needed
 
