@@ -20,7 +20,7 @@ committed - use it only for the fine-grained steps WHILE executing a phase).
 Tick a box when the phase is finished + verified + committed.
 
 - [x] Phase 0a - `provision_*` registry role rename
-- [ ] Phase 0b - `vm_*` role rename (commands stay `ivm`/`qvm`/`pvm`)
+- [x] Phase 0b - `vm_*` role rename (commands stay `ivm`/`qvm`/`pvm`)
 - [ ] Phase 0c - `essentials` Makefile targets
 - [ ] Phase 0d - split `roles/dotfiles` -> `bash` + `tmux`
 - [ ] Phase 0e - retire `setup_*` gates / config-model cleanup
