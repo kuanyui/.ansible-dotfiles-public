@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=../template.schema.json
+# A BARE Debian dev box: baseline (curl/git/sudo/zsh/tmux/sshd - on every ivm
+# guest) + `basic_tools` (git/make/ripgrep/tmux/stow), nothing else. No GUI, no
+# mounts, no third-party software - the minimal starting point you extend per
+# project (`ivm mount attach`, `ivm provision <group>`). For an agent/app box
+# see claude.yaml / codex.yaml; for a desktop see webbrowser.yaml.
+template_name: base_debian
+hw:
+  cpu: 2
+  memory: 4G
+  disk: 20G
+os:
+  type: linux
+  distro: debian
+  image:
+    source: incus
+    uri: debian/13
+sys:
+  gui: false
+  timezone: host
+net:
+  mode: nat
+distro_package_groups:
+  - basic_tools
+dotfiles:
+  - bash
+  - tmux
+  - zsh

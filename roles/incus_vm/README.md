@@ -34,7 +34,9 @@ A template describes a VM once, in YAML, at
 `~/.local/share/ansible-managed/incus-vm/ivm/templates/<name>.yaml`, validated
 against `ivm/template.schema.json` (the files carry a `# yaml-language-server:
 $schema=...` modeline, so an editor with the YAML LSP shows inline field docs +
-validation). Shipped examples: `claude`, `codex`, `webbrowser`, `windows11`.
+validation). Shipped examples: `base_debian` / `base_opensuse` / `base_fedora`
+(bare distro + `basic_tools`, nothing else), `claude`, `codex`, `webbrowser`,
+`windows11`.
 
 Field groups (see the schema for the full, authoritative list):
 
