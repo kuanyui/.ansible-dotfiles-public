@@ -25,7 +25,7 @@
     label: "{{ item.toggle }}={{ item.enabled }}"
 
 # One include for all enabled bundles: build the per-`os_family` install list
-# as `common (all bundles) + that family's overlay (only bundles that define
+# as `__common__ (all bundles) + that family's overlay (only bundles that define
 # it)`. `_install_distro_packages` then picks the host's `os_family` key and
 # installs via the right package manager. Skipped entirely when every toggle
 # is off (empty list would trip the sub-role's non-empty assert).
@@ -40,12 +40,12 @@
   vars:
     install_distro_packages:
       Debian:
-        install: "{{ (_provision_distro_packages_enabled_bundles | map(attribute='common') | flatten)
-                   + (_provision_distro_packages_enabled_bundles | selectattr('debian', 'defined') | map(attribute='debian') | flatten) }}"
+        install: "{{ (_provision_distro_packages_enabled_bundles | map(attribute='__common__') | flatten)
+                   + (_provision_distro_packages_enabled_bundles | selectattr('Debian', 'defined') | map(attribute='Debian') | flatten) }}"
       Suse:
-        install: "{{ (_provision_distro_packages_enabled_bundles | map(attribute='common') | flatten)
-                   + (_provision_distro_packages_enabled_bundles | selectattr('suse', 'defined') | map(attribute='suse') | flatten) }}"
+        install: "{{ (_provision_distro_packages_enabled_bundles | map(attribute='__common__') | flatten)
+                   + (_provision_distro_packages_enabled_bundles | selectattr('Suse', 'defined') | map(attribute='Suse') | flatten) }}"
       RedHat:
-        install: "{{ (_provision_distro_packages_enabled_bundles | map(attribute='common') | flatten)
-                   + (_provision_distro_packages_enabled_bundles | selectattr('redhat', 'defined') | map(attribute='redhat') | flatten) }}"
+        install: "{{ (_provision_distro_packages_enabled_bundles | map(attribute='__common__') | flatten)
+                   + (_provision_distro_packages_enabled_bundles | selectattr('RedHat', 'defined') | map(attribute='RedHat') | flatten) }}"
   when: _provision_distro_packages_enabled_bundles | length > 0

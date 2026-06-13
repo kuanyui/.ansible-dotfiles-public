@@ -5,9 +5,9 @@
 #
 # Each `provision_thirdparty_software_<name>` is a per-`ansible_os_family` dict. Resolution
 # is OVERRIDE, not additive (UNLIKE `provision_distro_packages`, which concatenates
-# `common` + the family overlay): a piece of software has ONE install method,
+# `__common__` + the family overlay): a piece of software has ONE install method,
 # possibly varying by family - so use the host/guest family's entry if defined,
-# else `common`. Each entry:
+# else `__common__`. Each entry:
 #   install_script    REQUIRED  shell run as ROOT in the guest; `su - user -c '...'`
 #                               for user-scoped installs (root switches to anyone,
 #                               no password).
@@ -25,7 +25,7 @@
 # pattern as the distro bundles).
 
 provision_thirdparty_software_claude:
-  common:
+  __common__:
     already_installed: su - user -c 'command -v claude'
     install_script: |
       # claude.ai/install.sh redirects to a `#!/bin/bash` bootstrap that uses
@@ -33,7 +33,7 @@ provision_thirdparty_software_claude:
       su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
 provision_thirdparty_software_codex:
-  common:
+  __common__:
     # File test, not `command -v`: codex lands in ~/.local/npm_global/bin, which is
     # not necessarily on the login PATH, so a PATH probe could wrongly re-install.
     already_installed: su - user -c 'test -x ~/.local/npm_global/bin/codex'
@@ -50,7 +50,7 @@ provision_thirdparty_software_codex:
 # rustc/cargo are intentionally NOT used: they lag Rust's 6-week stable cadence and can't
 # manage toolchains/targets/components the way Rust development expects.
 provision_thirdparty_software_dev_rust:
-  common:
+  __common__:
     already_installed: su - user -c 'test -x ~/.cargo/bin/cargo'
     install_script: |
       # `-y` is rustup-init's only non-interactive flag (no long-form alias exists);
@@ -66,7 +66,7 @@ provision_thirdparty_software_dev_rust:
 # `sdkmanager emulator`). Set ANDROID_HOME=~/Android/Sdk (or a project local.properties) to
 # point Gradle/AGP at it.
 provision_thirdparty_software_dev_android:
-  common:
+  __common__:
     already_installed: su - user -c 'test -x ~/Android/Sdk/platform-tools/adb'
     install_script: |
       # Google ships cmdline-tools as a build-numbered zip - there is NO stable "latest" URL,

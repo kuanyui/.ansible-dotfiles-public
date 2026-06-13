@@ -1,20 +1,20 @@
 ---
 # Named bundles of frequently-used distro packages. Each bundle is a dict of
-# per-`os_family` overlays: `common` applies to every family, `debian` /
-# `suse` / `redhat` add family-specific extras on top. `tasks/main.yml`
+# per-`os_family` overlays: `__common__` applies to every family, `Debian` /
+# `Suse` / `RedHat` add family-specific extras on top. `tasks/main.yml`
 # concatenates `common + <host family overlay>` and hands the result to
 # `roles/_install_distro_packages`, the single multi-distro install engine
 # (ansible-core-only: it shells `zypper --non-interactive` on openSUSE instead
 # of `ansible.builtin.package`, which would dispatch to
 # `community.general.zypper`).
 #
-# Each family overlay (`common` / `debian` / `suse` / `redhat`) is EITHER a bare package
+# Each family overlay (`__common__` / `Debian` / `Suse` / `RedHat`) is EITHER a bare package
 # list (the usual case), OR - when that family ALSO needs setup - a dict
 # `{install: [<pkgs>], post_install: <shell>}`. So a family's packages AND its setup stay
 # co-located under that family, and the bundle's TOP level is purely families (the {DISTRO}
 # layer keeps one meaning). Resolution, both host (`tasks/main.yml`) and guest (`ivm`):
-#   packages     = `common` install + `<family>` install
-#   post_install = `common` post_install + `<family>` post_install   (ADDITIVE: shared first,
+#   packages     = `__common__` install + `<family>` install
+#   post_install = `__common__` post_install + `<family>` post_install   (ADDITIVE: shared first,
 #                  then the family-specific extra appends - a distro needing one more step
 #                  just adds it under its own overlay, no repeating the shared part)
 # RULE OF THUMB: a per-distro PACKAGE difference (e.g. a greeter named differently per family)
@@ -36,7 +36,7 @@ provision_distro_packages_install_dev_qt: false
 provision_distro_packages_install_dev_android: false
 
 provision_distro_packages_basic_tools:
-  common:
+  __common__:
     - git
     - make
     - ripgrep
@@ -44,26 +44,26 @@ provision_distro_packages_basic_tools:
     - stow
 
 provision_distro_packages_sys_tools:
-  common:
+  __common__:
     - htop
     - iotop
     - sysstat
     - nvtop
     - cpuid
-  debian:
+  Debian:
     - cpu-x  # not in default Fedora/RHEL repos
-  suse: []   # `common` names carry over to openSUSE; no Suse-only extra needed
-  redhat: []
+  Suse: []   # `__common__` names carry over to openSUSE; no Suse-only extra needed
+  RedHat: []
 
 provision_distro_packages_net_tools:
-  common:
+  __common__:
     - nethogs
     - traceroute
     - net-tools
     - tcpdump
 
 provision_distro_packages_wayland_tools:
-  common:
+  __common__:
     - wl-clipboard
 
 # The emacs PACKAGE only. Its `~/.emacs.d` config is a SEPARATE config-file set that
@@ -71,7 +71,7 @@ provision_distro_packages_wayland_tools:
 # this package + that config set. `emacs` is the package name in all three families'
 # default repos.
 provision_distro_packages_emacs:
-  common:
+  __common__:
     - emacs
 
 # Minimal X11 stack any X WM/DE needs: server + startx + xauth + the libinput
@@ -79,17 +79,17 @@ provision_distro_packages_emacs:
 # package - the server's built-in modesetting drives virtio-gpu/std-VGA. The
 # WM/DE and display-manager stay per-template. Names diverge per family.
 provision_distro_packages_gui_x11:
-  debian:
+  Debian:
     - xserver-xorg-core
     - xinit
     - xauth
     - xserver-xorg-input-libinput
-  suse:
+  Suse:
     - xorg-x11-server
     - xinit
     - xauth
     - xf86-input-libinput
-  redhat:
+  RedHat:
     - xorg-x11-server-Xorg
     - xorg-x11-xinit
     - xorg-x11-xauth
@@ -98,21 +98,21 @@ provision_distro_packages_gui_x11:
 # Xwayland only - the one compositor-agnostic Wayland piece (runs X apps under
 # any Wayland compositor); the compositor itself stays per-template.
 provision_distro_packages_gui_wayland:
-  debian:
+  Debian:
     - xwayland
-  suse:
+  Suse:
     - xwayland
-  redhat:
+  RedHat:
     - xorg-x11-server-Xwayland
 
 # Noto Sans CJK: one font covers all CJK; JP/TC/SC differ only in default Han
 # glyphs, not coverage. openSUSE OSS has no combined pkg, so use the JP variant.
 provision_distro_packages_cjk_fonts:
-  debian:
+  Debian:
     - fonts-noto-cjk
-  suse:
+  Suse:
     - google-noto-sans-jp-fonts
-  redhat:
+  RedHat:
     - google-noto-sans-cjk-fonts
 
 # fcitx5 + engines (mozc=JP, chewing=TC) + GTK/Qt frontends. Needs the
@@ -120,23 +120,23 @@ provision_distro_packages_cjk_fonts:
 # Frontend names diverge per family; config tool: Debian `fcitx5-config-qt` vs
 # openSUSE/Fedora `fcitx5-configtool`.
 provision_distro_packages_cjk_input:
-  common:
+  __common__:
     - fcitx5
     - fcitx5-mozc
     - fcitx5-chewing
-  debian:
+  Debian:
     - fcitx5-frontend-gtk3
     - fcitx5-frontend-gtk4
     - fcitx5-frontend-qt5
     - fcitx5-frontend-qt6
     - fcitx5-config-qt
-  suse:
+  Suse:
     - fcitx5-gtk3
     - fcitx5-gtk4
     - fcitx5-qt5
     - fcitx5-qt6
     - fcitx5-configtool
-  redhat:
+  RedHat:
     - fcitx5-gtk
     - fcitx5-qt
     - fcitx5-configtool
@@ -150,7 +150,7 @@ provision_distro_packages_cjk_input:
 # set-root-password escalation, sshd for ssh, plus the basics.
 #
 # Per-family names are NOT all identical (verified, not assumed):
-#   - `common`: core packages, same name + in default repos on all three
+#   - `__common__`: core packages, same name + in default repos on all three
 #     (curl/git/ca-certificates/sudo/zsh/tmux). High confidence; not web-checked
 #     individually as they are universally-present base packages.
 #   - sshd: Debian/Fedora ship `openssh-server`; openSUSE ships sshd in the
@@ -158,26 +158,26 @@ provision_distro_packages_cjk_input:
 #   - zsh-syntax-highlighting / zsh-autosuggestions: in Debian + Fedora default
 #     repos (Fedora confirmed via packages.fedoraproject.org). For openSUSE they
 #     were only found in an OBS devel project (shells:zsh-users:*), NOT confirmed
-#     in the default Tumbleweed OSS repo -> deliberately OMITTED from `suse:`
+#     in the default Tumbleweed OSS repo -> deliberately OMITTED from `Suse:`
 #     until verified on a real Tumbleweed box (`zypper search <name>`). Until
 #     then an openSUSE guest's zsh just runs without those two plugins.
 provision_distro_packages_incus_guest_baseline:
-  common:
+  __common__:
     - curl
     - git
     - ca-certificates
     - sudo
     - zsh
     - tmux
-  debian:
+  Debian:
     - openssh-server
     - zsh-syntax-highlighting
     - zsh-autosuggestions
-  suse:
+  Suse:
     - openssh   # ships sshd; `openssh-server` is not the default-repo name here
     # zsh-syntax-highlighting / zsh-autosuggestions: see header note (unverified
     # in default repo; add here once confirmed on Tumbleweed).
-  redhat:
+  RedHat:
     - openssh-server
     - zsh-syntax-highlighting
     - zsh-autosuggestions
@@ -192,17 +192,17 @@ provision_distro_packages_incus_guest_baseline:
 # also differs: Debian splits GUI (`linguist-qt6`) from CLI tools (`qt6-l10n-tools`,
 # = lrelease/lupdate); openSUSE `qt6-linguist-devel`; Fedora `qt6-linguist`.
 provision_distro_packages_dev_qt:
-  common:
+  __common__:
     - cmake
     - make
-  debian:
+  Debian:
     - qt6-base-dev          # Core, Gui, Widgets, Concurrent, Network, Sql, Test, ... (one meta)
     - qt6-declarative-dev   # QML / Qt Quick
     - qt6-multimedia-dev
     - qt6-l10n-tools        # lrelease / lupdate (Linguist CLI; CMake LinguistTools)
     - linguist-qt6          # Qt Linguist GUI
     - g++
-  suse:
+  Suse:
     - qt6-core-devel
     - qt6-gui-devel
     - qt6-widgets-devel
@@ -211,7 +211,7 @@ provision_distro_packages_dev_qt:
     - qt6-declarative-devel   # QML / Qt Quick
     - qt6-linguist-devel      # Linguist tools (lrelease/lupdate + CMake module)
     - gcc-c++
-  redhat:
+  RedHat:
     - qt6-qtbase-devel        # Core, Gui, Widgets, Concurrent, ...
     - qt6-qtdeclarative-devel # QML / Qt Quick
     - qt6-qtmultimedia-devel
@@ -231,24 +231,24 @@ provision_distro_packages_dev_qt:
 #     yourself with `sdkmanager emulator` when wanted.
 # JDK is JDK 21 (current LTS; Debian `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+.
 provision_distro_packages_dev_android:
-  common:
+  __common__:
     - unzip   # extract the Android command-line tools zip (the dev_android thirdparty step)
-  debian:
+  Debian:
     - default-jdk
-  suse:
+  Suse:
     - java-21-openjdk-devel
-  redhat:
+  RedHat:
     - java-21-openjdk-devel
 
 # A complete, autologin icewm desktop - the WM/DE + display-manager layer that `gui_x11`
 # (the X server stack) deliberately leaves out. RIDES ON gui_x11: provision them together,
 # `ivm provision gui_x11 icewm_desktop`. The shared packages + the (identical) setup wiring
-# live in `common`; the only per-family difference is the lightdm GREETER's package name
+# live in `__common__`; the only per-family difference is the lightdm GREETER's package name
 # (Debian/openSUSE `lightdm-gtk-greeter`, Fedora `lightdm-gtk`) - a per-family `install`, NOT
 # a post_install, since it is a package not a script. The greeter is listed EXPLICITLY because
 # ivm installs with recommends OFF (apt-min/zypper-min/dnf-min) so it is not auto-pulled.
-# `spice-vdagent` (in common.install, not relying on `sys.gui`) gives `ivm gui`'s SPICE console
-# clipboard + dynamic resolution; `lxterminal` (common.install) is the terminal emulator -
+# `spice-vdagent` (in __common__.install, not relying on `sys.gui`) gives `ivm gui`'s SPICE console
+# clipboard + dynamic resolution; `lxterminal` (__common__.install) is the terminal emulator -
 # icewm bundles none, so without it a fresh desktop can launch nothing. The wiring:
 # graphical.target + lightdm autologin (-> the guest's `user`, into an icewm session, name
 # DETECTED at runtime: Debian `icewm-session` / openSUSE `icewm`) + spice-vdagent autostart +
@@ -257,9 +257,9 @@ provision_distro_packages_dev_android:
 # CAVEAT: verified-shaped for Debian (the common
 # ivm target) + openSUSE (mirrors templates/webbrowser.yaml); Fedora is best-effort - SELinux
 # Enforcing has known lightdm-autologin issues; a fix, once verified on a real box, lands as a
-# `redhat: {post_install: ...}` here (the per-family slot is exactly for that). See TODO.md.
+# `RedHat: {post_install: ...}` here (the per-family slot is exactly for that). See TODO.md.
 provision_distro_packages_icewm_desktop:
-  common:
+  __common__:
     install:
       - icewm
       - lxterminal      # terminal emulator (icewm bundles none); bound to Ctrl+Alt+T in post_install
@@ -280,14 +280,14 @@ provision_distro_packages_icewm_desktop:
       # icewm ships NO default terminal hotkey (icewm-keys(5): its `key "Alt+Ctrl+t" xterm`
       # is only a doc example, not a shipped binding) -> bind Ctrl+Alt+T to lxterminal.
       su - user -c 'mkdir -p ~/.config/icewm && printf "key \"Ctrl+Alt+t\" lxterminal\n" > ~/.config/icewm/keys'
-  debian:
+  Debian:
     install:
       - lightdm-gtk-greeter
-  suse:
+  Suse:
     install:
       - icewm-theme-branding  # openSUSE-only: the default icewm theme/background
       - lightdm-gtk-greeter
-  redhat:
+  RedHat:
     install:
       - lightdm-gtk          # Fedora's greeter package (NOT lightdm-gtk-greeter)
 
@@ -295,7 +295,7 @@ provision_distro_packages_icewm_desktop:
 # (both ride on gui_x11: `ivm provision gui_x11 lxqt_desktop`). Difference from icewm_desktop:
 # a full lightweight Qt DE (session + panel + file manager + terminal over the openbox WM)
 # rather than a bare WM, so it ships the file manager + terminal a desktop actually needs.
-# `common.install` holds the parts whose package names match on all three families (verified):
+# `__common__.install` holds the parts whose package names match on all three families (verified):
 # `lxqt-session` + `lxqt-panel`, `openbox` (LXQt's default X11 WM - NOT pulled by lxqt-session
 # with weak-deps off, so explicit), `pcmanfm-qt` (file manager), `qterminal` (terminal), plus
 # `lightdm` + `spice-vdagent` (as icewm_desktop). Per-family `install` carries only the name
@@ -310,9 +310,9 @@ provision_distro_packages_icewm_desktop:
 # normally `lxqt`) rather than hardcoded, same as icewm_desktop. CAVEAT: verified-shaped for
 # Debian + openSUSE (the common ivm targets); Fedora is best-effort - same lightdm-autologin /
 # SELinux-Enforcing caveat as icewm_desktop (a verified fix lands as a
-# `redhat: {post_install: ...}` here). See TODO.md.
+# `RedHat: {post_install: ...}` here). See TODO.md.
 provision_distro_packages_lxqt_desktop:
-  common:
+  __common__:
     install:
       - lxqt-session
       - lxqt-panel
@@ -330,13 +330,13 @@ provision_distro_packages_lxqt_desktop:
       printf '[Seat:*]\nautologin-user=user\nautologin-session=%s\n' "$lxqt_session_name" > /etc/lightdm/lightdm.conf.d/autologin.conf
       # --force: openSUSE pre-aliases display-manager.service; harmless on Debian/Fedora.
       systemctl enable --force lightdm
-  debian:
+  Debian:
     install:
       - lightdm-gtk-greeter
-  suse:
+  Suse:
     install:
       - lightdm-gtk-greeter
-  redhat:
+  RedHat:
     install:
       - lightdm-gtk         # Fedora's greeter package (NOT lightdm-gtk-greeter)
       - lxqt-x11-session    # Fedora-only: the X11 session .desktop subpackage (else autologin has no session to enter)
@@ -351,7 +351,7 @@ provision_distro_packages_lxqt_desktop:
 # Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three); the Debian-only `uidmap`
 # split is the one divergence. (No HOST toggle - dict-form bundles are guest-only.)
 provision_distro_packages_podman_rootless:
-  common:
+  __common__:
     install:
       - podman
       - passt
@@ -363,6 +363,6 @@ provision_distro_packages_podman_rootless:
       grep -q '^user:' /etc/subgid || usermod --add-subgids 100000-165535 user
       # cgroup delegation without an interactive login session (headless guest).
       loginctl enable-linger user
-  debian:
+  Debian:
     install:
       - uidmap   # newuidmap/newgidmap; Fedora/openSUSE ship these in shadow-utils/shadow (base)
