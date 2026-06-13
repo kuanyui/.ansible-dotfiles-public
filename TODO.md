@@ -424,11 +424,12 @@ First real `ivm init webbrowser` on the host surfaced these (all fixed unless no
 - [x] **`ivm list` + `ivm reboot`** - `list` = raw `incus list` passthrough
   (via `parse_known_args` so `--format` etc. reach incus; other subcommands still
   reject unknown args); `reboot` = `incus restart` the target VM.
-- [ ] **Light-desktop apps on icewm** - add `pcmanfm-qt` + `lximage-qt` (the
-  actively-maintained LXQt file manager + image viewer; GTK `pcmanfm`/`gpicview`
-  are stalled/abandoned). Both in Tumbleweed OSS. DECIDE: extend `webbrowser`
-  into a light desktop vs a separate `desktop` template. Deferred - user is
-  trying the current setup first to see if needed.
+- [x] **Light-desktop apps on icewm** - RESOLVED via a dedicated `distro_packages_lxqt_desktop`
+  bundle (full LXQt: lxqt-session/panel + openbox + `pcmanfm-qt` file manager + `qterminal`,
+  autologin like icewm_desktop) instead of bolting apps onto icewm or forking a `desktop`
+  template - `ivm provision gui_x11 lxqt_desktop`. icewm_desktop itself also gained a terminal
+  (`lxterminal`, bound to Ctrl+Alt+T) so the bare-WM desktop is usable too. Still optional:
+  `lximage-qt` image viewer (add to either bundle if wanted; GTK `gpicview` is abandoned).
 - [ ] **Cross-distro icewm theming** - when a non-openSUSE icewm template exists:
   Fedora `+= icewm-themes` (extras; default theme already in `icewm` since F31),
   Debian has none (bundled), and ship a `~/.icewm/theme` pick so it's not ugly on
@@ -918,6 +919,21 @@ one shot" possible, distro_packages bundles gained an OPTIONAL `post_install` ke
   `gui_x11`: `ivm provision gui_x11 icewm_desktop`.
   - Greeter bug fix: ivm installs with recommends OFF (apt-min/zypper-min/dnf-min), so the
     greeter is NOT auto-pulled - listed explicitly. Fedora name verified via packages.fedoraproject.org.
+- [x] **icewm terminal + Ctrl+Alt+T** - icewm_desktop shipped no terminal and (verified via
+  icewm-keys(5)) has NO default terminal hotkey - the man page's `key "Alt+Ctrl+t" xterm` is only
+  an example. Added `lxterminal` (common.install; user-chosen lightweight terminal) + a
+  `common.post_install` line writing `~/.config/icewm/keys` = `key "Ctrl+Alt+t" lxterminal`, so a
+  fresh icewm desktop is usable. lxterminal: same package name on Debian/Fedora/openSUSE.
+- [x] **`distro_packages_lxqt_desktop`** - sibling desktop bundle (pick ONE with icewm_desktop):
+  a full lightweight Qt DE. `common.install` lxqt-session + lxqt-panel + openbox (LXQt's X11 WM,
+  not auto-pulled with weak-deps off) + `pcmanfm-qt` (file manager) + `qterminal` (terminal) +
+  lightdm + spice-vdagent; same autologin `common.post_install` (session DETECTED via
+  `/usr/share/xsessions/*lxqt*.desktop`). Per-family `install`: greeter (Debian/openSUSE
+  `lightdm-gtk-greeter`, Fedora `lightdm-gtk`) + Fedora-only `lxqt-x11-session` (Fedora splits the
+  X11 session .desktop into that subpackage). LXQt honors XDG autostart so spice-vdagent
+  self-starts - no icewm-style startup hack. Wired into ivm's distro-package-groups.json render +
+  auto-completes. Rides on gui_x11: `ivm provision gui_x11 lxqt_desktop`. Per-family names verified
+  (Debian lxqt-core deps / openSUSE Portal:LXQt / packages.fedoraproject.org).
 - Decision log: started with a sibling `post_install` key (kept overlays mono-typed) but that
   POLLUTED the family layer (post_install sitting beside debian/suse/redhat) and duplicated the
   family enumeration. Switched to the nested per-family `{install, post_install}` (the user's
@@ -928,7 +944,9 @@ one shot" possible, distro_packages bundles gained an OPTIONAL `post_install` ke
 - [ ] **Validate in a guest** - `ivm init` a headless template then
   `ivm provision gui_x11 icewm_desktop`; `ivm gui` shows the icewm desktop (autologin worked,
   session name detected, greeter present so lightdm starts, spice-vdagent gives live resize).
-  Debian = primary target; openSUSE mirrors templates/webbrowser.yaml.
+  Debian = primary target; openSUSE mirrors templates/webbrowser.yaml. Also: on icewm verify
+  Ctrl+Alt+T opens lxterminal; and `ivm provision gui_x11 lxqt_desktop` brings up an LXQt desktop
+  with pcmanfm-qt + qterminal reachable from the panel menu.
 - [ ] **Fedora icewm_desktop is best-effort/untested** - SELinux Enforcing has known
   lightdm-autologin issues (.xsession-errors write denials / home context; redhat bugzilla
   1900334, 1323426). Once a fix is verified on a real Fedora box it goes in

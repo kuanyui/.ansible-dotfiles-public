@@ -23,7 +23,7 @@
 # (so `su - user` works), idempotent (re-runs each `ivm provision <bundle>`). GUEST-ONLY: the
 # host install path runs only the package lists (a snippet assumes the guest `user`), so the
 # host toggle loop holds bare-list bundles only. Most bundles never need the dict form -
-# `distro_packages_icewm_desktop` is the one that does.
+# `distro_packages_icewm_desktop` / `distro_packages_lxqt_desktop` (the desktop bundles) are the ones that do.
 
 distro_packages_basic_tools:
   common:
@@ -238,9 +238,13 @@ distro_packages_dev_android:
 # a post_install, since it is a package not a script. The greeter is listed EXPLICITLY because
 # ivm installs with recommends OFF (apt-min/zypper-min/dnf-min) so it is not auto-pulled.
 # `spice-vdagent` (in common.install, not relying on `sys.gui`) gives `ivm gui`'s SPICE console
-# clipboard + dynamic resolution. The wiring: graphical.target + lightdm autologin (-> the
-# guest's `user`, into an icewm session, name DETECTED at runtime: Debian `icewm-session` /
-# openSUSE `icewm`) + spice-vdagent autostart. CAVEAT: verified-shaped for Debian (the common
+# clipboard + dynamic resolution; `lxterminal` (common.install) is the terminal emulator -
+# icewm bundles none, so without it a fresh desktop can launch nothing. The wiring:
+# graphical.target + lightdm autologin (-> the guest's `user`, into an icewm session, name
+# DETECTED at runtime: Debian `icewm-session` / openSUSE `icewm`) + spice-vdagent autostart +
+# a `~/.config/icewm/keys` line binding Ctrl+Alt+T to lxterminal (icewm has NO default
+# terminal hotkey; icewm-keys(5)'s `key "Alt+Ctrl+t" xterm` is only a doc example).
+# CAVEAT: verified-shaped for Debian (the common
 # ivm target) + openSUSE (mirrors templates/webbrowser.yaml); Fedora is best-effort - SELinux
 # Enforcing has known lightdm-autologin issues; a fix, once verified on a real box, lands as a
 # `redhat: {post_install: ...}` here (the per-family slot is exactly for that). See TODO.md.
@@ -248,6 +252,7 @@ distro_packages_icewm_desktop:
   common:
     install:
       - icewm
+      - lxterminal      # terminal emulator (icewm bundles none); bound to Ctrl+Alt+T in post_install
       - lightdm
       - spice-vdagent
     post_install: |
@@ -262,6 +267,9 @@ distro_packages_icewm_desktop:
       # icewm ignores XDG autostart -> start spice-vdagent (host<->guest clipboard /
       # dynamic resolution) from its own startup.
       su - user -c 'mkdir -p ~/.config/icewm && printf "#!/bin/sh\nspice-vdagent &\n" > ~/.config/icewm/startup && chmod +x ~/.config/icewm/startup'
+      # icewm ships NO default terminal hotkey (icewm-keys(5): its `key "Alt+Ctrl+t" xterm`
+      # is only a doc example, not a shipped binding) -> bind Ctrl+Alt+T to lxterminal.
+      su - user -c 'mkdir -p ~/.config/icewm && printf "key \"Ctrl+Alt+t\" lxterminal\n" > ~/.config/icewm/keys'
   debian:
     install:
       - lightdm-gtk-greeter
@@ -272,3 +280,53 @@ distro_packages_icewm_desktop:
   redhat:
     install:
       - lightdm-gtk          # Fedora's greeter package (NOT lightdm-gtk-greeter)
+
+# A complete, autologin LXQt desktop - sibling of `distro_packages_icewm_desktop`; pick ONE
+# (both ride on gui_x11: `ivm provision gui_x11 lxqt_desktop`). Difference from icewm_desktop:
+# a full lightweight Qt DE (session + panel + file manager + terminal over the openbox WM)
+# rather than a bare WM, so it ships the file manager + terminal a desktop actually needs.
+# `common.install` holds the parts whose package names match on all three families (verified):
+# `lxqt-session` + `lxqt-panel`, `openbox` (LXQt's default X11 WM - NOT pulled by lxqt-session
+# with weak-deps off, so explicit), `pcmanfm-qt` (file manager), `qterminal` (terminal), plus
+# `lightdm` + `spice-vdagent` (as icewm_desktop). Per-family `install` carries only the name
+# divergences, all EXPLICIT because ivm installs with recommends OFF: the lightdm GREETER
+# (Debian/openSUSE `lightdm-gtk-greeter`, Fedora `lightdm-gtk`) and, on Fedora ONLY,
+# `lxqt-x11-session` (Fedora splits the X11 session `.desktop` into that subpackage;
+# Debian/openSUSE ship it inside `lxqt-session`). Unlike icewm, LXQt is a real DE that HONORS
+# XDG autostart, so spice-vdagent (it ships its own `/etc/xdg/autostart` entry) starts itself
+# - no manual WM-startup hack, and no icewm-style Ctrl+Alt+T keys file (LXQt launches
+# `qterminal` from its panel application menu; shortcuts are configurable in LXQt settings).
+# The autologin session name is DETECTED at runtime (`/usr/share/xsessions/*lxqt*.desktop`,
+# normally `lxqt`) rather than hardcoded, same as icewm_desktop. CAVEAT: verified-shaped for
+# Debian + openSUSE (the common ivm targets); Fedora is best-effort - same lightdm-autologin /
+# SELinux-Enforcing caveat as icewm_desktop (a verified fix lands as a
+# `redhat: {post_install: ...}` here). See TODO.md.
+distro_packages_lxqt_desktop:
+  common:
+    install:
+      - lxqt-session
+      - lxqt-panel
+      - openbox          # LXQt's default X11 window manager; lxqt-session does not pull it (weak-deps off)
+      - pcmanfm-qt       # file manager
+      - qterminal        # terminal emulator
+      - lightdm
+      - spice-vdagent
+    post_install: |
+      systemctl set-default graphical.target
+      mkdir -p /etc/lightdm/lightdm.conf.d
+      # LXQt's xsession .desktop is normally 'lxqt'; detect it rather than hardcode
+      # (Fedora ships it via the lxqt-x11-session subpackage - the file name may differ).
+      lxqt_session_name=$(basename "$(ls /usr/share/xsessions/*lxqt*.desktop | head -n1)" .desktop)
+      printf '[Seat:*]\nautologin-user=user\nautologin-session=%s\n' "$lxqt_session_name" > /etc/lightdm/lightdm.conf.d/autologin.conf
+      # --force: openSUSE pre-aliases display-manager.service; harmless on Debian/Fedora.
+      systemctl enable --force lightdm
+  debian:
+    install:
+      - lightdm-gtk-greeter
+  suse:
+    install:
+      - lightdm-gtk-greeter
+  redhat:
+    install:
+      - lightdm-gtk         # Fedora's greeter package (NOT lightdm-gtk-greeter)
+      - lxqt-x11-session    # Fedora-only: the X11 session .desktop subpackage (else autologin has no session to enter)
