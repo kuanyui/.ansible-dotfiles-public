@@ -12,3 +12,6 @@
 
 - name: Import Debian CD signing keys into a dedicated GPG keyring
   ansible.builtin.include_tasks: import_debian_cd_keys.yml
+
+- name: Import the openSUSE Project Signing Key into a dedicated GPG keyring
+  ansible.builtin.include_tasks: import_opensuse_keys.yml

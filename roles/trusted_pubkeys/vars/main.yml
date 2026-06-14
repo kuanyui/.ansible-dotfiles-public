@@ -52,3 +52,20 @@ trusted_pubkeys_debian_cd_keys:
   - name: "Debian Testing CDs Automatic Signing Key"
     fingerprint: "F41D30342F3546695F65C66942468F4009EA8AC3"
     file: "debian-testing-cd-signing-42468F4009EA8AC3.asc"
+
+# openSUSE Project Signing Key: signs Tumbleweed media + appliance checksums,
+# e.g. the Minimal-VM Cloud qcow2's `.sha256.asc`. Pinned (armored) in files/,
+# imported into its own keyring (`trusted_pubkeys_opensuse_keyring`). Verify a
+# downloaded Tumbleweed image's checksum offline with:
+#   gpg --no-default-keyring --keyring <keyring> --verify <img>.sha256.asc <img>.sha256
+#
+# Source - the armored key is the authoritative repo signing key shipped at:
+#   https://download.opensuse.org/tumbleweed/repo/oss/repodata/repomd.xml.key
+# Verified 2026-06-15: this key (keyid 35A2F86E29B700A4) produces a GOOD signature
+# over the live Tumbleweed Minimal-VM Cloud qcow2's `.sha256.asc`, and its v4
+# fingerprint below was cross-checked == the copy on keyserver.ubuntu.com. The
+# role re-asserts the fingerprint against the keyring at apply time.
+trusted_pubkeys_opensuse_keys:
+  - name: "openSUSE Project Signing Key"
+    fingerprint: "AD485664E901B867051AB15F35A2F86E29B700A4"
+    file: "opensuse-project-signing-35A2F86E29B700A4.asc"

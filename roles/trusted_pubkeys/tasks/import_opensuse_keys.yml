@@ -1,0 +1,74 @@
+---
+- name: Check whether `gpg` is available (openSUSE key import needs it)
+  ansible.builtin.command:
+    cmd: gpg --version
+  register: _trusted_pubkeys_gpg_check_opensuse
+  changed_when: false
+  failed_when: false
+
+- name: Warn and skip openSUSE key import when `gpg` is absent
+  ansible.builtin.debug:
+    msg: >-
+      gpg not found - skipping openSUSE Project Signing Key import. Install gnupg
+      (e.g. `sudo zypper install gpg2` / `sudo apt install gnupg`) and re-run to
+      enable verifying Tumbleweed images.
+  when: _trusted_pubkeys_gpg_check_opensuse.rc != 0
+
+- name: Import and verify the openSUSE Project Signing Key into the dedicated keyring
+  when: _trusted_pubkeys_gpg_check_opensuse.rc == 0
+  block:
+    - name: Ensure `{{ target_home }}/.gnupg/` exists with mode 0700 (gpg requires this)
+      ansible.builtin.file:
+        path: "{{ target_home }}/.gnupg"
+        state: directory
+        owner: "{{ target_user }}"
+        group: "{{ target_group }}"
+        mode: "0700"
+
+    - name: Read fingerprints already in `{{ trusted_pubkeys_opensuse_keyring }}`
+      ansible.builtin.command:
+        cmd: >-
+          gpg --no-default-keyring --keyring {{ trusted_pubkeys_opensuse_keyring }}
+          --batch --with-colons --list-keys
+      register: _trusted_pubkeys_opensuse_existing
+      changed_when: false
+      failed_when: false  # a not-yet-created keyring (first run) is fine
+
+    - name: Import each pinned openSUSE key not already present
+      ansible.builtin.command:
+        cmd: >-
+          gpg --no-default-keyring --keyring {{ trusted_pubkeys_opensuse_keyring }}
+          --batch --import {{ role_path }}/files/{{ item.file }}
+      loop: "{{ trusted_pubkeys_opensuse_keys }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.fingerprint }})"
+      when: item.fingerprint not in _trusted_pubkeys_opensuse_existing.stdout
+
+    - name: Re-read the dedicated keyring after import
+      ansible.builtin.command:
+        cmd: >-
+          gpg --no-default-keyring --keyring {{ trusted_pubkeys_opensuse_keyring }}
+          --batch --with-colons --list-keys
+      register: _trusted_pubkeys_opensuse_after
+      changed_when: false
+
+    # Pin integrity: fail loudly if a pinned file did not yield its expected
+    # fingerprint (wrong/tampered key material, or a failed import).
+    - name: Assert every pinned openSUSE fingerprint is present in the keyring
+      ansible.builtin.assert:
+        that: item.fingerprint in _trusted_pubkeys_opensuse_after.stdout
+        fail_msg: >-
+          Fingerprint {{ item.fingerprint }} ({{ item.name }}) is NOT in
+          {{ trusted_pubkeys_opensuse_keyring }} after import - the pinned key in
+          files/{{ item.file }} may be wrong, or the import failed.
+        quiet: true
+      loop: "{{ trusted_pubkeys_opensuse_keys }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.fingerprint }})"
+
+    - name: Show how to verify a downloaded Tumbleweed image with this keyring
+      ansible.builtin.debug:
+        msg: >-
+          openSUSE key ready. Verify a downloaded image's checksum with:
+          gpg --no-default-keyring --keyring {{ trusted_pubkeys_opensuse_keyring }}
+          --verify <img>.sha256.asc <img>.sha256

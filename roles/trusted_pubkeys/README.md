@@ -11,10 +11,11 @@ Gate: `setup_trusted_pubkeys` (default `false`, in `group_vars/all.yml`).
 | --- | --- | --- |
 | GitHub + GitLab SSH host keys | pinned in `vars/main.yml` | `~/.ssh/known_hosts` |
 | Debian CD signing GPG keys | pinned armored in `files/` | dedicated keyring `~/.gnupg/ansible-trusted-debian-cd.gpg` |
+| openSUSE Project Signing Key | pinned armored in `files/` | dedicated keyring `~/.gnupg/ansible-trusted-opensuse.gpg` |
 
 So `git clone git@github.com:...` / `git@gitlab.com:...` over SSH no longer shows
 the `authenticity of host ... can't be established` TOFU prompt, and you can verify
-downloaded Debian images offline.
+downloaded Debian / openSUSE images offline.
 
 ## Verifying Debian images
 
@@ -36,6 +37,19 @@ alias verify-debian-iso='gpg --no-default-keyring --keyring ~/.gnupg/ansible-tru
 Needs `gpg`; if it is absent the role prints a warning and skips this part (the
 SSH part is unaffected). On apply, the role asserts each imported key's
 fingerprint matches the pinned value in `vars/main.yml`, failing loudly otherwise.
+
+## Verifying openSUSE (Tumbleweed) images
+
+Same scheme, own keyring. openSUSE signs the `.sha256` of each image with the
+**openSUSE Project Signing Key** and ships the detached sig as `.sha256.asc`:
+
+```
+gpg --no-default-keyring --keyring ~/.gnupg/ansible-trusted-opensuse.gpg \
+    --verify <img>.qcow2.sha256.asc <img>.qcow2.sha256
+```
+
+(then check the `.sha256` matches the image's actual sha256sum). This is the key
+`qvm` can use to GPG-verify its Tumbleweed Cloud qcow2 download.
 
 ## Why pinned (hardcoded), not fetched
 
@@ -65,6 +79,12 @@ Debian CD keys roll per stable release and are additive (old keys still verify
 old images). To add one: re-verify against <https://www.debian.org/CD/verify>,
 drop the armored key into `files/`, and add it to `trusted_pubkeys_debian_cd_keys`
 in `vars/main.yml`.
+
+The openSUSE Project Signing Key rotates rarely. The authoritative armored copy
+is the repo signing key at
+<https://download.opensuse.org/tumbleweed/repo/oss/repodata/repomd.xml.key>;
+re-verify it produces a GOOD signature over a live image's `.sha256.asc`, then
+update the armored file + fingerprint in `trusted_pubkeys_opensuse_keys`.
 
 ## Layout note
 

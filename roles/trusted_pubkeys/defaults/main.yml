@@ -9,3 +9,9 @@ target_group: ""
 # (uninstall = delete it). Verify Debian images with:
 #   gpg --no-default-keyring --keyring <this path> --verify SHA256SUMS.sign SHA256SUMS
 trusted_pubkeys_debian_cd_keyring: "{{ target_home }}/.gnupg/ansible-trusted-debian-cd.gpg"
+
+# Dedicated keyring for the pinned openSUSE Project Signing Key (same boundary
+# idea: the file IS the ansible-managed unit, uninstall = delete it). Verify a
+# Tumbleweed image's checksum with:
+#   gpg --no-default-keyring --keyring <this path> --verify <img>.sha256.asc <img>.sha256
+trusted_pubkeys_opensuse_keyring: "{{ target_home }}/.gnupg/ansible-trusted-opensuse.gpg"
