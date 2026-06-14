@@ -32,11 +32,12 @@ and 3D desktop Linux. Positioning: [`roles/vm_incus/docs/survey-of-quickemu.md`]
 
 | command | what |
 | --- | --- |
-| `qvm init <os> [name]` | create (prebuilt: tumbleweed/debian/fedora; else quickget) |
+| `qvm init <os> [name] [--provision <unit...>]` | create (prebuilt: tumbleweed/debian/fedora; else quickget); `--provision` installs bundles after first boot |
 | `qvm start [--gui]` | boot headless (default) or SPICE window |
 | `qvm stop` / `kill` | ACPI powerdown (monitor socket) / force-stop |
 | `qvm exec -- <cmd>` | run in guest via guest agent (root, batch) |
 | `qvm push` / `pull` | one file in / out via guest agent |
+| `qvm provision [<unit...>]` | install distro bundles / thirdparty recipes / dotfiles via the guest agent (shares ivm's registry: `distro-package-groups.json` + dotfiles); no arg = list units |
 | `qvm shell` | interactive SSH |
 | `qvm snapshot <action>` | qcow2-internal: apply/create/delete `<tag>`, info (VM stopped) |
 | `qvm list` / `info` / `delete` | inventory / details / remove (confirms) |
