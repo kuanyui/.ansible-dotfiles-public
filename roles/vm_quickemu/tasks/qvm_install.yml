@@ -30,3 +30,13 @@
     src: completions/qvm.bash
     dest: "{{ vm_quickemu_bash_completion_dir }}/qvm"
     mode: "0644"
+
+# ---------- Produce the SHARED provision-asset cache (consumed by `qvm provision`) ----------
+# The SAME cache ivm uses (JSON registries + feature-first dotfiles tree), produced by the
+# internal `_shared_prebuilt_provision_assets` role into
+# `~/.local/share/ansible-managed/shared-prebuilt-provision-assets/`. `qvm provision` reads
+# it (its DEFAULT_SHARED_ASSETS_ROOT). Regenerable + SHARED with ivm - so it is REF-COUNTED
+# at uninstall (see qvm_uninstall.yml), not owned by either launcher's subdir.
+- name: Produce the shared provision-asset cache (`roles/_shared_prebuilt_provision_assets`)
+  ansible.builtin.include_role:
+    name: _shared_prebuilt_provision_assets
