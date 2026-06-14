@@ -16,6 +16,7 @@ _qvm_subcommands=(
   'push:copy one local file into the guest (guest agent)'
   'pull:copy one guest file out (guest agent)'
   'snapshot:qcow2-internal snapshots - apply/create/delete <tag>, info'
+  'provision:install distro bundle(s) / thirdparty recipe(s) / dotfiles onto the VM (guest agent)'
   'info:show the VM state (conf, disk, ssh port, agent socket)'
   'list:list qvm-managed VMs (name, state, bound dir)'
 )
@@ -29,11 +30,46 @@ _qvm_vm_names() {
   done
 }
 
+# All installable unit names for `provision`: keys of the materialized distro-bundle
+# + thirdparty-recipe registries + dotfiles feature dirs, from the SHARED provision-asset
+# cache (python3 is a qvm dependency, so always present). Same dynamic pattern as ivm's
+# `_ivm_unit_names` - reads the JSON, so it auto-tracks the registry.
+_qvm_unit_names() {
+  local _qvm_shared_assets_root="${SHARED_PREBUILT_PROVISION_ASSETS_ROOT:-$HOME/.local/share/ansible-managed/shared-prebuilt-provision-assets}"
+  python3 - "$_qvm_shared_assets_root" 2>/dev/null <<'PY'
+import json, os, sys
+shared_root = sys.argv[1]
+seen, out = set(), []
+def add(name, desc=""):
+    if name in seen:
+        return
+    seen.add(name)
+    # zsh _describe splits on the FIRST colon -> "name:description"; bare name = no desc.
+    out.append(f"{name}:{desc}" if desc else name)
+for f in ("distro-package-groups.json", "thirdparty-software.json"):
+    p = os.path.join(shared_root, f)
+    if os.path.exists(p):
+        try:
+            for key, val in json.load(open(p)).items():
+                add(key, val.get("description", "") if isinstance(val, dict) else "")
+        except Exception:
+            pass
+dotfiles = os.path.join(shared_root, "dotfiles")
+if os.path.isdir(dotfiles):
+    for d in sorted(os.listdir(dotfiles)):
+        add(d)
+# A name can live in two registries (first occurrence wins, so the `description` shown
+# is the distro one - it already notes any pairing).
+print("\n".join(out))
+PY
+}
+
 local state
 
 _arguments -C \
   '--name[target an existing VM by name, ignoring the cwd binding]:vm:->vmname' \
   '--dry-run[print every mutating command instead of running it]' \
+  '--shared-assets-root[shared provision-asset cache dir (rarely overridden)]:dir:_files -/' \
   '1:subcommand:->subcmd' \
   '*::args:->args'
 
@@ -42,10 +78,15 @@ case "$state" in
   vmname) compadd -- ${(f)"$(_qvm_vm_names)"} ;;
   args)
     case "$words[1]" in
-      init) compadd -- tumbleweed debian fedora --disk-size --ram --cpus --yes ;;
+      init) compadd -- tumbleweed debian fedora --disk-size --ram --cpus --yes --provision ;;
       start) compadd -- --gui ;;
       delete) compadd -- --yes ;;
       snapshot) compadd -- apply create delete info ;;
+      provision)
+        # `_describe` renders each "name:description" line as `name  -- description`.
+        local -a _qvm_provision_units
+        _qvm_provision_units=(${(f)"$(_qvm_unit_names)"})
+        _describe -t units 'provision unit' _qvm_provision_units ;;
       push|pull) _files ;;
     esac
     ;;

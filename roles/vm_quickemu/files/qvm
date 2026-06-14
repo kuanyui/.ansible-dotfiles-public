@@ -53,6 +53,17 @@ QVM_DATA_HOME: Path = Path(os.environ.get("QVM_HOME", str(Path.home() / ".local/
 VMS_DIR: Path = QVM_DATA_HOME / "vms"
 IMAGE_CACHE_DIR: Path = QVM_DATA_HOME / "cache"
 
+# The SHARED, regenerable provision-asset cache (produced by
+# roles/_shared_prebuilt_provision_assets, also included by qvm_install):
+# distro-package-groups.json + thirdparty-software.json + the feature-first
+# dotfiles/ tree. The SAME dir ivm reads - hence its name carries no `qvm` tie.
+# `qvm provision` only READS it. Rarely overridden (env
+# SHARED_PREBUILT_PROVISION_ASSETS_ROOT or --shared-assets-root, for testing /
+# non-standard installs).
+DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
+    os.environ.get("SHARED_PREBUILT_PROVISION_ASSETS_ROOT",
+                   str(Path.home() / ".local/share/ansible-managed/shared-prebuilt-provision-assets")))
+
 # `init <os>` arguments served by a PREBUILT image (no interactive installer).
 # Everything else is handed to `quickget <os> ...` as-is.
 TUMBLEWEED_CLOUD_QCOW2_URL: str = (
@@ -82,8 +93,24 @@ QVM_META_FILENAME: str = "qvm-meta.json"
 # Subcommands that act on ONE existing VM, resolved by cwd binding or `--name`.
 VM_ACTING_SUBCOMMANDS: tuple[str, ...] = (
     "start", "stop", "kill", "delete", "shell", "exec", "push", "pull",
-    "snapshot", "info",
+    "snapshot", "info", "provision",
 )
+
+# Map a VM's recorded `guest_os_label` (qvm-meta.json, written by write_vm_meta /
+# cmd_init / init_via_quickget) to the ansible fact `ansible_os_family` (values:
+# Debian/Suse/RedHat - NOT the distro name). It keys both the feature-first dotfiles
+# staging (dotfiles/<feature>/<Debian|Suse|RedHat>/) and the package-group overlays
+# (__common__ + per-family) in distro-package-groups.json. The prebuilt OS labels
+# (PREBUILT_OSES = tumbleweed/debian/fedora) all map; quickget passthrough labels
+# (e.g. ubuntu) map where the family is known. A label with no entry (e.g. windows,
+# macos) is unprovisionable - cmd_provision dies clearly.
+GUEST_OS_LABEL_TO_ANSIBLE_OS_FAMILY: dict[str, str] = {
+    "tumbleweed": "Suse",
+    "opensuse": "Suse",
+    "debian": "Debian",
+    "ubuntu": "Debian",
+    "fedora": "RedHat",
+}
 
 VM_NAME_COLOR: str = "\033[1;36m"  # bold cyan, same convention as ivm
 COLOR_RESET: str = "\033[0m"
@@ -268,6 +295,185 @@ def vm_pid_if_running(vm_record: VmRecord) -> int | None:
     return qemu_pid
 
 
+# ---------- provision resolver (reads the SHARED asset cache) ----------
+# These helpers are duplicated verbatim from `ivm` BY DESIGN: each launcher is a
+# standalone single-file tool that reads the SAME shared JSON (the DATA is the one
+# source of truth; the resolver CODE is copied so qvm needs no ivm import). Keep
+# them in sync with roles/vm_incus/files/ivm.
+
+
+def load_package_groups(shared_root: Path) -> dict[str, Any]:
+    """Load distro-package-groups.json (rendered at apply time from the
+    provision_distro_packages registry; see roles/_shared_prebuilt_provision_assets)."""
+    path: Path = shared_root / "distro-package-groups.json"
+    if not path.is_file():
+        die(f"distro-package-groups.json not found: {path}; re-run `make quickemu-install`")
+    loaded: Any = json.loads(path.read_text())
+    if not isinstance(loaded, dict):
+        die(f"distro-package-groups.json is not a mapping: {path}")
+    return loaded
+
+
+def load_thirdparty_software(shared_root: Path) -> dict[str, Any]:
+    """Load thirdparty-software.json (rendered at apply time from the
+    provision_thirdparty_software registry; see roles/_shared_prebuilt_provision_assets)."""
+    path: Path = shared_root / "thirdparty-software.json"
+    if not path.is_file():
+        die(f"thirdparty-software.json not found: {path}; re-run `make quickemu-install`")
+    loaded: Any = json.loads(path.read_text())
+    if not isinstance(loaded, dict):
+        die(f"thirdparty-software.json is not a mapping: {path}")
+    return loaded
+
+
+def overlay_install_packages(overlay: Any) -> list[str]:
+    """A family overlay (the `common` / `debian` / `suse` / `redhat` value of a
+    distro_packages bundle) is EITHER a bare package list, OR - when that family also
+    carries setup - a dict `{install: [...], post_install: <shell>}`. Return its package
+    list either way."""
+    if isinstance(overlay, dict):
+        return list(overlay.get("install", []))
+    return list(overlay or [])
+
+
+def overlay_post_install(overlay: Any) -> str:
+    """The optional `post_install` shell snippet of a family overlay (only its dict form
+    has one). Returns "" for the bare-list form or when absent."""
+    if isinstance(overlay, dict):
+        return str(overlay.get("post_install", "") or "")
+    return ""
+
+
+def resolve_group(registry: dict[str, Any], group: str, ansible_os_family: str) -> list[str]:
+    """A bundle resolves to `__common__ + <ansible_os_family overlay>` packages (same rule as
+    roles/provision_distro_packages/tasks/main.yml, but for one family at a time). Each overlay is a
+    bare list or a `{install, post_install}` dict - see overlay_install_packages."""
+    entry: Any = registry.get(group)
+    if entry is None:
+        die(f"unknown distro_package_group '{group}' "
+            f"(not in distro-package-groups.json; defined ones: {', '.join(sorted(registry))})")
+    return overlay_install_packages(entry.get("__common__")) + overlay_install_packages(entry.get(ansible_os_family))
+
+
+def group_post_install_snippet(group_entry: dict[str, Any], ansible_os_family: str) -> str:
+    """Resolve a bundle's `post_install` for one family: the `__common__` overlay's snippet +
+    this family overlay's snippet, ADDITIVE (__common__ runs first, the family-specific extra
+    appends - so a distro needing one extra step adds it without repeating the shared part).
+    `post_install` lives INSIDE each family overlay's dict form (sibling to its `install`),
+    so the bundle's top level stays purely families. Returns "" when none define one."""
+    parts: list[str] = [overlay_post_install(group_entry.get("__common__")),
+                        overlay_post_install(group_entry.get(ansible_os_family))]
+    return "\n".join(part for part in parts if part.strip())
+
+
+def groups_post_install_script(groups: list[str], registry: dict[str, Any], ansible_os_family: str) -> str:
+    """A distro_packages bundle MAY carry an optional `post_install` shell snippet
+    (sibling to its per-family package overlays) - setup that belongs WITH its packages,
+    e.g. enabling a display manager after installing it. Concatenate the resolved
+    snippets of the given bundles, in order, each prefixed with an echo marker; skip
+    bundles without one. Run as ROOT in the guest AFTER the packages install. Idempotent."""
+    script: str = ""
+    for group in groups:
+        snippet: str = group_post_install_snippet(registry.get(group) or {}, ansible_os_family)
+        if snippet.strip():
+            script += f"echo '==> {group}: post_install' >&2\n"
+            script += snippet if snippet.endswith("\n") else snippet + "\n"
+    return script
+
+
+# zypper is the most failure-prone of the three package managers (mirror/metadata
+# hiccups); run it non-interactively (same policy as ivm).
+ZYPPER: str = "zypper --non-interactive"
+
+
+def install_packages_script(ansible_os_family: str, packages: list[str]) -> str:
+    """Per-family install with weak-deps/recommends OFF (the apt-min/zypper-min/
+    dnf-min policy, applied to provisioning)."""
+    pkgs: str = " ".join(packages)
+    if ansible_os_family == "Debian":
+        return ("export DEBIAN_FRONTEND=noninteractive\n"
+                "apt-get update -qq\n"
+                f"apt-get install --yes --no-install-recommends {pkgs}\n")
+    if ansible_os_family == "Suse":
+        return (f"{ZYPPER} refresh\n"
+                f"{ZYPPER} install --no-recommends {pkgs}\n")
+    if ansible_os_family == "RedHat":
+        return f"dnf install --assumeyes --setopt=install_weak_deps=False {pkgs}\n"
+    die(f"no package-manager mapping for ansible_os_family '{ansible_os_family}'")
+
+
+def resolve_thirdparty_software(
+    names: list[str], registry: dict[str, Any], ansible_os_family: str
+) -> list[dict[str, Any]]:
+    """Resolve `thirdparty_software` recipe names against the registry into
+    `{name, already_installed?, install_script}` recipes for THIS VM's family.
+    OVERRIDE (not additive like distro groups): the family's entry if defined, else
+    `__common__`."""
+    recipes: list[dict[str, Any]] = []
+    for name in names:
+        entry: Any = registry.get(name)
+        if entry is None:
+            die(f"unknown thirdparty_software '{name}' (not in thirdparty-software.json; "
+                f"defined: {', '.join(sorted(registry))})")
+        family_recipe: Any = entry.get(ansible_os_family) or entry.get("__common__")
+        if family_recipe is None:
+            die(f"thirdparty_software '{name}' has no recipe for {ansible_os_family} "
+                f"(needs a '{ansible_os_family}' or '__common__' entry)")
+        install_script: str = family_recipe.get("install_script", "")
+        if not install_script:
+            die(f"thirdparty_software '{name}' ({ansible_os_family}) has no install_script")
+        recipes.append({
+            "name": name,
+            "already_installed": family_recipe.get("already_installed"),
+            "install_script": install_script,
+        })
+    return recipes
+
+
+def thirdparty_install_script(recipes: list[dict[str, Any]]) -> str:
+    """Shell (run as root in the guest) that installs each resolved recipe, guarded
+    by its `already_installed` probe when present (rc 0 -> skip), so a re-run is
+    idempotent. Each recipe's `install_script` is the author's verbatim shell."""
+    script: str = ""
+    for recipe in recipes:
+        name: str = recipe["name"]
+        install: str = recipe["install_script"]
+        if not install.endswith("\n"):
+            install += "\n"
+        probe: str | None = recipe.get("already_installed")
+        script += f"echo '==> thirdparty_software: {name}' >&2\n"
+        if probe:
+            script += (
+                f"if {{ {probe}; }} >/dev/null 2>&1; then\n"
+                f"  echo '    already present, skipping' >&2\n"
+                "else\n"
+                f"{install}"
+                "fi\n"
+            )
+        else:
+            script += install
+    return script
+
+
+def vm_ansible_os_family(vm_record: VmRecord) -> str:
+    """The target VM's ansible_os_family, from its recorded `guest_os_label`
+    (qvm-meta.json). `die`s clearly when the VM's OS has no provisioning mapping -
+    e.g. a quickget passthrough OS (windows/macos) qvm cannot provision."""
+    guest_os_label: str = str(vm_record.meta.get("guest_os_label") or "")
+    if not guest_os_label:
+        die(f"VM `{vm_record.vm_name}` has no recorded guest_os_label "
+            f"(qvm-meta.json) - cannot determine how to provision it")
+    family: str | None = GUEST_OS_LABEL_TO_ANSIBLE_OS_FAMILY.get(guest_os_label)
+    if family is None:
+        die(f"VM `{vm_record.vm_name}` runs `{guest_os_label}`, which qvm cannot provision "
+            f"(no package-manager mapping; provisionable families: "
+            f"{', '.join(sorted(set(GUEST_OS_LABEL_TO_ANSIBLE_OS_FAMILY.values())))}). "
+            f"qvm provision targets the prebuilt Linux OSes "
+            f"({', '.join(PREBUILT_OSES)}) + known quickget Linux distros, not "
+            f"Windows/macOS or unrecognized passthrough OSes.")
+    return family
+
+
 # ---------- QEMU Guest Agent client (exec / push / pull) ----------
 # Protocol: newline-delimited JSON on `<vmdir>/<vm>-agent.sock` (the chardev
 # quickemu wires for --display none|spice|spice-app). guest-exec output is only
@@ -359,27 +565,57 @@ def qga_call_or_die(vm_record: VmRecord, execute: str, arguments: dict[str, Any]
             "  --display none/spice. Interactive fallback: `qvm shell` (SSH).")
 
 
-def cmd_exec(vm_record: VmRecord, guest_argv: list[str]) -> NoReturn:
-    """Run a command in the guest via QGA guest-exec (root, no SSH, no
-    credentials). Batch semantics: stdout/stderr arrive only after exit."""
-    if not guest_argv:
-        die("exec needs a command, e.g. `qvm exec -- uname -a`")
-    print(f"+ (guest-exec) {shlex.join(guest_argv)}", file=sys.stderr)
+def qga_guest_exec_wait(vm_record: VmRecord, guest_argv: list[str]) -> dict[str, Any]:
+    """guest-exec `guest_argv` (root) then poll guest-exec-status until it exits;
+    return the final status dict (carries exitcode + base64 out/err-data). Batch
+    semantics - output arrives only after exit (QGA has no PTY/streaming). Shared
+    by `cmd_exec` (CLI passthrough) and `qga_run_script` (provisioning)."""
     started: Any = qga_call_or_die(vm_record, "guest-exec", {
         "path": guest_argv[0], "arg": guest_argv[1:], "capture-output": "separated"})
     guest_pid: int = int(started["pid"])
     while True:
         execution_status: Any = qga_call_or_die(vm_record, "guest-exec-status", {"pid": guest_pid})
         if execution_status.get("exited"):
-            break
+            return execution_status
         time.sleep(0.3)
+
+
+def write_guest_exec_output(execution_status: dict[str, Any]) -> None:
+    """Stream a finished guest-exec's captured stdout/stderr to ours + warn on the
+    agent's size-cap truncation."""
     sys.stdout.write(base64.b64decode(execution_status.get("out-data", "")).decode(errors="replace"))
     sys.stderr.write(base64.b64decode(execution_status.get("err-data", "")).decode(errors="replace"))
     for truncated_stream_key in ("out-truncated", "err-truncated"):
         if execution_status.get(truncated_stream_key):
             print(f"qvm: warning: {truncated_stream_key} - output hit the agent's size cap; "
                   "write to a guest file and `qvm pull` it instead", file=sys.stderr)
+
+
+def cmd_exec(vm_record: VmRecord, guest_argv: list[str]) -> NoReturn:
+    """Run a command in the guest via QGA guest-exec (root, no SSH, no
+    credentials). Batch semantics: stdout/stderr arrive only after exit."""
+    if not guest_argv:
+        die("exec needs a command, e.g. `qvm exec -- uname -a`")
+    print(f"+ (guest-exec) {shlex.join(guest_argv)}", file=sys.stderr)
+    execution_status: dict[str, Any] = qga_guest_exec_wait(vm_record, guest_argv)
+    write_guest_exec_output(execution_status)
     raise SystemExit(int(execution_status.get("exitcode", 1)))
+
+
+def qga_run_script(vm_record: VmRecord, script_text: str, *, dry_run: bool) -> None:
+    """Run `bash -ec <script_text>` in the guest as ROOT via QGA (the provisioning
+    equivalent of ivm's `incus exec <vm> -- bash -ec <script>`). Streams the script's
+    stdout/stderr and `die`s on a non-zero exit. Reusable - does NOT raise SystemExit
+    on success. Honors dry_run (prints the bash invocation it would run)."""
+    bash_argv: list[str] = ["bash", "-ec", script_text]
+    print(f"+ (guest-exec) {shlex.join(bash_argv)}", file=sys.stderr)
+    if dry_run:
+        return
+    execution_status: dict[str, Any] = qga_guest_exec_wait(vm_record, bash_argv)
+    write_guest_exec_output(execution_status)
+    exit_code: int = int(execution_status.get("exitcode", 1))
+    if exit_code != 0:
+        die(f"provisioning script failed in `{vm_record.vm_name}` (exit {exit_code})")
 
 
 QGA_FILE_CHUNK_BYTES: int = 1024 * 1024
@@ -424,6 +660,159 @@ def cmd_pull(vm_record: VmRecord, guest_path: str, local_path_argument: str) -> 
     finally:
         qga_call_or_die(vm_record, "guest-file-close", {"handle": guest_file_handle})
     print(f"==> pulled from {colorize_vm_name(vm_record.vm_name)}:{guest_path}", file=sys.stderr)
+
+
+def qga_push_file_bytes(vm_record: VmRecord, file_bytes: bytes, guest_path: str) -> None:
+    """Write `file_bytes` to `guest_path` in the guest via guest-file-open/write/close
+    (as root). Like `cmd_push` but from an in-memory blob (the parent dir must already
+    exist - qga_push_tree mkdir -p's it first)."""
+    guest_file_handle: Any = qga_call_or_die(vm_record, "guest-file-open",
+                                             {"path": guest_path, "mode": "wb"})
+    try:
+        for chunk_start in range(0, len(file_bytes) or 1, QGA_FILE_CHUNK_BYTES):
+            file_chunk: bytes = file_bytes[chunk_start:chunk_start + QGA_FILE_CHUNK_BYTES]
+            qga_call_or_die(vm_record, "guest-file-write", {
+                "handle": guest_file_handle,
+                "buf-b64": base64.b64encode(file_chunk).decode()})
+    finally:
+        qga_call_or_die(vm_record, "guest-file-close", {"handle": guest_file_handle})
+
+
+def qga_push_tree(vm_record: VmRecord, local_dir: Path, guest_dest_dir: str,
+                  *, uid: int, gid: int, dry_run: bool) -> None:
+    """Recursively push `local_dir`'s contents into `guest_dest_dir` over QGA (qvm
+    has no `incus file push --recursive`, so this builds it). For each file: mkdir -p
+    its guest parent dir (guest-exec), then guest-file-write the bytes. Ownership is
+    fixed ONCE at the end with `chown -R uid:gid <guest_dest_dir>` (simplest correct
+    approach - every written file/dir lands root-owned otherwise). The contents of
+    `local_dir` land DIRECTLY under `guest_dest_dir` (i.e. `<local_dir>/a/b` ->
+    `<guest_dest_dir>/a/b`)."""
+    local_files: list[Path] = sorted(p for p in local_dir.rglob("*") if p.is_file())
+    if not local_files:
+        return
+    for local_file in local_files:
+        relative_path: str = local_file.relative_to(local_dir).as_posix()
+        guest_file_path: str = f"{guest_dest_dir.rstrip('/')}/{relative_path}"
+        guest_parent_dir: str = str(Path(guest_file_path).parent)
+        print(f"+ (guest-file) push tree {local_file} -> {guest_file_path}", file=sys.stderr)
+        if dry_run:
+            continue
+        mkdir_status: dict[str, Any] = qga_guest_exec_wait(
+            vm_record, ["mkdir", "-p", guest_parent_dir])
+        if int(mkdir_status.get("exitcode", 1)) != 0:
+            die(f"mkdir -p {guest_parent_dir} failed in `{vm_record.vm_name}`")
+        qga_push_file_bytes(vm_record, local_file.read_bytes(), guest_file_path)
+    chown_argv: list[str] = ["chown", "-R", f"{uid}:{gid}", guest_dest_dir]
+    print(f"+ (guest-exec) {shlex.join(chown_argv)}", file=sys.stderr)
+    if dry_run:
+        return
+    chown_status: dict[str, Any] = qga_guest_exec_wait(vm_record, chown_argv)
+    if int(chown_status.get("exitcode", 1)) != 0:
+        die(f"chown -R {uid}:{gid} {guest_dest_dir} failed in `{vm_record.vm_name}`")
+
+
+def push_feature_dotfiles_qga(feature: str, ansible_os_family: str, vm_record: VmRecord,
+                              shared_root: Path, *, dry_run: bool) -> None:
+    """Push one feature's staged dotfiles into the guest over QGA: the `__common__`
+    bucket then the VM's `<ansible_os_family>` bucket (distro overlays common), each
+    with its `home/user` (uid/gid 1000) + `root` (uid/gid 0) side. Buckets/sides a
+    feature does not populate are skipped. Source:
+    `<shared_root>/dotfiles/<feature>/<bucket>/<who>/`. The `home/user` side lands at
+    /home/user/...; the `root` side at /root/... (mirror of ivm's
+    push_feature_dotfiles_commands, but file-by-file via the guest agent)."""
+    feature_dir: Path = shared_root / "dotfiles" / feature
+    for bucket in ("__common__", ansible_os_family):
+        user_side: Path = feature_dir / bucket / "home" / "user"
+        root_side: Path = feature_dir / bucket / "root"
+        if user_side.is_dir():
+            qga_push_tree(vm_record, user_side, "/home/user", uid=1000, gid=1000, dry_run=dry_run)
+        if root_side.is_dir():
+            qga_push_tree(vm_record, root_side, "/root", uid=0, gid=0, dry_run=dry_run)
+
+
+# ---------- provision (install bundles / recipes / dotfiles onto a VM) ----------
+
+
+def cmd_list_provision_units(shared_root: Path) -> None:
+    """List the installable units (name + `description`), grouped by kind - shown when
+    `qvm provision` runs with NO unit arg (the bash-friendly alternative to <TAB>). No VM
+    needed - this is just the registry. Prints to stdout (readable / pipeable)."""
+    distro: dict[str, Any] = load_package_groups(shared_root)
+    thirdparty: dict[str, Any] = load_thirdparty_software(shared_root)
+    dotfiles_root: Path = shared_root / "dotfiles"
+    dotfiles: list[str] = sorted(p.name for p in dotfiles_root.iterdir()) if dotfiles_root.is_dir() else []
+
+    def described_rows(registry: dict[str, Any]) -> list[str]:
+        names: list[str] = sorted(registry)
+        width: int = max((len(n) for n in names), default=0)
+        rows: list[str] = []
+        for n in names:
+            desc: str = registry[n].get("description", "") if isinstance(registry[n], dict) else ""
+            rows.append(f"    {n:<{width}}  {desc}" if desc else f"    {n}")
+        return rows
+
+    print("Provisionable units - run `qvm provision <unit>...` (a name may match more than one):\n")
+    print("  distro package bundles:")
+    print("\n".join(described_rows(distro)))
+    print("\n  thirdparty software:")
+    print("\n".join(described_rows(thirdparty)))
+    print("\n  dotfiles features:")
+    print(("    " + ", ".join(dotfiles)) if dotfiles else "    (none)")
+
+
+def cmd_provision(vm_record: VmRecord, unit_names: list[str], shared_root: Path,
+                  *, dry_run: bool) -> None:
+    """Install named units onto an EXISTING VM via the QEMU Guest Agent - the post-`init`
+    "add more software" path (the qvm twin of `ivm provision`). A name can be a
+    `distro_package_groups` bundle, a `thirdparty_software` recipe, AND/OR a dotfiles
+    feature - all that match are applied. Distro bundles install via the VM's package
+    manager, thirdparty recipes run their (probe-guarded) script as root, dotfiles
+    features are pushed into /home/user (+ /root). Idempotent. With NO unit args the
+    caller lists the registry instead (handled before VM resolution)."""
+    distro_registry: dict[str, Any] = load_package_groups(shared_root)
+    thirdparty_registry: dict[str, Any] = load_thirdparty_software(shared_root)
+    dotfiles_root: Path = shared_root / "dotfiles"
+    distro_bundles: list[str] = []
+    thirdparty_names: list[str] = []
+    dotfiles_features: list[str] = []
+    for unit in unit_names:
+        matched: bool = False
+        if unit in distro_registry:
+            distro_bundles.append(unit)
+            matched = True
+        if unit in thirdparty_registry:
+            thirdparty_names.append(unit)
+            matched = True
+        if (dotfiles_root / unit).is_dir():
+            dotfiles_features.append(unit)
+            matched = True
+        if not matched:
+            available_features: list[str] = (
+                sorted(p.name for p in dotfiles_root.iterdir()) if dotfiles_root.is_dir() else [])
+            die(f"unknown unit '{unit}' - not a distro_package_groups bundle, a "
+                f"thirdparty_software recipe, nor a dotfiles feature.\n"
+                f"  distro bundles:      {', '.join(sorted(distro_registry))}\n"
+                f"  thirdparty software: {', '.join(sorted(thirdparty_registry))}\n"
+                f"  dotfiles features:   {', '.join(available_features)}")
+    ansible_os_family: str = vm_ansible_os_family(vm_record)
+    script: str = ""
+    if distro_bundles:
+        packages: list[str] = []
+        for bundle in distro_bundles:
+            packages += resolve_group(distro_registry, bundle, ansible_os_family)
+        packages = list(dict.fromkeys(packages))
+        if packages:
+            script += install_packages_script(ansible_os_family, packages)
+        script += groups_post_install_script(distro_bundles, distro_registry, ansible_os_family)
+    if thirdparty_names:
+        script += thirdparty_install_script(
+            resolve_thirdparty_software(thirdparty_names, thirdparty_registry, ansible_os_family))
+    if script:
+        qga_run_script(vm_record, script, dry_run=dry_run)
+    for feature in dotfiles_features:
+        push_feature_dotfiles_qga(feature, ansible_os_family, vm_record, shared_root, dry_run=dry_run)
+    print(f"==> provisioned {', '.join(unit_names)} into {colorize_vm_name(vm_record.vm_name)}.",
+          file=sys.stderr)
 
 
 # ---------- init: prebuilt images (the no-interactive-install paths) ----------
@@ -564,16 +953,22 @@ def init_virt_builder_disk(vm_dir: Path, vm_name: str, guest_os_label: str, disk
 
 
 def cmd_init(os_arguments: list[str], *, disk_size: str, ram: str,
-             cpu_cores: str, assume_yes: bool, dry_run: bool) -> None:
+             cpu_cores: str, assume_yes: bool, provision_units: list[str] | None,
+             shared_assets_root: Path, dry_run: bool) -> None:
     """Create a VM: prebuilt path for tumbleweed/debian/fedora (zero interactive
     install; optional 2nd positional = VM name), `quickget` passthrough for
     everything else (Windows is unattended; most Linux ISOs are interactive
-    ONCE - keep the installed disk around)."""
+    ONCE - keep the installed disk around). `--provision <unit>...` (prebuilt OS
+    only): after the VM boots and its agent is reachable, install those units."""
     if not os_arguments:
         die(f"init needs an OS: one of {', '.join(PREBUILT_OSES)} (prebuilt, no installer), "
             "or any `quickget` OS (e.g. `qvm init windows 11`)")
     guest_os_label: str = os_arguments[0]
     if guest_os_label not in PREBUILT_OSES:
+        if provision_units is not None:
+            die("`--provision` is only supported for the prebuilt OSes "
+                f"({', '.join(PREBUILT_OSES)}); a quickget VM needs an interactive "
+                "install first, then `qvm provision` once it is up")
         init_via_quickget(os_arguments, assume_yes=assume_yes, dry_run=dry_run)
         return
     if len(os_arguments) > 2:
@@ -614,6 +1009,9 @@ def cmd_init(os_arguments: list[str], *, disk_size: str, ram: str,
     if not dry_run:
         conf_path.write_text(conf_text)
         write_vm_meta(vm_dir, vm_name, guest_os_label, ssh_user)
+    if provision_units is not None:
+        init_provision_after_boot(vm_name, provision_units, shared_assets_root, dry_run=dry_run)
+        return
     print("\n".join([
         f"==> {colorize_vm_name(vm_name)} created. Next:",
         "",
@@ -622,6 +1020,57 @@ def cmd_init(os_arguments: list[str], *, disk_size: str, ram: str,
         "  then `qvm exec -- uname -a` (guest agent; tumbleweed installs the agent on",
         "  FIRST boot via cloud-init - allow a minute) or `qvm shell` (SSH).",
     ]), file=sys.stderr)
+
+
+# How long to wait for the guest agent after `init --provision` starts the VM.
+# Tumbleweed installs qemu-guest-agent via cloud-init on FIRST boot (download +
+# install + enable), so the wait is generous.
+INIT_PROVISION_AGENT_TIMEOUT_SECONDS: float = 300.0
+
+
+def wait_for_guest_agent(vm_record: VmRecord, *, timeout_seconds: float) -> None:
+    """Block until the guest agent answers a `guest-ping`, or `die` on timeout. Used
+    by `init --provision` (the agent needs the VM running AND - on tumbleweed's first
+    boot - cloud-init to have installed+started qemu-guest-agent)."""
+    deadline: float = time.monotonic() + timeout_seconds
+    agent_socket_path: Path = guest_agent_socket_path(vm_record)
+    while time.monotonic() < deadline:
+        if vm_pid_if_running(vm_record) is None:
+            die(f"VM `{vm_record.vm_name}` is no longer running while waiting for its agent")
+        try:
+            qga_call(agent_socket_path, "guest-ping", timeout_seconds=5.0)
+            return
+        except GuestAgentError:
+            time.sleep(3.0)
+    die(f"guest agent on `{vm_record.vm_name}` not reachable within "
+        f"{int(timeout_seconds)}s (tumbleweed installs it via cloud-init on first "
+        f"boot - try `qvm provision ...` again in a minute)")
+
+
+def init_provision_after_boot(vm_name: str, provision_units: list[str], shared_assets_root: Path,
+                              *, dry_run: bool) -> None:
+    """`init --provision`: start the freshly-created VM headless, wait for its guest
+    agent, then run the provisioning. Best-effort + clearly reported (provisioning
+    failures `die` loudly; the VM itself is already created)."""
+    vm_record: VmRecord | None = next(
+        (record for record in list_vm_records() if record.vm_name == vm_name), None)
+    if vm_record is None:
+        if dry_run:
+            print(f"==> (dry-run) would start {colorize_vm_name(vm_name)}, wait for its agent, "
+                  f"then provision {provision_units or '(list)'}", file=sys.stderr)
+            return
+        die(f"could not find the just-created VM `{vm_name}` to provision it")
+    print(f"==> {colorize_vm_name(vm_name)} created; starting it to provision "
+          f"{provision_units or '(none - will list)'}", file=sys.stderr)
+    cmd_start(vm_record, gui=False, dry_run=dry_run)
+    if not provision_units:
+        cmd_list_provision_units(shared_assets_root)
+        return
+    if not dry_run:
+        print("==> waiting for the guest agent (first boot can take a few minutes "
+              "while cloud-init installs it)...", file=sys.stderr)
+        wait_for_guest_agent(vm_record, timeout_seconds=INIT_PROVISION_AGENT_TIMEOUT_SECONDS)
+    cmd_provision(vm_record, provision_units, shared_assets_root, dry_run=dry_run)
 
 
 def write_vm_meta(vm_dir: Path, vm_name: str, guest_os_label: str, ssh_user: str) -> None:
@@ -814,6 +1263,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="target VM by name (overrides the cwd binding)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print every mutating command instead of running it")
+    parser.add_argument("--shared-assets-root", type=Path, default=DEFAULT_SHARED_ASSETS_ROOT,
+                        help=f"shared provision-asset cache (package-group + thirdparty JSON, "
+                             f"feature-first dotfiles/); rarely overridden. "
+                             f"Default: {DEFAULT_SHARED_ASSETS_ROOT}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     init_parser = subparsers.add_parser(
@@ -825,6 +1278,10 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--ram", default="", help="e.g. 8G (default: quickemu auto)")
     init_parser.add_argument("--cpus", default="", help="cpu cores (default: quickemu auto)")
     init_parser.add_argument("--yes", action="store_true", help="skip the y/N confirmation")
+    init_parser.add_argument("--provision", nargs="*", metavar="<unit>", default=None,
+                             help="after the VM boots, provision these unit(s) "
+                                  "(distro bundle / thirdparty recipe / dotfiles feature); "
+                                  "prebuilt-OS init only")
 
     for vm_acting_subcommand, subcommand_help in (
             ("start", "boot the VM headless (--gui for a SPICE desktop window)"),
@@ -836,6 +1293,8 @@ def build_parser() -> argparse.ArgumentParser:
             ("push", "copy one local file into the guest (guest agent)"),
             ("pull", "copy one guest file out (guest agent)"),
             ("snapshot", "qcow2-internal snapshots: apply/create/delete <tag>, info"),
+            ("provision", "install distro bundle(s) / thirdparty recipe(s) / dotfiles "
+                          "onto the VM via the guest agent (no args = list them)"),
             ("info", "show the VM's state (conf, disk, ssh port, agent socket)")):
         vm_acting_parser = subparsers.add_parser(vm_acting_subcommand, help=subcommand_help)
         if vm_acting_subcommand == "start":
@@ -856,6 +1315,10 @@ def build_parser() -> argparse.ArgumentParser:
         elif vm_acting_subcommand == "snapshot":
             vm_acting_parser.add_argument("snapshot_arguments", nargs="+",
                                           metavar="apply|create|delete <tag> | info")
+        elif vm_acting_subcommand == "provision":
+            vm_acting_parser.add_argument("names", nargs="*", metavar="<unit>",
+                                          help="unit(s) to install; omit to LIST all "
+                                               "installable units + descriptions")
 
     subparsers.add_parser("list", help="list qvm-managed VMs (name, state, bound dir)")
     return parser
@@ -864,6 +1327,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parsed_arguments: argparse.Namespace = build_parser().parse_args()
     subcommand: str = parsed_arguments.subcommand
+    shared_assets_root: Path = parsed_arguments.shared_assets_root
     if subcommand == "init":
         if parsed_arguments.name:
             die("`--name` targets an EXISTING VM; for init give the name as a "
@@ -871,10 +1335,16 @@ def main() -> None:
         cmd_init(parsed_arguments.os_arguments,
                  disk_size=parsed_arguments.disk_size, ram=parsed_arguments.ram,
                  cpu_cores=parsed_arguments.cpus, assume_yes=parsed_arguments.yes,
-                 dry_run=parsed_arguments.dry_run)
+                 provision_units=parsed_arguments.provision,
+                 shared_assets_root=shared_assets_root, dry_run=parsed_arguments.dry_run)
         return
     if subcommand == "list":
         cmd_list()
+        return
+    # `provision` with no units just lists what is installable - no VM needed, so
+    # handle it BEFORE resolving a target VM (mirror ivm).
+    if subcommand == "provision" and not parsed_arguments.names:
+        cmd_list_provision_units(shared_assets_root)
         return
     target_vm: VmRecord = resolve_target_vm(parsed_arguments.name)
     if subcommand == "start":
@@ -899,6 +1369,9 @@ def main() -> None:
     elif subcommand == "snapshot":
         cmd_snapshot(target_vm, parsed_arguments.snapshot_arguments,
                      dry_run=parsed_arguments.dry_run)
+    elif subcommand == "provision":
+        cmd_provision(target_vm, parsed_arguments.names, shared_assets_root,
+                      dry_run=parsed_arguments.dry_run)
     elif subcommand == "info":
         cmd_info(target_vm)
 

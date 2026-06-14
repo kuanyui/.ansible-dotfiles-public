@@ -159,5 +159,72 @@ class TestVmNameValidation(unittest.TestCase):
         self.assertFalse(qvm.VM_NAME_RE.match("a" * 64))
 
 
+class TestResolveGroup(unittest.TestCase):
+    """`resolve_group`: __common__ + the per-family overlay, each overlay a bare
+    list OR a `{install, post_install}` dict (the registry's two overlay shapes).
+    Same rule as ivm's resolver; tested against a tiny synthetic registry."""
+
+    REGISTRY: dict = {
+        "tools_basic": {
+            "__common__": ["git", "tmux"],
+            "Debian": ["bash-completion"],
+            "Suse": {"install": ["zsh"], "post_install": "echo hi"},
+        },
+        "common_only": {
+            "__common__": ["curl"],
+        },
+    }
+
+    def test_common_plus_family_bare_list(self) -> None:
+        self.assertEqual(
+            qvm.resolve_group(self.REGISTRY, "tools_basic", "Debian"),
+            ["git", "tmux", "bash-completion"])
+
+    def test_common_plus_family_dict_overlay(self) -> None:
+        # The Suse overlay is a dict; only its `install` packages come through here.
+        self.assertEqual(
+            qvm.resolve_group(self.REGISTRY, "tools_basic", "Suse"),
+            ["git", "tmux", "zsh"])
+
+    def test_family_with_no_overlay_is_common_only(self) -> None:
+        self.assertEqual(
+            qvm.resolve_group(self.REGISTRY, "tools_basic", "RedHat"),
+            ["git", "tmux"])
+
+    def test_common_only_bundle(self) -> None:
+        self.assertEqual(
+            qvm.resolve_group(self.REGISTRY, "common_only", "Debian"), ["curl"])
+
+    def test_unknown_group_dies(self) -> None:
+        with self.assertRaises(SystemExit):
+            qvm.resolve_group(self.REGISTRY, "nope", "Debian")
+
+
+class TestGuestOsToAnsibleFamily(unittest.TestCase):
+    """`vm_ansible_os_family` maps the recorded `guest_os_label` to Debian/Suse/
+    RedHat, and `die`s for an OS qvm cannot provision (windows/macos/unknown)."""
+
+    @staticmethod
+    def _record(guest_os_label: str) -> "qvm.VmRecord":
+        return qvm.VmRecord("vm", Path("/vms/vm.conf"), Path("/vms/vm"),
+                            {"guest_os_label": guest_os_label})
+
+    def test_prebuilt_and_known_labels(self) -> None:
+        self.assertEqual(qvm.vm_ansible_os_family(self._record("tumbleweed")), "Suse")
+        self.assertEqual(qvm.vm_ansible_os_family(self._record("opensuse")), "Suse")
+        self.assertEqual(qvm.vm_ansible_os_family(self._record("debian")), "Debian")
+        self.assertEqual(qvm.vm_ansible_os_family(self._record("ubuntu")), "Debian")
+        self.assertEqual(qvm.vm_ansible_os_family(self._record("fedora")), "RedHat")
+
+    def test_unprovisionable_os_dies(self) -> None:
+        with self.assertRaises(SystemExit):
+            qvm.vm_ansible_os_family(self._record("windows"))
+
+    def test_missing_label_dies(self) -> None:
+        no_label_record = qvm.VmRecord("vm", Path("/vms/vm.conf"), Path("/vms/vm"), {})
+        with self.assertRaises(SystemExit):
+            qvm.vm_ansible_os_family(no_label_record)
+
+
 if __name__ == "__main__":
     unittest.main()

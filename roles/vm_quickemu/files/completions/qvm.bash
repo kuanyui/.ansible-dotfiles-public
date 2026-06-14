@@ -14,11 +14,39 @@ _qvm_vm_names() {
     done
 }
 
+# Installable `provision` unit names: distro-bundle + thirdparty-recipe registry keys +
+# dotfiles feature dirs, from the SHARED provision-asset cache (read dynamically from
+# the JSON, so it auto-tracks the registry). bash shows names only - no descriptions.
+_qvm_unit_names() {
+    local qvm_shared_assets_root="${SHARED_PREBUILT_PROVISION_ASSETS_ROOT:-$HOME/.local/share/ansible-managed/shared-prebuilt-provision-assets}"
+    python3 - "$qvm_shared_assets_root" 2>/dev/null <<'PY'
+import json, os, sys
+shared_root = sys.argv[1]
+seen = []
+def add(name):
+    if name not in seen:
+        seen.append(name)
+for f in ("distro-package-groups.json", "thirdparty-software.json"):
+    p = os.path.join(shared_root, f)
+    if os.path.exists(p):
+        try:
+            for key in json.load(open(p)):
+                add(key)
+        except Exception:
+            pass
+dotfiles = os.path.join(shared_root, "dotfiles")
+if os.path.isdir(dotfiles):
+    for d in sorted(os.listdir(dotfiles)):
+        add(d)
+print("\n".join(seen))
+PY
+}
+
 _qvm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init start stop kill delete shell exec push pull snapshot info list"
+    local subcommands="init start stop kill delete shell exec push pull snapshot provision info list"
 
     # --name takes a value: complete qvm VM names after it.
     if [[ "$prev" == "--name" ]]; then
@@ -37,13 +65,13 @@ _qvm() {
     done
 
     if [[ -z "$sub" ]]; then
-        COMPREPLY=( $(compgen -W "${subcommands} --name --dry-run" -- "$cur") )
+        COMPREPLY=( $(compgen -W "${subcommands} --name --dry-run --shared-assets-root" -- "$cur") )
         return
     fi
 
     case "$sub" in
         init)
-            COMPREPLY=( $(compgen -W "tumbleweed debian fedora --disk-size --ram --cpus --yes" -- "$cur") )
+            COMPREPLY=( $(compgen -W "tumbleweed debian fedora --disk-size --ram --cpus --yes --provision" -- "$cur") )
             ;;
         start)
             COMPREPLY=( $(compgen -W "--gui" -- "$cur") )
@@ -61,6 +89,10 @@ _qvm() {
             if [[ -z "$snapshot_action" ]]; then
                 COMPREPLY=( $(compgen -W "apply create delete info" -- "$cur") )
             fi
+            ;;
+        provision)
+            # Unit names (bash shows names only; zsh adds descriptions).
+            COMPREPLY=( $(compgen -W "$(_qvm_unit_names)" -- "$cur") )
             ;;
         push|pull)
             COMPREPLY=( $(compgen -A file -- "$cur") )
