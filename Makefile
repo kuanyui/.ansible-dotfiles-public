@@ -116,18 +116,15 @@ vm-incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`,
 
 vm-incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (run `vm-incus-install` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.
 	@set -e; \
-	WORKS="$$HOME/.local/share/ansible-managed/vm-incus/ivm/rootfs/Debian"; \
-	if [ -d "$$WORKS/home/user" ] && [ -d "$$WORKS/root" ]; then SRC="$$WORKS"; \
-	else echo "No staged dotfiles found -- run 'make vm-incus-install' first" >&2; exit 1; fi; \
-	echo "Source (Debian tree; the only buildable guest family today): $$SRC"; \
+	STAGED="$$HOME/.local/share/ansible-managed/shared-prebuilt-provision-assets/dotfiles"; \
+	if [ ! -d "$$STAGED" ]; then echo "No staged dotfiles found ($$STAGED) -- run 'make vm-incus-install' first" >&2; exit 1; fi; \
 	VMS=$$(incus list user.ansible_managed=true --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
-	if [ -z "$$VMS" ]; then echo "No v-* VMs found, nothing to do."; exit 0; fi; \
+	if [ -z "$$VMS" ]; then echo "No managed VMs found, nothing to do."; exit 0; fi; \
 	for vm in $$VMS; do \
 	    os=$$(incus config get "$$vm" user.ivm_guest_os 2>/dev/null || true); \
 	    if [ "$$os" = "windows" ]; then echo "==> Skipping $$vm (guest-os=windows)"; continue; fi; \
-	    echo "==> Re-pushing dotfiles into $$vm (user + root)"; \
-	    incus file push --recursive --create-dirs --uid 1000 --gid 1000 "$$SRC/home/user" "$$vm/home/"; \
-	    incus file push --recursive --create-dirs --uid 0 --gid 0 "$$SRC/root" "$$vm/"; \
+	    echo "==> Re-pushing dotfiles into $$vm (via ivm overwrite-dotfiles)"; \
+	    ivm --name "$$vm" overwrite-dotfiles; \
 	done
 
 vm-incus-uninstall-ivm:  ## Uninstall `ivm` + its `~/.local/share/ansible-managed/vm-incus/` subdir ONLY; leaves incus daemon, pool, networks, VMs, and your `incus` group intact. Host-level teardown: `vm-incus-teardown-host` (or `-e vm_incus_uninstall_*=true` here).
