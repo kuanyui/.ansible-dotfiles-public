@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=../template.schema.json
 # Codex agent VM: Node.js + npm `@openai/codex`.
 template_name: codex
+description: "Codex agent box (Debian + Node.js + @openai/codex CLI)"
 hw:
   cpu: 4
   memory: 4G

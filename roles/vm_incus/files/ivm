@@ -1286,6 +1286,26 @@ def confirm_create(doc: Template, name: str, cwd: Path, root: Path, *, assume_ye
         die("aborted; no VM created")
 
 
+def cmd_list_templates(root: Path) -> None:
+    """List available templates + their one-line `description` - shown when `ivm init` runs
+    with NO template arg (the bash-friendly alternative to <TAB>, since bash completion
+    can't show descriptions inline). Prints to stdout (readable / pipeable)."""
+    templates_dir: Path = root / "templates"
+    rows: list[tuple[str, str]] = []
+    for template_file in sorted(templates_dir.glob("*.yaml")):
+        try:
+            doc: Template = load_yaml(template_file)
+            rows.append((doc.get("template_name", template_file.stem), doc.get("description", "")))
+        except Exception:
+            rows.append((template_file.stem, "(could not parse)"))
+    if not rows:
+        die(f"no templates found in {templates_dir}; re-run `make vm-incus-install`")
+    width: int = max(len(name) for name, _ in rows)
+    print("Available templates - run `ivm init <template>`:\n")
+    for name, desc in rows:
+        print(f"  {name:<{width}}  {desc}" if desc else f"  {name}")
+
+
 def cmd_init(template_name: str, given_name: str | None, root: Path, shared_root: Path, *,
              assume_yes: bool, dry_run: bool) -> None:
     """Create a VM from `<template>`, bound to the current directory: validate the
@@ -1485,6 +1505,33 @@ def cmd_update(name: str, *, dry_run: bool) -> None:
     ansible_os_family: str = vm_ansible_os_family(name, dry_run=dry_run)
     run(["incus", "exec", name, "--", "bash", "-ec", update_packages_script(ansible_os_family)],
         dry_run=dry_run)
+
+
+def cmd_list_provision_units(shared_root: Path) -> None:
+    """List the installable units (name + `description`), grouped by kind - shown when
+    `ivm provision` runs with NO unit arg (the bash-friendly alternative to <TAB>). No VM
+    needed - this is just the registry. Prints to stdout (readable / pipeable)."""
+    distro: dict[str, Any] = load_package_groups(shared_root)
+    thirdparty: dict[str, Any] = load_thirdparty_software(shared_root)
+    dotfiles_root: Path = shared_root / "dotfiles"
+    dotfiles: list[str] = sorted(p.name for p in dotfiles_root.iterdir()) if dotfiles_root.is_dir() else []
+
+    def described_rows(registry: dict[str, Any]) -> list[str]:
+        names: list[str] = sorted(registry)
+        width: int = max((len(n) for n in names), default=0)
+        rows: list[str] = []
+        for n in names:
+            desc: str = registry[n].get("description", "") if isinstance(registry[n], dict) else ""
+            rows.append(f"    {n:<{width}}  {desc}" if desc else f"    {n}")
+        return rows
+
+    print("Provisionable units - run `ivm provision <unit>...` (a name may match more than one):\n")
+    print("  distro package bundles:")
+    print("\n".join(described_rows(distro)))
+    print("\n  thirdparty software:")
+    print("\n".join(described_rows(thirdparty)))
+    print("\n  dotfiles features:")
+    print(("    " + ", ".join(dotfiles)) if dotfiles else "    (none)")
 
 
 def cmd_provision(name: str, unit_names: list[str], shared_root: Path, *, dry_run: bool) -> None:
@@ -2118,7 +2165,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_init: argparse.ArgumentParser = sub.add_parser(
         "init", help="create a VM from a template", description=cmd_init.__doc__)
-    p_init.add_argument("template", help="template id (file in templates/)")
+    p_init.add_argument("template", nargs="?",
+                        help="template id (file in templates/); omit to list all templates + descriptions")
     p_init.add_argument("name", nargs="?",
                         help="incus VM instance name (as shown in `incus list`); skips the prompt")
 
@@ -2149,8 +2197,8 @@ def build_parser() -> argparse.ArgumentParser:
         if name in PASSWORD_SUBCOMMANDS:
             sp.add_argument("username", help="guest account to set/lock the password for (e.g. `user`, `root`)")
         if name == "provision":
-            sp.add_argument("names", nargs="+",
-                            help="unit(s) to install: a distro_package_groups bundle, a thirdparty_software recipe, or a dotfiles feature")
+            sp.add_argument("names", nargs="*",
+                            help="unit(s) to install: a distro_package_groups bundle, a thirdparty_software recipe, or a dotfiles feature; omit to list all units + descriptions")
         if name == "resize":
             sp.add_argument("--cpu", type=int, metavar="N", help="new vCPU count")
             sp.add_argument("--memory", metavar="NG", help="new RAM, whole GiB with a G suffix (e.g. 16G)")
@@ -2202,7 +2250,10 @@ def main() -> None:
     if extras:  # every other subcommand is strict about unknown args
         parser.error("unrecognized arguments: " + " ".join(extras))
     if args.subcommand == "init":
-        cmd_init(args.template, args.name, root, shared_root, assume_yes=args.yes, dry_run=args.dry_run)
+        if args.template:
+            cmd_init(args.template, args.name, root, shared_root, assume_yes=args.yes, dry_run=args.dry_run)
+        else:
+            cmd_list_templates(root)  # no template arg -> list what's available
         return
     if args.subcommand == "env":
         cmd_env(args.template, root)
@@ -2218,6 +2269,11 @@ def main() -> None:
     # resolves no VM by cwd - handle it before the cwd binding below.
     if args.subcommand == "storage-status":
         cmd_storage_status(root, as_json=args.json, dry_run=args.dry_run)
+        return
+    # `provision` with no units just lists what is installable - no VM needed, so handle
+    # it before the cwd VM binding below.
+    if args.subcommand == "provision" and not args.names:
+        cmd_list_provision_units(shared_root)
         return
     # Everything else acts on a VM: the global --name overrides the cwd binding.
     name: str = args.name if args.name else resolve_vm_by_cwd(Path.cwd(), dry_run=args.dry_run)

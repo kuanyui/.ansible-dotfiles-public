@@ -4,6 +4,7 @@
 # telegram, no fcitx5, ...). No GUI, no mounts; extend per project. The minimal
 # openSUSE counterpart of base_debian / base_fedora.
 template_name: base_opensuse
+description: "bare openSUSE Tumbleweed dev box - baseline + basic_tools, no GUI"
 hw:
   cpu: 2
   memory: 4G

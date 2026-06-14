@@ -1,5 +1,6 @@
 # yaml-language-server: $schema=../template.schema.json
 template_name: webbrowser
+description: "openSUSE icewm desktop - Firefox + CJK fonts/input, GUI, mounts ~/Downloads"
 hw:
   cpu: 4
   memory: 4G

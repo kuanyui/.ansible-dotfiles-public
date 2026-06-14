@@ -1,5 +1,6 @@
 # yaml-language-server: $schema=../template.schema.json
 template_name: windows11
+description: "Windows 11 VM (GUI; secureboot + TPM)"
 hw:
   cpu: 4
   memory: 8G
