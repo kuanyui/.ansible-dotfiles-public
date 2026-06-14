@@ -31,7 +31,7 @@
 # is off (empty list would trip the sub-role's non-empty assert).
 # NOTE: this host path assumes every overlay is a BARE package list. The
 # `{install, post_install}` dict overlay form (see defaults/main.yml) is GUEST-ONLY -
-# `post_install` runs only in an `ivm` guest - so dict-form bundles (e.g. icewm_desktop)
+# `post_install` runs only in an `ivm` guest - so dict-form bundles (e.g. desktop_icewm)
 # are NOT wired into the `provision_distro_packages_install_*` toggle loop above. Keep it that way:
 # only add bare-list bundles to that loop.
 - name: Install enabled `provision_distro_packages_*` bundles via `roles/_install_distro_packages`

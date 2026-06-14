@@ -44,8 +44,8 @@
         'emacs': provision_distro_packages_emacs,
         'dev_qt': provision_distro_packages_dev_qt,
         'dev_android': provision_distro_packages_dev_android,
-        'icewm_desktop': provision_distro_packages_icewm_desktop,
-        'lxqt_desktop': provision_distro_packages_lxqt_desktop,
+        'desktop_icewm': provision_distro_packages_desktop_icewm,
+        'desktop_lxqt': provision_distro_packages_desktop_lxqt,
         'podman_rootless': provision_distro_packages_podman_rootless,
       } | to_nice_json }}
 

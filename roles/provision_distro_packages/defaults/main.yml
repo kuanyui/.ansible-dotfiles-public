@@ -29,7 +29,7 @@
 # (so `su - user` works), idempotent (re-runs each `ivm provision <bundle>`). GUEST-ONLY: the
 # host install path runs only the package lists (a snippet assumes the guest `user`), so the
 # host toggle loop holds bare-list bundles only. Most bundles never need the dict form -
-# `provision_distro_packages_icewm_desktop` / `provision_distro_packages_lxqt_desktop` (the desktop bundles) are the ones that do.
+# `provision_distro_packages_desktop_icewm` / `provision_distro_packages_desktop_lxqt` (the desktop bundles) are the ones that do.
 
 # Which bundles to install on the HOST (apply-essentials-root / -user). Override in
 # group_vars / host_vars per host. (Guest installs via `ivm provision <bundle>` ignore
@@ -248,7 +248,7 @@ provision_distro_packages_dev_android:
 
 # A complete, autologin icewm desktop - the WM/DE + display-manager layer that `gui_x11`
 # (the X server stack) deliberately leaves out. RIDES ON gui_x11: provision them together,
-# `ivm provision gui_x11 icewm_desktop`. The shared packages + the (identical) setup wiring
+# `ivm provision gui_x11 desktop_icewm`. The shared packages + the (identical) setup wiring
 # live in `__common__`; the only per-family difference is the lightdm GREETER's package name
 # (Debian/openSUSE `lightdm-gtk-greeter`, Fedora `lightdm-gtk`) - a per-family `install`, NOT
 # a post_install, since it is a package not a script. The greeter is listed EXPLICITLY because
@@ -264,7 +264,7 @@ provision_distro_packages_dev_android:
 # ivm target) + openSUSE (mirrors templates/webbrowser.yaml); Fedora is best-effort - SELinux
 # Enforcing has known lightdm-autologin issues; a fix, once verified on a real box, lands as a
 # `RedHat: {post_install: ...}` here (the per-family slot is exactly for that). See TODO.md.
-provision_distro_packages_icewm_desktop:
+provision_distro_packages_desktop_icewm:
   __common__:
     install:
       - icewm
@@ -297,8 +297,8 @@ provision_distro_packages_icewm_desktop:
     install:
       - lightdm-gtk          # Fedora's greeter package (NOT lightdm-gtk-greeter)
 
-# A complete, autologin LXQt desktop - sibling of `provision_distro_packages_icewm_desktop`; pick ONE
-# (both ride on gui_x11: `ivm provision gui_x11 lxqt_desktop`). Difference from icewm_desktop:
+# A complete, autologin LXQt desktop - sibling of `provision_distro_packages_desktop_icewm`; pick ONE
+# (both ride on gui_x11: `ivm provision gui_x11 desktop_lxqt`). Difference from desktop_icewm:
 # a full lightweight Qt DE (session + panel + file manager + terminal over the openbox WM)
 # rather than a bare WM, so it ships the file manager + terminal a desktop actually needs.
 # `__common__.install` = the session/panel/WM/file-manager/terminal + the stack that makes
@@ -319,11 +319,11 @@ provision_distro_packages_icewm_desktop:
 # Fedora-only `lxqt-x11-session` (the X11 session `.desktop`). Unlike icewm, LXQt HONORS XDG
 # autostart, so spice-vdagent + the lxqt daemons (globalkeys/runner/policykit) start themselves.
 # The autologin session name is DETECTED at runtime (`/usr/share/xsessions/*lxqt*.desktop`,
-# normally `lxqt`) rather than hardcoded, same as icewm_desktop. CAVEAT: verified-shaped for
+# normally `lxqt`) rather than hardcoded, same as desktop_icewm. CAVEAT: verified-shaped for
 # Debian + openSUSE (the common ivm targets); Fedora is best-effort - same lightdm-autologin /
-# SELinux-Enforcing caveat as icewm_desktop (a verified fix lands as a
+# SELinux-Enforcing caveat as desktop_icewm (a verified fix lands as a
 # `RedHat: {post_install: ...}` here). See TODO.md.
-provision_distro_packages_lxqt_desktop:
+provision_distro_packages_desktop_lxqt:
   __common__:
     install:
       - lxqt-session

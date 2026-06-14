@@ -870,7 +870,7 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: P
         script += "su - user -c 'xdg-user-dirs-update'\n"
     script += input_method_provision(doc, root)
     script += ssh_provision(doc, cwd)
-    # A bundle's optional `post_install` (e.g. icewm_desktop wiring lightdm autologin):
+    # A bundle's optional `post_install` (e.g. desktop_icewm wiring lightdm autologin):
     # run after its packages + after `user` exists (snippets may `su - user -c`), before
     # the author's `post_install_script` so that can build on it.
     script += groups_post_install_script(doc.get("distro_package_groups", []), registry, ansible_os_family)
