@@ -48,11 +48,10 @@ setopt AUTO_CD    # cd to directory without cd command
 ### ============================================
 alias sz='source ~/.zshrc'
 alias ta='if tmux attach-session -t 0;then;else tmux;fi'
-# `claude` defaults to skip-permissions + max effort (claude warns on launch; full path avoids alias recursion).
-alias claude="~/.local/bin/claude --dangerously-skip-permissions --effort max"
+{{ shared_shell_aliases_llmagents }}
 
-{{ shared_aliases_ls }}
-{{ shared_aliases_cd_shortcuts }}
+{{ shared_shell_aliases_ls }}
+{{ shared_shell_aliases_cd_shortcuts }}
 alias sc="systemctl"
 alias jc="journalctl"
 alias jc-clear="journalctl --vacuum-time=5d"   #  Delete journal logs which are older than 5 days

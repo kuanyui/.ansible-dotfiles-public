@@ -160,10 +160,9 @@ function jitsi-restart {
 {% endif %}
 alias sz='source ~/.bashrc'
 alias ta='if tmux attach-session -t 0;then;else tmux;fi'
-# `claude` defaults to skip-permissions + max effort (claude warns on launch; full path avoids alias recursion).
-alias claude="~/.local/bin/claude --dangerously-skip-permissions --effort max"
+{{ shared_shell_aliases_llmagents }}
 
-{{ shared_aliases_cd_shortcuts }}
+{{ shared_shell_aliases_cd_shortcuts }}
 alias gl="git log --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit --graph"
 alias gb="git branch"
 alias gc="git checkout"
@@ -171,7 +170,7 @@ alias gs="git status"
 alias gp="git pull"
 
 
-{{ shared_aliases_ls }}
+{{ shared_shell_aliases_ls }}
 alias sc="sudo systemctl"
 alias jc="sudo journalctl"
 alias jc-clear="sudo journalctl --vacuum-time=5d"   #  Delete journal logs which are older than 5 days

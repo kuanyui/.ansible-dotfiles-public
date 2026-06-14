@@ -43,7 +43,7 @@ PATH={% if cfg.nodejs is defined and cfg.nodejs.install_via == 'distro' %}${HOME
 
 {% endif %}
 alias sz="source ~/.bashrc"
-{{ shared_aliases_ls }}
+{{ shared_shell_aliases_ls }}
 alias sc="sudo systemctl"
 alias jc="sudo journalctl"
 alias jc-clear="sudo journalctl --vacuum-time=5d"   #  Delete journal logs which are older than 5 days
@@ -53,7 +53,7 @@ alias nvv='nvm ls'
 alias nv='nvm version'
 
 {% endif %}
-{{ shared_aliases_cd_shortcuts }}
+{{ shared_shell_aliases_cd_shortcuts }}
 
 export HISTCONTROL=ignorespace
 {% if who == 'user' %}
