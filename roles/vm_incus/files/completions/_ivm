@@ -68,7 +68,28 @@ print("\n".join(out))
 PY
 }
 
-local _ivm_templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}/templates"
+# Template names + their `description` (template.schema.json field) for `ivm init` /
+# `ivm env` completion. zsh _describe renders `name  -- description`; bash can't show
+# inline descriptions, so ivm.bash lists template names only.
+_ivm_template_names() {
+  local _ivm_templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}/templates"
+  python3 - "$_ivm_templates_root" 2>/dev/null <<'PY'
+import os, sys, glob
+root = sys.argv[1]
+for tf in sorted(glob.glob(os.path.join(root, "*.yaml"))):
+    name = os.path.basename(tf)[:-5]  # strip .yaml
+    desc = ""
+    try:  # cheap line-scan for `description:` (no yaml dep in the completion)
+        for line in open(tf):
+            if line.startswith("description:"):
+                desc = line.split(":", 1)[1].strip().strip('"').strip("'")
+                break
+    except Exception:
+        pass
+    print(f"{name}:{desc}" if desc else name)
+PY
+}
+
 local state
 
 _arguments -C \
@@ -84,7 +105,11 @@ case "$state" in
   vmname) compadd -- ${(f)"$(incus list --format csv --columns n 2>/dev/null)"} ;;
   args)
     case "$words[1]" in
-      init|env) compadd -- ${_ivm_templates_root}/*.yaml(N:t:r) ;;
+      init|env)
+        # _describe shows each `name:description` as `name  -- description`.
+        local -a _ivm_templates
+        _ivm_templates=(${(f)"$(_ivm_template_names)"})
+        _describe -t templates 'template' _ivm_templates ;;
       storage-status) compadd -- --json ;;
       resize) compadd -- --cpu --memory --disk ;;
       mount)

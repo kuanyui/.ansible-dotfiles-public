@@ -32,10 +32,10 @@
     mode: "0644"
     content: |
       {{ {
-        'basic_tools': provision_distro_packages_basic_tools,
-        'sys_tools': provision_distro_packages_sys_tools,
-        'net_tools': provision_distro_packages_net_tools,
-        'wayland_tools': provision_distro_packages_wayland_tools,
+        'tools_basic': provision_distro_packages_tools_basic,
+        'tools_sys': provision_distro_packages_tools_sys,
+        'tools_net': provision_distro_packages_tools_net,
+        'tools_wayland': provision_distro_packages_tools_wayland,
         'gui_x11': provision_distro_packages_gui_x11,
         'gui_wayland': provision_distro_packages_gui_wayland,
         'cjk_fonts': provision_distro_packages_cjk_fonts,

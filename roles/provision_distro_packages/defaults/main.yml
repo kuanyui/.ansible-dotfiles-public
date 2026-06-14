@@ -34,14 +34,14 @@
 # Which bundles to install on the HOST (apply-essentials-root / -user). Override in
 # group_vars / host_vars per host. (Guest installs via `ivm provision <bundle>` ignore
 # these - they select bundles explicitly.) Only bare-list bundles belong here (see above).
-provision_distro_packages_install_basic_tools: true
-provision_distro_packages_install_sys_tools: true
-provision_distro_packages_install_net_tools: true
-provision_distro_packages_install_wayland_tools: false
+provision_distro_packages_install_tools_basic: true
+provision_distro_packages_install_tools_sys: true
+provision_distro_packages_install_tools_net: true
+provision_distro_packages_install_tools_wayland: false
 provision_distro_packages_install_dev_qt: false
 provision_distro_packages_install_dev_android: false
 
-provision_distro_packages_basic_tools:
+provision_distro_packages_tools_basic:
   description: "core CLI tools - git, make, ripgrep, tmux, stow"
   __common__:
     - git
@@ -50,7 +50,7 @@ provision_distro_packages_basic_tools:
     - tmux
     - stow
 
-provision_distro_packages_sys_tools:
+provision_distro_packages_tools_sys:
   description: "system monitors - htop, iotop, sysstat, nvtop, cpuid"
   __common__:
     - htop
@@ -63,7 +63,7 @@ provision_distro_packages_sys_tools:
   Suse: []   # `__common__` names carry over to openSUSE; no Suse-only extra needed
   RedHat: []
 
-provision_distro_packages_net_tools:
+provision_distro_packages_tools_net:
   description: "network diagnostics - nethogs, traceroute, net-tools, tcpdump"
   __common__:
     - nethogs
@@ -71,7 +71,7 @@ provision_distro_packages_net_tools:
     - net-tools
     - tcpdump
 
-provision_distro_packages_wayland_tools:
+provision_distro_packages_tools_wayland:
   description: "Wayland clipboard - wl-clipboard"
   __common__:
     - wl-clipboard

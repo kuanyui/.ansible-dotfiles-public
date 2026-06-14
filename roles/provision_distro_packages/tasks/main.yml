@@ -14,10 +14,10 @@
   ansible.builtin.set_fact:
     _provision_distro_packages_enabled_bundles: "{{ _provision_distro_packages_enabled_bundles + [item.bundle] }}"
   loop:
-    - { toggle: provision_distro_packages_install_basic_tools,   enabled: "{{ provision_distro_packages_install_basic_tools }}",   bundle: "{{ provision_distro_packages_basic_tools }}" }
-    - { toggle: provision_distro_packages_install_sys_tools,     enabled: "{{ provision_distro_packages_install_sys_tools }}",     bundle: "{{ provision_distro_packages_sys_tools }}" }
-    - { toggle: provision_distro_packages_install_net_tools,     enabled: "{{ provision_distro_packages_install_net_tools }}",     bundle: "{{ provision_distro_packages_net_tools }}" }
-    - { toggle: provision_distro_packages_install_wayland_tools, enabled: "{{ provision_distro_packages_install_wayland_tools }}", bundle: "{{ provision_distro_packages_wayland_tools }}" }
+    - { toggle: provision_distro_packages_install_tools_basic,   enabled: "{{ provision_distro_packages_install_tools_basic }}",   bundle: "{{ provision_distro_packages_tools_basic }}" }
+    - { toggle: provision_distro_packages_install_tools_sys,     enabled: "{{ provision_distro_packages_install_tools_sys }}",     bundle: "{{ provision_distro_packages_tools_sys }}" }
+    - { toggle: provision_distro_packages_install_tools_net,     enabled: "{{ provision_distro_packages_install_tools_net }}",     bundle: "{{ provision_distro_packages_tools_net }}" }
+    - { toggle: provision_distro_packages_install_tools_wayland, enabled: "{{ provision_distro_packages_install_tools_wayland }}", bundle: "{{ provision_distro_packages_tools_wayland }}" }
     - { toggle: provision_distro_packages_install_dev_qt,        enabled: "{{ provision_distro_packages_install_dev_qt }}",        bundle: "{{ provision_distro_packages_dev_qt }}" }
     - { toggle: provision_distro_packages_install_dev_android,   enabled: "{{ provision_distro_packages_install_dev_android }}",   bundle: "{{ provision_distro_packages_dev_android }}" }
   when: item.enabled | bool

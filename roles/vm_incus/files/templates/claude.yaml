@@ -34,7 +34,7 @@ mounts:
       - .git
       - .vscode
 distro_package_groups:
-  - basic_tools
+  - tools_basic
 distro_packages:
   - curl
   - git

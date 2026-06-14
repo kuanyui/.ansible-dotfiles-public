@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=../template.schema.json
-# A BARE Fedora dev box: baseline + `basic_tools`, nothing else. No GUI, no
+# A BARE Fedora dev box: baseline + `tools_basic`, nothing else. No GUI, no
 # mounts; extend per project. The minimal Fedora counterpart of base_debian /
 # base_opensuse. `fedora/43` matches the role's "Fedora 43+" support floor.
 template_name: base_fedora
-description: "bare Fedora dev box - baseline + basic_tools, no GUI (Fedora 43+)"
+description: "bare Fedora dev box - baseline + tools_basic, no GUI (Fedora 43+)"
 hw:
   cpu: 2
   memory: 4G
@@ -20,7 +20,7 @@ sys:
 net:
   mode: nat
 distro_package_groups:
-  - basic_tools
+  - tools_basic
 dotfiles:
   - bash
   - tmux

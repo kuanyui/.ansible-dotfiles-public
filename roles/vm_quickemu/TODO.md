@@ -72,7 +72,7 @@ appears.
 **`ivm` side wish (user): `base_{debian,opensusetw,fedora}` templates** - bare
 guests with just the baseline/basic tools, no app payload. That belongs to
 `roles/incus_vm` (new `templates/base_*.yaml`, trivially expressible in the
-existing schema: `os.distro` + `distro_package_groups: [basic_tools]`, no
+existing schema: `os.distro` + `distro_package_groups: [tools_basic]`, no
 mounts/gui). Note the symmetry once both exist:
 
     ivm init base_opensusetw   <->   qvm init tumbleweed
@@ -80,5 +80,5 @@ mounts/gui). Note the symmetry once both exist:
     ivm init base_fedora       <->   qvm init fedora
 
 - [ ] **(ivm, separate pass) add `templates/base_{debian,opensusetw,fedora}.yaml`**
-  - baseline + `basic_tools` only; decide whether `ivm init` default-suggests
+  - baseline + `tools_basic` only; decide whether `ivm init` default-suggests
   them. Tracked here so the discussion has a home; implement in `roles/incus_vm`.

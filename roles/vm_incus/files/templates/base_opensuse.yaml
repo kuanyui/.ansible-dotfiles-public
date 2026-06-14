@@ -1,10 +1,10 @@
 # yaml-language-server: $schema=../template.schema.json
-# A BARE openSUSE dev box: baseline + `basic_tools`, nothing else. Tracks
+# A BARE openSUSE dev box: baseline + `tools_basic`, nothing else. Tracks
 # Tumbleweed (rolling) on purpose, NOT Leap - Leap's repos lack too much (no
 # telegram, no fcitx5, ...). No GUI, no mounts; extend per project. The minimal
 # openSUSE counterpart of base_debian / base_fedora.
 template_name: base_opensuse
-description: "bare openSUSE Tumbleweed dev box - baseline + basic_tools, no GUI"
+description: "bare openSUSE Tumbleweed dev box - baseline + tools_basic, no GUI"
 hw:
   cpu: 2
   memory: 4G
@@ -21,7 +21,7 @@ sys:
 net:
   mode: nat
 distro_package_groups:
-  - basic_tools
+  - tools_basic
 dotfiles:
   - bash
   - tmux

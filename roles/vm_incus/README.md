@@ -35,7 +35,7 @@ A template describes a VM once, in YAML, at
 against `ivm/template.schema.json` (the files carry a `# yaml-language-server:
 $schema=...` modeline, so an editor with the YAML LSP shows inline field docs +
 validation). Shipped examples: `base_debian` / `base_opensuse` / `base_fedora`
-(bare distro + `basic_tools`, nothing else), `claude`, `codex`, `webbrowser`,
+(bare distro + `tools_basic`, nothing else), `claude`, `codex`, `webbrowser`,
 `windows11`.
 
 Field groups (see the schema for the full, authoritative list):
@@ -51,7 +51,7 @@ Field groups (see the schema for the full, authoritative list):
 | `windows` | `unattend`, `post_install_powershell` |
 
 - `distro_package_groups` reference bundles in `roles/distro_packages`
-  (`basic_tools`, `sys_tools`, ...); resolved per the VM's ansible_os_family. A
+  (`tools_basic`, `tools_sys`, ...); resolved per the VM's ansible_os_family. A
   fixed baseline (`incus_guest_baseline`: zsh + plugins, sudo, sshd, git, ...) is
   always installed.
 - `thirdparty_software` reference non-distro install recipes in
