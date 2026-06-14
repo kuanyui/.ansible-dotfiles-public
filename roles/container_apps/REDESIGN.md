@@ -29,7 +29,7 @@ Problems (the same ones `ivm` fixed):
 2. **N launchers + manifest.** One launcher per `(template, runtime)` + a manifest
    to track them for uninstall - exactly the model `ivm` dropped for cwd-resolution.
 3. **Duplicated dotfiles.** `container_templates` ships its OWN `zshrc.j2` /
-   `bashrc.j2` (~130 lines, only partly sharing `_shared` fragments) instead of
+   `bashrc.j2` (~130 lines, only partly sharing `_shared_j2_snippets` fragments) instead of
    reusing `roles/zsh` like `ivm`'s dotfiles staging does. The only genuinely
    container-specific bit is "auto-cd into `/workspaces/*` on login".
 4. **Split role, single consumer.** `container_templates` is consumed only by

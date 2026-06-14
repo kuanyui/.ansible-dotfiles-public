@@ -4,7 +4,7 @@ Internal `_`-prefixed **producer** role (invoked via `include_role` only - no
 paired playbook, no Makefile target). It builds the SHARED, regenerable
 provision-asset cache that every provisioning backend reads at provision time.
 
-> Not to be confused with [`roles/_shared/`](../_shared/), which holds shared
+> Not to be confused with [`roles/_shared_j2_snippets/`](../_shared_j2_snippets/), which holds shared
 > *Jinja shell-rc fragments* (build-time template snippets). THIS role produces
 > *runtime data* (JSON registries + staged dotfile trees) consumed by the
 > non-ansible launchers.

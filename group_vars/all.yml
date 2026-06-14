@@ -1,13 +1,13 @@
 ---
 # `shared_*` vars expose byte-identical fragments stored under
-# `roles/_shared/templates/`. See `roles/_shared/README.md` for the rationale.
+# `roles/_shared_j2_snippets/templates/`. See `roles/_shared_j2_snippets/README.md` for the rationale.
 # Lookup is lazy (runs each reference); fine for our scale.
-shared_zsh_ps1_lines: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/zsh_ps1_lines.j2') }}"
-shared_zsh_history: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/zsh_history.j2') }}"
-shared_zsh_compinit_and_zstyles: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/zsh_compinit_and_zstyles.j2') }}"
-shared_bash_ps1_line: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/bash_ps1_line.j2') }}"
-shared_aliases_ls: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/aliases_ls.j2') }}"
-shared_aliases_cd_shortcuts: "{{ lookup('template', playbook_dir + '/../roles/_shared/templates/aliases_cd_shortcuts.j2') }}"
+shared_zsh_ps1_lines: "{{ lookup('template', playbook_dir + '/../roles/_shared_j2_snippets/templates/zsh_ps1_lines.j2') }}"
+shared_zsh_history: "{{ lookup('template', playbook_dir + '/../roles/_shared_j2_snippets/templates/zsh_history.j2') }}"
+shared_zsh_compinit_and_zstyles: "{{ lookup('template', playbook_dir + '/../roles/_shared_j2_snippets/templates/zsh_compinit_and_zstyles.j2') }}"
+shared_bash_ps1_line: "{{ lookup('template', playbook_dir + '/../roles/_shared_j2_snippets/templates/bash_ps1_line.j2') }}"
+shared_aliases_ls: "{{ lookup('template', playbook_dir + '/../roles/_shared_j2_snippets/templates/aliases_ls.j2') }}"
+shared_aliases_cd_shortcuts: "{{ lookup('template', playbook_dir + '/../roles/_shared_j2_snippets/templates/aliases_cd_shortcuts.j2') }}"
 
 # NOTE: this file is now ONLY the cross-role `shared_*` fragments. The former
 # `setup_*` opt-in gates are GONE - a feature runs by running its role's
