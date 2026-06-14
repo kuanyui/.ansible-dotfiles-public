@@ -10,8 +10,12 @@ stack (quickemu boot, QGA against a live agent, virt-builder) is host-only.
 Run:  cd roles/vm_quickemu/files && python3 -m unittest test_qvm -v
 """
 
+import contextlib
 import importlib.util
+import io
 import os
+import tempfile
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -224,6 +228,33 @@ class TestGuestOsToAnsibleFamily(unittest.TestCase):
         no_label_record = qvm.VmRecord("vm", Path("/vms/vm.conf"), Path("/vms/vm"), {})
         with self.assertRaises(SystemExit):
             qvm.vm_ansible_os_family(no_label_record)
+
+
+class TestStaleImageWarning(unittest.TestCase):
+    """warn_if_cached_image_stale: warn (with an `rm` hint) only past the age
+    threshold; stay silent for a fresh file."""
+
+    def _stderr_of(self, image_path: Path) -> str:
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            qvm.warn_if_cached_image_stale(image_path)
+        return captured.getvalue()
+
+    def test_old_file_warns_with_rm_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "img.qcow2"
+            image_path.write_text("x")
+            stale_mtime = time.time() - (qvm.IMAGE_CACHE_STALE_DAYS + 5) * 86400
+            os.utime(image_path, (stale_mtime, stale_mtime))
+            output = self._stderr_of(image_path)
+            self.assertIn("warning", output)
+            self.assertIn(f"rm {image_path}", output)
+
+    def test_fresh_file_is_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "img.qcow2"
+            image_path.write_text("x")  # mtime = now
+            self.assertEqual(self._stderr_of(image_path), "")
 
 
 if __name__ == "__main__":

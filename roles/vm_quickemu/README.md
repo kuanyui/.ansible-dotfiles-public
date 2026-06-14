@@ -14,12 +14,17 @@ and 3D desktop Linux. Positioning: [`roles/vm_incus/docs/survey-of-quickemu.md`]
 ## What `qvm` fixes vs raw quickemu
 
 - **No interactive install for tumbleweed / debian / fedora.** `qvm init
-  tumbleweed` = official Minimal-VM Cloud qcow2 (sha256-verified, cached) +
-  cloud-init NoCloud seed ISO (key-only user, passwordless sudo, installs
-  `qemu-guest-agent` on first boot). `qvm init debian|fedora` = `virt-builder`
-  (GPG-verified; agent + sshd baked in, per-VM ed25519 key injected on root).
+  tumbleweed` = official Minimal-VM Cloud qcow2 (**GPG- + sha256-verified**,
+  cached) + cloud-init NoCloud seed ISO (key-only user, passwordless sudo,
+  installs `qemu-guest-agent` on first boot). `qvm init debian|fedora` =
+  `virt-builder` (GPG-verified; agent + sshd baked in, per-VM ed25519 key on root).
   Anything else: `qvm init windows 11` etc. -> `quickget` passthrough
   (Windows = unattended; most Linux ISOs = interactive ONCE).
+- **Tumbleweed image trust.** The qcow2's `.sha256.asc` is GPG-verified against
+  the openSUSE key pinned by `roles/trusted_pubkeys` (keyring
+  `~/.gnupg/ansible-trusted-opensuse.gpg`). Missing keyring/`gpg` = hard error;
+  `--no-gpg-verify` downgrades to sha256-only. The image is cached + reused;
+  past `IMAGE_CACHE_STALE_DAYS` (30d) it warns with the exact `rm` to refresh.
 - **Host->guest exec without SSH/credentials:** `qvm exec -- <cmd>` /
   `qvm push` / `qvm pull` speak the QEMU Guest Agent protocol over the socket
   quickemu already wires (`--display none|spice`). Batch only - QGA returns

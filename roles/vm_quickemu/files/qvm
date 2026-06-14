@@ -7,7 +7,7 @@ can't do (Windows/macOS guests, 3D desktop Linux) while fixing quickemu's two
 gaps for this repo's workflow:
 
   - NO interactive OS install for the user's main distros: `init tumbleweed`
-    downloads the official Minimal-VM Cloud qcow2 (sha256-verified) + builds a
+    downloads the official Minimal-VM Cloud qcow2 (GPG- + sha256-verified) + builds a
     cloud-init NoCloud seed ISO; `init debian` / `init fedora` run
     `virt-builder` (GPG-verified prebuilt images). Any other OS falls through
     to `quickget` (installer ISO - interactive once; Windows is unattended).
@@ -45,6 +45,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, NamedTuple, NoReturn
@@ -52,6 +53,14 @@ from typing import Any, NamedTuple, NoReturn
 QVM_DATA_HOME: Path = Path(os.environ.get("QVM_HOME", str(Path.home() / ".local/share/qvm")))
 VMS_DIR: Path = QVM_DATA_HOME / "vms"
 IMAGE_CACHE_DIR: Path = QVM_DATA_HOME / "cache"
+
+# Base-image download hardening (download_with_cache, the `init tumbleweed` path).
+# urlopen has NO default timeout - a stalled connection would hang forever; cap each
+# socket read so a dead transfer fails loudly instead.
+DOWNLOAD_TIMEOUT_SECONDS: int = 30
+# A cached image older than this prints a "may be stale" hint (Tumbleweed is rolling).
+# Never auto-deleted - the hint shows the exact `rm` to refresh it.
+IMAGE_CACHE_STALE_DAYS: int = 30
 
 # The SHARED, regenerable provision-asset cache (produced by
 # roles/_shared_prebuilt_provision_assets, also included by qvm_install):
@@ -70,6 +79,11 @@ TUMBLEWEED_CLOUD_QCOW2_URL: str = (
     "https://download.opensuse.org/tumbleweed/appliances/"
     "openSUSE-Tumbleweed-Minimal-VM.x86_64-Cloud.qcow2"
 )
+# GPG keyring with the openSUSE Project Signing Key (pinned by roles/trusted_pubkeys).
+# `init tumbleweed` GPG-verifies the image's `.sha256.asc` against it BEFORE trusting
+# the checksum; `--no-gpg-verify` downgrades to sha256-only. A missing keyring / gpg is
+# a HARD error unless that flag is given - run the trusted_pubkeys role to create it.
+OPENSUSE_SIGNING_KEYRING: Path = Path.home() / ".gnupg/ansible-trusted-opensuse.gpg"
 # virt-builder image name per `qvm init <os>` (GPG-verified prebuilt images from
 # builder.libguestfs.org; the index has NO openSUSE - hence the appliance URL above).
 VIRT_BUILDER_IMAGE_BY_OS: dict[str, str] = {
@@ -818,41 +832,105 @@ def cmd_provision(vm_record: VmRecord, unit_names: list[str], shared_root: Path,
 # ---------- init: prebuilt images (the no-interactive-install paths) ----------
 
 
-def download_with_cache(image_url: str, *, dry_run: bool) -> Path:
+def fetch_url_to_file(image_url: str, destination_path: Path) -> None:
+    """Fetch a SMALL file (a checksum / signature) to disk, with a read timeout."""
+    with urllib.request.urlopen(image_url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as url_response:
+        destination_path.write_bytes(url_response.read())
+
+
+def gpg_verify_image_checksum(image_url: str, signing_keyring: Path, *, into_dir: Path) -> str:
+    """Download `<image_url>.sha256` + `.sha256.asc`, GPG-verify the detached
+    signature against `signing_keyring`, and return the (now authenticated)
+    checksum file's text. HARD error - not a silent downgrade - if the keyring or
+    `gpg` is missing, or the signature does not verify; `--no-gpg-verify` is the
+    only opt-out (fail-loud rule)."""
+    if not signing_keyring.exists():
+        die(f"GPG keyring {signing_keyring} not found - run the trusted_pubkeys role to\n"
+            f"  pin the openSUSE signing key, or pass `--no-gpg-verify` for sha256-only.")
+    if shutil.which("gpg") is None:
+        die("gpg not found - install gnupg (e.g. `sudo zypper install gpg2` /\n"
+            "  `sudo apt install gnupg`), or pass `--no-gpg-verify` for sha256-only.")
+    image_filename: str = Path(image_url).name
+    checksum_path: Path = into_dir / f"{image_filename}.sha256"
+    signature_path: Path = into_dir / f"{image_filename}.sha256.asc"
+    fetch_url_to_file(f"{image_url}.sha256", checksum_path)
+    fetch_url_to_file(f"{image_url}.sha256.asc", signature_path)
+    gpg_verify_argv: list[str] = [
+        "gpg", "--no-default-keyring", "--keyring", str(signing_keyring),
+        "--verify", str(signature_path), str(checksum_path),
+    ]
+    print("+ " + shlex.join(gpg_verify_argv), file=sys.stderr)
+    returncode, _, gpg_stderr = run_capture(gpg_verify_argv)
+    if returncode != 0:
+        die(f"GPG verification of {image_url}.sha256 FAILED - the checksum is NOT signed by\n"
+            f"  the pinned openSUSE key. Refusing the download.\n{gpg_stderr.strip()}")
+    print(f"==> GPG-verified {image_filename}.sha256 against {signing_keyring.name}", file=sys.stderr)
+    return checksum_path.read_text()
+
+
+def warn_if_cached_image_stale(cached_image_path: Path) -> None:
+    """Tumbleweed is rolling, so a long-cached base image may be far behind. Warn
+    (never auto-delete) and print the exact `rm` to refresh it."""
+    age_days: float = (time.time() - cached_image_path.stat().st_mtime) / 86400
+    if age_days < IMAGE_CACHE_STALE_DAYS:
+        return
+    print(f"qvm: warning: cached image is ~{int(age_days)} days old "
+          f"(> {IMAGE_CACHE_STALE_DAYS}d) and may be stale. To refresh, delete it then re-init:",
+          file=sys.stderr)
+    print(f"  rm {shlex.quote(str(cached_image_path))}", file=sys.stderr)
+
+
+def download_with_cache(image_url: str, *, signing_keyring: Path | None, dry_run: bool) -> Path:
     """Download `image_url` into the cache (printed first - transparency for
-    outside-repo fetches), verifying the publisher's `.sha256`. A cached copy is
-    reused as-is: Tumbleweed is rolling, so the REMOTE checksum changes over
-    time and would false-fail a re-verify; delete the cache file to re-download."""
+    outside-repo fetches). When `signing_keyring` is given, GPG-verify the
+    publisher's `.sha256.asc` against it BEFORE trusting the checksum (then verify
+    the image's sha256); when None, fall back to sha256-only. A cached copy is
+    reused as-is: Tumbleweed is rolling, so the REMOTE checksum changes over time
+    and would false-fail a re-verify; delete the cache file to re-download."""
     cached_image_path: Path = IMAGE_CACHE_DIR / Path(image_url).name
     if cached_image_path.exists():
+        warn_if_cached_image_stale(cached_image_path)
         print(f"==> using cached {cached_image_path} (delete it to re-download)", file=sys.stderr)
         return cached_image_path
     IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"+ GET {image_url}", file=sys.stderr)
     print(f"+ GET {image_url}.sha256", file=sys.stderr)
+    if signing_keyring is not None:
+        print(f"+ GET {image_url}.sha256.asc", file=sys.stderr)
     if dry_run:
         return cached_image_path
-    with urllib.request.urlopen(f"{image_url}.sha256") as sha256_response:
-        published_sha256: str | None = parse_sha256_line(
-            sha256_response.read().decode(), cached_image_path.name)
+    if signing_keyring is not None:
+        checksum_text: str = gpg_verify_image_checksum(
+            image_url, signing_keyring, into_dir=IMAGE_CACHE_DIR)
+    else:
+        with urllib.request.urlopen(f"{image_url}.sha256",
+                                    timeout=DOWNLOAD_TIMEOUT_SECONDS) as sha256_response:
+            checksum_text = sha256_response.read().decode()
+    published_sha256: str | None = parse_sha256_line(checksum_text, cached_image_path.name)
     if not published_sha256:
         die(f"no checksum for {cached_image_path.name} in {image_url}.sha256")
     download_in_progress_path: Path = cached_image_path.with_suffix(".partial")
     image_digest = hashlib.sha256()
-    with urllib.request.urlopen(image_url) as image_response, \
-            open(download_in_progress_path, "wb") as partial_file:
-        while True:
-            downloaded_chunk: bytes = image_response.read(QGA_FILE_CHUNK_BYTES)
-            if not downloaded_chunk:
-                break
-            image_digest.update(downloaded_chunk)
-            partial_file.write(downloaded_chunk)
+    try:
+        with urllib.request.urlopen(image_url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as image_response, \
+                open(download_in_progress_path, "wb") as partial_file:
+            while True:
+                downloaded_chunk: bytes = image_response.read(QGA_FILE_CHUNK_BYTES)
+                if not downloaded_chunk:
+                    break
+                image_digest.update(downloaded_chunk)
+                partial_file.write(downloaded_chunk)
+    except (urllib.error.URLError, TimeoutError) as download_error:
+        download_in_progress_path.unlink(missing_ok=True)
+        die(f"download of {image_url} failed or stalled "
+            f"(>{DOWNLOAD_TIMEOUT_SECONDS}s per read): {download_error}")
     if image_digest.hexdigest().lower() != published_sha256:
         download_in_progress_path.unlink()
         die(f"sha256 MISMATCH for {image_url}\n"
             f"  expected {published_sha256}\n  got      {image_digest.hexdigest()}")
     download_in_progress_path.rename(cached_image_path)
-    print(f"==> downloaded + sha256-verified {cached_image_path}", file=sys.stderr)
+    verification_method: str = "gpg + sha256" if signing_keyring is not None else "sha256"
+    print(f"==> downloaded + {verification_method}-verified {cached_image_path}", file=sys.stderr)
     return cached_image_path
 
 
@@ -919,10 +997,11 @@ def build_seed_iso(vm_dir: Path, vm_name: str, ssh_public_key_path: Path, *, dry
 
 
 def init_tumbleweed_disk(vm_dir: Path, vm_name: str, disk_size: str, *,
-                         dry_run: bool) -> Path | None:
+                         signing_keyring: Path | None, dry_run: bool) -> Path | None:
     """Tumbleweed: official Minimal-VM Cloud qcow2 -> disk.qcow2 (+resize) + the
     cloud-init seed ISO. Returns the seed ISO path (becomes `fixed_iso`)."""
-    cached_image_path: Path = download_with_cache(TUMBLEWEED_CLOUD_QCOW2_URL, dry_run=dry_run)
+    cached_image_path: Path = download_with_cache(
+        TUMBLEWEED_CLOUD_QCOW2_URL, signing_keyring=signing_keyring, dry_run=dry_run)
     disk_image_path: Path = vm_dir / "disk.qcow2"
     print(f"+ cp {cached_image_path} {disk_image_path}", file=sys.stderr)
     if not dry_run:
@@ -954,7 +1033,7 @@ def init_virt_builder_disk(vm_dir: Path, vm_name: str, guest_os_label: str, disk
 
 def cmd_init(os_arguments: list[str], *, disk_size: str, ram: str,
              cpu_cores: str, assume_yes: bool, provision_units: list[str] | None,
-             shared_assets_root: Path, dry_run: bool) -> None:
+             gpg_verify: bool, shared_assets_root: Path, dry_run: bool) -> None:
     """Create a VM: prebuilt path for tumbleweed/debian/fedora (zero interactive
     install; optional 2nd positional = VM name), `quickget` passthrough for
     everything else (Windows is unattended; most Linux ISOs are interactive
@@ -982,8 +1061,10 @@ def cmd_init(os_arguments: list[str], *, disk_size: str, ram: str,
     if conf_path.exists() or vm_dir.exists():
         die(f"VM `{vm_name}` already exists ({conf_path}) - pick another --name or `qvm delete` it")
     ssh_user: str = TUMBLEWEED_SSH_USER if guest_os_label == "tumbleweed" else VIRT_BUILDER_SSH_USER
-    image_source_description: str = (TUMBLEWEED_CLOUD_QCOW2_URL if guest_os_label == "tumbleweed"
-                                     else f"virt-builder {VIRT_BUILDER_IMAGE_BY_OS[guest_os_label]}")
+    image_source_description: str = (
+        f"{TUMBLEWEED_CLOUD_QCOW2_URL} ({'GPG+sha256' if gpg_verify else 'sha256-ONLY'} verified)"
+        if guest_os_label == "tumbleweed"
+        else f"virt-builder {VIRT_BUILDER_IMAGE_BY_OS[guest_os_label]} (GPG-verified)")
     print("\n".join([
         "qvm init preview:",
         f"  name        {vm_name}",
@@ -998,7 +1079,9 @@ def cmd_init(os_arguments: list[str], *, disk_size: str, ram: str,
     if not dry_run:
         vm_dir.mkdir(parents=True, exist_ok=True)
     if guest_os_label == "tumbleweed":
-        seed_iso_path: Path | None = init_tumbleweed_disk(vm_dir, vm_name, disk_size, dry_run=dry_run)
+        signing_keyring: Path | None = OPENSUSE_SIGNING_KEYRING if gpg_verify else None
+        seed_iso_path: Path | None = init_tumbleweed_disk(
+            vm_dir, vm_name, disk_size, signing_keyring=signing_keyring, dry_run=dry_run)
     else:
         seed_iso_path = init_virt_builder_disk(vm_dir, vm_name, guest_os_label, disk_size,
                                                dry_run=dry_run)
@@ -1282,6 +1365,10 @@ def build_parser() -> argparse.ArgumentParser:
                              help="after the VM boots, provision these unit(s) "
                                   "(distro bundle / thirdparty recipe / dotfiles feature); "
                                   "prebuilt-OS init only")
+    init_parser.add_argument("--no-gpg-verify", action="store_true",
+                             help="tumbleweed only: skip GPG-verifying the image checksum "
+                                  "(sha256-only). Default verifies the `.sha256.asc` against the "
+                                  "pinned openSUSE key in ~/.gnupg/ansible-trusted-opensuse.gpg")
 
     for vm_acting_subcommand, subcommand_help in (
             ("start", "boot the VM headless (--gui for a SPICE desktop window)"),
@@ -1336,6 +1423,7 @@ def main() -> None:
                  disk_size=parsed_arguments.disk_size, ram=parsed_arguments.ram,
                  cpu_cores=parsed_arguments.cpus, assume_yes=parsed_arguments.yes,
                  provision_units=parsed_arguments.provision,
+                 gpg_verify=not parsed_arguments.no_gpg_verify,
                  shared_assets_root=shared_assets_root, dry_run=parsed_arguments.dry_run)
         return
     if subcommand == "list":
