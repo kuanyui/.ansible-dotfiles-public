@@ -48,7 +48,8 @@ setopt AUTO_CD    # cd to directory without cd command
 ### ============================================
 alias sz='source ~/.zshrc'
 alias ta='if tmux attach-session -t 0;then;else tmux;fi'
-alias claude-danger='claude --dangerously-skip-permissions'
+# `claude` defaults to skip-permissions + max effort (claude warns on launch; full path avoids alias recursion).
+alias claude="~/.local/bin/claude --dangerously-skip-permissions --effort max"
 
 {{ shared_aliases_ls }}
 {{ shared_aliases_cd_shortcuts }}
