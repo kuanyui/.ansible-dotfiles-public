@@ -42,20 +42,29 @@ _ivm_unit_names() {
   python3 - "$_ivm_shared_assets_root" 2>/dev/null <<'PY'
 import json, os, sys
 shared_root = sys.argv[1]
-names = []
+seen, out = set(), []
+def add(name, desc=""):
+    if name in seen:
+        return
+    seen.add(name)
+    # zsh _describe splits on the FIRST colon -> "name:description"; bare name = no desc.
+    out.append(f"{name}:{desc}" if desc else name)
 for f in ("distro-package-groups.json", "thirdparty-software.json"):
     p = os.path.join(shared_root, f)
     if os.path.exists(p):
         try:
-            names += list(json.load(open(p)))
+            for key, val in json.load(open(p)).items():
+                add(key, val.get("description", "") if isinstance(val, dict) else "")
         except Exception:
             pass
 dotfiles = os.path.join(shared_root, "dotfiles")
 if os.path.isdir(dotfiles):
-    names += sorted(os.listdir(dotfiles))
-# A name can be in two registries (e.g. `emacs` is a package bundle AND a dotfiles
-# feature) - dedupe so it is offered once, order preserved.
-print("\n".join(dict.fromkeys(names)))
+    for d in sorted(os.listdir(dotfiles)):
+        add(d)
+# A name can live in two registries (e.g. dev_android = distro bundle AND thirdparty
+# recipe; emacs = package bundle AND dotfiles feature) - first occurrence wins, so the
+# `description` shown is the distro one (it already notes the pairing).
+print("\n".join(out))
 PY
 }
 
@@ -102,7 +111,11 @@ case "$state" in
         fi
         ;;
       push) compadd -- --as-root; _files ;;
-      provision) compadd -- ${(f)"$(_ivm_unit_names)"} ;;
+      provision)
+        # `_describe` renders each "name:description" line as `name  -- description`.
+        local -a _ivm_provision_units
+        _ivm_provision_units=(${(f)"$(_ivm_unit_names)"})
+        _describe -t units 'provision unit' _ivm_provision_units ;;
       set-password|unset-password) compadd -- user root ;;
       snapshot)
         # `$words` here: 1=snapshot, then the action, then a snapshot name. Flags may

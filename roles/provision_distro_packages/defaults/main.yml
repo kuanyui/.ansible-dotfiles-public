@@ -42,6 +42,7 @@ provision_distro_packages_install_dev_qt: false
 provision_distro_packages_install_dev_android: false
 
 provision_distro_packages_basic_tools:
+  description: "core CLI tools - git, make, ripgrep, tmux, stow"
   __common__:
     - git
     - make
@@ -50,6 +51,7 @@ provision_distro_packages_basic_tools:
     - stow
 
 provision_distro_packages_sys_tools:
+  description: "system monitors - htop, iotop, sysstat, nvtop, cpuid"
   __common__:
     - htop
     - iotop
@@ -62,6 +64,7 @@ provision_distro_packages_sys_tools:
   RedHat: []
 
 provision_distro_packages_net_tools:
+  description: "network diagnostics - nethogs, traceroute, net-tools, tcpdump"
   __common__:
     - nethogs
     - traceroute
@@ -69,6 +72,7 @@ provision_distro_packages_net_tools:
     - tcpdump
 
 provision_distro_packages_wayland_tools:
+  description: "Wayland clipboard - wl-clipboard"
   __common__:
     - wl-clipboard
 
@@ -77,6 +81,7 @@ provision_distro_packages_wayland_tools:
 # this package + that config set. `emacs` is the package name in all three families'
 # default repos.
 provision_distro_packages_emacs:
+  description: "Emacs editor package (its ~/.emacs.d is the separate emacs dotfiles feature)"
   __common__:
     - emacs
 
@@ -85,6 +90,7 @@ provision_distro_packages_emacs:
 # package - the server's built-in modesetting drives virtio-gpu/std-VGA. The
 # WM/DE and display-manager stay per-template. Names diverge per family.
 provision_distro_packages_gui_x11:
+  description: "minimal X11 stack (Xorg server, xinit, xauth, libinput) - base for any X WM/DE"
   Debian:
     - xserver-xorg-core
     - xinit
@@ -104,6 +110,7 @@ provision_distro_packages_gui_x11:
 # Xwayland only - the one compositor-agnostic Wayland piece (runs X apps under
 # any Wayland compositor); the compositor itself stays per-template.
 provision_distro_packages_gui_wayland:
+  description: "Xwayland - run X apps under any Wayland compositor"
   Debian:
     - xwayland
   Suse:
@@ -114,6 +121,7 @@ provision_distro_packages_gui_wayland:
 # Noto Sans CJK: one font covers all CJK; JP/TC/SC differ only in default Han
 # glyphs, not coverage. openSUSE OSS has no combined pkg, so use the JP variant.
 provision_distro_packages_cjk_fonts:
+  description: "Noto Sans CJK fonts (covers JP/TC/SC)"
   Debian:
     - fonts-noto-cjk
   Suse:
@@ -126,6 +134,7 @@ provision_distro_packages_cjk_fonts:
 # Frontend names diverge per family; config tool: Debian `fcitx5-config-qt` vs
 # openSUSE/Fedora `fcitx5-configtool`.
 provision_distro_packages_cjk_input:
+  description: "fcitx5 + mozc (JP) / chewing (TC) IME (needs template sys.input_method fcitx5)"
   __common__:
     - fcitx5
     - fcitx5-mozc
@@ -168,6 +177,7 @@ provision_distro_packages_cjk_input:
 #     until verified on a real Tumbleweed box (`zypper search <name>`). Until
 #     then an openSUSE guest's zsh just runs without those two plugins.
 provision_distro_packages_incus_guest_baseline:
+  description: "always-on ivm guest floor - zsh, sudo, sshd, curl/git/ca-certificates/tmux"
   __common__:
     - curl
     - git
@@ -198,6 +208,7 @@ provision_distro_packages_incus_guest_baseline:
 # also differs: Debian splits GUI (`linguist-qt6`) from CLI tools (`qt6-l10n-tools`,
 # = lrelease/lupdate); openSUSE `qt6-linguist-devel`; Fedora `qt6-linguist`.
 provision_distro_packages_dev_qt:
+  description: "Qt6 C++/QML build basics - cmake, qt6 dev modules, g++"
   __common__:
     - cmake
     - make
@@ -237,6 +248,7 @@ provision_distro_packages_dev_qt:
 #     yourself with `sdkmanager emulator` when wanted.
 # JDK is JDK 21 (current LTS; Debian `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+.
 provision_distro_packages_dev_android:
+  description: "headless Android build chain - JDK + unzip (pairs with the dev_android thirdparty SDK)"
   __common__:
     - unzip   # extract the Android command-line tools zip (the dev_android thirdparty step)
   Debian:
@@ -265,6 +277,7 @@ provision_distro_packages_dev_android:
 # Enforcing has known lightdm-autologin issues; a fix, once verified on a real box, lands as a
 # `RedHat: {post_install: ...}` here (the per-family slot is exactly for that). See TODO.md.
 provision_distro_packages_desktop_icewm:
+  description: "autologin icewm desktop - bare WM + lxterminal + lightdm (rides on gui_x11)"
   __common__:
     install:
       - icewm
@@ -324,6 +337,7 @@ provision_distro_packages_desktop_icewm:
 # SELinux-Enforcing caveat as desktop_icewm (a verified fix lands as a
 # `RedHat: {post_install: ...}` here). See TODO.md.
 provision_distro_packages_desktop_lxqt:
+  description: "autologin LXQt desktop - panel/pcmanfm-qt/qterminal + shortcuts/gvfs/Papirus (rides on gui_x11)"
   __common__:
     install:
       - lxqt-session
@@ -379,6 +393,7 @@ provision_distro_packages_desktop_lxqt:
 # Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three); the Debian-only `uidmap`
 # split is the one divergence. (No HOST toggle - dict-form bundles are guest-only.)
 provision_distro_packages_podman_rootless:
+  description: "rootless podman in the guest - podman, pasta, subuid/subgid + linger"
   __common__:
     install:
       - podman

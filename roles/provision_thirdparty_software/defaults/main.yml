@@ -27,6 +27,7 @@
 # read the rendered JSON at runtime) - no completion edit needed.
 
 provision_thirdparty_software_claude:
+  description: "Claude Code CLI (claude.ai install script, user-scoped)"
   __common__:
     already_installed: su - user -c 'command -v claude'
     install_script: |
@@ -35,6 +36,7 @@ provision_thirdparty_software_claude:
       su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
 provision_thirdparty_software_codex:
+  description: "OpenAI Codex CLI (npm global, user-scoped; needs nodejs + npm)"
   __common__:
     # File test, not `command -v`: codex lands in ~/.local/npm_global/bin, which is
     # not necessarily on the login PATH, so a PATH probe could wrongly re-install.
@@ -52,6 +54,7 @@ provision_thirdparty_software_codex:
 # rustc/cargo are intentionally NOT used: they lag Rust's 6-week stable cadence and can't
 # manage toolchains/targets/components the way Rust development expects.
 provision_thirdparty_software_dev_rust:
+  description: "Rust toolchain via rustup - stable + rust-analyzer (user-scoped)"
   __common__:
     already_installed: su - user -c 'test -x ~/.cargo/bin/cargo'
     install_script: |
@@ -68,6 +71,7 @@ provision_thirdparty_software_dev_rust:
 # `sdkmanager emulator`). Set ANDROID_HOME=~/Android/Sdk (or a project local.properties) to
 # point Gradle/AGP at it.
 provision_thirdparty_software_dev_android:
+  description: "Android SDK - cmdline-tools, platform-tools, build-tools (user-scoped; pairs with dev_android distro)"
   __common__:
     already_installed: su - user -c 'test -x ~/Android/Sdk/platform-tools/adb'
     install_script: |
