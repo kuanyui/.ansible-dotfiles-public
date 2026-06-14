@@ -39,7 +39,7 @@ distro_packages:
   - curl
   - git
 thirdparty_software:
-  - claude   # curl|bash installer; recipe in roles/thirdparty_software/defaults/main.yml
+  - claude   # curl|bash installer; recipe in roles/provision_thirdparty_software/defaults/main.yml
 dotfiles:
   - bash
   - tmux

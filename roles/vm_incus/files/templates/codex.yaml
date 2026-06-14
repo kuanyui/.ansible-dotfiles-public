@@ -25,4 +25,4 @@ distro_packages:
   - nodejs
   - npm
 thirdparty_software:
-  - codex   # npm install -g @openai/codex; recipe in roles/thirdparty_software/defaults/main.yml
+  - codex   # npm install -g @openai/codex; recipe in roles/provision_thirdparty_software/defaults/main.yml

@@ -125,7 +125,7 @@
     "distro_package_groups": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Named package bundles defined in `roles/distro_packages/defaults/main.yml` (variable `distro_packages_<name>`), referenced here by the short `<name>`. Resolved against this VM's ansible_os_family (derived from `os.distro`): the bundle's `common` list plus its per-family overlay. (Linux only.)"
+      "description": "Named package bundles defined in `roles/provision_distro_packages/defaults/main.yml` (variable `provision_distro_packages_<name>`), referenced here by the short `<name>`. Resolved against this VM's ansible_os_family (derived from `os.distro`): the bundle's `__common__` list plus its per-family overlay. (Linux only.)"
     },
     "distro_packages": {
       "type": "array",
@@ -135,7 +135,7 @@
     "thirdparty_software": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Named non-distro install recipes defined in `roles/thirdparty_software/defaults/main.yml` (variable `thirdparty_software_<name>`), referenced by the short `<name>`. Each runs a shell snippet as ROOT in the guest (with an optional `already_installed` probe that skips it if present): 3rd-party repos (vscode), `curl|bash` installers (claude), npm/pip globals (codex). Resolved per ansible_os_family - the family's entry if defined, else `common` (OVERRIDE, not additive). (Linux only.)"
+      "description": "Named non-distro install recipes defined in `roles/provision_thirdparty_software/defaults/main.yml` (variable `provision_thirdparty_software_<name>`), referenced by the short `<name>`. Each runs a shell snippet as ROOT in the guest (with an optional `already_installed` probe that skips it if present): 3rd-party repos (vscode), `curl|bash` installers (claude), npm/pip globals (codex). Resolved per ansible_os_family - the family's entry if defined, else `__common__` (OVERRIDE, not additive). (Linux only.)"
     },
     "dotfiles": {
       "type": "array",
