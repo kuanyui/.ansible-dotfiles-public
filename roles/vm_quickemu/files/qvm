@@ -1145,7 +1145,7 @@ def init_provision_after_boot(vm_name: str, provision_units: list[str], shared_a
         die(f"could not find the just-created VM `{vm_name}` to provision it")
     print(f"==> {colorize_vm_name(vm_name)} created; starting it to provision "
           f"{provision_units or '(none - will list)'}", file=sys.stderr)
-    cmd_start(vm_record, gui=False, dry_run=dry_run)
+    cmd_start(vm_record, gui=False, public_dir=None, dry_run=dry_run)
     if not provision_units:
         cmd_list_provision_units(shared_assets_root)
         return
@@ -1201,16 +1201,22 @@ def quickemu_argv(vm_record: VmRecord, *extra_quickemu_arguments: str) -> list[s
     return ["quickemu", "--vm", str(vm_record.conf_path), *extra_quickemu_arguments]
 
 
-def cmd_start(vm_record: VmRecord, *, gui: bool, dry_run: bool) -> None:
+def cmd_start(vm_record: VmRecord, *, gui: bool, public_dir: str | None, dry_run: bool) -> None:
     """Boot via quickemu (qemu goes to the background; state lands in the VMDIR).
     Headless `--display none` by default - the guest-agent socket needs
-    none/spice/spice-app, and that keeps `exec`/`push` working."""
+    none/spice/spice-app, and that keeps `exec`/`push` working. `public_dir`
+    overrides quickemu's shared folder (default ~/Public); shared clipboard +
+    that folder need the guest_spice bundle in the guest, and clipboard needs
+    --gui (a connected SPICE display)."""
     if vm_pid_if_running(vm_record) is not None:
         print(f"==> {colorize_vm_name(vm_record.vm_name)} is already running", file=sys.stderr)
         return
     display_mode: str = "spice" if gui else "none"
+    quickemu_extra_arguments: list[str] = ["--display", display_mode]
+    if public_dir is not None:
+        quickemu_extra_arguments += ["--public-dir", public_dir]
     # cwd=VMS_DIR: quickget-written confs use paths relative to where quickget ran.
-    run(quickemu_argv(vm_record, "--display", display_mode), dry_run=dry_run, cwd=VMS_DIR)
+    run(quickemu_argv(vm_record, *quickemu_extra_arguments), dry_run=dry_run, cwd=VMS_DIR)
     ssh_port: int | None = read_ssh_port(vm_record)
     if ssh_port is not None:
         print(f"==> ssh forwarded on localhost:{ssh_port} (`qvm shell`)", file=sys.stderr)
@@ -1387,6 +1393,11 @@ def build_parser() -> argparse.ArgumentParser:
         if vm_acting_subcommand == "start":
             vm_acting_parser.add_argument("--gui", action="store_true",
                                           help="SPICE display instead of headless")
+            vm_acting_parser.add_argument("--public-dir", default=None, metavar="<dir>|none",
+                                          help="host folder shared into the guest (quickemu "
+                                               "9p/webdav; default ~/Public, 'none' disables). "
+                                               "Needs the guest_spice bundle in the guest; "
+                                               "clipboard also needs --gui")
         elif vm_acting_subcommand == "delete":
             vm_acting_parser.add_argument("--yes", action="store_true",
                                           help="skip the y/N confirmation")
@@ -1436,7 +1447,8 @@ def main() -> None:
         return
     target_vm: VmRecord = resolve_target_vm(parsed_arguments.name)
     if subcommand == "start":
-        cmd_start(target_vm, gui=parsed_arguments.gui, dry_run=parsed_arguments.dry_run)
+        cmd_start(target_vm, gui=parsed_arguments.gui,
+                  public_dir=parsed_arguments.public_dir, dry_run=parsed_arguments.dry_run)
     elif subcommand == "stop":
         cmd_stop(target_vm, dry_run=parsed_arguments.dry_run)
     elif subcommand == "kill":

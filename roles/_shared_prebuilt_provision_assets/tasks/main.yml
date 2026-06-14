@@ -46,6 +46,7 @@
         'dev_android': provision_distro_packages_dev_android,
         'desktop_icewm': provision_distro_packages_desktop_icewm,
         'desktop_lxqt': provision_distro_packages_desktop_lxqt,
+        'guest_spice': provision_distro_packages_guest_spice,
         'podman_rootless': provision_distro_packages_podman_rootless,
       } | to_nice_json }}
 

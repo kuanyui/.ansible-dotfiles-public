@@ -32,13 +32,20 @@ and 3D desktop Linux. Positioning: [`roles/vm_incus/docs/survey-of-quickemu.md`]
   auto-forwarded port, per-VM key, per-VM known_hosts).
 - **cwd binding like ivm:** subcommands resolve the VM `init`-ed in the current
   dir (or nearest ancestor); `--name <vm>` overrides.
+- **Shared clipboard + folder (opt-in).** quickemu wires the SPICE/9p/webdav
+  devices from the conf regardless of image origin; what a minimal cloud image
+  lacks is the GUEST agents. `qvm provision guest_spice` installs them
+  (`spice-vdagent` = clipboard, `spice-webdavd` = folder). Then: clipboard needs
+  `qvm start --gui` (a connected SPICE display); the folder is `qvm start
+  --public-dir <dir>` (default `~/Public`, `none` disables), surfaced in the
+  guest over 9p/webdav.
 
 ## Commands
 
 | command | what |
 | --- | --- |
 | `qvm init <os> [name] [--provision <unit...>]` | create (prebuilt: tumbleweed/debian/fedora; else quickget); `--provision` installs bundles after first boot |
-| `qvm start [--gui]` | boot headless (default) or SPICE window |
+| `qvm start [--gui] [--public-dir <dir>]` | boot headless (default) or SPICE window; share a host folder (default `~/Public`) |
 | `qvm stop` / `kill` | ACPI powerdown (monitor socket) / force-stop |
 | `qvm exec -- <cmd>` | run in guest via guest agent (root, batch) |
 | `qvm push` / `pull` | one file in / out via guest agent |

@@ -118,6 +118,26 @@ provision_distro_packages_gui_wayland:
   RedHat:
     - xorg-x11-server-Xwayland
 
+# SPICE guest integration for VMs launched by qvm/quickemu (NOT incus): shared
+# clipboard (spice-vdagent) + host<->guest folder sharing (spice-webdavd). Both
+# package names are identical across all three families (verified pkgs.org /
+# software.opensuse.org / Fedora / Debian, 2026-06) -> `__common__` only. Dict form
+# (post_install) => GUEST-ONLY (no HOST toggle). Clipboard needs a connected SPICE
+# display (`qvm start --gui`); the shared folder is quickemu's `--public-dir`
+# (default ~/Public) surfaced in the guest over webdav.
+provision_distro_packages_guest_spice:
+  description: "SPICE guest integration for qvm VMs - shared clipboard (spice-vdagent) + folder (spice-webdavd); needs --gui"
+  __common__:
+    install:
+      - spice-vdagent    # clipboard agent; the desktop session autostarts it (needs --gui / SPICE)
+      - spice-webdavd    # proxies quickemu's --public-dir folder over the SPICE webdav channel
+    post_install: |
+      # spice-vdagentd (clipboard) is socket-activated + launched by the desktop
+      # session's spice-vdagent - no explicit enable needed. spice-webdavd is a
+      # system daemon serving the shared folder, so enable it for boot (unit name
+      # verified == spice-webdavd.service via the Debian/phodav package file list).
+      systemctl enable spice-webdavd.service
+
 # Noto Sans CJK: one font covers all CJK; JP/TC/SC differ only in default Han
 # glyphs, not coverage. openSUSE OSS has no combined pkg, so use the JP variant.
 provision_distro_packages_cjk_fonts:
