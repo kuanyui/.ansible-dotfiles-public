@@ -11,7 +11,7 @@ baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 `delete`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set-password`/`unset-password`/
 `enable-user-sudo`/`disable-user-sudo`/`info` (target VM status/hw/mounts/storage); `env`; `list` (incus list passthrough);
-`adopt` (tag a pre-existing/older-ivm VM into ivm management; requires `--name`).
+`adopt` (bring an unmanaged VM - hand-made or older-ivm - under ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
 attach devices (mounts + `shadow` masking, `hw.tpm`, macvlan/bridge `net`) ->
@@ -2094,8 +2094,10 @@ def cmd_adopt(name: str, root: Path, *, dry_run: bool) -> None:
     prints its `incus config set` before running (legacy hyphenated tags unset)."""
     if not dry_run and not instance_exists(name):
         die(f"no such incus VM: '{name}' (see `incus list`)")
-    print(f"Adopting {colorize_vm_name(name)}: set its ivm `user.*` tags "
-          f"(enter to keep the shown value, blank to skip a tag).", file=sys.stderr)
+    print(f"Adopting {colorize_vm_name(name)}.", file=sys.stderr)
+    print("ivm uses custom `user.*` tags to tell whether an Incus VM is ivm-managed. "
+          "ivm can't probe some of these automatically, so please fill them in below "
+          "(Enter keeps the shown value, blank skips a tag):", file=sys.stderr)
     available_templates: list[str] = sorted(
         template_file.stem for template_file in (root / "templates").glob("*.yaml"))
     template_hint: str = f" (have: {', '.join(available_templates)})" if available_templates else ""
@@ -2206,7 +2208,7 @@ def build_parser() -> argparse.ArgumentParser:
                    description=cmd_list.__doc__)
 
     sub.add_parser("adopt",
-                   help="tag an existing incus VM into ivm management (requires `--name`)",
+                   help="bring an unmanaged Incus VM (hand-made or old-ivm) under ivm management (requires `--name`)",
                    description=cmd_adopt.__doc__)
 
     storage_status_parser: argparse.ArgumentParser = sub.add_parser(
