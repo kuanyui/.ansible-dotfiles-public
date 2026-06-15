@@ -215,10 +215,10 @@ def load_and_validate(template_name: str, root: Path) -> Template:
 
 # ---------- distro_packages bundle registry ----------
 
-def load_package_groups(shared_root: Path) -> dict[str, Any]:
+def load_package_groups(shared_prebuilt_provision_assets_root: Path) -> dict[str, Any]:
     """Load distro-package-groups.json (rendered at apply time from the
     provision_distro_packages registry; see roles/_shared_prebuilt_provision_assets)."""
-    path: Path = shared_root / "distro-package-groups.json"
+    path: Path = shared_prebuilt_provision_assets_root / "distro-package-groups.json"
     if not path.is_file():
         die(f"distro-package-groups.json not found: {path}; re-run `make vm-incus-install`")
     loaded: Any = json.loads(path.read_text())
@@ -227,10 +227,10 @@ def load_package_groups(shared_root: Path) -> dict[str, Any]:
     return loaded
 
 
-def load_thirdparty_software(shared_root: Path) -> dict[str, Any]:
+def load_thirdparty_software(shared_prebuilt_provision_assets_root: Path) -> dict[str, Any]:
     """Load thirdparty-software.json (rendered at apply time from the
     provision_thirdparty_software registry; see roles/_shared_prebuilt_provision_assets)."""
-    path: Path = shared_root / "thirdparty-software.json"
+    path: Path = shared_prebuilt_provision_assets_root / "thirdparty-software.json"
     if not path.is_file():
         die(f"thirdparty-software.json not found: {path}; re-run `make vm-incus-install`")
     loaded: Any = json.loads(path.read_text())
@@ -834,7 +834,8 @@ def thirdparty_install_script(recipes: list[dict[str, Any]]) -> str:
     return script
 
 
-def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: Path) -> str:
+def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: Path,
+                     shared_prebuilt_provision_assets_root: Path) -> str:
     """First-provision shell, run as root via `incus exec`: install packages
     (baseline + groups + flat), set timezone + tmpfs, create `user`, set both
     shells to zsh, configure sshd, then run the template's `post_install_script`
@@ -880,7 +881,7 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: P
     thirdparty_names: list[str] = doc.get("thirdparty_software", [])
     if thirdparty_names:
         script += thirdparty_install_script(
-            resolve_thirdparty_software(thirdparty_names, load_thirdparty_software(root), ansible_os_family)
+            resolve_thirdparty_software(thirdparty_names, load_thirdparty_software(shared_prebuilt_provision_assets_root), ansible_os_family)
         )
     post_install_script: str = doc.get("post_install_script", "")
     if post_install_script:
@@ -896,15 +897,15 @@ BASELINE_DOTFILE_FEATURES: tuple[str, ...] = ("bash", "tmux", "zsh")
 
 
 def push_feature_dotfiles_commands(feature: str, ansible_os_family: str, name: str,
-                                   shared_root: Path) -> list[list[str]]:
+                                   shared_prebuilt_provision_assets_root: Path) -> list[list[str]]:
     """Push one feature's staged dotfiles into the guest: the `__common__` bucket then
     the VM's `<ansible_os_family>` bucket (distro overlays common), each with its
     `home/user` (uid 1000) + `root` (uid 0) side. Buckets/sides a feature does not
     populate are skipped - emacs has only `__common__/home/user`; `.zshrc` is per-family
-    with no `__common__`. Source: `<shared_root>/dotfiles/<feature>/<bucket>/<who>/`.
+    with no `__common__`. Source: `<shared_prebuilt_provision_assets_root>/dotfiles/<feature>/<bucket>/<who>/`.
     A `home/user` dir is pushed INTO `{name}/home/` (so it lands as /home/user/...);
     a `root` dir INTO `{name}/` (lands as /root/...)."""
-    feature_dir: Path = shared_root / "dotfiles" / feature
+    feature_dir: Path = shared_prebuilt_provision_assets_root / "dotfiles" / feature
     cmds: list[list[str]] = []
     for bucket in ("__common__", ansible_os_family):
         user_side: Path = feature_dir / bucket / "home" / "user"
@@ -919,13 +920,13 @@ def push_feature_dotfiles_commands(feature: str, ansible_os_family: str, name: s
 
 
 def push_baseline_dotfiles_commands(ansible_os_family: str, name: str,
-                                    shared_root: Path) -> list[list[str]]:
+                                    shared_prebuilt_provision_assets_root: Path) -> list[list[str]]:
     """All baseline shell dotfiles (bash/tmux/zsh) for `init` / `overwrite-dotfiles`,
     keyed by this VM's ansible_os_family (init: from the template; overwrite-dotfiles:
     from the `user.ivm_ansible_os_family` tag)."""
     cmds: list[list[str]] = []
     for feature in BASELINE_DOTFILE_FEATURES:
-        cmds += push_feature_dotfiles_commands(feature, ansible_os_family, name, shared_root)
+        cmds += push_feature_dotfiles_commands(feature, ansible_os_family, name, shared_prebuilt_provision_assets_root)
     return cmds
 
 
@@ -1306,7 +1307,7 @@ def cmd_list_templates(root: Path) -> None:
         print(f"  {name:<{width}}  {desc}" if desc else f"  {name}")
 
 
-def cmd_init(template_name: str, given_name: str | None, root: Path, shared_root: Path, *,
+def cmd_init(template_name: str, given_name: str | None, root: Path, shared_prebuilt_provision_assets_root: Path, *,
              assume_yes: bool, dry_run: bool) -> None:
     """Create a VM from `<template>`, bound to the current directory: validate the
     template, prompt for + confirm the instance name, then `incus create` (stopped)
@@ -1317,7 +1318,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, shared_root
     doc: Template = load_and_validate(template_name, root)
     if doc["os"]["type"] != "linux":
         die(f"`init` supports linux only for now; '{template_name}' is os.type={doc['os']['type']}")
-    registry: dict[str, Any] = load_package_groups(shared_root)
+    registry: dict[str, Any] = load_package_groups(shared_prebuilt_provision_assets_root)
     warn_if_host_nesting_disabled(doc)
     name: str = choose_instance_name(template_name, cwd, given_name, doc,
                                      dry_run=dry_run, assume_yes=assume_yes)
@@ -1338,8 +1339,8 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, shared_root
             run(device_cmd, dry_run=dry_run)
         run(["incus", "start", name], dry_run=dry_run)
         wait_ready(name, dry_run=dry_run)
-        run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd, root)], dry_run=dry_run)
-        for push_cmd in push_baseline_dotfiles_commands(ansible_os_family_of(doc), name, shared_root):
+        run(["incus", "exec", name, "--", "bash", "-ec", provision_script(doc, registry, cwd, root, shared_prebuilt_provision_assets_root)], dry_run=dry_run)
+        for push_cmd in push_baseline_dotfiles_commands(ansible_os_family_of(doc), name, shared_prebuilt_provision_assets_root):
             run(push_cmd, dry_run=dry_run)
         if is_gui:
             # Provisioning set graphical.target + enabled the display manager, but
@@ -1426,11 +1427,11 @@ def cmd_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> Non
     run(["incus", "delete", "--force", name], dry_run=dry_run)
 
 
-def cmd_overwrite_dotfiles(name: str, shared_root: Path, *, dry_run: bool) -> None:
+def cmd_overwrite_dotfiles(name: str, shared_prebuilt_provision_assets_root: Path, *, dry_run: bool) -> None:
     """Re-push the host-staged baseline dotfiles (bash/tmux/zsh) into an existing VM
     (no re-provision)."""
     ensure_up(name, dry_run=dry_run)
-    for push_cmd in push_baseline_dotfiles_commands(vm_ansible_os_family(name, dry_run=dry_run), name, shared_root):
+    for push_cmd in push_baseline_dotfiles_commands(vm_ansible_os_family(name, dry_run=dry_run), name, shared_prebuilt_provision_assets_root):
         run(push_cmd, dry_run=dry_run)
     print(f"==> dotfiles re-pushed into {colorize_vm_name(name)} (/home/user + /root).", file=sys.stderr)
 
@@ -1507,13 +1508,13 @@ def cmd_update(name: str, *, dry_run: bool) -> None:
         dry_run=dry_run)
 
 
-def cmd_list_provision_units(shared_root: Path) -> None:
+def cmd_list_provision_units(shared_prebuilt_provision_assets_root: Path) -> None:
     """List the installable units (name + `description`), grouped by kind - shown when
     `ivm provision` runs with NO unit arg (the bash-friendly alternative to <TAB>). No VM
     needed - this is just the registry. Prints to stdout (readable / pipeable)."""
-    distro: dict[str, Any] = load_package_groups(shared_root)
-    thirdparty: dict[str, Any] = load_thirdparty_software(shared_root)
-    dotfiles_root: Path = shared_root / "dotfiles"
+    distro: dict[str, Any] = load_package_groups(shared_prebuilt_provision_assets_root)
+    thirdparty: dict[str, Any] = load_thirdparty_software(shared_prebuilt_provision_assets_root)
+    dotfiles_root: Path = shared_prebuilt_provision_assets_root / "dotfiles"
     dotfiles: list[str] = sorted(p.name for p in dotfiles_root.iterdir()) if dotfiles_root.is_dir() else []
 
     def described_rows(registry: dict[str, Any]) -> list[str]:
@@ -1534,7 +1535,7 @@ def cmd_list_provision_units(shared_root: Path) -> None:
     print(("    " + ", ".join(dotfiles)) if dotfiles else "    (none)")
 
 
-def cmd_provision(name: str, unit_names: list[str], shared_root: Path, *, dry_run: bool) -> None:
+def cmd_provision(name: str, unit_names: list[str], shared_prebuilt_provision_assets_root: Path, *, dry_run: bool) -> None:
     """Install named units onto an EXISTING VM - the post-`init` "add more software"
     path. A name can be a `distro_package_groups` bundle, a `thirdparty_software`
     recipe, AND/OR a dotfiles feature - all that match are applied (e.g. `emacs` is
@@ -1543,9 +1544,9 @@ def cmd_provision(name: str, unit_names: list[str], shared_root: Path, *, dry_ru
     (probe-guarded) script as root, dotfiles features are pushed into /home/user (+ /root).
     Idempotent. Target is the cwd-bound VM or `--name`, like the other VM subcommands."""
     ensure_up(name, dry_run=dry_run)
-    distro_registry: dict[str, Any] = load_package_groups(shared_root)
-    thirdparty_registry: dict[str, Any] = load_thirdparty_software(shared_root)
-    dotfiles_root: Path = shared_root / "dotfiles"
+    distro_registry: dict[str, Any] = load_package_groups(shared_prebuilt_provision_assets_root)
+    thirdparty_registry: dict[str, Any] = load_thirdparty_software(shared_prebuilt_provision_assets_root)
+    dotfiles_root: Path = shared_prebuilt_provision_assets_root / "dotfiles"
     distro_bundles: list[str] = []
     thirdparty_names: list[str] = []
     dotfiles_features: list[str] = []
@@ -1591,7 +1592,7 @@ def cmd_provision(name: str, unit_names: list[str], shared_root: Path, *, dry_ru
     if script:
         run(["incus", "exec", name, "--", "bash", "-ec", script], dry_run=dry_run)
     for feature in dotfiles_features:
-        for push_cmd in push_feature_dotfiles_commands(feature, ansible_os_family, name, shared_root):
+        for push_cmd in push_feature_dotfiles_commands(feature, ansible_os_family, name, shared_prebuilt_provision_assets_root):
             run(push_cmd, dry_run=dry_run)
     print(f"==> provisioned {', '.join(unit_names)} into {colorize_vm_name(name)}.", file=sys.stderr)
 
@@ -1644,7 +1645,7 @@ def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
     run(["incus", "list", *list_args], dry_run=dry_run)
 
 
-def cmd_env(template_name: str, root: Path) -> None:
+def cmd_env(template_name: str, root: Path, shared_prebuilt_provision_assets_root: Path) -> None:
     """Load + validate a template and print its resolved configuration."""
     doc: Template = load_and_validate(template_name, root)
     os_block: dict[str, Any] = doc.get("os", {})
@@ -1684,7 +1685,7 @@ def cmd_env(template_name: str, root: Path) -> None:
         print(f"thirdparty    : {', '.join(thirdparty)}")
     if os_block.get("type") == "linux":
         ansible_os_family: str = ansible_os_family_of(doc)
-        resolved: list[str] = resolve_packages(doc, load_package_groups(root), ansible_os_family)
+        resolved: list[str] = resolve_packages(doc, load_package_groups(shared_prebuilt_provision_assets_root), ansible_os_family)
         print(f"-> resolved   : ({ansible_os_family}) {' '.join(resolved)}")
 
 
@@ -2242,7 +2243,7 @@ def main() -> None:
     extras: list[str]
     args, extras = parser.parse_known_args()
     root: Path = args.root
-    shared_root: Path = args.shared_assets_root
+    shared_prebuilt_provision_assets_root: Path = args.shared_assets_root
     # init / env / list don't act on an existing VM, so they don't resolve a target.
     if args.subcommand == "list":
         cmd_list(extras, dry_run=args.dry_run)  # raw passthrough to `incus list`
@@ -2251,12 +2252,12 @@ def main() -> None:
         parser.error("unrecognized arguments: " + " ".join(extras))
     if args.subcommand == "init":
         if args.template:
-            cmd_init(args.template, args.name, root, shared_root, assume_yes=args.yes, dry_run=args.dry_run)
+            cmd_init(args.template, args.name, root, shared_prebuilt_provision_assets_root, assume_yes=args.yes, dry_run=args.dry_run)
         else:
             cmd_list_templates(root)  # no template arg -> list what's available
         return
     if args.subcommand == "env":
-        cmd_env(args.template, root)
+        cmd_env(args.template, root, shared_prebuilt_provision_assets_root)
         return
     # adopt acts on an existing VM but must NOT resolve by cwd (the VM has no
     # binding yet - adopt is what creates it), so it forces an explicit --name.
@@ -2273,7 +2274,7 @@ def main() -> None:
     # `provision` with no units just lists what is installable - no VM needed, so handle
     # it before the cwd VM binding below.
     if args.subcommand == "provision" and not args.names:
-        cmd_list_provision_units(shared_root)
+        cmd_list_provision_units(shared_prebuilt_provision_assets_root)
         return
     # Everything else acts on a VM: the global --name overrides the cwd binding.
     name: str = args.name if args.name else resolve_vm_by_cwd(Path.cwd(), dry_run=args.dry_run)
@@ -2290,7 +2291,7 @@ def main() -> None:
     elif args.subcommand == "delete":
         cmd_delete(name, root, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "overwrite-dotfiles":
-        cmd_overwrite_dotfiles(name, shared_root, dry_run=args.dry_run)
+        cmd_overwrite_dotfiles(name, shared_prebuilt_provision_assets_root, dry_run=args.dry_run)
     elif args.subcommand == "set-password":
         cmd_set_password(name, args.username, dry_run=args.dry_run)
     elif args.subcommand == "unset-password":
@@ -2302,7 +2303,7 @@ def main() -> None:
     elif args.subcommand == "update":
         cmd_update(name, dry_run=args.dry_run)
     elif args.subcommand == "provision":
-        cmd_provision(name, args.names, shared_root, dry_run=args.dry_run)
+        cmd_provision(name, args.names, shared_prebuilt_provision_assets_root, dry_run=args.dry_run)
     elif args.subcommand == "snapshot":
         cmd_snapshot(name, args.snapshot_args, dry_run=args.dry_run)
     elif args.subcommand == "gui":
