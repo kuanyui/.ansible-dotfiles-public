@@ -2324,4 +2324,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # Ctrl+C is a normal way to abort a long `init` / `provision`; exit the way
+        # a shell would (130 = 128 + SIGINT) with a one-line notice, not a Python
+        # traceback. Mutating subprocesses run via run() get the same SIGINT from
+        # the terminal and stop on their own; exec_into() (os.execvp) is unaffected.
+        print("\nivm: aborted", file=sys.stderr)
+        sys.exit(130)
