@@ -7,30 +7,75 @@
 # `git diff`. Do NOT switch to fetching at apply time; that would trust the
 # network on every run and could silently accept a swapped key. See README.md.
 #
-# Verified 2026-06-08: each line's fingerprint matches the forge's published
-# value. Re-verify with:
-#   ssh-keyscan -t rsa,ecdsa,ed25519 github.com gitlab.com | ssh-keygen -lf -
-# and compare against the published fingerprints:
-#   GitHub  ed25519  SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU
-#   GitHub  ecdsa    SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM
-#   GitHub  rsa      SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s
-#   GitLab  ed25519  SHA256:eUXGGm1YGsMAS7vkcx6JOJdOGHPem5gQp4taiCfCLB8
-#   GitLab  ecdsa    SHA256:HbW3g8zUjNSksFbqTiUWPWg2Bq1x8xdGUrliXFzSnUw
-#   GitLab  rsa      SHA256:ROQFvPThGrW4RuWLoL9tq9I9zJ42fK4XywyRtbOz/EQ
-# Sources to audit the fingerprints against (the forges' own published pages):
-#   GitHub fingerprints:
-#     https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
-#   GitHub machine-readable (full known_hosts key lines, "ssh_keys" field):
-#     https://api.github.com/meta
-#   GitLab fingerprints ("SSH host keys fingerprints" section):
-#     https://docs.gitlab.com/user/gitlab_com/
-trusted_pubkeys_ssh_known_hosts_lines:
-  - "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
-  - "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg="
-  - "github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk="
-  - "gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf"
-  - "gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFSMqzJeV9rUzU4kWitGjeR4PWSa29SPqJ1fVkhtj3Hw9xjLVXVYrU9QlYWrOLXBpQ6KWjbjTDTdDkoohFzgbEY="
-  - "gitlab.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/U0tCNyokEi/ueaBMCvbcTHhO7FcwzY92WK4Yt0aGROY5qX2UKSeOvuP4D6TPqKF1onrSzH9bx9XUf2lEdWT/ia1NEKjunUqu1xOB/StKDHMoX4/OKyIzuS0q/T1zOATthvasJFoPrAjkohTyaDUz2LN5JoH839hViyEG82yB+MjcFV5MU3N1l1QL3cVUCh93xSaua1N85qivl+siMkPGbO5xR/En4iEY6K2XPASUEMaieWVNTRCtJ4S8H+9"
+# Each entry: `host` + `source` (the forge's published-fingerprints page) +
+# `verified` date, then `keys` pairing every known_hosts `line` with its
+# expected SHA256 `fingerprint`. On apply the role re-derives each line's
+# fingerprint with `ssh-keygen` and asserts it equals the pinned `fingerprint`
+# (tasks/import_ssh_host_keys.yml) - same apply-time rigor as the Debian/openSUSE
+# GPG keys below, and the fingerprint is DATA not a comment so the check is
+# machine-auditable. Adding/rotating a key is verify-then-pin, never bare TOFU;
+# see README.md "Updating when a forge rotates its key".
+trusted_pubkeys_ssh_host_keys:
+  - host: github.com
+    source: "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints"
+    verified: "2026-06-08"
+    # Full key lines are also machine-readable at https://api.github.com/meta ("ssh_keys").
+    keys:
+      - line: "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+        fingerprint: "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
+      - line: "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg="
+        fingerprint: "SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM"
+      - line: "github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk="
+        fingerprint: "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s"
+  - host: gitlab.com
+    source: "https://docs.gitlab.com/user/gitlab_com/"
+    verified: "2026-06-08"
+    # Full key lines (known_hosts format) are published on the source page itself.
+    keys:
+      - line: "gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf"
+        fingerprint: "SHA256:eUXGGm1YGsMAS7vkcx6JOJdOGHPem5gQp4taiCfCLB8"
+      - line: "gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFSMqzJeV9rUzU4kWitGjeR4PWSa29SPqJ1fVkhtj3Hw9xjLVXVYrU9QlYWrOLXBpQ6KWjbjTDTdDkoohFzgbEY="
+        fingerprint: "SHA256:HbW3g8zUjNSksFbqTiUWPWg2Bq1x8xdGUrliXFzSnUw"
+      - line: "gitlab.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/U0tCNyokEi/ueaBMCvbcTHhO7FcwzY92WK4Yt0aGROY5qX2UKSeOvuP4D6TPqKF1onrSzH9bx9XUf2lEdWT/ia1NEKjunUqu1xOB/StKDHMoX4/OKyIzuS0q/T1zOATthvasJFoPrAjkohTyaDUz2LN5JoH839hViyEG82yB+MjcFV5MU3N1l1QL3cVUCh93xSaua1N85qivl+siMkPGbO5xR/En4iEY6K2XPASUEMaieWVNTRCtJ4S8H+9"
+        fingerprint: "SHA256:ROQFvPThGrW4RuWLoL9tq9I9zJ42fK4XywyRtbOz/EQ"
+  - host: invent.kde.org
+    source: "https://invent.kde.org/help/instance_configuration"
+    verified: "2026-06-15"
+    # No ecdsa pinned: the page lists SHA256:ZNBg4AkRxbt/N6xzpt7GbmmS78A3WFy5lz0l/cPHbcE but
+    # invent.kde.org serves no ecdsa host key to ssh-keyscan (checked from 2 networks
+    # 2026-06-15), so there is no key blob to pin; the page fingerprint may be stale.
+    keys:
+      - line: "invent.kde.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMtd90DMLrtdCiapQK43JjwKk+U8egSXQU15fOJba1n"
+        fingerprint: "SHA256:zHdK2R/S6s5Oj71N0s8LHWCXXsUt+DCztd+GjzW9KlU"
+      - line: "invent.kde.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC9kAykUQWBw0z7+2Ux0Cu36qW95NWxdEPYmgf0xALIeOYyNA7QF2RDkuezMp+TKhDrqYV8RZCfQmXyGIHCPx+4nm9Ij0Sq/xRVYL+R5X4jBmxbsXtDo7nizSckovPAKR9HxKWi9QLTus9wP4/jskCnEV6uGRqeSXevFy8X1jIYfhC63nbjsamelfgszr92gzQyK1OPa3qYjK7zcdgNh/o3Nh2p7hOcVZavlhjQiqZhYAz/m0xoaHVvquRapcY+xdBoQLeTs62RcsyTB8EKbNKXf8rpeh/Ki406w6GC73WCetMk6WXDJjy8FjhL9cUS4M8oGAmGN7wfH43HmjQgcLZ5rmV2vskuxdXeoYrAFV+iLLHEHzHgAGLf4YQxi78ZE4N7l7Hnp3mRaX6t4GxmyH12v0I8B7scya7FIXWcQxCwv/C4j4g0VkuCMgeeolnc+xI+0e2XbhhhBNj+8GnZKzZiU9NQxo7+ypRzB+ZIP4LhaUETAQbu9U4wr5cgsEwt0Ek="
+        fingerprint: "SHA256:KxAoV6VsbKvAocFZCJlxtmPDScmUCRNiUiOCSXNSC/k"
+  - host: ssh.gitlab.gnome.org
+    source: "https://gitlab.gnome.org/help/instance_configuration"
+    verified: "2026-06-15"
+    # gitlab.gnome.org is Fastly CDN (no SSH); keys are served on this ssh.* host.
+    # All 3 also match gnome.org's DNSSEC-signed SSHFP records; rsa is anchored
+    # ONLY by SSHFP (the HTTPS page publishes ed25519 + ecdsa only).
+    keys:
+      - line: "ssh.gitlab.gnome.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHG6b3deoYMPwKEu9Sj+y6MBHYYUKQiAnta/go3aNv7R"
+        fingerprint: "SHA256:Y9G4dWiIfi53LR3InJWsIbv4lekUHonq/HrqTTm/rcw"
+      - line: "ssh.gitlab.gnome.org ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBH8NuGQ3ArFGochlv6TKXhMhsgIwG743e93pLkAQTzfgds0g0k6QBimb40zavVjITjytiSaQsf+KncJgUjYd98o="
+        fingerprint: "SHA256:TiA9po6nO6jFso7wQNy4xLlth10lIfjv1dxuDabVIqw"
+      - line: "ssh.gitlab.gnome.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCmUnZ33O26kvhcmc6k1T8xlL3yJjeNt3gphvW9/5u/CO0z5G8PGr2km4jUhStuPJR9m77LrdCF5Ywm26hsBnoxK+1zMs7YTjriiGt4r0Q5btQS5J5zFAV6aYJEmCbQz/23n8+w9Jx3hPVS8A3VE9Vd52S+5DMeIQY8QR3LPpROyCIpkR425sN0D0VjRUAH0hn61zS8N1+Pw5te2ULbBriBB9cub2n1GBCsZ2ErX1ernwKffOz/fbi5mpGbGLlJabLBm81/AiNk6NLZWTAZiNZjztxRySZFSpSzGF54kttIePxNC1x9AtW4KMaIzjVK2DIrFONyZYiEX47ox5TXlc7VQaBICUoTrR91wpb5xl2HPKP4MvFqUAzubU2V8r91ISXrnJyfwDrSB7L9Jwg6B6pN+acIttC4gOFGTJg9qanmLxtonSpwv/NaLehI1+D4LR9Or+e8jjtKSc6vu8+ghqAni3XHoT9uSmt1UPd89dOhqbpk8Hc3KTubUC3WIjGnotE="
+        fingerprint: "SHA256:WRRpoWo7szMzwlkYFeLoj0UItmVHfAI+r+hFgzwGARg"
+  # ---------------------------------------------------------------------------
+  # freedesktop.org (ssh.gitlab.freedesktop.org) is intentionally NOT pinned.
+  # Reason: there is no authoritative way to verify its host keys offline, so
+  # pinning would be bare TOFU - the very thing this file exists to avoid.
+  # Evidence (checked 2026-06-15):
+  #   - Its instance_configuration page publishes NO fingerprints; it shows
+  #     "SSH host keys are not available on this system, use ssh-keyscan".
+  #   - Its SSHFP DNS records exist but are NOT DNSSEC-signed (no `ad` flag, no
+  #     RRSIG), so they are spoofable and cannot serve as a trust anchor.
+  # That leaves only `ssh-keyscan`, which is TOFU - refused here. Pin freedesktop
+  # ONLY once it ships a verifiable anchor: a DNSSEC-signed SSHFP record, or
+  # published HTTPS fingerprints. (Contrast: GNOME above is anchored by a
+  # DNSSEC-signed SSHFP, KDE by its published instance_configuration page.)
+  # ---------------------------------------------------------------------------
 
 # Debian CD/installer image signing keys: pinned (armored) in files/, imported
 # into a DEDICATED keyring (`trusted_pubkeys_debian_cd_keyring`, see defaults) so

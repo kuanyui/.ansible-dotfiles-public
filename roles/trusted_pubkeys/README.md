@@ -15,7 +15,9 @@ Gate: `setup_trusted_pubkeys` (default `false`, in `group_vars/all.yml`).
 
 So `git clone git@github.com:...` / `git@gitlab.com:...` over SSH no longer shows
 the `authenticity of host ... can't be established` TOFU prompt, and you can verify
-downloaded Debian / openSUSE images offline.
+downloaded Debian / openSUSE images offline. On apply the role also re-derives each
+pinned SSH key's SHA256 fingerprint and asserts it matches the value stored beside
+it, so a tampered key fails loudly - the same rigor the GPG keys get.
 
 ## Verifying Debian images
 
@@ -64,16 +66,21 @@ Rare - GitHub rotated its RSA host key once (2023-03-24); ECDSA/Ed25519 never. A
 rotation surfaces as ssh's loud `REMOTE HOST IDENTIFICATION HAS CHANGED`; that is
 the signal to update the pin as a deliberate, reviewed change.
 
-Re-verify, then edit `vars/main.yml`:
+To add or rotate an SSH host key, edit `trusted_pubkeys_ssh_host_keys` in
+`vars/main.yml`. Each forge there is `host` + `source` (its published-fingerprints
+page) + `verified` date + `keys`, where every key pairs a known_hosts `line` with
+its SHA256 `fingerprint`. The flow is verify-then-pin, never bare TOFU:
 
-```
-ssh-keyscan -t rsa,ecdsa,ed25519 github.com gitlab.com | ssh-keygen -lf -
-```
-
-Compare the fingerprints against the published values:
-
-- GitHub: <https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints>
-- GitLab: <https://docs.gitlab.com/user/gitlab_com/> (SSH host keys)
+1. Get the full key `line`:
+   - github.com / gitlab.com publish theirs over HTTPS -
+     <https://api.github.com/meta> (`ssh_keys`) and
+     <https://docs.gitlab.com/user/gitlab_com/>.
+   - a self-hosted GitLab (e.g. gitlab.gnome.org) publishes only fingerprints, so
+     fetch its key with `ssh-keyscan -t rsa,ecdsa,ed25519 <host>`.
+2. Compute its fingerprint: pipe the line through `ssh-keygen -lf -`.
+3. Confirm that SHA256 equals the value on the forge's `source` page, then pin
+   both `line` and `fingerprint`. On every apply the role re-runs step 2 and
+   asserts the result equals the pinned `fingerprint`, failing loudly otherwise.
 
 Debian CD keys roll per stable release and are additive (old keys still verify
 old images). To add one: re-verify against <https://www.debian.org/CD/verify>,
@@ -85,6 +92,21 @@ is the repo signing key at
 <https://download.opensuse.org/tumbleweed/repo/oss/repodata/repomd.xml.key>;
 re-verify it produces a GOOD signature over a live image's `.sha256.asc`, then
 update the armored file + fingerprint in `trusted_pubkeys_opensuse_keys`.
+
+## Auditing the pins
+
+`audit_pins.py` re-checks every pinned SSH fingerprint against its live
+authoritative sources - the forge's HTTPS `source` page and its DNSSEC-signed
+SSHFP DNS records - so you can catch a forge rotating a key (a pin gone stale).
+Read-only (outbound HTTPS + DNS only); needs `dig` for the SSHFP check.
+
+```
+python3 roles/trusted_pubkeys/audit_pins.py
+```
+
+Each key prints `OK` (a source confirms it), `ALERT` (a trustworthy source serves
+a different key - rotation, investigate), or `UNCONFIRMED` (no source could be
+checked - e.g. no network or `dig`). Exits non-zero unless every key is `OK`.
 
 ## Layout note
 

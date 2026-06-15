@@ -7,14 +7,36 @@
     group: "{{ target_group }}"
     mode: "0700"
 
+# Re-derive each pinned key's SHA256 fingerprint with `ssh-keygen` and assert it
+# equals the `fingerprint` pinned beside it in vars/main.yml, BEFORE writing any
+# line to known_hosts - so a swapped key blob fails loudly instead of being
+# trusted, and the pinned fingerprint is a machine-checked datum rather than a
+# decorative comment. Same apply-time rigor the Debian/openSUSE GPG keys get.
+# (`ssh-keygen` has no long flags: `-l` = print fingerprint, `-f -` = read the
+# key line from stdin.)
+- name: Assert each pinned SSH host key matches its `fingerprint` in vars/main.yml
+  ansible.builtin.command:
+    cmd: ssh-keygen -l -f -
+    stdin: "{{ _trusted_pubkey_ssh_key.line }}"
+  register: _trusted_pubkey_ssh_keygen
+  changed_when: false
+  failed_when: >-
+    _trusted_pubkey_ssh_keygen.rc != 0
+    or _trusted_pubkey_ssh_key.fingerprint != _trusted_pubkey_ssh_keygen.stdout.split()[1]
+  loop: "{{ trusted_pubkeys_ssh_host_keys | map(attribute='keys') | flatten(levels=1) }}"
+  loop_control:
+    loop_var: _trusted_pubkey_ssh_key
+    label: "{{ _trusted_pubkey_ssh_key.line.split()[:2] | join(' ') }} == {{ _trusted_pubkey_ssh_key.fingerprint }}"
+
 # `ansible.builtin.known_hosts` merges per (host, key): it keeps the user's own
 # entries and other host keys, allows multiple keys per host, and is idempotent.
-- name: Pin each forge host key into `{{ target_home }}/.ssh/known_hosts`
+- name: Pin each verified forge host key into `{{ target_home }}/.ssh/known_hosts`
   ansible.builtin.known_hosts:
-    name: "{{ item.split()[0] }}"
-    key: "{{ item }}"
+    name: "{{ _trusted_pubkey_ssh_key.line.split()[0] }}"
+    key: "{{ _trusted_pubkey_ssh_key.line }}"
     path: "{{ target_home }}/.ssh/known_hosts"
     state: present
-  loop: "{{ trusted_pubkeys_ssh_known_hosts_lines }}"
+  loop: "{{ trusted_pubkeys_ssh_host_keys | map(attribute='keys') | flatten(levels=1) }}"
   loop_control:
-    label: "{{ item.split()[:2] | join(' ') }}"
+    loop_var: _trusted_pubkey_ssh_key
+    label: "{{ _trusted_pubkey_ssh_key.line.split()[:2] | join(' ') }}"
