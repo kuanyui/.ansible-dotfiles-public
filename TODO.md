@@ -1121,15 +1121,37 @@ the template-sharing design discussion: `roles/quickemu_vm/TODO.md`.
   registry JSON (future `qvm provision`); role renaming (`vm_incus`/`vm_quickemu`)
   deferred.
 
+## vm_podman (`pvm`) - REFACTOR.md Phase 3 (container engine)
+
+Fold `container_apps` + `container_templates` into ONE engine role `roles/vm_podman`
+shipping `pvm`, mirroring `vm_quickemu`/`qvm`. Dockerfile-less: provision a base
+container via `podman exec`/`cp` then `podman commit` (content-hash tag); consume
+the SAME shared provision-asset cache ivm/qvm use. crun in v1; libkrun deferred.
+Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
+
+- [~] **3.0 scaffold** - `roles/vm_podman` mirroring `vm_quickemu`: `files/pvm`
+  skeleton (env/list/help wired; other subcommands registered but error with the
+  sub-phase that adds them), `test_pvm.py`, `_pvm`/`pvm.bash` completions, defaults,
+  tasks (main/pvm_install/pvm_uninstall/podman_host_install), README, playbooks,
+  sandbox config, Makefile `vm-podman-*`. ivm/qvm/pvm uninstall upgraded to a 3-way
+  shared-cache ref-count (pvm is now a third consumer). (Repo-hygiene git-rm was a
+  no-op: the dead `roles/incus_vm` cruft + `.pyc` are untracked, already gitignored.)
+- [ ] **3.1** declarative templates + `template.schema.json` + port `host-cli.sh.j2`
+  logic + `filter_plugins/distro.py` to typed Python (pure, unit-tested; no podman).
+- [ ] **3.2** consume the shared cache: provision-via-exec + `podman commit`
+  (content-hash); `overlay/workspace-autocd`; dynamic completions read the JSON.
+- [ ] **3.3** real podman drive (init/run/lifecycle/shell/agent, crun) + isolation
+  guardrails (shared-kernel warn -> ivm; non-libkrun `init` [y/N] gate).
+- [ ] **3.4** retire `container_apps` + `container_templates`; tick REFACTOR.md.
+- [ ] **(deferred) libkrun** - `--runtime krun` + sshd-via-commit (recipe in the plan).
+
 ## Notes / future
 
-- [ ] **container_apps -> one engine + declarative templates** (parallel to what
-  `ivm` did to incus_agents). DESIGN written: `roles/container_apps/REDESIGN.md`.
-  Replaces the rendered `c-<tpl>-<rt>` launchers + 454-line `host-cli.sh.j2` +
-  manifest with one Python engine (working name `capp`, TBD); reuses `roles/zsh`
-  for dotfiles (kills `container_templates`'s own zshrc/bashrc.j2); folds
-  `container_templates` into the engine role. Big, separate effort. Also: `git rm
-  --cached roles/container_templates/filter_plugins/__pycache__/*.pyc` (committed cruft).
+- [~] **container_apps -> one engine + declarative templates** - UNDERWAY as
+  REFACTOR.md Phase 3 (`pvm` / `roles/vm_podman`); see the dedicated section above +
+  `roles/vm_podman/IMPLEMENTATION_PLAN.md`. (Working name resolved `capp` -> `pvm`;
+  the `filter_plugins/__pycache__/*.pyc` "committed cruft" note was stale - they are
+  untracked + already gitignored.)
 - Python launcher rewrite: deferred to the `incus_vm` redesign (see
   `roles/incus_vm/REDESIGN.md`). Trigger = presets / multi-distro /
   Windows. The 11 duplicated subcommands across the two launchers get unified

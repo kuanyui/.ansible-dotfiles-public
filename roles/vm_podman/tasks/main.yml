@@ -1,0 +1,21 @@
+---
+- name: Validate `vm_podman_state` is `present` or `absent`
+  ansible.builtin.assert:
+    that: vm_podman_state in ['present', 'absent']
+    fail_msg: "vm_podman_state must be `present` or `absent`, got `{{ vm_podman_state }}`."
+
+- name: Run host-level prep (podman package + shared-kernel notice) via tasks/podman_host_install.yml
+  ansible.builtin.include_tasks: podman_host_install.yml
+  when:
+    - vm_podman_state == 'present'
+    - not (vm_podman_skip_host_setup | default(false) | bool)
+
+- ansible.builtin.include_tasks: pvm_install.yml
+  when: vm_podman_state == 'present'
+
+# `absent` removes only the user-space `pvm` + this role's subdir. There is no
+# host-level teardown: podman is never removed (system-shared), pvm has no
+# daemon/pool/group state, and built images/containers are pvm's runtime concern
+# (`pvm rma`). The SHARED provision-asset cache is ref-counted (see pvm_uninstall.yml).
+- ansible.builtin.include_tasks: pvm_uninstall.yml
+  when: vm_podman_state == 'absent'

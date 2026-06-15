@@ -1,0 +1,44 @@
+---
+# Install the `pvm` launcher + its shell completions, and co-produce the shared
+# provision-asset cache `pvm` reads at build time. Built images/containers are
+# pvm's own runtime concern (created on `pvm init`) - the role deploys nothing
+# there. The shipped templates + JSON schema are installed in sub-phase 3.1
+# (they do not exist yet in this scaffold).
+
+- name: Ensure `vm_podman_bin_dir` + `vm_podman_pvm_dir` + completion dirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ vm_podman_bin_dir }}"
+    - "{{ vm_podman_pvm_dir }}"
+    - "{{ vm_podman_zsh_completion_dir }}"
+    - "{{ vm_podman_bash_completion_dir }}"
+
+- name: Install `pvm` to `{{ vm_podman_bin_dir }}/pvm`
+  ansible.builtin.copy:
+    src: pvm
+    dest: "{{ vm_podman_bin_dir }}/pvm"
+    mode: "0755"
+
+- name: Install `pvm` zsh completion to `{{ vm_podman_zsh_completion_dir }}/_pvm`
+  ansible.builtin.copy:
+    src: completions/_pvm
+    dest: "{{ vm_podman_zsh_completion_dir }}/_pvm"
+    mode: "0644"
+
+- name: Install `pvm` bash completion to `{{ vm_podman_bash_completion_dir }}/pvm`
+  ansible.builtin.copy:
+    src: completions/pvm.bash
+    dest: "{{ vm_podman_bash_completion_dir }}/pvm"
+    mode: "0644"
+
+# ---------- Produce the SHARED provision-asset cache (read by `pvm` at build time) ----------
+# The SAME cache ivm/qvm use (JSON registries + feature-first dotfiles tree), produced by the
+# internal `_shared_prebuilt_provision_assets` role into
+# `~/.local/share/ansible-managed/shared-prebuilt-provision-assets/`. Regenerable + SHARED, so
+# it is REF-COUNTED at uninstall (see pvm_uninstall.yml + the matching ivm/qvm steps).
+- name: Produce the shared provision-asset cache (`roles/_shared_prebuilt_provision_assets`)
+  ansible.builtin.include_role:
+    name: _shared_prebuilt_provision_assets

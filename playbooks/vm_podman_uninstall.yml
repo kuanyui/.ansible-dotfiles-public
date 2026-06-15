@@ -1,0 +1,9 @@
+---
+- name: Uninstall the `pvm` podman container launcher via `roles/vm_podman` (podman + built images/containers untouched)
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    vm_podman_state: absent
+  roles:
+    - vm_podman

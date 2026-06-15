@@ -1,0 +1,69 @@
+#compdef pvm
+# pvm zsh completion (ansible-managed by roles/vm_podman). zsh autoloads this via
+# fpath - see the `ansible-managed/*/zsh-completions` glob in roles/zsh/.zshrc.j2.
+# Two levels: subcommands, then their args - template names for init/build/run/env,
+# container names for --name, runtime values for --runtime.
+
+local -a _pvm_subcommands
+_pvm_subcommands=(
+  'init:build the image if needed, then run a container bound to the cwd'
+  'build:build + commit the per-template image only (no container)'
+  'run:run a container from the per-template image (cwd-bound)'
+  'env:show resolved paths + runtime (optionally for a template)'
+  'start:start the cwd-bound container'
+  'stop:stop the cwd-bound container'
+  'rmc:remove the container (keeps the image)'
+  'rmi:remove the per-template image (keeps containers)'
+  'rma:remove the container AND its image'
+  'shell:interactive shell in the container (zsh, user)'
+  'bash-user:bash in the container as the unprivileged user'
+  'bash-root:bash in the container as root'
+  'zsh-user:zsh in the container as the unprivileged user'
+  'zsh-root:zsh in the container as root'
+  'agent:run the template-configured agent (e.g. claude) in the container'
+  'list:list pvm-managed containers (name, status, image)'
+  'help:show help'
+)
+
+# Template names = *.yaml stems under the templates dir (shipped + user). No daemon
+# to ask - fast. Same dynamic pattern as qvm's _qvm_vm_names.
+_pvm_template_names() {
+  local _pvm_templates_dir="${PVM_HOME:-$HOME/.local/share/ansible-managed/vm-podman/pvm}/templates"
+  local _pvm_template_path
+  for _pvm_template_path in ${_pvm_templates_dir}/*.yaml(N); do
+    print -r -- "${_pvm_template_path:t:r}"
+  done
+}
+
+# pvm-managed container names (ask podman; empty if podman is absent).
+_pvm_container_names() {
+  podman ps --all --filter 'name=^pvm-' --format '{{.Names}}' 2>/dev/null
+}
+
+local state
+
+_arguments -C \
+  '--name[target an existing container by name, ignoring the cwd binding]:container:->ctrname' \
+  '--dry-run[print every mutating command instead of running it]' \
+  '--runtime[OCI runtime: crun (shared host kernel) or libkrun (microVM)]:runtime:(crun libkrun)' \
+  '--shared-assets-root[shared provision-asset cache dir (rarely overridden)]:dir:_files -/' \
+  '1:subcommand:->subcmd' \
+  '*::args:->args'
+
+case "$state" in
+  subcmd) _describe 'pvm subcommand' _pvm_subcommands ;;
+  ctrname) compadd -- ${(f)"$(_pvm_container_names)"} ;;
+  args)
+    case "$words[1]" in
+      init|build|run|env)
+        local -a _pvm_templates
+        _pvm_templates=(${(f)"$(_pvm_template_names)"})
+        _describe -t templates 'template' _pvm_templates
+        case "$words[1]" in
+          init) compadd -- --rebuild --yes ;;
+          build) compadd -- --rebuild ;;
+        esac
+        ;;
+    esac
+    ;;
+esac

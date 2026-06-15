@@ -15,21 +15,28 @@
     state: absent
 
 # The SHARED provision-asset cache (shared-prebuilt-provision-assets/) is CO-PRODUCED by
-# `vm_incus` AND `vm_quickemu` (qvm), so it is REF-COUNTED: this uninstall removes it ONLY
-# when the OTHER consumer (qvm) is absent - else `qvm provision` would break until a
-# re-apply. The last launcher uninstalled wipes it (regenerable cache; see CLAUDE.md
-# "Shared prebuilt-asset dirs"). Path comes from the producer's defaults.
+# `vm_incus`, `vm_quickemu` (qvm) AND `vm_podman` (pvm), so it is REF-COUNTED across all
+# THREE: this uninstall removes it ONLY when NEITHER other consumer (qvm, pvm) is installed -
+# else their `provision`/build would break until a re-apply. The last launcher uninstalled
+# wipes it (regenerable cache; see CLAUDE.md "Shared prebuilt-asset dirs").
 - name: Load the shared-asset producer's defaults (for `_shared_prebuilt_provision_assets_dir`)
   ansible.builtin.include_vars:
     file: "{{ role_path }}/../_shared_prebuilt_provision_assets/defaults/main.yml"
 
-- name: Check whether `qvm` (the other shared-cache consumer) is still installed
+- name: Check whether `qvm` (a shared-cache consumer) is still installed
   ansible.builtin.stat:
     path: "{{ ansible_facts['env']['HOME'] }}/.local/bin/qvm"
   register: _other_launcher_qvm
 
-- name: Wipe the SHARED provision-asset cache `{{ _shared_prebuilt_provision_assets_dir }}` (only when qvm is NOT installed)
+- name: Check whether `pvm` (a shared-cache consumer) is still installed
+  ansible.builtin.stat:
+    path: "{{ ansible_facts['env']['HOME'] }}/.local/bin/pvm"
+  register: _other_launcher_pvm
+
+- name: Wipe the SHARED provision-asset cache `{{ _shared_prebuilt_provision_assets_dir }}` (only when NEITHER qvm nor pvm is installed)
   ansible.builtin.file:
     path: "{{ _shared_prebuilt_provision_assets_dir }}"
     state: absent
-  when: not _other_launcher_qvm.stat.exists
+  when:
+    - not _other_launcher_qvm.stat.exists
+    - not _other_launcher_pvm.stat.exists

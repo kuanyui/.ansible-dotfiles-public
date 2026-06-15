@@ -1,0 +1,7 @@
+---
+- name: Install the `pvm` podman container launcher via `roles/vm_podman`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - vm_podman

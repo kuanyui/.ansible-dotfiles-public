@@ -1,0 +1,34 @@
+---
+# Host-level package prep for `roles/vm_podman`. Included from tasks/main.yml
+# (gated on `not vm_podman_skip_host_setup`). Probe-gated, so a set-up host is a
+# no-op that never prompts for sudo. podman is just a package - no daemon (rootless),
+# no pool, no group (compare roles/vm_quickemu/tasks/quickemu_host_install.yml).
+
+- name: Install `podman` via official distro repo (Debian / Suse / RedHat; only if the binary is missing)
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+  vars:
+    install_distro_packages:
+      Debian:
+        install: [podman]
+        probe: command -v podman
+      Suse:
+        install: [podman]
+        probe: command -v podman
+      RedHat:
+        install: [podman]
+        probe: command -v podman
+
+# Isolation honesty (REFACTOR.md): pvm's default runtime (crun) shares the HOST
+# kernel - weaker than a real VM. Print it ONCE at install so the tradeoff is up
+# front; `pvm init` re-warns + gates per-container (sub-phase 3.3).
+- name: NOTICE that pvm containers (crun) share the host kernel - use `ivm` for real VM isolation
+  ansible.builtin.debug:
+    msg: |
+      ============================================================
+       pvm runs podman CONTAINERS. The default runtime (crun) shares
+       the HOST kernel - this is NOT the isolation a real VM gives.
+       For kernel-level isolation use `ivm` (incus VMs); `pvm init`
+       will warn + confirm per-container. (libkrun microVM runtime
+       is a later addition.)
+      ============================================================

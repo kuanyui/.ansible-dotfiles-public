@@ -1,0 +1,29 @@
+---
+# vm_podman vars: the `pvm` launcher install + host-level podman dep.
+
+# `vm_podman_state`:
+#   - `present` (default): install `pvm` + completions + shipped templates, and
+#     co-produce the shared provision-asset cache (+ host podman unless
+#     `vm_podman_skip_host_setup`).
+#   - `absent`: remove the `pvm` binary + this role's subdir. Does NOT remove
+#     podman (system-shared) or any built images/containers (`pvm rma` per-project),
+#     same policy as roles/vm_incus / roles/vm_quickemu.
+vm_podman_state: present
+
+# `vm_podman_skip_host_setup`: skip tasks/podman_host_install.yml (the `podman`
+# package install + the shared-kernel notice) - for hosts that manage podman
+# themselves, and for the sandbox (no podman drive at install time). Off by default.
+vm_podman_skip_host_setup: false
+
+# This role's own subdir under `~/.local/share/ansible-managed/` (holds the pvm
+# program data + completion dirs; uninstall = `rm -rf` it). Built images /
+# containers live in podman's own storage, NOT here - so uninstalling the role
+# never erases them (compare vm_quickemu keeping VM data outside its subdir).
+vm_podman_root: "{{ ansible_facts['env']['HOME'] }}/.local/share/ansible-managed/vm-podman"
+vm_podman_pvm_dir: "{{ vm_podman_root }}/pvm"
+vm_podman_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+
+# Auto-discovered by the rc globs (`ansible-managed/*/zsh-completions` in
+# .zshrc.j2; `*/bash-completions/*` sourced by .bashrc.j2) - no rc edits.
+vm_podman_zsh_completion_dir: "{{ vm_podman_root }}/zsh-completions"
+vm_podman_bash_completion_dir: "{{ vm_podman_root }}/bash-completions"

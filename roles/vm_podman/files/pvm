@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""pvm - podman container launcher (rootless; optional libkrun microVM).
+
+Sibling of `ivm` (incus VMs) and `qvm` (quickemu VMs), for the container axis.
+Drives podman from the HOST off declarative YAML templates: build a per-template
+image once (provision a base container via `podman exec` + `podman cp`, then
+`podman commit` it - NO Dockerfile), then run a per-project container bound to the
+cwd. Provisioning (packages + thirdparty recipes + dotfiles) reads the SAME shared
+provision-asset cache `ivm`/`qvm` use, so all three engines share one source of
+truth.
+
+Isolation honesty: the default runtime (`crun`) shares the HOST kernel - the
+boundary `ivm` exists to avoid. For real kernel isolation use `ivm`; pvm warns and
+gates accordingly (see sub-phase 3.3). `libkrun` (a microVM runtime) is a later
+addition.
+
+Layout (program data under `PVM_HOME`; uninstalling the role's managed subdir
+`~/.local/share/ansible-managed/vm-podman/` removes it):
+  ~/.local/share/ansible-managed/vm-podman/pvm/templates/   shipped + user templates
+  ~/.local/share/ansible-managed/vm-podman/pvm/host_ssh_key 1 (libkrun only, later)
+
+NOTE: this is the sub-phase 3.0 scaffold - only `env`/`list`/`help` are wired;
+every other subcommand is registered but errors with the sub-phase that adds it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, NoReturn
+
+PVM_DATA_HOME: Path = Path(os.environ.get("PVM_HOME", str(Path.home() / ".local/share/ansible-managed/vm-podman/pvm")))
+TEMPLATES_DIR: Path = PVM_DATA_HOME / "templates"
+
+# The SHARED, regenerable provision-asset cache (produced by
+# roles/_shared_prebuilt_provision_assets, also included by pvm_install): the SAME
+# dir ivm/qvm read - distro-package-groups.json + thirdparty-software.json + the
+# feature-first dotfiles/ tree. `pvm` only READS it (at build time). Rarely
+# overridden (env SHARED_PREBUILT_PROVISION_ASSETS_ROOT or --shared-assets-root).
+DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
+    os.environ.get("SHARED_PREBUILT_PROVISION_ASSETS_ROOT",
+                   str(Path.home() / ".local/share/ansible-managed/shared-prebuilt-provision-assets")))
+
+# `crun` shares the host kernel (lightweight, default); `libkrun` is a microVM
+# (stronger isolation, deferred - see IMPLEMENTATION_PLAN.md). User-facing flag
+# value `libkrun` maps to podman's `krun` OCI-runtime handler.
+DEFAULT_RUNTIME: str = "crun"
+RUNTIME_CHOICES: tuple[str, ...] = ("crun", "libkrun")
+
+# pvm-managed containers are named `pvm-<template>-<project>`; the prefix scopes
+# `list` and never collides with hand-run podman containers.
+CONTAINER_NAME_PREFIX: str = "pvm-"
+
+CONTAINER_NAME_COLOR: str = "\033[1;36m"  # bold cyan, same convention as ivm/qvm
+COLOR_RESET: str = "\033[0m"
+
+
+def colorize_container_name(container_name: str, *, stream: Any = sys.stderr) -> str:
+    """Bold-cyan the container name on TTYs (NO_COLOR honored), plain otherwise."""
+    if os.environ.get("NO_COLOR") or not stream.isatty():
+        return container_name
+    return f"{CONTAINER_NAME_COLOR}{container_name}{COLOR_RESET}"
+
+
+def die(message: str) -> NoReturn:
+    print(f"pvm: error: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def not_yet_implemented(subcommand: str, sub_phase: str) -> NoReturn:
+    """Scaffold stub: a registered-but-unbuilt subcommand fails loudly, naming the
+    sub-phase that lands it (so a half-built pvm never silently no-ops)."""
+    die(f"`pvm {subcommand}` is not implemented yet (arrives in sub-phase {sub_phase})")
+
+
+def run(command_argv: list[str], *, dry_run: bool, cwd: Path | None = None) -> None:
+    """Run a mutating command, printing the exact argv FIRST (transparency rule)."""
+    print("+ " + shlex.join(command_argv), file=sys.stderr)
+    if dry_run:
+        return
+    subprocess.run(command_argv, check=True, cwd=cwd)
+
+
+def run_capture(command_argv: list[str], *, cwd: Path | None = None) -> tuple[int, str, str]:
+    """Run read-only, capture (returncode, stdout, stderr); missing binary -> rc 127."""
+    try:
+        completed = subprocess.run(command_argv, capture_output=True, text=True, check=False, cwd=cwd)
+    except FileNotFoundError:
+        return 127, "", f"{command_argv[0]}: not found"
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+def confirm_or_die(prompt_text: str, *, assume_yes: bool) -> None:
+    """y/N gate before anything heavy (build / delete) or the shared-kernel `init`
+    gate. Non-TTY aborts unless --yes, so scripts can never stumble through it."""
+    if assume_yes:
+        return
+    if not sys.stdin.isatty():
+        die("not a TTY and --yes not given - refusing to proceed unconfirmed")
+    reply: str = input(f"{prompt_text} [y/N] ").strip().lower()
+    if reply not in ("y", "yes"):
+        die("aborted by user")
+
+
+# ---------- subcommands implemented in this scaffold ----------
+
+
+def cmd_env(template_name: str | None) -> None:
+    """Print the resolved paths + default runtime (no podman). `ivm env`/`qvm env`
+    analog; a template arg is echoed back (full resolution arrives in 3.1)."""
+    print(f"PVM_HOME            : {PVM_DATA_HOME}")
+    print(f"templates dir       : {TEMPLATES_DIR}")
+    print(f"shared assets root  : {DEFAULT_SHARED_ASSETS_ROOT}")
+    print(f"default runtime     : {DEFAULT_RUNTIME}")
+    if template_name is not None:
+        print(f"template            : {template_name} (resolution lands in sub-phase 3.1)")
+
+
+def cmd_list() -> None:
+    """List pvm-managed containers (name, status, image). Read-only `podman ps`;
+    degrades to a hint when podman is absent."""
+    return_code, stdout, stderr = run_capture(
+        ["podman", "ps", "--all", "--filter", f"name=^{CONTAINER_NAME_PREFIX}",
+         "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"])
+    if return_code == 127:
+        print("pvm: podman not found - run `make vm-podman-install` first", file=sys.stderr)
+        return
+    if return_code != 0:
+        die(f"podman ps failed: {stderr.strip()}")
+    container_rows: list[str] = [row for row in stdout.splitlines() if row.strip()]
+    if not container_rows:
+        print("no pvm-managed containers", file=sys.stderr)
+        return
+    print("\n".join(container_rows))
+
+
+def cmd_help(parser: argparse.ArgumentParser) -> None:
+    parser.print_help()
+
+
+# ---------- CLI ----------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="pvm",
+        description="podman container launcher: declarative templates, per-template "
+                    "image built via podman exec+commit (no Dockerfile), per-project "
+                    "container bound to the cwd. Shares ivm/qvm's provision cache.",
+        epilog="Container-acting subcommands resolve the target by the directory "
+               "`init` ran in, or take the global `--name <container>`.")
+    parser.add_argument("--name", metavar="<container>", default=None,
+                        help="target container by name (overrides the cwd binding)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print every mutating command instead of running it")
+    parser.add_argument("--runtime", choices=RUNTIME_CHOICES, default=DEFAULT_RUNTIME,
+                        help=f"OCI runtime: crun (shared host kernel, default) or libkrun "
+                             f"(microVM; later). Default: {DEFAULT_RUNTIME}")
+    parser.add_argument("--shared-assets-root", type=Path, default=DEFAULT_SHARED_ASSETS_ROOT,
+                        help=f"shared provision-asset cache (package-group + thirdparty JSON, "
+                             f"feature-first dotfiles/); rarely overridden. "
+                             f"Default: {DEFAULT_SHARED_ASSETS_ROOT}")
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+
+    # Template-taking subcommands (build/run a container for a named template).
+    for template_subcommand, subcommand_help in (
+            ("init", "build the image if needed, then run a container bound to the cwd"),
+            ("build", "build + commit the per-template image only (no container)"),
+            ("run", "run a container from the per-template image (cwd-bound)"),
+            ("env", "show resolved paths + runtime (optionally for a template)")):
+        template_parser = subparsers.add_parser(template_subcommand, help=subcommand_help)
+        # env's template is optional; init/build/run require one.
+        template_parser.add_argument(
+            "template", nargs="?" if template_subcommand == "env" else None,
+            metavar="<template>", help="template name (a *.yaml stem under the templates dir)")
+        if template_subcommand in ("init", "build"):
+            template_parser.add_argument("--rebuild", action="store_true",
+                                         help="force a rebuild even if the image exists")
+        if template_subcommand == "init":
+            template_parser.add_argument("--yes", action="store_true",
+                                         help="skip the shared-kernel confirmation gate")
+
+    # Container-acting subcommands (resolved by cwd binding or --name).
+    for container_subcommand, subcommand_help in (
+            ("start", "start the cwd-bound container (no-op if running)"),
+            ("stop", "stop the cwd-bound container"),
+            ("rmc", "remove the container (keeps the image)"),
+            ("rmi", "remove the per-template image (keeps containers)"),
+            ("rma", "remove the container AND its image"),
+            ("shell", "interactive shell in the container (zsh, user)"),
+            ("bash-user", "bash in the container as the unprivileged user"),
+            ("bash-root", "bash in the container as root"),
+            ("zsh-user", "zsh in the container as the unprivileged user"),
+            ("zsh-root", "zsh in the container as root"),
+            ("agent", "run the template's configured agent (e.g. claude) in the container")):
+        subparsers.add_parser(container_subcommand, help=subcommand_help)
+
+    subparsers.add_parser("list", help="list pvm-managed containers (name, status, image)")
+    subparsers.add_parser("help", help="show this help")
+    return parser
+
+
+def main() -> None:
+    parser: argparse.ArgumentParser = build_parser()
+    parsed_arguments: argparse.Namespace = parser.parse_args()
+    subcommand: str = parsed_arguments.subcommand
+
+    # Subcommands that need no container/template resolution.
+    if subcommand == "env":
+        cmd_env(parsed_arguments.template)
+        return
+    if subcommand == "list":
+        cmd_list()
+        return
+    if subcommand == "help":
+        cmd_help(parser)
+        return
+
+    # Everything else is scaffolded - registered so the CLI + completions are
+    # complete, but the drive lands in later sub-phases (see IMPLEMENTATION_PLAN.md).
+    if subcommand in ("init", "build", "run"):
+        not_yet_implemented(subcommand, "3.1-3.3 (templates -> build -> drive)")
+    not_yet_implemented(subcommand, "3.3 (podman drive + lifecycle)")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\npvm: interrupted", file=sys.stderr)
+        sys.exit(130)
+    except subprocess.CalledProcessError as command_failure:
+        failed_command: str = (shlex.join(command_failure.cmd)
+                               if isinstance(command_failure.cmd, list) else str(command_failure.cmd))
+        print(f"pvm: command failed (exit {command_failure.returncode}): {failed_command}",
+              file=sys.stderr)
+        sys.exit(command_failure.returncode or 1)

@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-local-lang-pkg-managers vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-local-lang-pkg-managers vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm vm-podman-install vm-podman-check vm-podman-uninstall-pvm vm-podman-sandbox check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -157,6 +157,22 @@ vm-quickemu-check:  ## Dry-run `vm-quickemu-install` (`--check --diff`).
 
 vm-quickemu-uninstall-qvm:  ## Uninstall `qvm` + its `~/.local/share/ansible-managed/vm-quickemu/` subdir ONLY; VM data (`~/.local/share/qvm/`) and packages untouched.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/vm_quickemu_uninstall.yml
+
+### -------------------------------------------------------------------------
+### Podman (the `pvm` launcher; container axis - roles/vm_podman)
+### -------------------------------------------------------------------------
+
+vm-podman-install:  ## Install podman + the `pvm` container launcher (`roles/vm_podman`). Default runtime `crun` SHARES the host kernel - use `ivm` for real VM isolation. Sudo only for the podman package install.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/vm_podman.yml
+
+vm-podman-check:  ## Dry-run `vm-podman-install` (`--check --diff`).
+	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/vm_podman.yml
+
+vm-podman-uninstall-pvm:  ## Uninstall `pvm` + its `~/.local/share/ansible-managed/vm-podman/` subdir ONLY; podman + built images/containers untouched.
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/vm_podman_uninstall.yml
+
+vm-podman-sandbox:  ## Dry-run `vm-podman-install` in a throwaway podman+systemd sandbox (install path only; no podman drive).
+	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) vm_podman
 
 ### -------------------------------------------------------------------------
 ### Dry-run (--check --diff)
