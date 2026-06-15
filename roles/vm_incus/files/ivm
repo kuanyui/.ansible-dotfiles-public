@@ -588,7 +588,11 @@ def extra_device_commands(doc: Template, name: str) -> list[list[str]]:
 def shadow_mask_dir(root: Path) -> Path:
     """A single empty, read-only host dir mounted over each `shadow` subpath to
     mask it. Shared across all VMs (it is always empty); lives under the install
-    root so it persists for the VM's lifetime (disk devices reference it)."""
+    root. Its absolute path is baked into each VM's shadow device at create time, so
+    if the dir is later deleted or moved (e.g. the install root was renamed), a VM
+    referencing it fails `incus start` validation. `ensure_shadow_mask_sources`
+    recreates whatever each VM references before start (see ensure_up), so a vanished
+    mask never bricks a VM."""
     return root / "shadow-mask"
 
 
@@ -599,6 +603,26 @@ def ensure_shadow_mask(root: Path, *, dry_run: bool) -> None:
         print(f"+ (mkdir -p {mask})", file=sys.stderr)
         return
     mask.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_shadow_mask_sources(name: str) -> None:
+    """Self-heal before `incus start`: recreate any missing `_shadow_` mask source
+    dirs of THIS VM. The mask source is an always-empty read-only dir whose ABSOLUTE
+    host path is baked into the device config at create time; if it is later deleted
+    or moved (e.g. the install root was renamed, or the user removed it), `incus
+    start` fails with `Missing source path ...`. The mask is always empty, so
+    recreating exactly what the VM references is safe and idempotent - and it heals
+    masks baked under an OLD path too, not just the current one. Only `_shadow_`
+    devices are touched; a real mount's missing source (e.g. a removed cwd) is left
+    alone so it surfaces instead of being papered over with an empty dir."""
+    for device_name, device in _vm_disk_devices(name).items():
+        if "_shadow_" not in device_name:
+            continue
+        source: str = device.get("source", "")
+        if source and not Path(source).is_dir():
+            print(f"+ mkdir -p {shlex.quote(source)}  "
+                  f"# restore missing shadow mask for {device_name}", file=sys.stderr)
+            Path(source).mkdir(parents=True, exist_ok=True)
 
 
 def mount_commands(doc: Template, name: str, cwd: Path, root: Path) -> list[list[str]]:
@@ -1066,6 +1090,7 @@ def ensure_up(name: str, *, dry_run: bool) -> None:
     if not instance_exists(name):
         die(f"VM '{name}' does not exist; run `ivm init <template>` here first")
     if not vm_is_running(name):
+        ensure_shadow_mask_sources(name)
         run(["incus", "start", name], dry_run=dry_run)
     wait_ready(name, dry_run=dry_run)
 
