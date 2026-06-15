@@ -98,12 +98,6 @@ def die(message: str) -> NoReturn:
     raise SystemExit(1)
 
 
-def not_yet_implemented(subcommand: str, sub_phase: str) -> NoReturn:
-    """Scaffold stub: a registered-but-unbuilt subcommand fails loudly, naming the
-    sub-phase that lands it (so a half-built pvm never silently no-ops)."""
-    die(f"`pvm {subcommand}` is not implemented yet (arrives in sub-phase {sub_phase})")
-
-
 def run(command_argv: list[str], *, dry_run: bool, cwd: Path | None = None) -> None:
     """Run a mutating command, printing the exact argv FIRST (transparency rule)."""
     print("+ " + shlex.join(command_argv), file=sys.stderr)
@@ -189,9 +183,11 @@ def container_name_for(template_name: str, project_name: str) -> str:
 
 
 def image_ref_for(template_name: str, tag: str) -> str:
-    """The per-template image ref. <tag> is a content hash from 3.2; until then a
-    placeholder. `localhost/` keeps podman from treating it as a remote."""
-    return f"localhost/pvm/{template_name}:{tag}"
+    """The per-template image ref, tagged by a content hash. `localhost/` keeps podman
+    from treating it as a remote; the name is lowercased because OCI image references
+    must be lowercase (the schema's template_name pattern still allows uppercase,
+    which is fine for container names but not image refs)."""
+    return f"localhost/pvm/{template_name.lower()}:{tag}"
 
 
 def hide_dir_volume_args(mounts: list[Mount], hide_dirs: list[str]) -> list[str]:
@@ -616,27 +612,196 @@ def cmd_env(template_name: str | None, *, runtime: str, network: str | None) -> 
     print(f"image ref           : {image_ref_for(template_name, '<content-hash>')}")
 
 
-def cmd_run(template_name: str, *, runtime: str, network: str | None, dry_run: bool) -> None:
-    """Run a per-project container from the per-template image. In 3.1 only the
-    --dry-run path is wired (prints the exact `podman run` argv); the live drive +
-    image build land in 3.2/3.3."""
+# ---------- isolation guardrails (shared-kernel honesty; REFACTOR.md) ----------
+
+
+def is_macos_or_windows() -> bool:
+    """On macOS/Windows podman runs inside a `podman machine` VM, so a crun container
+    shares only that VM's kernel - the shared-HOST-kernel warning softens there."""
+    return sys.platform in ("darwin", "win32")
+
+
+def warn_shared_kernel(runtime: str) -> None:
+    """Non-blocking notice: a crun container shares the HOST kernel (weaker than a
+    real VM). libkrun (a microVM) does not; for full isolation use `ivm`."""
+    if runtime == "libkrun" or is_macos_or_windows():
+        return
+    print("pvm: note: crun shares the HOST kernel - weaker isolation than a real VM. "
+          "For kernel-level isolation use `ivm`.", file=sys.stderr)
+
+
+def gate_non_libkrun_init(runtime: str, *, assume_yes: bool) -> None:
+    """At `init` on Linux with a shared-kernel runtime, require an explicit y/N
+    (default No; --yes bypasses; non-TTY aborts) - the container must EARN the run."""
+    if runtime == "libkrun" or is_macos_or_windows():
+        return
+    confirm_or_die("pvm: this container shares the HOST kernel (crun), NOT a real VM "
+                   "boundary - for kernel isolation use `ivm`. Continue with crun?",
+                   assume_yes=assume_yes)
+
+
+# ---------- container resolution + drive ----------
+
+
+def container_exists(container_name: str) -> bool:
+    return run_capture(["podman", "container", "exists", container_name])[0] == 0
+
+
+def resolve_container_for_cwd(name_override: str | None) -> str:
+    """The container a container-acting subcommand targets: `--name` wins; else the
+    pvm container labelled with this cwd (pvm.project_dir). 0 -> die with an init
+    hint; >1 (different templates in one dir) -> die listing them, require --name."""
+    if name_override:
+        return name_override
+    cwd: str = str(Path.cwd().resolve())
+    return_code, stdout, _ = run_capture(
+        ["podman", "ps", "--all", "--filter", f"label={LABEL_PROJECT_DIR}={cwd}",
+         "--format", "{{.Names}}"])
+    if return_code == 127:
+        die("podman not found - run `make vm-podman-install` first")
+    names: list[str] = [name for name in stdout.splitlines() if name.strip()]
+    if not names:
+        die(f"no pvm container bound to {cwd}; run `pvm init <template>` here first "
+            f"(or pass --name <container>)")
+    if len(names) > 1:
+        die(f"{len(names)} pvm containers bound to {cwd}: {', '.join(names)}; "
+            f"pass --name <container> to pick one")
+    return names[0]
+
+
+def container_template_name(container_name: str) -> str:
+    """The template label baked into a pvm container (for `agent`)."""
+    label_format: str = '{{ index .Config.Labels "' + LABEL_TEMPLATE + '" }}'
+    return run_capture(["podman", "inspect", "--format", label_format, container_name])[1].strip()
+
+
+def container_image(container_name: str) -> str:
+    """The image ref a container was created from (for rmi/rma)."""
+    return run_capture(["podman", "inspect", "--format", "{{.ImageName}}", container_name])[1].strip()
+
+
+def ensure_mask_dir(*, dry_run: bool) -> None:
+    """The empty dir masked (read-only) over each hide_dir must exist before `podman run`."""
+    if dry_run or MASK_DIR.is_dir():
+        return
+    MASK_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def run_container(template: dict[str, Any], image_ref: str, *, runtime: str,
+                  network: str | None, dry_run: bool) -> str:
+    """`podman run` a per-project container from image_ref, bound to the cwd; returns
+    its name. Errors if a container for this cwd+template already exists."""
+    cwd: Path = Path.cwd()
+    container_name: str = container_name_for(template["template_name"],
+                                             project_name_from_cwd(cwd, Path.home()))
+    if not dry_run and container_exists(container_name):
+        die(f"container {container_name} already exists; `pvm rma` (or `pvm rmc`) first, "
+            f"or `pvm shell` / `pvm start` to use it")
+    ensure_mask_dir(dry_run=dry_run)
+    run(build_podman_run_argv(
+        image_ref=image_ref, container_name=container_name,
+        template_name=template["template_name"], mounts=[cwd_mount(cwd)],
+        hide_dirs=template.get("hide_dirs", list(DEFAULT_HIDE_DIRS)),
+        publish_ports=template.get("publish_ports", []), runtime=runtime, network=network),
+        dry_run=dry_run)
+    return container_name
+
+
+def ensure_started(container_name: str, *, dry_run: bool) -> None:
+    """Start the container if it exists but is not running (exec/shell need it up)."""
+    if dry_run:
+        return
+    return_code, stdout, _ = run_capture(["podman", "inspect", "--format", "{{.State.Running}}", container_name])
+    if return_code != 0:
+        die(f"no such container: {container_name} (run `pvm init <template>` here?)")
+    if stdout.strip() != "true":
+        run(["podman", "start", container_name], dry_run=dry_run)
+
+
+def exec_into(container_name: str, command_argv: list[str], *, as_root: bool,
+              runtime: str, dry_run: bool) -> None:
+    """`podman exec -it` into the container (user by default), replacing the pvm
+    process so the child IS the foreground program (no Python wrapper / traceback)."""
+    ensure_started(container_name, dry_run=dry_run)
+    warn_shared_kernel(runtime)
+    user_args: list[str] = ["--user", "root"] if as_root else ["--user", "user"]
+    exec_argv: list[str] = ["podman", "exec", "--interactive", "--tty", *user_args,
+                            container_name, *command_argv]
+    if dry_run:
+        run(exec_argv, dry_run=True)
+        return
+    print("+ " + shlex.join(exec_argv), file=sys.stderr)
+    os.execvp("podman", exec_argv)
+
+
+def cmd_init(template_name: str, *, shared_root: Path, runtime: str, network: str | None,
+             rebuild: bool, assume_yes: bool, dry_run: bool) -> None:
+    """Build the per-template image if needed, then run a container bound to the cwd."""
     template: dict[str, Any] = load_template(template_name)
     effective_runtime: str = resolve_runtime(template, runtime)
-    cwd: Path = Path.cwd()
-    mounts: list[Mount] = [cwd_mount(cwd)]
-    project: str = project_name_from_cwd(cwd, Path.home())
-    argv: list[str] = build_podman_run_argv(
-        image_ref=image_ref_for(template_name, "latest"),
-        container_name=container_name_for(template_name, project),
-        template_name=template_name,
-        mounts=mounts,
-        hide_dirs=template.get("hide_dirs", list(DEFAULT_HIDE_DIRS)),
-        publish_ports=template.get("publish_ports", []),
-        runtime=effective_runtime,
-        network=network)
-    if not dry_run:
-        not_yet_implemented("run", "3.3 (real podman drive; needs the image from 3.2)")
-    run(argv, dry_run=True)
+    gate_non_libkrun_init(effective_runtime, assume_yes=assume_yes)
+    image_ref: str = build_image(template, shared_root=shared_root, network=network,
+                                 rebuild=rebuild, dry_run=dry_run)
+    container_name: str = run_container(template, image_ref, runtime=effective_runtime,
+                                        network=network, dry_run=dry_run)
+    warn_shared_kernel(effective_runtime)
+    enter_hint: str = "pvm shell" + ("; run the agent: pvm agent" if template.get("agent") else "")
+    print(f"==> {colorize_container_name(container_name)} ready. Enter: {enter_hint}", file=sys.stderr)
+    auth_note: str = (template.get("agent") or {}).get("auth_note", "")
+    if auth_note:
+        print(f"    {auth_note}", file=sys.stderr)
+
+
+def cmd_run(template_name: str, *, shared_root: Path, runtime: str, network: str | None,
+            dry_run: bool) -> None:
+    """Run a container from the per-template image (building it if missing). Like
+    `init` without the shared-kernel gate (init already earned it)."""
+    template: dict[str, Any] = load_template(template_name)
+    effective_runtime: str = resolve_runtime(template, runtime)
+    image_ref: str = build_image(template, shared_root=shared_root, network=network,
+                                 rebuild=False, dry_run=dry_run)
+    container_name: str = run_container(template, image_ref, runtime=effective_runtime,
+                                        network=network, dry_run=dry_run)
+    warn_shared_kernel(effective_runtime)
+    print(f"==> {colorize_container_name(container_name)} running.", file=sys.stderr)
+
+
+def cmd_start(container_name: str, *, dry_run: bool) -> None:
+    run(["podman", "start", container_name], dry_run=dry_run)
+    print(f"==> {colorize_container_name(container_name)} started.", file=sys.stderr)
+
+
+def cmd_stop(container_name: str, *, dry_run: bool) -> None:
+    run(["podman", "stop", container_name], dry_run=dry_run)
+    print(f"==> {colorize_container_name(container_name)} stopped.", file=sys.stderr)
+
+
+def cmd_rmc(container_name: str, *, dry_run: bool) -> None:
+    run(["podman", "rm", "--force", container_name], dry_run=dry_run)
+    print(f"==> removed container {colorize_container_name(container_name)}.", file=sys.stderr)
+
+
+def cmd_rmi(container_name: str, *, dry_run: bool) -> None:
+    image_ref: str = "<image>" if dry_run else container_image(container_name)
+    run(["podman", "rm", "--force", container_name], dry_run=dry_run)
+    run(["podman", "rmi", image_ref], dry_run=dry_run)
+    print(f"==> removed container + image ({image_ref}).", file=sys.stderr)
+
+
+def cmd_rma(container_name: str, *, dry_run: bool) -> None:
+    cmd_rmi(container_name, dry_run=dry_run)
+
+
+def cmd_agent(container_name: str, *, runtime: str, dry_run: bool) -> None:
+    """Run the template's configured agent command in the container, as `user`. The
+    template is read from the container's pvm.template label (read-only, so this also
+    works under --dry-run)."""
+    template_name: str = container_template_name(container_name)
+    agent: dict[str, Any] = load_template(template_name).get("agent") or {}
+    if not agent.get("command"):
+        die(f"template '{template_name}' has no `agent` command to run")
+    exec_into(container_name, shlex.split(str(agent["command"])), as_root=False,
+              runtime=runtime, dry_run=dry_run)
 
 
 def cmd_build(template_name: str, *, shared_root: Path, network: str | None,
@@ -737,17 +902,10 @@ def main() -> None:
     runtime: str = parsed_arguments.runtime
     network: str | None = parsed_arguments.network
     shared_root: Path = parsed_arguments.shared_assets_root
+    dry_run: bool = parsed_arguments.dry_run
 
     if subcommand == "env":
         cmd_env(parsed_arguments.template, runtime=runtime, network=network)
-        return
-    if subcommand == "run":
-        cmd_run(parsed_arguments.template, runtime=runtime, network=network,
-                dry_run=parsed_arguments.dry_run)
-        return
-    if subcommand == "build":
-        cmd_build(parsed_arguments.template, shared_root=shared_root, network=network,
-                  rebuild=parsed_arguments.rebuild, dry_run=parsed_arguments.dry_run)
         return
     if subcommand == "list":
         cmd_list()
@@ -755,13 +913,44 @@ def main() -> None:
     if subcommand == "help":
         cmd_help(parser)
         return
-
-    # `init` (= build + run) and the container-acting subcommands need the live
-    # drive; registered so the CLI + completions are complete, they fail loudly
-    # until sub-phase 3.3 lands them.
     if subcommand == "init":
-        not_yet_implemented("init", "3.3 (= build + run; the run drive)")
-    not_yet_implemented(subcommand, "3.3 (podman drive + lifecycle)")
+        cmd_init(parsed_arguments.template, shared_root=shared_root, runtime=runtime,
+                 network=network, rebuild=parsed_arguments.rebuild,
+                 assume_yes=parsed_arguments.yes, dry_run=dry_run)
+        return
+    if subcommand == "build":
+        cmd_build(parsed_arguments.template, shared_root=shared_root, network=network,
+                  rebuild=parsed_arguments.rebuild, dry_run=dry_run)
+        return
+    if subcommand == "run":
+        cmd_run(parsed_arguments.template, shared_root=shared_root, runtime=runtime,
+                network=network, dry_run=dry_run)
+        return
+
+    # Container-acting subcommands: resolve the target by cwd binding or --name.
+    container_name: str = resolve_container_for_cwd(parsed_arguments.name)
+    if subcommand == "start":
+        cmd_start(container_name, dry_run=dry_run)
+    elif subcommand == "stop":
+        cmd_stop(container_name, dry_run=dry_run)
+    elif subcommand == "rmc":
+        cmd_rmc(container_name, dry_run=dry_run)
+    elif subcommand == "rmi":
+        cmd_rmi(container_name, dry_run=dry_run)
+    elif subcommand == "rma":
+        cmd_rma(container_name, dry_run=dry_run)
+    elif subcommand == "shell":
+        exec_into(container_name, ["zsh"], as_root=False, runtime=runtime, dry_run=dry_run)
+    elif subcommand == "bash-user":
+        exec_into(container_name, ["bash"], as_root=False, runtime=runtime, dry_run=dry_run)
+    elif subcommand == "bash-root":
+        exec_into(container_name, ["bash"], as_root=True, runtime=runtime, dry_run=dry_run)
+    elif subcommand == "zsh-user":
+        exec_into(container_name, ["zsh"], as_root=False, runtime=runtime, dry_run=dry_run)
+    elif subcommand == "zsh-root":
+        exec_into(container_name, ["zsh"], as_root=True, runtime=runtime, dry_run=dry_run)
+    elif subcommand == "agent":
+        cmd_agent(container_name, runtime=runtime, dry_run=dry_run)
 
 
 if __name__ == "__main__":
