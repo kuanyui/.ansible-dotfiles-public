@@ -8,9 +8,12 @@ runtimes:
   - crun
 distro_package_groups:
   - tools_basic
+  - emacs    # the `emacs` dotfiles feature below needs the editor itself
 distro_packages:
   - curl
   - git
+  - zsh              # the unprivileged user's login shell (+ the zsh dotfiles)
+  - ca-certificates  # HTTPS trust for the claude curl|bash installer
 thirdparty_software:
   - claude   # curl|bash installer; recipe in roles/provision_thirdparty_software/defaults/main.yml
 dotfiles:

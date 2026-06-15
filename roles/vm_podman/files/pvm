@@ -28,6 +28,8 @@ NO podman calls). `init`/`build` + the live drive land in 3.2/3.3.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import shlex
@@ -276,6 +278,310 @@ def resolve_runtime(template: dict[str, Any], requested_runtime: str) -> str:
     return requested_runtime
 
 
+# ---------- provision resolver (reads the SHARED asset cache) ----------
+# Duplicated verbatim from `ivm`/`qvm` BY DESIGN: each launcher is a standalone
+# single-file tool reading the SAME shared JSON (the DATA is the one source of
+# truth; the resolver CODE is copied so pvm needs no ivm/qvm import). Keep in sync
+# with roles/vm_incus/files/ivm + roles/vm_quickemu/files/qvm.
+
+
+def load_package_groups(shared_root: Path) -> dict[str, Any]:
+    """Load distro-package-groups.json (rendered from the provision_distro_packages registry)."""
+    path: Path = shared_root / "distro-package-groups.json"
+    if not path.is_file():
+        die(f"distro-package-groups.json not found: {path}; re-run `make vm-podman-install`")
+    loaded: Any = json.loads(path.read_text())
+    if not isinstance(loaded, dict):
+        die(f"distro-package-groups.json is not a mapping: {path}")
+    return loaded
+
+
+def load_thirdparty_software(shared_root: Path) -> dict[str, Any]:
+    """Load thirdparty-software.json (rendered from the provision_thirdparty_software registry)."""
+    path: Path = shared_root / "thirdparty-software.json"
+    if not path.is_file():
+        die(f"thirdparty-software.json not found: {path}; re-run `make vm-podman-install`")
+    loaded: Any = json.loads(path.read_text())
+    if not isinstance(loaded, dict):
+        die(f"thirdparty-software.json is not a mapping: {path}")
+    return loaded
+
+
+def overlay_install_packages(overlay: Any) -> list[str]:
+    """A family overlay is EITHER a bare package list OR `{install: [...], post_install: <shell>}`.
+    Return its package list either way."""
+    if isinstance(overlay, dict):
+        return list(overlay.get("install", []))
+    return list(overlay or [])
+
+
+def overlay_post_install(overlay: Any) -> str:
+    """The optional `post_install` shell snippet of a family overlay (dict form only)."""
+    if isinstance(overlay, dict):
+        return str(overlay.get("post_install", "") or "")
+    return ""
+
+
+def resolve_group(registry: dict[str, Any], group: str, ansible_os_family: str) -> list[str]:
+    """A bundle resolves to `__common__ + <ansible_os_family overlay>` packages."""
+    entry: Any = registry.get(group)
+    if entry is None:
+        die(f"unknown distro_package_group '{group}' "
+            f"(not in distro-package-groups.json; defined: {', '.join(sorted(registry))})")
+    return overlay_install_packages(entry.get("__common__")) + overlay_install_packages(entry.get(ansible_os_family))
+
+
+def group_post_install_snippet(group_entry: dict[str, Any], ansible_os_family: str) -> str:
+    """A bundle's `post_install` for one family: __common__ snippet + family snippet (additive)."""
+    parts: list[str] = [overlay_post_install(group_entry.get("__common__")),
+                        overlay_post_install(group_entry.get(ansible_os_family))]
+    return "\n".join(part for part in parts if part.strip())
+
+
+def groups_post_install_script(groups: list[str], registry: dict[str, Any], ansible_os_family: str) -> str:
+    """Concatenate the resolved `post_install` snippets of the given bundles. Run as ROOT
+    after the packages install. Idempotent."""
+    script: str = ""
+    for group in groups:
+        snippet: str = group_post_install_snippet(registry.get(group) or {}, ansible_os_family)
+        if snippet.strip():
+            script += f"echo '==> {group}: post_install' >&2\n"
+            script += snippet if snippet.endswith("\n") else snippet + "\n"
+    return script
+
+
+# zypper is the most failure-prone of the three; run it non-interactively (ivm/qvm policy).
+ZYPPER: str = "zypper --non-interactive"
+
+
+def install_packages_script(ansible_os_family: str, packages: list[str]) -> str:
+    """Per-family package install with recommends/weak-deps OFF."""
+    pkgs: str = " ".join(packages)
+    if ansible_os_family == "Debian":
+        return ("export DEBIAN_FRONTEND=noninteractive\n"
+                "apt-get update -qq\n"
+                f"apt-get install --yes --no-install-recommends {pkgs}\n")
+    if ansible_os_family == "Suse":
+        return f"{ZYPPER} refresh\n{ZYPPER} install --no-recommends {pkgs}\n"
+    if ansible_os_family == "RedHat":
+        return f"dnf install --assumeyes --setopt=install_weak_deps=False {pkgs}\n"
+    die(f"no package-manager mapping for ansible_os_family '{ansible_os_family}'")
+
+
+def resolve_thirdparty_software(names: list[str], registry: dict[str, Any],
+                                ansible_os_family: str) -> list[dict[str, Any]]:
+    """Resolve `thirdparty_software` names into `{name, already_installed?, install_script}`
+    recipes for this family (OVERRIDE: family entry if defined, else __common__)."""
+    recipes: list[dict[str, Any]] = []
+    for name in names:
+        entry: Any = registry.get(name)
+        if entry is None:
+            die(f"unknown thirdparty_software '{name}' (not in thirdparty-software.json; "
+                f"defined: {', '.join(sorted(registry))})")
+        family_recipe: Any = entry.get(ansible_os_family) or entry.get("__common__")
+        if family_recipe is None:
+            die(f"thirdparty_software '{name}' has no recipe for {ansible_os_family}")
+        install_script: str = family_recipe.get("install_script", "")
+        if not install_script:
+            die(f"thirdparty_software '{name}' ({ansible_os_family}) has no install_script")
+        recipes.append({"name": name, "already_installed": family_recipe.get("already_installed"),
+                        "install_script": install_script})
+    return recipes
+
+
+def thirdparty_install_script(recipes: list[dict[str, Any]]) -> str:
+    """Shell (run as root) installing each recipe, guarded by its `already_installed`
+    probe when present (rc 0 -> skip). Each recipe's install_script is verbatim."""
+    script: str = ""
+    for recipe in recipes:
+        install: str = recipe["install_script"]
+        if not install.endswith("\n"):
+            install += "\n"
+        probe: str | None = recipe.get("already_installed")
+        script += f"echo '==> thirdparty_software: {recipe['name']}' >&2\n"
+        if probe:
+            script += (f"if {{ {probe}; }} >/dev/null 2>&1; then\n"
+                       f"  echo '    already present, skipping' >&2\nelse\n{install}fi\n")
+        else:
+            script += install
+    return script
+
+
+# ---------- image build pipeline (provision-via-exec + podman commit; no Dockerfile) ----------
+
+# The ONLY container-specific dotfile bit (the rest comes from the shared cache,
+# same as ivm/qvm). Auto-cd into the workspace on interactive login. Ported from
+# roles/container_templates/templates/zshrc.j2.
+WORKSPACE_AUTOCD_ZSH: str = (
+    'if [[ -o interactive && -d /workspaces ]]; then\n'
+    '  _pvm_count=0; _pvm_first=""\n'
+    '  for _pvm_d in /workspaces/*(N/); do\n'
+    '    _pvm_count=$((_pvm_count + 1)); [[ -z "$_pvm_first" ]] && _pvm_first="$_pvm_d"\n'
+    '  done\n'
+    '  (( _pvm_count == 1 )) && cd "$_pvm_first"\n'
+    '  (( _pvm_count > 1 )) && cd /workspaces\n'
+    '  unset _pvm_count _pvm_first _pvm_d\n'
+    'fi\n'
+)
+WORKSPACE_AUTOCD_BASH: str = (
+    'if [[ $- == *i* && -d /workspaces ]]; then\n'
+    '  shopt -s nullglob; _pvm_dirs=(/workspaces/*/); shopt -u nullglob\n'
+    '  if (( ${#_pvm_dirs[@]} == 1 )); then cd "${_pvm_dirs[0]}"\n'
+    '  elif (( ${#_pvm_dirs[@]} > 1 )); then cd /workspaces; fi\n'
+    '  unset _pvm_dirs\n'
+    'fi\n'
+)
+
+# Create the unprivileged `user` (uid/gid 1000) so --userns=keep-id maps the host
+# user in, and the thirdparty recipes' `su - user -c` land in /home/user. Run as
+# root AFTER packages (so zsh exists for the login shell).
+CREATE_USER_SCRIPT: str = (
+    'if ! id user >/dev/null 2>&1; then\n'
+    '  groupadd -g 1000 user 2>/dev/null || true\n'
+    '  useradd --create-home --uid 1000 --gid 1000 --shell "$(command -v zsh || echo /bin/bash)" user\n'
+    'fi\n'
+    'usermod --shell "$(command -v zsh || echo /bin/bash)" user >/dev/null 2>&1 || true\n'
+    'chown user:user /home/user\n'
+)
+
+DOTFILE_BUCKET_SIDES: tuple[tuple[str, str], ...] = (("home/user", "/home/user/"), ("root", "/root/"))
+
+# Baked into the committed image's ENV so `podman exec` (which sources NO rc files)
+# finds user-scoped binaries - claude in ~/.local/bin, codex in ~/.local/npm_global/bin.
+# The shared dotfiles add these for interactive/login shells; this covers `pvm agent`/
+# `exec`. Mirrors the old container Dockerfile's `ENV PATH=/home/user/.local/bin:...`.
+IMAGE_ENV_PATH: str = ("/home/user/.local/bin:/home/user/.local/npm_global/bin:"
+                       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+
+
+def resolve_packages(template: dict[str, Any], registry: dict[str, Any], family: str) -> list[str]:
+    """The template's groups (resolved per family) + its flat distro_packages, deduped."""
+    packages: list[str] = []
+    for group in template.get("distro_package_groups", []):
+        packages += resolve_group(registry, group, family)
+    packages += template.get("distro_packages", [])
+    return list(dict.fromkeys(packages))
+
+
+def build_provision_script(template: dict[str, Any], distro_registry: dict[str, Any],
+                           tp_registry: dict[str, Any], family: str) -> str:
+    """The shell run as ROOT in the build container: packages -> create user ->
+    bundle post_installs -> thirdparty recipes -> the template's post_install_script."""
+    packages: list[str] = resolve_packages(template, distro_registry, family)
+    parts: list[str] = ["set -e"]
+    if packages:
+        parts.append(install_packages_script(family, packages))
+    parts.append(CREATE_USER_SCRIPT)
+    parts.append(groups_post_install_script(template.get("distro_package_groups", []), distro_registry, family))
+    parts.append(thirdparty_install_script(
+        resolve_thirdparty_software(template.get("thirdparty_software", []), tp_registry, family)))
+    if template.get("post_install_script"):
+        parts.append(str(template["post_install_script"]))
+    return "\n".join(part for part in parts if part.strip()) + "\n"
+
+
+def dotfiles_copy_argv(container: str, template: dict[str, Any], family: str,
+                       shared_root: Path) -> list[list[str]]:
+    """`podman cp` argv to stage each requested dotfiles feature's `{__common__,<family>}`
+    home/user + root buckets into the container (common first, family overlays)."""
+    copy_commands: list[list[str]] = []
+    dotfiles_root: Path = shared_root / "dotfiles"
+    for feature in template.get("dotfiles", []):
+        for bucket in ("__common__", family):
+            for side_subpath, container_dest in DOTFILE_BUCKET_SIDES:
+                source_dir: Path = dotfiles_root / feature / bucket / side_subpath
+                if source_dir.is_dir():
+                    copy_commands.append(["podman", "cp", f"{source_dir}/.", f"{container}:{container_dest}"])
+    return copy_commands
+
+
+def overlay_append_script() -> str:
+    """Append the /workspaces auto-cd overlay to the staged user+root rc files
+    (idempotent via the `pvm-workspace-autocd` marker)."""
+    return (
+        '_pvm_append() {\n'
+        '  [ -f "$1" ] || return 0\n'
+        '  grep -q "pvm-workspace-autocd" "$1" && return 0\n'
+        '  printf "\\n# pvm-workspace-autocd\\n%s\\n" "$2" >> "$1"\n'
+        '}\n'
+        f'_pvm_append /home/user/.zshrc {shlex.quote(WORKSPACE_AUTOCD_ZSH)}\n'
+        f'_pvm_append /root/.zshrc {shlex.quote(WORKSPACE_AUTOCD_ZSH)}\n'
+        f'_pvm_append /home/user/.bashrc {shlex.quote(WORKSPACE_AUTOCD_BASH)}\n'
+        f'_pvm_append /root/.bashrc {shlex.quote(WORKSPACE_AUTOCD_BASH)}\n'
+        'chown user:user /home/user/.zshrc /home/user/.bashrc 2>/dev/null || true\n'
+    )
+
+
+def content_hash(template: dict[str, Any], family: str, shared_root: Path, provision_script: str) -> str:
+    """A stable 12-hex digest over everything that defines the image: the template,
+    the resolved provision script, the overlay, and the staged dotfiles bytes. An
+    edit to any of them changes the tag, so `init` rebuilds instead of reusing a
+    stale image."""
+    hasher = hashlib.sha256()
+    hasher.update(json.dumps(template, sort_keys=True).encode())
+    hasher.update(family.encode())
+    hasher.update(provision_script.encode())
+    hasher.update(WORKSPACE_AUTOCD_ZSH.encode())
+    hasher.update(WORKSPACE_AUTOCD_BASH.encode())
+    hasher.update(IMAGE_ENV_PATH.encode())
+    dotfiles_root: Path = shared_root / "dotfiles"
+    for feature in sorted(template.get("dotfiles", [])):
+        for bucket in ("__common__", family):
+            for side_subpath, _ in DOTFILE_BUCKET_SIDES:
+                source_dir: Path = dotfiles_root / feature / bucket / side_subpath
+                if source_dir.is_dir():
+                    for file_path in sorted(source_dir.rglob("*")):
+                        if file_path.is_file():
+                            hasher.update(str(file_path.relative_to(dotfiles_root)).encode())
+                            hasher.update(file_path.read_bytes())
+    return hasher.hexdigest()[:12]
+
+
+def image_exists(image_ref: str) -> bool:
+    return run_capture(["podman", "image", "exists", image_ref])[0] == 0
+
+
+def build_image(template: dict[str, Any], *, shared_root: Path, network: str | None,
+                rebuild: bool, dry_run: bool) -> str:
+    """Build (provision + commit) the per-template image, keyed by a content hash.
+    Reuses an existing image with the same hash unless --rebuild. Returns the image ref."""
+    template_name: str = template["template_name"]
+    family: str | None = distro_family_of_image(template["image_name"])
+    if family is None:
+        die(f"template '{template_name}' image '{template['image_name']}' has no supported "
+            f"distro family (Debian/Suse/RedHat) - cannot provision it")
+    distro_registry: dict[str, Any] = load_package_groups(shared_root)
+    tp_registry: dict[str, Any] = load_thirdparty_software(shared_root)
+    provision_script: str = build_provision_script(template, distro_registry, tp_registry, family)
+    image_ref: str = image_ref_for(template_name, content_hash(template, family, shared_root, provision_script))
+
+    if not rebuild and not dry_run and image_exists(image_ref):
+        print(f"==> image {image_ref} already built (use --rebuild to force)", file=sys.stderr)
+        return image_ref
+
+    build_container: str = f"pvm-build-{template_name}"
+    network_args: list[str] = ["--network", network] if network else []
+    if dry_run:
+        print(f"==> would build {image_ref} (family={family})", file=sys.stderr)
+        print(f"--- provision.sh (run as root in the build container) ---\n{provision_script}", file=sys.stderr)
+    run(["podman", "rm", "--force", build_container], dry_run=dry_run)
+    run(["podman", "run", "--detach", *network_args, "--name", build_container,
+         template["image_name"], "sleep", "infinity"], dry_run=dry_run)
+    try:
+        run(["podman", "exec", build_container, "bash", "-ec", provision_script], dry_run=dry_run)
+        for copy_argv in dotfiles_copy_argv(build_container, template, family, shared_root):
+            run(copy_argv, dry_run=dry_run)
+        run(["podman", "exec", build_container, "chown", "-R", "1000:1000", "/home/user"], dry_run=dry_run)
+        run(["podman", "exec", build_container, "bash", "-ec", overlay_append_script()], dry_run=dry_run)
+        run(["podman", "commit", "--change", 'CMD ["sleep", "infinity"]',
+             "--change", "WORKDIR /workspaces", "--change", f"ENV PATH={IMAGE_ENV_PATH}",
+             build_container, image_ref], dry_run=dry_run)
+    finally:
+        run(["podman", "rm", "--force", build_container], dry_run=dry_run)
+    print(f"==> built {colorize_container_name(image_ref)}", file=sys.stderr)
+    return image_ref
+
+
 # ---------- subcommands implemented in this sub-phase ----------
 
 
@@ -331,6 +637,14 @@ def cmd_run(template_name: str, *, runtime: str, network: str | None, dry_run: b
     if not dry_run:
         not_yet_implemented("run", "3.3 (real podman drive; needs the image from 3.2)")
     run(argv, dry_run=True)
+
+
+def cmd_build(template_name: str, *, shared_root: Path, network: str | None,
+              rebuild: bool, dry_run: bool) -> None:
+    """Build (provision + commit) the per-template image only - no container run.
+    `pvm init` (3.3) calls the same build_image() then runs a container from it."""
+    template: dict[str, Any] = load_template(template_name)
+    build_image(template, shared_root=shared_root, network=network, rebuild=rebuild, dry_run=dry_run)
 
 
 def cmd_list() -> None:
@@ -422,6 +736,7 @@ def main() -> None:
     subcommand: str = parsed_arguments.subcommand
     runtime: str = parsed_arguments.runtime
     network: str | None = parsed_arguments.network
+    shared_root: Path = parsed_arguments.shared_assets_root
 
     if subcommand == "env":
         cmd_env(parsed_arguments.template, runtime=runtime, network=network)
@@ -430,6 +745,10 @@ def main() -> None:
         cmd_run(parsed_arguments.template, runtime=runtime, network=network,
                 dry_run=parsed_arguments.dry_run)
         return
+    if subcommand == "build":
+        cmd_build(parsed_arguments.template, shared_root=shared_root, network=network,
+                  rebuild=parsed_arguments.rebuild, dry_run=parsed_arguments.dry_run)
+        return
     if subcommand == "list":
         cmd_list()
         return
@@ -437,11 +756,11 @@ def main() -> None:
         cmd_help(parser)
         return
 
-    # init/build need the build pipeline (3.2) + drive (3.3); the container-acting
-    # subcommands need the live drive (3.3). Registered so the CLI + completions
-    # are complete; they fail loudly until their sub-phase lands.
-    if subcommand in ("init", "build"):
-        not_yet_implemented(subcommand, "3.2-3.3 (build pipeline -> drive)")
+    # `init` (= build + run) and the container-acting subcommands need the live
+    # drive; registered so the CLI + completions are complete, they fail loudly
+    # until sub-phase 3.3 lands them.
+    if subcommand == "init":
+        not_yet_implemented("init", "3.3 (= build + run; the run drive)")
     not_yet_implemented(subcommand, "3.3 (podman drive + lifecycle)")
 
 

@@ -8,9 +8,14 @@ runtimes:
   - crun
 distro_package_groups:
   - tools_basic
+  - emacs    # the `emacs` dotfiles feature below needs the editor itself
 distro_packages:
   - git
-  - links2   # text browser to finish the OpenAI auth flow inside the container
+  - zsh              # the unprivileged user's login shell (+ the zsh dotfiles)
+  - ca-certificates  # HTTPS trust for npm / the OpenAI auth flow
+  - nodejs           # the codex recipe runs `npm i -g @openai/codex`
+  - npm
+  - links2           # text browser to finish the OpenAI auth flow inside the container
 thirdparty_software:
   - codex    # nodejs + npm i -g @openai/codex; recipe in roles/provision_thirdparty_software/defaults/main.yml
 dotfiles:
