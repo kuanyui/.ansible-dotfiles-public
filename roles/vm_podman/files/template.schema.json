@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pvm podman container template",
+  "description": "One podman container template, built per-template via `podman exec`+`commit` (no Dockerfile) and run per-project bound to the cwd. Provisioned from the shared provision-asset cache ivm/qvm use. See IMPLEMENTATION_PLAN.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["template_name", "image_name"],
+  "properties": {
+    "template_name": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+      "description": "Template id - the `<template>` you pass to `pvm init <template>`. NOT the container name: that is `pvm-<template>-<project>`, where <project> is derived from the cwd, and the cwd binding is stored in the `pvm.project_dir` label."
+    },
+    "description": {
+      "type": "string",
+      "description": "One-line human summary, shown by `pvm list` / template listings. Optional."
+    },
+    "image_name": {
+      "type": "string",
+      "description": "Base image to build from, e.g. `debian:13`. The ansible_os_family (Debian/Suse/RedHat) is DERIVED from this string and keys the shared cache's package + dotfiles overlays. An unsupported base (e.g. alpine) is rejected at provision time."
+    },
+    "image_platform": {
+      "type": "string",
+      "default": "linux/amd64",
+      "description": "`--platform` for the base image pull/build (e.g. `linux/amd64`)."
+    },
+    "tz": {
+      "type": "string",
+      "default": "host",
+      "description": "Container timezone. `host` = match the host's timezone."
+    },
+    "runtimes": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["crun", "libkrun"] },
+      "default": ["crun"],
+      "description": "OCI runtimes this template supports. `crun` shares the host kernel (default); `libkrun` is a microVM (stronger isolation; a later pvm addition). `pvm --runtime <x>` must be one of these."
+    },
+    "distro_package_groups": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Named package bundles from `roles/provision_distro_packages/defaults/main.yml`, referenced by short name. Resolved against this image's ansible_os_family (`__common__` + the per-family overlay) - the SAME registry ivm/qvm use."
+    },
+    "distro_packages": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Extra packages, literal names for this image's distro (e.g. `links2`). Flat - the image already pins one distro."
+    },
+    "thirdparty_software": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Named non-distro install recipes from `roles/provision_thirdparty_software/defaults/main.yml` (e.g. `claude`, `codex`). Run as part of the build provision step, resolved per ansible_os_family (family entry else `__common__`)."
+    },
+    "dotfiles": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["bash", "tmux", "zsh", "emacs"] },
+      "default": ["bash", "tmux", "zsh"],
+      "description": "Dotfile sets staged host-side from the shared cache and COPYd into the image. Config only; the program itself (e.g. emacs) must be in distro_package_groups / distro_packages."
+    },
+    "hide_dirs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [".git", ".vscode"],
+      "description": "Subpaths under the cwd mount masked with an empty read-only dir, so the container (e.g. an AI agent) cannot see the host's real `.git` history / `.vscode` autorun. Set `[]` to disable."
+    },
+    "publish_ports": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "podman `--publish` specs, e.g. `1455:1455/tcp`. Bound at run time."
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional agent the container exists to run; `pvm agent` execs `command` as the unprivileged user.",
+      "properties": {
+        "command": { "type": "string", "description": "The command `pvm agent` runs in the container (e.g. `claude`)." },
+        "display_name": { "type": "string", "description": "Human label for the agent (e.g. `Claude Code`)." },
+        "auth_note": { "type": "string", "description": "Optional one-line note shown after init about completing auth." }
+      },
+      "required": ["command"]
+    },
+    "post_install_script": {
+      "type": "string",
+      "description": "Shell run as ROOT in the build container after packages + thirdparty install (before commit). Use `su - user -c '...'` to act as the unprivileged user."
+    }
+  }
+}

@@ -11,30 +11,37 @@ truth.
 
 Isolation honesty: the default runtime (`crun`) shares the HOST kernel - the
 boundary `ivm` exists to avoid. For real kernel isolation use `ivm`; pvm warns and
-gates accordingly (see sub-phase 3.3). `libkrun` (a microVM runtime) is a later
-addition.
+gates accordingly (sub-phase 3.3). `libkrun` (a microVM runtime) is a later
+addition; `--runtime libkrun` is accepted now but the drive lands later.
 
 Layout (program data under `PVM_HOME`; uninstalling the role's managed subdir
 `~/.local/share/ansible-managed/vm-podman/` removes it):
-  ~/.local/share/ansible-managed/vm-podman/pvm/templates/   shipped + user templates
-  ~/.local/share/ansible-managed/vm-podman/pvm/host_ssh_key 1 (libkrun only, later)
+  ~/.local/share/ansible-managed/vm-podman/pvm/templates/           shipped + user templates
+  ~/.local/share/ansible-managed/vm-podman/pvm/template.schema.json validation schema
+  ~/.local/share/ansible-managed/vm-podman/pvm/mask/                empty dir masked over hide_dirs
 
-NOTE: this is the sub-phase 3.0 scaffold - only `env`/`list`/`help` are wired;
-every other subcommand is registered but errors with the sub-phase that adds it.
+Sub-phase status: 3.1 - templates/schema + the pure host-cli logic ported to
+Python (`env`, `list`, `help`, and `run --dry-run` show the real podman argv with
+NO podman calls). `init`/`build` + the live drive land in 3.2/3.3.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NamedTuple, NoReturn
 
 PVM_DATA_HOME: Path = Path(os.environ.get("PVM_HOME", str(Path.home() / ".local/share/ansible-managed/vm-podman/pvm")))
 TEMPLATES_DIR: Path = PVM_DATA_HOME / "templates"
+SCHEMA_PATH: Path = PVM_DATA_HOME / "template.schema.json"
+# A single empty dir masked (read-only) over each hide_dir, hiding the host's real
+# .git / .vscode from the container. Shared across containers (always empty).
+MASK_DIR: Path = PVM_DATA_HOME / "mask"
 
 # The SHARED, regenerable provision-asset cache (produced by
 # roles/_shared_prebuilt_provision_assets, also included by pvm_install): the SAME
@@ -46,17 +53,35 @@ DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
                    str(Path.home() / ".local/share/ansible-managed/shared-prebuilt-provision-assets")))
 
 # `crun` shares the host kernel (lightweight, default); `libkrun` is a microVM
-# (stronger isolation, deferred - see IMPLEMENTATION_PLAN.md). User-facing flag
-# value `libkrun` maps to podman's `krun` OCI-runtime handler.
+# (stronger isolation, deferred). The user-facing flag value `libkrun` maps to
+# podman's `krun` OCI-runtime handler (the runtime binary podman invokes).
 DEFAULT_RUNTIME: str = "crun"
 RUNTIME_CHOICES: tuple[str, ...] = ("crun", "libkrun")
+RUNTIME_FLAG_TO_PODMAN: dict[str, str] = {"crun": "crun", "libkrun": "krun"}
 
 # pvm-managed containers are named `pvm-<template>-<project>`; the prefix scopes
-# `list` and never collides with hand-run podman containers.
+# `list` and never collides with hand-run podman containers. The cwd binding is
+# stored in the `pvm.project_dir` LABEL (authoritative), not parsed from the name.
 CONTAINER_NAME_PREFIX: str = "pvm-"
+LABEL_MANAGED: str = "pvm.managed"
+LABEL_TEMPLATE: str = "pvm.template"
+LABEL_PROJECT_DIR: str = "pvm.project_dir"
 
+# Default subpaths masked inside the cwd mount (hidden from the agent) when a
+# template does not set `hide_dirs`. .git history + .vscode autorun are the classic
+# risks - same default as the old container_apps HIDE_GIT_DIR / HIDE_VSCODE_DIR.
+DEFAULT_HIDE_DIRS: tuple[str, ...] = (".git", ".vscode")
+
+# image name string -> ansible_os_family (the shared cache's overlay key). Port of
+# roles/container_templates/filter_plugins/distro.py mapped onto Debian/Suse/RedHat
+# (the families the shared cache carries; alpine etc. -> None = unprovisionable).
 CONTAINER_NAME_COLOR: str = "\033[1;36m"  # bold cyan, same convention as ivm/qvm
 COLOR_RESET: str = "\033[0m"
+
+
+class Mount(NamedTuple):
+    host: Path
+    name: str  # workspace name -> /workspaces/<name>
 
 
 def colorize_container_name(container_name: str, *, stream: Any = sys.stderr) -> str:
@@ -106,25 +131,213 @@ def confirm_or_die(prompt_text: str, *, assume_yes: bool) -> None:
         die("aborted by user")
 
 
-# ---------- subcommands implemented in this scaffold ----------
+# ---------- pure helpers (ported from host-cli.sh.j2 / distro.py; unit-tested) ----------
 
 
-def cmd_env(template_name: str | None) -> None:
-    """Print the resolved paths + default runtime (no podman). `ivm env`/`qvm env`
-    analog; a template arg is echoed back (full resolution arrives in 3.1)."""
+def distro_family_of_image(image_name: str) -> str | None:
+    """Map a container image tag to its `ansible_os_family` (the shared cache's
+    overlay key: Debian/Suse/RedHat). Port of filter_plugins/distro.py, mapped to
+    the families the shared cache carries. Returns None for an unknown/unsupported
+    base (e.g. alpine) so provisioning can fail clearly."""
+    low: str = image_name.lower()
+    if "debian" in low or "ubuntu" in low:
+        return "Debian"
+    if "suse" in low:  # opensuse/leap, opensuse/tumbleweed
+        return "Suse"
+    if any(token in low for token in ("fedora", "rocky", "centos", "almalinux")):
+        return "RedHat"
+    return None
+
+
+def project_name_from_cwd(cwd: Path, home: Path) -> str:
+    """Derive a stable, container-name-safe project slug from the cwd (port of the
+    old launcher's `$PWD` minus `$HOME`, `/`->`_`). Uses the cwd's path RELATIVE to
+    $HOME so two same-basename dirs differ; non-alphanumerics collapse to `-`."""
+    resolved_cwd: Path = cwd.resolve()
+    try:
+        relative: str = str(resolved_cwd.relative_to(home.resolve()))
+    except ValueError:
+        relative = str(resolved_cwd).lstrip("/")
+    if not relative or relative == ".":
+        relative = resolved_cwd.name or "root"
+    slug: str = re.sub(r"[^A-Za-z0-9_.-]+", "-", relative).strip("-._").lower()
+    return slug or "proj"
+
+
+def cwd_mount(cwd: Path) -> Mount:
+    """The cwd mounted at /workspaces/<name>. <name> = cwd basename with a leading
+    dot rewritten to `_` (so dotdirs stay name-safe) and other odd chars -> `_`."""
+    raw_name: str = cwd.resolve().name or "workspace"
+    workspace_name: str = ("_" + raw_name[1:]) if raw_name.startswith(".") else raw_name
+    workspace_name = re.sub(r"[^A-Za-z0-9._-]", "_", workspace_name)
+    if not re.match(r"^[A-Za-z0-9_]", workspace_name):
+        workspace_name = "_" + workspace_name
+    return Mount(host=cwd.resolve(), name=workspace_name)
+
+
+def workspace_workdir(mounts: list[Mount]) -> str:
+    """Container workdir: a single mount -> that workspace dir; multi -> /workspaces."""
+    if len(mounts) == 1:
+        return f"/workspaces/{mounts[0].name}"
+    return "/workspaces"
+
+
+def container_name_for(template_name: str, project_name: str) -> str:
+    return f"{CONTAINER_NAME_PREFIX}{template_name}-{project_name}"
+
+
+def image_ref_for(template_name: str, tag: str) -> str:
+    """The per-template image ref. <tag> is a content hash from 3.2; until then a
+    placeholder. `localhost/` keeps podman from treating it as a remote."""
+    return f"localhost/pvm/{template_name}:{tag}"
+
+
+def hide_dir_volume_args(mounts: list[Mount], hide_dirs: list[str]) -> list[str]:
+    """`--volume` args masking each hide_dir under each mount with the empty MASK_DIR
+    (read-only), so the container sees an empty .git/.vscode instead of the host's."""
+    volume_args: list[str] = []
+    for mount in mounts:
+        for sub_path in hide_dirs:
+            volume_args += ["--volume", f"{MASK_DIR}:/workspaces/{mount.name}/{sub_path}:ro"]
+    return volume_args
+
+
+def build_podman_run_argv(*, image_ref: str, container_name: str, template_name: str,
+                          mounts: list[Mount], hide_dirs: list[str], publish_ports: list[str],
+                          runtime: str, network: str | None) -> list[str]:
+    """The exact `podman run` argv for a per-project container. Pure (no podman
+    call) - what `run --dry-run` prints. Port of host-cli.sh.j2 `cmd_run`."""
+    argv: list[str] = [
+        "podman", "run", "--detach", "--tty",
+        "--name", container_name,
+        "--userns=keep-id",
+        "--runtime", RUNTIME_FLAG_TO_PODMAN[runtime],
+        "--hostname", container_name,
+        "--workdir", workspace_workdir(mounts),
+        "--label", f"{LABEL_MANAGED}=true",
+        "--label", f"{LABEL_TEMPLATE}={template_name}",
+        "--label", f"{LABEL_PROJECT_DIR}={mounts[0].host}",
+    ]
+    if network:
+        argv += ["--network", network]
+    for mount in mounts:
+        argv += ["--volume", f"{mount.host}:/workspaces/{mount.name}"]
+    argv += hide_dir_volume_args(mounts, hide_dirs)
+    for port in publish_ports:
+        argv += ["--publish", port]
+    argv.append(image_ref)
+    return argv
+
+
+def load_template(template_name: str) -> dict[str, Any]:
+    """Load + validate a template YAML from TEMPLATES_DIR against the JSON schema."""
+    import yaml  # ships with ansible-core / python3-yaml (a pvm host dep)
+    template_path: Path = TEMPLATES_DIR / f"{template_name}.yaml"
+    if not template_path.is_file():
+        available: list[str] = sorted(p.stem for p in TEMPLATES_DIR.glob("*.yaml")) if TEMPLATES_DIR.is_dir() else []
+        die(f"no template '{template_name}' in {TEMPLATES_DIR}"
+            + (f" (have: {', '.join(available)})" if available else "; re-run `make vm-podman-install`"))
+    loaded: Any = yaml.safe_load(template_path.read_text())
+    if not isinstance(loaded, dict):
+        die(f"template {template_path} is not a mapping")
+    validate_template(loaded, template_name)
+    return loaded
+
+
+def validate_template(doc: dict[str, Any], template_name: str) -> None:
+    """Validate against template.schema.json with jsonschema when available; else a
+    minimal manual check of the required fields (jsonschema is a pvm host dep, but
+    keep working if it is missing - mirror ivm's tolerance)."""
+    import json
+    required_fields: tuple[str, ...] = ("template_name", "image_name")
+    missing: list[str] = [field for field in required_fields if field not in doc]
+    if missing:
+        die(f"template '{template_name}' missing required field(s): {', '.join(missing)}")
+    try:
+        import jsonschema
+    except ImportError:
+        return
+    if not SCHEMA_PATH.is_file():
+        return
+    schema: dict[str, Any] = json.loads(SCHEMA_PATH.read_text())
+    errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(doc), key=lambda e: list(e.path))
+    if errors:
+        location: str = "/".join(str(part) for part in errors[0].path) or "(root)"
+        die(f"template '{template_name}' invalid at {location}: {errors[0].message}")
+
+
+def resolve_runtime(template: dict[str, Any], requested_runtime: str) -> str:
+    """The runtime to use: the one requested on the CLI, asserted to be one this
+    template declares in `runtimes` (default [crun])."""
+    supported: list[str] = template.get("runtimes", ["crun"])
+    if requested_runtime not in supported:
+        die(f"template '{template['template_name']}' does not support runtime "
+            f"'{requested_runtime}' (declares: {', '.join(supported)})")
+    return requested_runtime
+
+
+# ---------- subcommands implemented in this sub-phase ----------
+
+
+def cmd_env(template_name: str | None, *, runtime: str, network: str | None) -> None:
+    """Print the resolved paths + runtime; with a template, also its resolved
+    family / features / mounts / names (no podman). `ivm env`/`qvm env` analog."""
     print(f"PVM_HOME            : {PVM_DATA_HOME}")
     print(f"templates dir       : {TEMPLATES_DIR}")
     print(f"shared assets root  : {DEFAULT_SHARED_ASSETS_ROOT}")
-    print(f"default runtime     : {DEFAULT_RUNTIME}")
-    if template_name is not None:
-        print(f"template            : {template_name} (resolution lands in sub-phase 3.1)")
+    print(f"runtime             : {runtime} (podman --runtime {RUNTIME_FLAG_TO_PODMAN[runtime]})")
+    if network:
+        print(f"network             : {network}")
+    if template_name is None:
+        return
+    template: dict[str, Any] = load_template(template_name)
+    family: str | None = distro_family_of_image(template["image_name"])
+    cwd: Path = Path.cwd()
+    mount: Mount = cwd_mount(cwd)
+    project: str = project_name_from_cwd(cwd, Path.home())
+    hide_dirs: list[str] = template.get("hide_dirs", list(DEFAULT_HIDE_DIRS))
+    print("----------------------------------------")
+    print(f"template            : {template_name}")
+    print(f"image               : {template['image_name']} (family={family})")
+    print(f"pkg groups          : {', '.join(template.get('distro_package_groups', [])) or '(none)'}")
+    print(f"packages            : {', '.join(template.get('distro_packages', [])) or '(none)'}")
+    print(f"thirdparty          : {', '.join(template.get('thirdparty_software', [])) or '(none)'}")
+    print(f"dotfiles            : {', '.join(template.get('dotfiles', [])) or '(none)'}")
+    print(f"hide_dirs           : {', '.join(hide_dirs) or '(none)'}")
+    print(f"publish_ports       : {', '.join(template.get('publish_ports', [])) or '(none)'}")
+    print(f"mount               : {mount.host} -> /workspaces/{mount.name}")
+    print(f"container           : {container_name_for(template_name, project)}")
+    print(f"image ref           : {image_ref_for(template_name, '<content-hash>')}")
+
+
+def cmd_run(template_name: str, *, runtime: str, network: str | None, dry_run: bool) -> None:
+    """Run a per-project container from the per-template image. In 3.1 only the
+    --dry-run path is wired (prints the exact `podman run` argv); the live drive +
+    image build land in 3.2/3.3."""
+    template: dict[str, Any] = load_template(template_name)
+    effective_runtime: str = resolve_runtime(template, runtime)
+    cwd: Path = Path.cwd()
+    mounts: list[Mount] = [cwd_mount(cwd)]
+    project: str = project_name_from_cwd(cwd, Path.home())
+    argv: list[str] = build_podman_run_argv(
+        image_ref=image_ref_for(template_name, "latest"),
+        container_name=container_name_for(template_name, project),
+        template_name=template_name,
+        mounts=mounts,
+        hide_dirs=template.get("hide_dirs", list(DEFAULT_HIDE_DIRS)),
+        publish_ports=template.get("publish_ports", []),
+        runtime=effective_runtime,
+        network=network)
+    if not dry_run:
+        not_yet_implemented("run", "3.3 (real podman drive; needs the image from 3.2)")
+    run(argv, dry_run=True)
 
 
 def cmd_list() -> None:
     """List pvm-managed containers (name, status, image). Read-only `podman ps`;
     degrades to a hint when podman is absent."""
     return_code, stdout, stderr = run_capture(
-        ["podman", "ps", "--all", "--filter", f"name=^{CONTAINER_NAME_PREFIX}",
+        ["podman", "ps", "--all", "--filter", f"label={LABEL_MANAGED}=true",
          "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"])
     if return_code == 127:
         print("pvm: podman not found - run `make vm-podman-install` first", file=sys.stderr)
@@ -160,20 +373,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime", choices=RUNTIME_CHOICES, default=DEFAULT_RUNTIME,
                         help=f"OCI runtime: crun (shared host kernel, default) or libkrun "
                              f"(microVM; later). Default: {DEFAULT_RUNTIME}")
+    parser.add_argument("--network", metavar="<mode>", default=None,
+                        help="podman `--network` mode passthrough (e.g. host); default = podman's default")
     parser.add_argument("--shared-assets-root", type=Path, default=DEFAULT_SHARED_ASSETS_ROOT,
                         help=f"shared provision-asset cache (package-group + thirdparty JSON, "
                              f"feature-first dotfiles/); rarely overridden. "
                              f"Default: {DEFAULT_SHARED_ASSETS_ROOT}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
-    # Template-taking subcommands (build/run a container for a named template).
     for template_subcommand, subcommand_help in (
             ("init", "build the image if needed, then run a container bound to the cwd"),
             ("build", "build + commit the per-template image only (no container)"),
             ("run", "run a container from the per-template image (cwd-bound)"),
             ("env", "show resolved paths + runtime (optionally for a template)")):
         template_parser = subparsers.add_parser(template_subcommand, help=subcommand_help)
-        # env's template is optional; init/build/run require one.
         template_parser.add_argument(
             "template", nargs="?" if template_subcommand == "env" else None,
             metavar="<template>", help="template name (a *.yaml stem under the templates dir)")
@@ -184,7 +397,6 @@ def build_parser() -> argparse.ArgumentParser:
             template_parser.add_argument("--yes", action="store_true",
                                          help="skip the shared-kernel confirmation gate")
 
-    # Container-acting subcommands (resolved by cwd binding or --name).
     for container_subcommand, subcommand_help in (
             ("start", "start the cwd-bound container (no-op if running)"),
             ("stop", "stop the cwd-bound container"),
@@ -208,10 +420,15 @@ def main() -> None:
     parser: argparse.ArgumentParser = build_parser()
     parsed_arguments: argparse.Namespace = parser.parse_args()
     subcommand: str = parsed_arguments.subcommand
+    runtime: str = parsed_arguments.runtime
+    network: str | None = parsed_arguments.network
 
-    # Subcommands that need no container/template resolution.
     if subcommand == "env":
-        cmd_env(parsed_arguments.template)
+        cmd_env(parsed_arguments.template, runtime=runtime, network=network)
+        return
+    if subcommand == "run":
+        cmd_run(parsed_arguments.template, runtime=runtime, network=network,
+                dry_run=parsed_arguments.dry_run)
         return
     if subcommand == "list":
         cmd_list()
@@ -220,10 +437,11 @@ def main() -> None:
         cmd_help(parser)
         return
 
-    # Everything else is scaffolded - registered so the CLI + completions are
-    # complete, but the drive lands in later sub-phases (see IMPLEMENTATION_PLAN.md).
-    if subcommand in ("init", "build", "run"):
-        not_yet_implemented(subcommand, "3.1-3.3 (templates -> build -> drive)")
+    # init/build need the build pipeline (3.2) + drive (3.3); the container-acting
+    # subcommands need the live drive (3.3). Registered so the CLI + completions
+    # are complete; they fail loudly until their sub-phase lands.
+    if subcommand in ("init", "build"):
+        not_yet_implemented(subcommand, "3.2-3.3 (build pipeline -> drive)")
     not_yet_implemented(subcommand, "3.3 (podman drive + lifecycle)")
 
 

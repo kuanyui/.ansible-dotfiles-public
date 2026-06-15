@@ -1,9 +1,8 @@
 ---
-# Install the `pvm` launcher + its shell completions, and co-produce the shared
-# provision-asset cache `pvm` reads at build time. Built images/containers are
-# pvm's own runtime concern (created on `pvm init`) - the role deploys nothing
-# there. The shipped templates + JSON schema are installed in sub-phase 3.1
-# (they do not exist yet in this scaffold).
+# Install the `pvm` launcher + its shell completions + the JSON schema + shipped
+# templates, and co-produce the shared provision-asset cache `pvm` reads at build
+# time. Built images/containers are pvm's own runtime concern (created on
+# `pvm init`) - the role deploys nothing there.
 
 - name: Ensure `vm_podman_bin_dir` + `vm_podman_pvm_dir` + completion dirs exist
   ansible.builtin.file:
@@ -21,6 +20,18 @@
     src: pvm
     dest: "{{ vm_podman_bin_dir }}/pvm"
     mode: "0755"
+
+- name: Install the container template schema to `{{ vm_podman_pvm_dir }}/template.schema.json`
+  ansible.builtin.copy:
+    src: template.schema.json
+    dest: "{{ vm_podman_pvm_dir }}/template.schema.json"
+    mode: "0644"
+
+- name: Install the example templates to `{{ vm_podman_pvm_dir }}/templates/`
+  ansible.builtin.copy:
+    src: templates/
+    dest: "{{ vm_podman_pvm_dir }}/templates/"
+    mode: "0644"
 
 - name: Install `pvm` zsh completion to `{{ vm_podman_zsh_completion_dir }}/_pvm`
   ansible.builtin.copy:

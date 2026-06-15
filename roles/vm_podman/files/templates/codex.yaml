@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=../template.schema.json
+template_name: codex
+description: "OpenAI Codex agent container (Debian; links2 for in-container auth)"
+image_name: debian:13
+image_platform: linux/amd64
+tz: host
+runtimes:
+  - crun
+distro_package_groups:
+  - tools_basic
+distro_packages:
+  - git
+  - links2   # text browser to finish the OpenAI auth flow inside the container
+thirdparty_software:
+  - codex    # nodejs + npm i -g @openai/codex; recipe in roles/provision_thirdparty_software/defaults/main.yml
+dotfiles:
+  - bash
+  - tmux
+  - zsh
+  - emacs
+hide_dirs:
+  - .git
+  - .vscode
+agent:
+  command: codex
+  display_name: OpenAI Codex
+  auth_note: "Use the `links2` text browser in the container to finish OpenAI auth."
+publish_ports:
+  - "1455:1455/tcp"
