@@ -82,8 +82,8 @@ fi
 # Eager-source ansible-managed bash completions. Each managed role drops
 # its completion scripts under its own
 # `~/.local/share/ansible-managed/<role>/bash-completions/` subdir (e.g.
-# `container-apps/bash-completions/c-claude-crun`, `incus-agents/bash-completions/
-# v-claude`); the outer loop globs across all roles so new roles don't
+# `vm-podman/bash-completions/pvm`, `vm-incus/bash-completions/ivm`); the outer
+# loop globs across all roles so new roles don't
 # require editing this file. We don't reuse the XDG bash-completion
 # dynamic-loader path (`~/.local/share/bash-completion/completions/<cmd>`)
 # because it requires the bash-completion package and a loader handshake;

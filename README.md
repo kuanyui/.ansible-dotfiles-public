@@ -23,8 +23,8 @@ playbooks/                # entry playbooks
   ├─ all.yml              # ├─ user.yml + root.yml
   # Everything below is OPTIONAL - run its own target; no `setup_*` gate any more.
   ├─ podman_oci_runtimes.yml  # ├─ dedicated entry: configure podman OCI runtime(s)
-  ├─ container_apps.yml   # ├─ dedicated entry: install c-<template>-<runtime> launchers
-  ├─ container_apps_uninstall.yml   # ├─ uninstall flow (reads install manifest)
+  ├─ vm_podman.yml        # ├─ dedicated entry: install the `pvm` podman container launcher
+  ├─ vm_podman_uninstall.yml     # ├─ uninstall flow (removes `pvm` + role subdir; images untouched)
   ├─ vm_incus.yml         # ├─ dedicated entry: install the `ivm` Incus VM launcher
   ├─ vm_incus_uninstall.yml      # ├─ uninstall flow (removes `ivm` + role subdir)
   ├─ vm_quickemu.yml      # ├─ dedicated entry: install the `qvm` quickemu VM launcher
@@ -58,8 +58,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`provision_distro_packages/`](roles/provision_distro_packages/) | Frequently-used distro package bundles (basic / net / sys / Wayland tools); delegates installs to `_install_distro_packages`. |
 | [`local_lang_pkg_managers/`](roles/local_lang_pkg_managers/) | Redirect npm / pip / pipx / cargo / go global installs from `~/.local/` into `~/.local-lang-pkg-managers/<tool>/`, so XDG + ansible-managed dotfiles stay separable from language-level package state. Opt-in via `make apply-local-lang-pkg-managers`. |
 | [`podman_oci_runtimes/`](roles/podman_oci_runtimes/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
-| [`container_templates/`](roles/container_templates/) | Render per-`(template, runtime)` Makefile / Dockerfile / dotfile trees consumed by `container_apps`. |
-| [`container_apps/`](roles/container_apps/) | Install `c-<template>-<runtime>` launchers into `~/.local/bin/`; one ephemeral podman container per `(template, runtime, project)`. |
+| [`vm_podman/`](roles/vm_podman/) | Install `pvm`: define a podman container in a YAML template, then `pvm init <template>` - builds a per-template image via `podman exec` + `podman commit` (no Dockerfile), runs one container per project dir (cwd-bound). Consumes the same provision cache as `ivm`/`qvm`; `pvm shell` / `pvm agent`. Default `crun` shares the host kernel (warns + gates; use `ivm` for a real VM); `libkrun` microVM planned. |
 | [`vm_incus/`](roles/vm_incus/) | Install `ivm`: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |
 | [`vm_quickemu/`](roles/vm_quickemu/) | Install `qvm`: quickemu wrapper for the axis `ivm` doesn't cover (Windows/macOS guests, 3D desktop Linux). Prebuilt tumbleweed/debian/fedora images (zero interactive install), `quickget` passthrough for the rest, guest-agent `exec`/`push`/`pull`, SSH `shell`. |
 | [`apparmor/`](roles/apparmor/) | AppArmor profiles for desktop GUI apps (Firefox / Chromium / Edge / VLC / mpv / VSCode / Telegram / Gwenview / Okular / ...). |
@@ -113,9 +112,9 @@ make apply-essentials-user   # current user only
 make apply-essentials-root   # root only (requires sudo)
 ```
 
-## Using the `c-<template>-<runtime>` launchers without applying `roles/bash` / `roles/tmux` / `roles/zsh`
+## Using the launchers (`pvm` / `ivm` / `qvm`) without applying `roles/bash` / `roles/tmux` / `roles/zsh`
 
-If you already have your own `.bashrc` / `.zshrc` and only want the container app launchers (`c-claude-crun`, `c-claude-krun`, ...) from `make apply-container-apps`, three things need to be wired up in your shell rc manually. The dotfiles role does these for you automatically; this section is for users who maintain their own shell config.
+If you already have your own `.bashrc` / `.zshrc` and only want the ansible-managed launchers (`pvm` from `make vm-podman-install`, `ivm` from `make vm-incus-install`, `qvm` from `make vm-quickemu-install`), three things need to be wired up in your shell rc manually. The dotfiles role does these for you automatically; this section is for users who maintain their own shell config.
 
 ### 1. `~/.local/bin` in `PATH`
 
@@ -135,7 +134,7 @@ Add to **`~/.bashrc`**:
 ```bash
 # Ansible-managed bash completions. Each managed role drops its scripts under
 # its own `~/.local/share/ansible-managed/<role>/bash-completions/` subdir
-# (`container_apps`, `incus`, ...); the outer loop globs across all roles
+# (`vm-podman`, `vm-incus`, ...); the outer loop globs across all roles
 # so new roles don't require editing this snippet. We do NOT use the XDG
 # bash-completion dynamic-loader path because that requires the
 # `bash-completion` package on every target distro - eager-source here is
@@ -156,7 +155,7 @@ Add to **`~/.zshrc`**, **before** any `compinit` call (the `fpath` change is onl
 ```zsh
 # Ansible-managed zsh completions. Each managed role drops `_<cmd>` files
 # under its own `~/.local/share/ansible-managed/<role>/zsh-completions/`
-# subdir (`container-apps/zsh-completions/_c-*`, `vm-incus/zsh-completions/_ivm`,
+# subdir (`vm-podman/zsh-completions/_pvm`, `vm-incus/zsh-completions/_ivm`,
 # ...); the glob auto-discovers across all roles. `(N)` is null-glob so it's
 # safe even before any role has installed completions.
 fpath=(${HOME}/.local/share/ansible-managed/*/zsh-completions(N) $fpath)
@@ -174,13 +173,12 @@ After opening a fresh shell:
 
 ```sh
 # bash
-type _c_claude_crun                            # should say "is a function"
-complete -p c-claude-crun                      # should print the registered completion
-c-claude-crun <TAB><TAB>                       # should list: help env init build run rma rmi rmc ...
+complete -p pvm                                # should print the registered completion
+pvm <TAB><TAB>                                 # should list: init build run env start stop rmc rmi rma shell ...
 
 # zsh
-which _c-claude-crun                           # should resolve to the completion file
-c-claude-crun <TAB>                            # should list subcommands with descriptions
+which _pvm                                     # should resolve to the completion file
+pvm <TAB>                                      # should list subcommands with descriptions
 ```
 
 ## VM-isolated launchers via `roles/vm_incus` (the `ivm` launcher)
@@ -210,7 +208,7 @@ ivm stop             # shut down the VM (disk state preserved)
 ivm delete           # delete the VM + its disk (asks first)
 ```
 
-VM names are derived from `cwd` exactly like `c-claude-crun` derives container names, so `~/work/foo` and `~/sandbox/foo` get separate VMs (bound via the `user.ivm_init_at_dir` tag). Resource defaults come from the template's `hw:` block. Cold boot is ~10-15 s; subsequent `ivm shell` reuses the running VM.
+VM names are derived from `cwd` (the same way `pvm` derives container names), so `~/work/foo` and `~/sandbox/foo` get separate VMs (bound via the `user.ivm_init_at_dir` tag). Resource defaults come from the template's `hw:` block. Cold boot is ~10-15 s; subsequent `ivm shell` reuses the running VM.
 
 ### Threat model: where `ivm` VMs are stronger than `c-*-crun` / `c-*-krun`
 

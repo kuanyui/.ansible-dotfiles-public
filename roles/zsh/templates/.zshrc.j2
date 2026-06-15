@@ -26,8 +26,8 @@ select-word-style bash
 ### ============================================
 # Pick up ansible-managed completion functions. Each managed role drops `_<cmd>`
 # files under its own `~/.local/share/ansible-managed/<role>/zsh-completions/`
-# subdir (e.g. `container-apps/zsh-completions/_c-claude-crun`,
-# `incus-agents/zsh-completions/_v-claude`); the glob auto-discovers across all
+# subdir (e.g. `vm-podman/zsh-completions/_pvm`,
+# `vm-incus/zsh-completions/_ivm`); the glob auto-discovers across all
 # roles, so adding a new role doesn't require editing this file. Must run
 # BEFORE `compinit` for new fpath entries to be scanned. `(N)` is null-glob
 # (no error if zero matches). Project-private path (not the distro-standard

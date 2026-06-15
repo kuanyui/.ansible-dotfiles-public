@@ -1129,25 +1129,25 @@ container via `podman exec`/`cp` then `podman commit` (content-hash tag); consum
 the SAME shared provision-asset cache ivm/qvm use. crun in v1; libkrun deferred.
 Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
 
-- [~] **3.0 scaffold** - `roles/vm_podman` mirroring `vm_quickemu`: `files/pvm`
+- [x] **3.0 scaffold** - `roles/vm_podman` mirroring `vm_quickemu`: `files/pvm`
   skeleton (env/list/help wired; other subcommands registered but error with the
   sub-phase that adds them), `test_pvm.py`, `_pvm`/`pvm.bash` completions, defaults,
   tasks (main/pvm_install/pvm_uninstall/podman_host_install), README, playbooks,
   sandbox config, Makefile `vm-podman-*`. ivm/qvm/pvm uninstall upgraded to a 3-way
   shared-cache ref-count (pvm is now a third consumer). (Repo-hygiene git-rm was a
   no-op: the dead `roles/incus_vm` cruft + `.pyc` are untracked, already gitignored.)
-- [ ] **3.1** declarative templates + `template.schema.json` + port `host-cli.sh.j2`
+- [x] **3.1** declarative templates + `template.schema.json` + port `host-cli.sh.j2`
   logic + `filter_plugins/distro.py` to typed Python (pure, unit-tested; no podman).
-- [ ] **3.2** consume the shared cache: provision-via-exec + `podman commit`
+- [x] **3.2** consume the shared cache: provision-via-exec + `podman commit`
   (content-hash); `overlay/workspace-autocd`; dynamic completions read the JSON.
-- [ ] **3.3** real podman drive (init/run/lifecycle/shell/agent, crun) + isolation
+- [x] **3.3** real podman drive (init/run/lifecycle/shell/agent, crun) + isolation
   guardrails (shared-kernel warn -> ivm; non-libkrun `init` [y/N] gate).
-- [ ] **3.4** retire `container_apps` + `container_templates`; tick REFACTOR.md.
+- [x] **3.4** retire `container_apps` + `container_templates`; tick REFACTOR.md.
 - [ ] **(deferred) libkrun** - `--runtime krun` + sshd-via-commit (recipe in the plan).
 
 ## Notes / future
 
-- [~] **container_apps -> one engine + declarative templates** - UNDERWAY as
+- [x] **container_apps -> one engine + declarative templates** - DONE as
   REFACTOR.md Phase 3 (`pvm` / `roles/vm_podman`); see the dedicated section above +
   `roles/vm_podman/IMPLEMENTATION_PLAN.md`. (Working name resolved `capp` -> `pvm`;
   the `filter_plugins/__pycache__/*.pyc` "committed cruft" note was stale - they are

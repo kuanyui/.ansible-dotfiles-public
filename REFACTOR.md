@@ -26,7 +26,7 @@ Tick a box when the phase is finished + verified + committed.
 - [x] Phase 0e - retire `setup_*` gates / config-model cleanup
 - [x] Phase 1 - shared assets foundation (`__common__`, `_shared_prebuilt_provision_assets`, `ivm` consumes)
 - [x] Phase 2 - `qvm provision`
-- [ ] Phase 3 - `pvm` / container engine
+- [x] Phase 3 - `pvm` / container engine (crun shipped; libkrun deferred)
 
 ---
 

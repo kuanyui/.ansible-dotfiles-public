@@ -1,10 +1,9 @@
 """Sandbox config for `playbooks/user.yml`.
 
-Provisions current user with zsh + emacs + dotfiles. The `container_apps` and
-`apparmor` roles are also in this playbook but gated off by default in
-`group_vars/all.yml` (`setup_container_apps` / `setup_apparmor` both false) and
-have dedicated sandbox configs of their own, so they are intentionally not
-exercised here.
+Provisions current user with zsh + emacs + dotfiles (the essentials). Optional
+roles (apparmor, vm_incus / vm_quickemu / vm_podman, ...) are NOT in user.yml -
+each has its own dedicated playbook + sandbox config (the `setup_*` gates were
+retired in Phase 0e), so they are intentionally not exercised here.
 
 `user.yml` runs with `is_root: false`, which skips the install-* sub-tasks
 in `zsh` / `emacs` (those only fire when `is_root: true`); only the config

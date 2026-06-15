@@ -1,9 +1,0 @@
----
-- name: "Uninstall container apps via `roles/container_apps` (`container_apps_state: absent`)"
-  hosts: localhost
-  connection: local
-  gather_facts: true
-  vars:
-    container_apps_state: absent
-  roles:
-    - container_apps

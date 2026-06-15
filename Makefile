@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-container-apps unapply-container-apps apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-local-lang-pkg-managers vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm vm-podman-install vm-podman-check vm-podman-uninstall-pvm vm-podman-sandbox check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-container-apps check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-container-apps sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-local-lang-pkg-managers vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm vm-podman-install vm-podman-check vm-podman-uninstall-pvm vm-podman-sandbox check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -55,12 +55,6 @@ apply-podman-oci-runtimes:  ## Provision crun + libkrun, assert crun has `+LIBKR
 
 unapply-podman-oci-runtimes:  ## Revert podman to distro default runtime (deletes the managed containers.conf; leaves installed libkrun packages alone)
 	$(PLAYBOOK) --diff --ask-become-pass -e podman_runtime=default $(PLAYBOOKS)/podman_oci_runtimes.yml
-
-apply-container-apps:  ## Install c-<template>-<runtime> launchers into ~/.local/bin/ (bypasses `setup_container_apps` gate)
-	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps.yml
-
-unapply-container-apps:  ## Uninstall container_apps (reads ~/.local/share/container-templates/.ansible-manifest.yml, removes everything it recorded)
-	$(PLAYBOOK) --diff $(PLAYBOOKS)/container_apps_uninstall.yml
 
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / VSCode / etc.; bypasses `setup_apparmor` gate). Python pre-flight validates + previews + asks y/N before ansible runs. Needs sudo.
 	python3 roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py --confirm
@@ -190,9 +184,6 @@ check-essentials-all-users:  ## Dry-run diff for both user and root (i.e. `check
 check-podman-oci-runtimes:  ## Dry-run diff for podman OCI runtime config
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/podman_oci_runtimes.yml
 
-check-container-apps:  ## Dry-run diff for container_apps install
-	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/container_apps.yml
-
 check-apparmor:  ## Dry-run diff for AppArmor profile deployment
 	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/apparmor.yml
 
@@ -258,9 +249,6 @@ sandbox-essentials-user:  ## Dry-run `apply-essentials-user` (zsh + emacs + dotf
 
 sandbox-essentials-root:  ## Dry-run `apply-essentials-root` (distro_packages + zsh + emacs + dotfiles, is_root=true) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) root
-
-sandbox-container-apps:  ## Dry-run `apply-container-apps` (c-<template>-<runtime> launcher install) in a throwaway podman+systemd sandbox
-	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) container_apps
 
 sandbox-podman-oci-runtimes:  ## Dry-run `apply-podman-oci-runtimes` (containers.conf write; `crun` and `podman` are stubbed) in a throwaway podman+systemd sandbox
 	python3 scripts/sandbox/sandbox.py --runtime $(SANDBOX_RUNTIME) podman_oci_runtimes

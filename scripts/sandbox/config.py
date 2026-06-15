@@ -44,7 +44,7 @@ class SandboxConfig:
     extra_files: dict[Path, str] = field(default_factory=dict)
 
     # Extra `-e VAR=VAL` passed to ansible-playbook. Useful to flip gates
-    # (`setup_apparmor=true`, `setup_container_apps=true` etc.) for the dry-run.
+    # (`setup_apparmor=true`, `vm_podman_skip_host_setup=true` etc.) for the dry-run.
     extra_ansible_vars: dict[str, Any] = field(default_factory=dict)
 
     # Commands run as `root` inside the container AFTER apt installs +

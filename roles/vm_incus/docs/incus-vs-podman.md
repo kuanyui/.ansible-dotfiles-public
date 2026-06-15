@@ -1,8 +1,9 @@
 # incus containers vs podman containers - why this project uses both
 
-Why `roles/vm_incus` (the `ivm` launcher) uses **incus VMs**, `roles/container_apps`
-uses **podman**, and neither should switch to "incus containers". Not a
-feature-count comparison - the two solve **different shapes** of problem.
+Why `roles/vm_incus` (the `ivm` launcher) uses **incus VMs**, `roles/vm_podman`
+(the `pvm` launcher) uses **podman**, and neither should switch to "incus
+containers". Not a feature-count comparison - the two solve **different shapes**
+of problem.
 
 ## System containers vs application containers
 
@@ -20,10 +21,10 @@ is the right tool (native OCI, the registry/Dockerfile ecosystem, libkrun).
 
 ## Consequence for this repo
 
-- **`roles/container_apps` stays podman.** It launches ephemeral GUI apps
-  (Firefox, ...) rootless, with libkrun for an extra isolation boundary - exactly
-  podman's sweet spot. Switching to incus containers would lose the OCI ecosystem
-  + libkrun model and gain nothing for that use case.
+- **`roles/vm_podman` (`pvm`) stays podman.** It runs ephemeral, rootless OCI
+  containers (dev / agent boxes), with libkrun available for an extra isolation
+  boundary - exactly podman's sweet spot. Switching to incus containers would lose
+  the OCI ecosystem + libkrun model and gain nothing for that use case.
 - **`roles/vm_incus` (`ivm`) uses incus VMs.** Stronger isolation than a shared
   kernel (separate kernel, standalone `virtiofsd` + `pivot_root` + seccomp) -
   wanted for agents touching source while credentials sit on the host.

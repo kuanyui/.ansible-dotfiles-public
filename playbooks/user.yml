@@ -9,7 +9,7 @@
     target_group: "{{ ansible_facts['user_id'] }}"
     is_root: false
   roles:
-    # Essentials only. Optional features (container_apps, apparmor, trusted_pubkeys,
+    # Essentials only. Optional features (vm_podman, apparmor, trusted_pubkeys,
     # firefox_tunes, mpv, local_lang_pkg_managers, ...) are no longer gated here -
     # run each via its own `make` target / playbook when a host wants it.
     - zsh
