@@ -41,9 +41,11 @@ trusted_pubkeys_ssh_host_keys:
   - host: invent.kde.org
     source: "https://invent.kde.org/help/instance_configuration"
     verified: "2026-06-15"
-    # No ecdsa pinned: the page lists SHA256:ZNBg4AkRxbt/N6xzpt7GbmmS78A3WFy5lz0l/cPHbcE but
-    # invent.kde.org serves no ecdsa host key to ssh-keyscan (checked from 2 networks
-    # 2026-06-15), so there is no key blob to pin; the page fingerprint may be stale.
+    # No ecdsa pinned: the HTTPS GitLab page lists an ecdsa fingerprint (SHA256:ZNBg4AkRxbt/N6xzpt7GbmmS78A3WFy5lz0l/cPHbcE), but the
+    # live sshd serves none - forcing ecdsa returns "no matching host key type, Their offer:
+    # ssh-ed25519,rsa-sha2-512,rsa-sha2-256" (checked 2026-06-15). No client negotiates ecdsa
+    # here, and a fingerprint can't be turned back into a key, so there is no blob to pin;
+    # the HTTPS GitLab page's ecdsa row is orphaned (its ed25519/rsa rows match what the server serves).
     keys:
       - line: "invent.kde.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMtd90DMLrtdCiapQK43JjwKk+U8egSXQU15fOJba1n"
         fingerprint: "SHA256:zHdK2R/S6s5Oj71N0s8LHWCXXsUt+DCztd+GjzW9KlU"
@@ -54,7 +56,7 @@ trusted_pubkeys_ssh_host_keys:
     verified: "2026-06-15"
     # gitlab.gnome.org is Fastly CDN (no SSH); keys are served on this ssh.* host.
     # All 3 also match gnome.org's DNSSEC-signed SSHFP records; rsa is anchored
-    # ONLY by SSHFP (the HTTPS page publishes ed25519 + ecdsa only).
+    # ONLY by SSHFP (the HTTPS GitLab page publishes ed25519 + ecdsa only).
     keys:
       - line: "ssh.gitlab.gnome.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHG6b3deoYMPwKEu9Sj+y6MBHYYUKQiAnta/go3aNv7R"
         fingerprint: "SHA256:Y9G4dWiIfi53LR3InJWsIbv4lekUHonq/HrqTTm/rcw"
