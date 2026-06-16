@@ -65,7 +65,6 @@
         'codex': provision_thirdparty_software_codex,
         'dev_rust': provision_thirdparty_software_dev_rust,
         'dev_android': provision_thirdparty_software_dev_android,
-        'sillytavern': provision_thirdparty_software_sillytavern,
       } | to_nice_json }}
 
 # ---------- Stage the feature-first dotfiles tree ----------

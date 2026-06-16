@@ -3,6 +3,11 @@
 # http://<guest-ip>:8000 (incus NAT lets the host route to the guest; the LAN cannot).
 # No GUI and no /workspaces mount - it is not a dev/agent box. ~/Downloads is shared with
 # the host purely as a drop zone for trading character-card PNGs both ways.
+#
+# Self-contained on purpose: the whole install lives in post_install_script, NOT in the
+# shared provision_thirdparty_software registry. SillyTavern is a single-purpose appliance
+# (like webbrowser.yaml), not a reusable tool like claude/codex - keeping it out of the
+# registry means `ivm provision sillytavern` can't accidentally land it on other VMs.
 template_name: sillytavern
 description: "SillyTavern LLM chat server (Debian, headless; host browser -> guest:8000; shares ~/Downloads for character cards)"
 hw:
@@ -32,30 +37,38 @@ distro_packages:
   - nodejs   # Debian 13 ships Node.js >= 20 (SillyTavern's floor)
   - npm
   - git
-thirdparty_software:
-  - sillytavern   # git clone + npm deps; recipe in roles/provision_thirdparty_software/defaults/main.yml
 dotfiles:
   - bash
   - zsh
-# Everything below runs as ROOT after packages + the thirdparty install. Heredocs are kept
-# at a FLAT indent on purpose: the `|` block strips the common 2 spaces, so the written
-# files (config.yaml keys, the unit's `[Section]` headers) land at column 0 as required.
+# Everything below runs as ROOT after packages install. Heredocs are kept at a FLAT indent
+# on purpose: the `|` block strips the common 2 spaces, so the written files (config.yaml
+# keys, the unit's `[Section]` headers) and the heredoc `EOF` terminators land at column 0.
 post_install_script: |
-  # 1. Make ST reachable from the host. ST's default config binds 127.0.0.1 and whitelists
-  #    localhost only; it also REFUSES to start with `listen: true` unless an access control
-  #    is on. So: listen + keep whitelistMode on + whitelist the RFC1918 ranges (covers
-  #    whatever subnet incusbr0 hands the host gateway). The VM is NAT-only, so allowing
-  #    private ranges exposes it to the HOST alone, not the LAN. A partial config.yaml is
-  #    fine - ST falls back to its built-in defaults for every key left unset.
+  # Install SillyTavern (user-scoped). Guarded by the node_modules check so a re-init is a
+  # no-op, not a clone-into-existing-dir failure. Upstream's "SillyTavern-Launcher" is an
+  # interactive TUI (unusable from incus exec), so this is the documented manual install:
+  # shallow-clone `release` + the SAME npm flags upstream's start.sh uses (NODE_ENV=production
+  # --omit=dev --ignore-scripts), run headlessly so the systemd unit need not reinstall.
+  su - user -c 'set -eu
+    if [ ! -d ~/SillyTavern/node_modules ]; then
+      git clone --branch release --depth 1 https://github.com/SillyTavern/SillyTavern ~/SillyTavern
+      cd ~/SillyTavern
+      NODE_ENV=production npm install --no-save --no-audit --no-fund --loglevel=error --no-progress --omit=dev --ignore-scripts
+    fi
+  '
+  # Make ST reachable from the host. Its default config binds 127.0.0.1 and whitelists
+  # localhost only; it also REFUSES to start with `listen: true` unless an access control is
+  # on. So: listen + keep whitelistMode on + whitelist the RFC1918 ranges (covers whatever
+  # subnet incusbr0 hands the host gateway). The VM is NAT-only (LAN cannot reach it), so this
+  # exposes ST to the HOST alone. A partial config.yaml is fine - ST defaults every unset key.
   su - user -c 'cat > ~/SillyTavern/config.yaml' <<'EOF'
   listen: true
   port: 8000
   whitelistMode: true
   whitelist: ["::1", "127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   EOF
-  # 2. Run ST as the unprivileged `user` on boot, so the host browser can reach it any time
-  #    without `ivm shell`. Deps are already installed by the thirdparty recipe, so the unit
-  #    just launches the server (Debian's `nodejs` package provides /usr/bin/node).
+  # Run ST as the unprivileged `user` on boot, so the host browser can reach it any time
+  # without `ivm shell` (Debian's `nodejs` package provides /usr/bin/node).
   cat > /etc/systemd/system/sillytavern.service <<'EOF'
   [Unit]
   Description=SillyTavern
