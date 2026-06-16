@@ -1694,6 +1694,16 @@ def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
     run(["incus", "list", *list_args], dry_run=dry_run)
 
 
+def cmd_top(top_args: list[str], *, dry_run: bool) -> None:
+    """`incus top` passthrough: a live per-instance CPU / memory / disk view (needs a
+    recent incus). NOTE: a VM's memory column is the GUEST-reported usage (via the incus
+    agent), which UNDER-reports the host RAM the QEMU process actually holds - incus VMs
+    have no balloon free-page-reporting, so freed guest memory is not returned to the
+    host until the VM stops. For the true per-VM host cost:
+    `ps -eo pid,rss,comm --sort=-rss | grep qemu`."""
+    exec_into(["incus", "top", *top_args], dry_run=dry_run)
+
+
 def cmd_env(template_name: str, root: Path, shared_prebuilt_provision_assets_root: Path) -> None:
     """Load + validate a template and print its resolved configuration."""
     doc: Template = load_and_validate(template_name, root)
@@ -2231,6 +2241,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("list", help="`incus list` passthrough (e.g. `ivm list --format csv`)",
                    description=cmd_list.__doc__)
 
+    sub.add_parser("top", help="`incus top` passthrough: live per-instance CPU/memory/disk usage",
+                   description=cmd_top.__doc__)
+
     sub.add_parser("adopt",
                    help="bring an unmanaged Incus VM (hand-made or old-ivm) under ivm management (requires `--name`)",
                    description=cmd_adopt.__doc__)
@@ -2298,6 +2311,9 @@ def main() -> None:
     # init / env / list don't act on an existing VM, so they don't resolve a target.
     if args.subcommand == "list":
         cmd_list(extras, dry_run=args.dry_run)  # raw passthrough to `incus list`
+        return
+    if args.subcommand == "top":
+        cmd_top(extras, dry_run=args.dry_run)  # raw passthrough to `incus top`
         return
     if extras:  # every other subcommand is strict about unknown args
         parser.error("unrecognized arguments: " + " ".join(extras))
