@@ -24,6 +24,7 @@
 # KConfig - system-wide theme/config files in /etc/xdg/
 /etc/xdg/kdeglobals r,                        # KDE global theme/fonts
 /etc/xdg/kwinrc r,                            # window manager defaults
+/etc/xdg/plasmarc r,                          # Plasma theme/style defaults
 
 # KColorScheme - system color scheme files
 /usr/share/color-schemes/{,**} r,             # BreezeLight.colors and friends
@@ -38,3 +39,7 @@ owner @{HOME}/.config/kcminputrc r,           # input device settings (cursor, m
 owner @{HOME}/.config/kwinrc r,               # window manager user settings
 owner @{HOME}/.config/klanguageoverridesrc r, # per-app language overrides
 owner @{HOME}/.config/breezerc r,             # Breeze theme (window decorations, animations)
+owner @{HOME}/.config/plasmarc r,             # Plasma theme/style user settings
+
+# KIconLoader shared icon cache (KSharedDataCache, regenerable); create + mmap rw
+owner @{HOME}/.cache/icon-cache.kcache rw,

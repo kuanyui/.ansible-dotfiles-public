@@ -13,6 +13,7 @@
 # Qt UI translation catalogs
 /usr/share/qt5/translations/{,**} r,          # Qt5 UI translation catalogs
 /usr/share/qt6/translations/{,**} r,          # Qt6 UI translation catalogs
+/usr/share/qt5/qtlogging.ini r,               # Qt5 logging rules, read at startup
 
 # ICU - Unicode / collation / locale data. Qt uses ICU for text processing
 # (string normalisation, case folding, regex). Distros ship versioned

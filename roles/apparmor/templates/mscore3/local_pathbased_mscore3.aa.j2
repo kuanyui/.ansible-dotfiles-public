@@ -8,15 +8,15 @@ abi <abi/5.0>,
 # Draft - put in complain mode first to capture missing paths:
 #   sudo aa-complain /etc/apparmor.d/local_pathbased_mscore3
 
-# flags=(attach_disconnected): the systemd journal socket is reported as a
-# disconnected path (see the journal section below); attach_disconnected
-# reattaches it so the deny rule there matches and silences the sendmsg spam.
-profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconnected) {
+# flags: attach_disconnected reattaches the disconnected systemd journal socket
+# (see the journal section) so its deny matches; mediate_deleted lets QSaveFile
+# atomic-save links resolve when the temp target is an unlinked `#<inode>`.
+profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconnected mediate_deleted) {
     #include <abstractions/base>
     #include <abstractions/fonts>
 
     #include <abstractions/local_mixin_audio>
-    #include <abstractions/local_mixin_qt>
+    #include <abstractions/local_mixin_kde>
     #include <abstractions/local_mixin_kde_native_apps>
     #include <abstractions/local_mixin_bookmarked_places>
     #include <abstractions/local_mixin_recent_file_list>
@@ -28,6 +28,9 @@ profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconne
     #include <abstractions/local_mixin_kernel_surface_general_app>
     #include <abstractions/local_mixin_personal_dirs__for__music_score_editor>
     #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_deny_gpu>
+    #include <abstractions/local_mixin_gpu_probe>
     #include <abstractions/local_mixin_gui_wayland>
 {% if apparmor_allow_x11 %}
     #include <abstractions/local_mixin_gui_x11>
@@ -41,16 +44,16 @@ profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconne
     # MuseScore 3 system data (soundfonts, templates, instruments) - self-installed under /usr/local
     /usr/local/share/mscore3*/{,**} r,
 
-    # User config and scores. The `l` on the .config/MuseScore/** rule covers
-    # MuseScore's atomic INI save: Qt hard-links MuseScore3.ini.<rand> onto a
-    # `#<inode>` temp before the rename (operation=link in the audit). Both the
-    # link name and its target sit under this dir, so `**` matches both.
+    # User config, cache, and scores. `l` on the ** rules covers MuseScore's
+    # QSaveFile atomic saves (hard-link a temp to a `#<inode>`, then rename) -
+    # the .ini in .config/, the Qt shader cache in .cache/, etc.; mediate_deleted
+    # (profile flag) lets those links resolve when the temp is already unlinked.
     owner @{HOME}/.config/MuseScore/ rw,
     owner @{HOME}/.config/MuseScore/** rwkl,
     owner @{HOME}/.local/share/MuseScore/ rw,
-    owner @{HOME}/.local/share/MuseScore/** rwk,
+    owner @{HOME}/.local/share/MuseScore/** rwkl,
     owner @{HOME}/.cache/MuseScore/ rw,
-    owner @{HOME}/.cache/MuseScore/** rwk,
+    owner @{HOME}/.cache/MuseScore/** rwkl,
 
     # MuseScore 3 KConfig-style rc directly under ~/.config (distinct from the
     # QSettings ~/.config/MuseScore/MuseScore3.ini above). Only read audited.
@@ -70,6 +73,10 @@ profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconne
     # audited (no flock). gwenview keeps the same rule inline (2nd caller now).
     owner /run/user/*/#[0-9]* rw,
 
+    # Self-introspection, own pid only: Qt/Mesa read their own name + argv
+    owner @{PROC}/@{pid}/comm r,
+    owner @{PROC}/@{pid}/cmdline r,
+
     # systemd journal: denied, not granted. Qt/libsystemd try to log to the
     # journal socket; a local score editor needs no host-journal access. The
     # socket is an AF_UNIX dgram whose dentry is disconnected from the policy
@@ -80,15 +87,57 @@ profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconne
     deny /run/systemd/journal/socket w,
     deny /systemd/journal/socket w,
 
-    # MuseScore data folders under XDG_DOCUMENTS_DIR. MuseScore's default
-    # "Folders" settings point Templates/ and Extensions/ at
-    # $XDG_DOCUMENTS_DIR/MuseScore3/ (Qt QStandardPaths DocumentsLocation). The
-    # subdir name is resolved from user-dirs.dirs at render time
-    # (apparmor_xdg_documents_subdir) - NOT hardcoded "Documents", which would
-    # miss a relocated or localized Documents dir. Only the directory listings
-    # are audited so far; reading the files inside will need a `{,**}` suffix on
-    # the next audit pass.
-    owner @{HOME}/{{ apparmor_xdg_documents_subdir }}/MuseScore3/Templates/ r,
-    owner @{HOME}/{{ apparmor_xdg_documents_subdir }}/MuseScore3/Extensions/ r,
+    # MuseScore's own data tree under XDG_DOCUMENTS_DIR (Scores, Templates,
+    # Styles, SoundFonts, Plugins, Extensions, ...). rw so it reads its
+    # resources and saves scores. Subdir resolved from user-dirs.dirs at render
+    # time (apparmor_xdg_documents_subdir), not hardcoded "Documents".
+    owner @{HOME}/{{ apparmor_xdg_documents_subdir }}/MuseScore3/ rw,
+    owner @{HOME}/{{ apparmor_xdg_documents_subdir }}/MuseScore3/** rwk,
+
+    # Qt terminal detection
+    /dev/tty r,
+
+    # GPU: software render (llvmpipe). deny_gpu (above) blocks the device nodes;
+    # gpu_probe gives the EGL-vendor scan; these are the Mesa/Vulkan metadata
+    # reads the llvmpipe path makes (nvidia / EGL-external probes denied).
+    /dev/dri/ r,
+    /dev/udmabuf rw,
+    /usr/share/vulkan/icd.d/{,**} r,
+    /usr/share/vulkan/implicit_layer.d/{,**} r,
+    /usr/share/drirc.d/{,**} r,
+    owner @{HOME}/.cache/mesa_shader_cache/{,**} rwk,
+    owner @{HOME}/.cache/qtshadercache-*/{,**} rwl,   # Qt Quick compiled-shader cache
+    deny /sys/devices/**/boot_vga r,
+    deny /usr/share/egl/egl_external_platform.d/{,**} r,
+    deny /usr/share/nvidia/nvidia-application-profiles-* r,
+
+    # HEIF/HEIC image import
+    /usr/libexec/libheif/ r,
+    /usr/libexec/libheif/libheif-*.so rm,
+
+    # QtSingleApplication single-instance lock (flock) + socket
+    owner /tmp/qtsingleapp-mscore-* rwk,
+
+    # Printing: local socket to cupsd (local IPC, NOT network egress - inet
+    # stays denied via local_mixin_network_deny).
+    /etc/cups/client.conf r,
+    /run/cups/cups.sock rw,
+
+    # NSS user/group resolution (libcups getpwuid/getgrgid for the print-job
+    # owner). World-readable, no secrets - allowed so printing works fully.
+    /etc/nsswitch.conf r,
+    /usr/etc/nsswitch.conf r,
+    /etc/passwd r,
+    /etc/group r,
+
+    # System D-Bus not needed (Qt probes it for power/network status); the app
+    # falls back gracefully. Deny + silence.
+    deny /run/dbus/system_bus_socket rw,
+
+    # JACK not used - audio goes via PipeWire/Pulse (local_mixin_audio). Deny +
+    # silence the JACK shm probe + jackd autostart rather than spawn a daemon
+    # from a confined editor; audio falls back, no crash.
+    deny /dev/shm/jack_default_* rw,
+    deny /usr/bin/jackd x,
 
 }
