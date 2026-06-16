@@ -16,8 +16,6 @@ sys:
   gui: true            # ivm installs spice-vdagent + xdg-user-dirs
   input_method: fcitx5  # ivm writes the IM env vars to /etc/environment
   timezone: host
-  tmpfs:
-    - /tmp
   ssh_server:
     enabled: false
     port: 20023

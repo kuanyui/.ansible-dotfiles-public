@@ -15,9 +15,6 @@ os:
 sys:
   gui: false
   timezone: host
-  tmpfs:
-    - /tmp
-    - /var/tmp
   ssh_server:
     enabled: false
     port: 20023

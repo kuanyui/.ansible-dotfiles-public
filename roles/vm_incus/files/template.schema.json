@@ -66,7 +66,7 @@
         "tmpfs": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Guest paths to back with tmpfs (RAM) to spare SSD writes, e.g. `/tmp`, `/var/tmp`. Set up inside the guest at provision time (fstab / systemd). Note: uses RAM."
+          "description": "Guest paths to back with tmpfs (RAM). DISCOURAGED in a VM: incus VMs have no balloon free-page-reporting, so tmpfs pages stay resident in the host QEMU process and are NOT returned to the host until the VM STOPS; and tmpfs only shrinks (to swap) if the guest HAS swap - the images usually don't, so without swap it is unreclaimable used RAM. Prefer leaving /tmp on the VM disk: the page cache already gives RAM-speed for hot temp files, cold data goes to disk (not scarce swap), and the RAM is reclaimable. If you must use it, cap the size and give the guest swap."
         },
         "ssh_server": {
           "type": "object",

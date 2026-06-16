@@ -707,9 +707,18 @@ def timezone_provision(doc: Template) -> str:
 
 
 def tmpfs_provision(doc: Template) -> str:
-    """`sys.tmpfs`: back each path with tmpfs now + persist it in /etc/fstab."""
-    script: str = ""
-    for guest_tmpfs_path in doc.get("sys", {}).get("tmpfs", []):
+    """`sys.tmpfs`: back each path with tmpfs now + persist it in /etc/fstab.
+    DISCOURAGED in a VM (see the schema's sys.tmpfs note): incus VMs have no balloon
+    free-page-reporting, so the RAM is held by the host QEMU process until the VM
+    STOPS, and it only shrinks to swap if the guest has swap. The shipped templates
+    no longer set it; prefer leaving /tmp on the VM disk."""
+    tmpfs_paths: list[str] = doc.get("sys", {}).get("tmpfs", [])
+    if not tmpfs_paths:
+        return ""
+    joined_paths: str = " ".join(tmpfs_paths)
+    script: str = (f"echo 'ivm: NOTE sys.tmpfs ({joined_paths}) uses RAM the host does NOT "
+                   f"reclaim until this VM stops; prefer disk-backed /tmp.' >&2\n")
+    for guest_tmpfs_path in tmpfs_paths:
         quoted: str = shlex.quote(guest_tmpfs_path)
         fstab_line: str = f"tmpfs {guest_tmpfs_path} tmpfs defaults,nosuid,nodev 0 0"
         script += (
