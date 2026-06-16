@@ -90,3 +90,25 @@ provision_thirdparty_software_dev_android:
         yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null
         "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" platform-tools "platforms;android-36" "build-tools;36.0.0"
       '
+
+# SillyTavern - a self-hosted Node.js web frontend (LLM chat UI). Upstream's
+# "SillyTavern-Launcher" is an INTERACTIVE installer/menu (a TUI), unusable from
+# `incus exec`, so this uses the documented manual install: shallow-clone the `release`
+# branch + run the SAME `npm install` flags upstream's `start.sh` uses (NODE_ENV=production
+# --omit=dev --ignore-scripts), so a later `node server.js` starts with deps ready and does
+# NOT reinstall. User-scoped under ~/SillyTavern; needs `nodejs` (>= 20) + `npm` + `git` from
+# the template's `distro_packages`. Making it a REACHABLE server (the listen/whitelist config
+# + a systemd unit) is the TEMPLATE's job (`sillytavern.yaml` post_install_script), not this
+# install recipe - same split as codex (install here) vs how a VM chooses to run it.
+provision_thirdparty_software_sillytavern:
+  description: "SillyTavern LLM chat frontend (git clone `release` + npm deps, user-scoped; needs nodejs >= 20 + npm + git)"
+  __common__:
+    # node_modules exists only after a successful `npm install` - a stronger "truly
+    # installed" probe than the mere presence of the cloned `server.js`.
+    already_installed: su - user -c 'test -d ~/SillyTavern/node_modules'
+    install_script: |
+      # `--branch release --depth 1`: upstream's recommended branch, shallow (no history).
+      su - user -c 'git clone --branch release --depth 1 https://github.com/SillyTavern/SillyTavern ~/SillyTavern'
+      # Mirror upstream `start.sh`'s install step exactly so deps match what ST expects;
+      # done headlessly here so the systemd unit's `node server.js` need not reinstall.
+      su - user -c 'cd ~/SillyTavern && NODE_ENV=production npm install --no-save --no-audit --no-fund --loglevel=error --no-progress --omit=dev --ignore-scripts'

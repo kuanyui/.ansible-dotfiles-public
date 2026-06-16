@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=../template.schema.json
+# SillyTavern server VM: a headless Node.js box you reach from the HOST browser at
+# http://<guest-ip>:8000 (incus NAT lets the host route to the guest; the LAN cannot).
+# No GUI and no /workspaces mount - it is not a dev/agent box. ~/Downloads is shared with
+# the host purely as a drop zone for trading character-card PNGs both ways.
+template_name: sillytavern
+description: "SillyTavern LLM chat server (Debian, headless; host browser -> guest:8000; shares ~/Downloads for character cards)"
+hw:
+  cpu: 2
+  memory: 4G
+  disk: 10G
+os:
+  type: linux
+  distro: debian
+  image:
+    source: incus
+    uri: debian/13
+sys:
+  gui: false
+  timezone: host
+net:
+  # NAT (incusbr0) is exactly right for "reached only from the host": the host routes to
+  # the guest's bridge IP, the LAN cannot. `macvlan` would BLOCK host<->guest; `bridge`
+  # would need a hand-made host bridge. So: zero host setup, and the host can hit guest:8000.
+  mode: nat
+mounts:
+  # Host XDG Download <-> guest ~/Downloads: a two-way drop zone for character-card PNGs
+  # (download a card on the host -> import it in ST; export from ST -> grab it on the host).
+  - host: $(xdg-user-dir DOWNLOAD)
+    guest: /home/user/Downloads
+distro_packages:
+  - nodejs   # Debian 13 ships Node.js >= 20 (SillyTavern's floor)
+  - npm
+  - git
+thirdparty_software:
+  - sillytavern   # git clone + npm deps; recipe in roles/provision_thirdparty_software/defaults/main.yml
+dotfiles:
+  - bash
+  - zsh
+# Everything below runs as ROOT after packages + the thirdparty install. Heredocs are kept
+# at a FLAT indent on purpose: the `|` block strips the common 2 spaces, so the written
+# files (config.yaml keys, the unit's `[Section]` headers) land at column 0 as required.
+post_install_script: |
+  # 1. Make ST reachable from the host. ST's default config binds 127.0.0.1 and whitelists
+  #    localhost only; it also REFUSES to start with `listen: true` unless an access control
+  #    is on. So: listen + keep whitelistMode on + whitelist the RFC1918 ranges (covers
+  #    whatever subnet incusbr0 hands the host gateway). The VM is NAT-only, so allowing
+  #    private ranges exposes it to the HOST alone, not the LAN. A partial config.yaml is
+  #    fine - ST falls back to its built-in defaults for every key left unset.
+  su - user -c 'cat > ~/SillyTavern/config.yaml' <<'EOF'
+  listen: true
+  port: 8000
+  whitelistMode: true
+  whitelist: ["::1", "127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  EOF
+  # 2. Run ST as the unprivileged `user` on boot, so the host browser can reach it any time
+  #    without `ivm shell`. Deps are already installed by the thirdparty recipe, so the unit
+  #    just launches the server (Debian's `nodejs` package provides /usr/bin/node).
+  cat > /etc/systemd/system/sillytavern.service <<'EOF'
+  [Unit]
+  Description=SillyTavern
+  After=network-online.target
+  Wants=network-online.target
+  [Service]
+  Type=simple
+  User=user
+  WorkingDirectory=/home/user/SillyTavern
+  ExecStart=/usr/bin/node server.js
+  Restart=on-failure
+  [Install]
+  WantedBy=multi-user.target
+  EOF
+  systemctl enable --now sillytavern
