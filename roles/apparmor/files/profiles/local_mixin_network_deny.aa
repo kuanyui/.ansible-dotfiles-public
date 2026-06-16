@@ -22,3 +22,6 @@
 #include <abstractions/local_mixin_network_local_ipc>
 deny network inet,
 deny network inet6,
+# Qt's bearer / network-status thread probes an AF_UNSPEC dgram socket every few
+# seconds - already blocked; this silences the recurring create-denied spam.
+deny network unspec,

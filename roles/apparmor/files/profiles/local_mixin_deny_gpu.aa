@@ -24,3 +24,5 @@ deny /dev/nvidiactl rw,               # NVIDIA command submission
 deny /dev/nvidia* rw,                 # NVIDIA per-GPU / UVM / modeset device
 deny /dev/nvidia-caps/{,**} rw,       # NVIDIA capabilities tree (newer drivers)
 deny /dev/kfd rw,                     # AMD ROCm compute device
+deny /proc/driver/nvidia/{,**} r,     # NVIDIA driver params/info procfs probe
+deny /usr/bin/nvidia-modprobe x,      # setuid-root NVIDIA module loader / device-node creator; never for a GPU-denied app
