@@ -41,6 +41,9 @@ profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconne
     # D-Bus (desktop notifications)
     owner /run/user/*/bus rw,
 
+    # MuseScore re-opens its own binary at runtime (argv[0] re-read)
+    /usr/{,local/}bin/mscore3 r,
+
     # MuseScore 3 system data (soundfonts, templates, instruments) - self-installed under /usr/local
     /usr/local/share/mscore3*/{,**} r,
 
@@ -134,10 +137,8 @@ profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconne
     # falls back gracefully. Deny + silence.
     deny /run/dbus/system_bus_socket rw,
 
-    # JACK not used - audio goes via PipeWire/Pulse (local_mixin_audio). Deny +
-    # silence the JACK shm probe + jackd autostart rather than spawn a daemon
-    # from a confined editor; audio falls back, no crash.
-    deny /dev/shm/jack_default_* rw,
-    deny /usr/bin/jackd x,
+    # JACK is necessary
+    /dev/shm/jack* rw,
+    /usr/bin/jackd ix,
 
 }

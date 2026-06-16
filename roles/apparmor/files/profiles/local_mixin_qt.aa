@@ -24,3 +24,7 @@
 # core_pattern at startup so they know what to do on SIGSEGV; informational
 # read, no write needed.
 @{PROC}/sys/kernel/core_pattern r,
+
+# Compose-key input: Qt's compose input context reads the user's custom
+# ~/.XCompose sequences (read-only; key->char mappings, not secrets).
+owner @{HOME}/.XCompose r,

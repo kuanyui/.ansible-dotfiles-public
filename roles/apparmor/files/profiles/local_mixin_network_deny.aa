@@ -22,6 +22,10 @@
 #include <abstractions/local_mixin_network_local_ipc>
 deny network inet,
 deny network inet6,
-# Qt's bearer / network-status thread probes an AF_UNSPEC dgram socket every few
-# seconds - already blocked; this silences the recurring create-denied spam.
-deny network unspec,
+# Qt's bearer thread keeps calling socket(AF_UNSPEC, dgram). AF_UNSPEC (family 0)
+# is not a real protocol family: the kernel rejects the socket() with EAFNOSUPPORT,
+# so this grants NO network. ALLOW (not deny) only to stop AppArmor auditing the
+# rejected create every few seconds - a `network` deny does NOT suppress that
+# "failed af match" audit, but an allow makes the match succeed (kernel rejects it
+# anyway). Real egress stays blocked by the inet/inet6 denies above. (LP#1546455)
+network unspec,
