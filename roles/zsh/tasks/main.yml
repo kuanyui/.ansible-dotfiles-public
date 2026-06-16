@@ -2,4 +2,6 @@
 - ansible.builtin.include_tasks: install-zsh-from-distro-repo.yml
   when: is_root
 
+- ansible.builtin.include_tasks: deploy-zsh-plugins.yml
+
 - ansible.builtin.include_tasks: deploy-zsh-config.yml

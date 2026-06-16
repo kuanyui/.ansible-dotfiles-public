@@ -1,0 +1,37 @@
+---
+# Vendored zsh plugins - the cross-distro fallback for shells whose default repos
+# do not package them. openSUSE's default OSS repo ships NONE of these (they live
+# only in the OBS devel project `shells:zsh-users`), and `zsh-history-substring-search`
+# is packaged by no mainstream distro at all. The runtime files are vendored under
+# `roles/zsh/files/<plugin>/` at pinned upstream releases (provenance table in
+# `roles/zsh/README.md`). `.zshrc` sources the distro copy under `/usr/share/...`
+# first and falls back to these.
+#
+# Deployed into the role's ansible-managed namespace
+# (`~/.local/share/ansible-managed/zsh/`), so uninstall is `rm -rf` of that one dir.
+# NOT part of `deploy-zsh-config.yml`: the dotfiles-staging caller
+# (`_shared_prebuilt_provision_assets`) includes only that file to render `.zshrc`,
+# and must not also copy plugin payloads into the staging tree.
+
+- name: "Ensure ansible-managed zsh dir `{{ target_home }}/.local/share/ansible-managed/zsh/`"
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/share/ansible-managed/zsh"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+
+- name: "Vendor pinned zsh plugins into `{{ target_home }}/.local/share/ansible-managed/zsh/`"
+  ansible.builtin.copy:
+    src: "{{ vendored_zsh_plugin }}/"
+    dest: "{{ target_home }}/.local/share/ansible-managed/zsh/{{ vendored_zsh_plugin }}/"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0644"
+    directory_mode: "0755"
+  loop:
+    - zsh-autosuggestions
+    - zsh-syntax-highlighting
+    - zsh-history-substring-search
+  loop_control:
+    loop_var: vendored_zsh_plugin

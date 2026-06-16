@@ -111,18 +111,43 @@ alias zypper-min='{% if not is_root %}sudo {% endif %}zypper install --no-recomm
 alias dnf-min='{% if not is_root %}sudo {% endif %}dnf install --setopt=install_weak_deps=False'
 {% endif %}
 ### ============================================
-### autosuggesstions (apt install zsh-autosuggestions)
+### Plugins - prefer the distro package under `/usr/share`, else the pinned
+### vendored copy under `~/.local/share/ansible-managed/zsh/` (deployed by
+### `roles/zsh` from `files/`; provenance table in that role's README).
+### openSUSE packages none of these, so there it is always the vendored copy.
 ### ============================================
+_ansible_managed_zsh_dir="${HOME}/.local/share/ansible-managed/zsh"
+
+# autosuggestions: as you type, suggests the rest of the line in gray from
+# history; press right-arrow / End to accept.
 if [ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]; then
         source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+elif [ -f "${_ansible_managed_zsh_dir}/zsh-autosuggestions/zsh-autosuggestions.zsh" ]; then
+        source "${_ansible_managed_zsh_dir}/zsh-autosuggestions/zsh-autosuggestions.zsh"
+fi
+
+# history-substring-search: type a fragment, then Up / Down cycles only the
+# history lines that CONTAIN it (substring, not prefix). No distro packages it,
+# so it is always the vendored copy. bindkey must run AFTER sourcing (the plugin
+# defines the up/down ZLE widgets); bind both the normal (`^[[A`) and the
+# application-mode (`^[OA`) cursor-key codes so it works across terminals.
+if [ -f "${_ansible_managed_zsh_dir}/zsh-history-substring-search/zsh-history-substring-search.zsh" ]; then
+        source "${_ansible_managed_zsh_dir}/zsh-history-substring-search/zsh-history-substring-search.zsh"
+        bindkey '^[[A' history-substring-search-up
+        bindkey '^[OA' history-substring-search-up
+        bindkey '^[[B' history-substring-search-down
+        bindkey '^[OB' history-substring-search-down
 fi
 
 ### ============================================
-### Syntax Highlighting (apt-get install zsh-syntax-highlighting)
-### [IMPORTANT] Please in the end of .zshrc
+### Syntax Highlighting - colors the command line as you type (valid command
+### green, unknown red, quotes / paths highlighted).
+### [IMPORTANT] keep this LAST (it wraps the ZLE widgets set up above).
 ### ============================================
 if [ -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]; then
         source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+elif [ -f "${_ansible_managed_zsh_dir}/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]; then
+        source "${_ansible_managed_zsh_dir}/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 fi
 {% if not is_root %}
 
