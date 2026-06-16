@@ -82,8 +82,8 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "shell-user": "open a zsh shell in the VM as `user`",
     "shell-root": "open a zsh shell in the VM as `root`",
     "start": "start the VM",
-    "reboot": "restart the VM (`incus restart`)",
-    "stop": "stop the VM (disk state preserved)",
+    "reboot": "restart the VM (`incus restart`; confirms, `--yes` skips)",
+    "stop": "stop the VM (disk state preserved; confirms, `--yes` skips)",
     "delete": "delete the VM + disk + snapshots (confirms; `--yes` skips)",
     "overwrite-dotfiles": "re-push the host-staged dotfiles into the VM (no re-provision)",
     "update": "refresh + upgrade all packages in the VM",
@@ -1410,19 +1410,34 @@ def cmd_start(name: str, *, dry_run: bool) -> None:
     print(f"==> {colorize_vm_name(name)} running.", file=sys.stderr)
 
 
-def cmd_reboot(name: str, *, dry_run: bool) -> None:
-    """`incus restart` the target VM (ivm-friendly alias; incus calls it restart)."""
+def confirm_action(name: str, action: str, *, assume_yes: bool, dry_run: bool) -> None:
+    """y/N gate before a disruptive lifecycle action (stop / reboot) that interrupts a
+    running VM. `--yes` / `--dry-run` skip it; non-TTY without `--yes` aborts (same
+    policy as `delete`)."""
+    if assume_yes or dry_run:
+        return
+    if not sys.stdin.isatty():
+        die(f"refusing to {action} {name} without a TTY; pass --yes")
+    if input(f"{action.capitalize()} {colorize_vm_name(name)}? [y/N] ").strip().lower() not in ("y", "yes"):
+        die("aborted")
+
+
+def cmd_reboot(name: str, *, assume_yes: bool, dry_run: bool) -> None:
+    """`incus restart` the target VM (ivm-friendly alias; incus calls it restart).
+    Confirms first (unless `--yes`)."""
+    confirm_action(name, "reboot", assume_yes=assume_yes, dry_run=dry_run)
     run(["incus", "restart", name], dry_run=dry_run)
     print(f"==> {colorize_vm_name(name)} rebooted.", file=sys.stderr)
 
 
-def cmd_stop(name: str, *, dry_run: bool) -> None:
-    """Stop the target VM (`incus stop`); disk state is preserved. No-op if already
-    stopped."""
-    if dry_run or vm_is_running(name):
-        run(["incus", "stop", name], dry_run=dry_run)
-    else:
+def cmd_stop(name: str, *, assume_yes: bool, dry_run: bool) -> None:
+    """Stop the target VM (`incus stop`); disk state is preserved. Confirms first
+    (unless `--yes`); no-op if already stopped."""
+    if not dry_run and not vm_is_running(name):
         print(f"==> {colorize_vm_name(name)} already stopped.", file=sys.stderr)
+        return
+    confirm_action(name, "stop", assume_yes=assume_yes, dry_run=dry_run)
+    run(["incus", "stop", name], dry_run=dry_run)
 
 
 def confirm_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> None:
@@ -2312,9 +2327,9 @@ def main() -> None:
     elif args.subcommand == "start":
         cmd_start(name, dry_run=args.dry_run)
     elif args.subcommand == "reboot":
-        cmd_reboot(name, dry_run=args.dry_run)
+        cmd_reboot(name, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "stop":
-        cmd_stop(name, dry_run=args.dry_run)
+        cmd_stop(name, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "delete":
         cmd_delete(name, root, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "overwrite-dotfiles":
