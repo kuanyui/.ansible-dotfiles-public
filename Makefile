@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-local-lang-pkg-managers vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm vm-podman-install vm-podman-check vm-podman-uninstall-pvm vm-podman-sandbox check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-local-lang-pkg-managers vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-incus-strip-tmpfs vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm vm-podman-install vm-podman-check vm-podman-uninstall-pvm vm-podman-sandbox check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -120,6 +120,15 @@ vm-incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests 
 	    echo "==> Re-pushing dotfiles into $$vm (via ivm overwrite-dotfiles)"; \
 	    ivm --name "$$vm" overwrite-dotfiles; \
 	done
+
+vm-incus-strip-tmpfs:  ## One-time migration: strip the old `tmpfs` /tmp,/var/tmp mounts from /etc/fstab in all RUNNING ivm-managed VMs (templates no longer default to tmpfs - it pinned host RAM that incus VMs don't reclaim until stop). Keeps /etc/fstab.bak; REBOOT each VM after to apply. Matches both `user.ansible_managed` (new) and `user.ansible-managed` (legacy) tags.
+	@VMS=$$( { incus list user.ansible_managed=true --format csv --columns nst; incus list user.ansible-managed=true --format csv --columns nst; } | awk -F, 'toupper($$2) ~ /RUNNING/ && toupper($$3) ~ /VIRTUAL/ {print $$1}' | sort -u ); \
+	if [ -z "$$VMS" ]; then echo "No running ivm-managed VMs found, nothing to do."; exit 0; fi; \
+	for vm in $$VMS; do \
+	    echo "==> $$vm: stripping tmpfs from /etc/fstab (backup /etc/fstab.bak)"; \
+	    incus exec "$$vm" -- sed -i.bak '/^tmpfs[[:space:]]/d' /etc/fstab </dev/null || echo "    (failed on $$vm; skipped)"; \
+	done; \
+	echo "Done. REBOOT each VM to apply + free its RAM, e.g.: ivm --name <vm> reboot"
 
 vm-incus-uninstall-ivm:  ## Uninstall `ivm` + its `~/.local/share/ansible-managed/vm-incus/` subdir ONLY; leaves incus daemon, pool, networks, VMs, and your `incus` group intact. Host-level teardown: `vm-incus-teardown-host` (or `-e vm_incus_uninstall_*=true` here).
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/vm_incus_uninstall.yml
