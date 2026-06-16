@@ -8,12 +8,18 @@ abi <abi/5.0>,
 # Draft - put in complain mode first to capture missing paths:
 #   sudo aa-complain /etc/apparmor.d/local_pathbased_mscore3
 
-profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 {
+# flags=(attach_disconnected): the systemd journal socket is reported as a
+# disconnected path (see the journal section below); attach_disconnected
+# reattaches it so the deny rule there matches and silences the sendmsg spam.
+profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconnected) {
     #include <abstractions/base>
     #include <abstractions/fonts>
 
     #include <abstractions/local_mixin_audio>
     #include <abstractions/local_mixin_qt>
+    #include <abstractions/local_mixin_kde_native_apps>
+    #include <abstractions/local_mixin_bookmarked_places>
+    #include <abstractions/local_mixin_recent_file_list>
     #include <abstractions/local_mixin_xdg_dir_downloads>
     #include <abstractions/local_mixin_deny_keyrings>
     #include <abstractions/local_mixin_deny_probably_credentials>
@@ -35,12 +41,54 @@ profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 {
     # MuseScore 3 system data (soundfonts, templates, instruments) - self-installed under /usr/local
     /usr/local/share/mscore3*/{,**} r,
 
-    # User config and scores
+    # User config and scores. The `l` on the .config/MuseScore/** rule covers
+    # MuseScore's atomic INI save: Qt hard-links MuseScore3.ini.<rand> onto a
+    # `#<inode>` temp before the rename (operation=link in the audit). Both the
+    # link name and its target sit under this dir, so `**` matches both.
     owner @{HOME}/.config/MuseScore/ rw,
-    owner @{HOME}/.config/MuseScore/** rwk,
+    owner @{HOME}/.config/MuseScore/** rwkl,
     owner @{HOME}/.local/share/MuseScore/ rw,
     owner @{HOME}/.local/share/MuseScore/** rwk,
     owner @{HOME}/.cache/MuseScore/ rw,
     owner @{HOME}/.cache/MuseScore/** rwk,
+
+    # MuseScore 3 KConfig-style rc directly under ~/.config (distinct from the
+    # QSettings ~/.config/MuseScore/MuseScore3.ini above). Only read audited.
+    owner @{HOME}/.config/MuseScore3rc r,
+
+    # Session / machine identity. Read by libsystemd-style code and KDE
+    # frameworks for D-Bus session identification. World-readable, not secrets
+    # (boot_id changes per boot; machine-id is a well-known per-host id), and
+    # mscore3 has no network egress (local_mixin_network_deny) to leak them.
+    # gwenview keeps the same two rules inline; promote to a shared mixin only
+    # once a 3rd Qt/KDE caller needs them.
+    @{PROC}/sys/kernel/random/boot_id r,
+    /etc/machine-id r,
+
+    # Anonymous (`#<inode>`) temp files in XDG_RUNTIME_DIR - O_TMPFILE or
+    # unlinked-while-open files Qt/KIO use for atomic state writes. Only rw
+    # audited (no flock). gwenview keeps the same rule inline (2nd caller now).
+    owner /run/user/*/#[0-9]* rw,
+
+    # systemd journal: denied, not granted. Qt/libsystemd try to log to the
+    # journal socket; a local score editor needs no host-journal access. The
+    # socket is an AF_UNIX dgram whose dentry is disconnected from the policy
+    # namespace root, so the audit reports it as `systemd/journal/socket` (no
+    # /run prefix) with a "disconnected path" error. flags=(attach_disconnected)
+    # on the profile header reattaches it so these denies match; deny both forms
+    # to silence the sendmsg spam. Same pattern as the telegram profile.
+    deny /run/systemd/journal/socket w,
+    deny /systemd/journal/socket w,
+
+    # MuseScore data folders under XDG_DOCUMENTS_DIR. MuseScore's default
+    # "Folders" settings point Templates/ and Extensions/ at
+    # $XDG_DOCUMENTS_DIR/MuseScore3/ (Qt QStandardPaths DocumentsLocation). The
+    # subdir name is resolved from user-dirs.dirs at render time
+    # (apparmor_xdg_documents_subdir) - NOT hardcoded "Documents", which would
+    # miss a relocated or localized Documents dir. Only the directory listings
+    # are audited so far; reading the files inside will need a `{,**}` suffix on
+    # the next audit pass.
+    owner @{HOME}/{{ apparmor_xdg_documents_subdir }}/MuseScore3/Templates/ r,
+    owner @{HOME}/{{ apparmor_xdg_documents_subdir }}/MuseScore3/Extensions/ r,
 
 }

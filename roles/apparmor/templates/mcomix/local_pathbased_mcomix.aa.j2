@@ -13,6 +13,7 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     #include <abstractions/fonts>
 
     #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_recent_file_list>
     #include <abstractions/local_mixin_xdg_dir_downloads>
     #include <abstractions/local_mixin_deny_keyrings>
     #include <abstractions/local_mixin_deny_probably_credentials>
@@ -84,17 +85,5 @@ profile local_pathbased_mcomix /usr/bin/mcomix {
     # and silence like ldconfig. (gcc-15 is version-specific; a toolchain bump may resurface it.)
     deny /usr/bin/gcc-15 x,
     deny /usr/bin/alts x,
-
-    # XDG cross-app recents - GtkRecentManager reads recently-used.xbel and rewrites it
-    # atomically (temp file + chmod + rename) to record opened comics, powering the "recently
-    # opened" menu. This is the freedesktop Desktop Bookmark Spec file: URIs + mime types +
-    # timestamps + which apps registered them, not file contents or secrets. ALLOWED for mcomix
-    # because this profile denies all network access (a compromised viewer cannot exfiltrate the
-    # history) and the user wants the recents feature. Kept inline, NOT in local_mixin_gtk/xdg:
-    # those mixins are also included by browsers (firefox/chromium/msedge) whose threat model
-    # wants this denied - firefox carries an explicit deny. Granting it in the shared mixin would
-    # silently hand cross-app file history to chromium/msedge.
-    owner @{HOME}/.local/share/recently-used.xbel rw,
-    owner @{HOME}/.local/share/recently-used.xbel.* rw,
 
 }

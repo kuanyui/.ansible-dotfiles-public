@@ -1,0 +1,27 @@
+# Managed by Ansible - do not edit manually
+# Recent-file-list / file-dialog history state - /etc/apparmor.d/abstractions/local_mixin_recent_file_list
+#
+# OPT-IN, split-policy mixin. Include ONLY in network-denied LOCAL apps
+# (viewers / editors: mcomix, mscore3, ...) that should keep their cross-app
+# "recently opened" / file-dialog convenience state. The files here hold
+# low-value METADATA - URIs, mime types, timestamps, last-visited dirs - never
+# file contents or secrets.
+#
+# Do NOT include in network-facing / untrusted-content apps (firefox, chromium,
+# msedge, telegram). This is exactly why these paths are NOT in local_mixin_gtk
+# / local_mixin_xdg / local_mixin_qt - those are also included by browsers, and
+# a compromised network app could exfiltrate the cross-app recent-file log while
+# gaining the user nothing. Browsers therefore leave the files default-denied
+# (local_base_firefox additionally carries an explicit `deny` for the xbel).
+#
+# recently-used.xbel - freedesktop Desktop Bookmark Spec file. GtkRecentManager
+# reads it and rewrites it atomically (temp file + rename), so the `.*` temp
+# needs the same `rw`. (Mode audited via mcomix.)
+owner @{HOME}/.local/share/recently-used.xbel rw,
+owner @{HOME}/.local/share/recently-used.xbel.* rw,
+
+# QtProject.conf - Qt's shared QSettings (org "QtProject"). Its [FileDialog]
+# section stores `history` / `lastVisited` / `shortcuts` dirs across every Qt
+# app. Read audited (mscore3); QFileDialog also writes it via QSaveFile - add
+# `rw` plus the temp pattern when a caller actually audits the write.
+owner @{HOME}/.config/QtProject.conf r,

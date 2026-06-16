@@ -36,6 +36,17 @@
 owner @{HOME}/.config/kiorc r,                # KIO library defaults (confirmations, "Open With" history, protocol prefs)
 owner @{HOME}/.config/baloofilerc r,          # user baloo file indexer config
 owner @{HOME}/.config/trashrc r,              # user trash config (paths, retention)
+/etc/xdg/dolphinrc r,                         # system-wide KFileWidget view defaults (shared with Dolphin)
+owner @{HOME}/.config/dolphinrc r,            # user KFileWidget view settings (shared with Dolphin)
+
+# KService / KSycoca - protocol + "Open With" handler cache. KIO lists the
+# kservices dir, then reads the binary ksycoca cache (guarded by a QLockFile
+# sidecar it creates + reads back). Read-only system dir + the app's own
+# regenerable cache (DB + lock): negligible surface, framework-determined, so
+# shared here rather than inlined per app. KF5 audited; KF6 (kservices6/,
+# ksycoca6*) not yet seen.
+/usr/share/kservices5/ r,                     # KF5 service-type / handler directory listing
+owner @{HOME}/.cache/ksycoca5* rw,            # KF5 ksycoca cache: binary DB + its QLockFile (regenerable; QLockFile, no flock)
 
 # XDG trash data dir. KIO writes here when user deletes a file via file
 # dialog / right-click "Move to Trash". Per freedesktop XDG trash spec:
@@ -73,7 +84,6 @@ owner @{PROC}/@{pid}/mounts r,                # own pid only
 # fsync()s, then atomic-renames over the target. KXmlGui additionally
 # hard-links the temp to a backup before the rename, which is why
 # kxmlgui5/ needs the `l` mode.
-owner @{HOME}/.local/share/user-places.xbel r,   # KIO KFilePlacesView bookmarks (only read audited so far)
 owner @{HOME}/.local/share/#[0-9]* rw,           # QSaveFile temp directly under .local/share/
 owner @{HOME}/.local/share/kxmlgui5/{,**} rwl,   # KXmlGui per-app GUI layouts; `l` covers hard-link backup step
 owner /run/user/*/gvfs/ r,                       # GVfs FUSE mount enumeration (KIO interop with GNOME apps)

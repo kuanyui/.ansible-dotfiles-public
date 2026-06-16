@@ -5,6 +5,7 @@ apparmor_firefox_base_path: "/home/{{ apparmor_target_user }}/.mozilla/firefox"
 apparmor_allow_x11: false
 apparmor_xdg_download_subdir: "Downloads"   # fallback; overridden at runtime from user-dirs.dirs
 apparmor_xdg_pictures_subdir: "Pictures"   # fallback; overridden at runtime from user-dirs.dirs
+apparmor_xdg_documents_subdir: "Documents" # fallback; overridden at runtime from user-dirs.dirs
 apparmor_xdg_screenshots_exists: false     # fallback; overridden at runtime by stat task
 
 # `apparmor_non_interactive`: skip the `personal_dirs.yml` preview + y/N
@@ -87,6 +88,10 @@ apparmor_static_abstractions:
     dest: abstractions/local_mixin_xdg
   - src: local_mixin_xdg_thumbnailer.aa
     dest: abstractions/local_mixin_xdg_thumbnailer
+  - src: local_mixin_recent_file_list.aa
+    dest: abstractions/local_mixin_recent_file_list
+  - src: local_mixin_bookmarked_places.aa
+    dest: abstractions/local_mixin_bookmarked_places
   - src: local_mixin_kde.aa
     dest: abstractions/local_mixin_kde
   - src: local_mixin_kde_native_apps.aa

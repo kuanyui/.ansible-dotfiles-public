@@ -38,6 +38,18 @@
     - _match | length > 0
   tags: apparmor
 
+- name: Set apparmor_xdg_documents_subdir from user-dirs.dirs
+  ansible.builtin.set_fact:
+    apparmor_xdg_documents_subdir: "{{ _match | first }}"
+  vars:
+    _content: "{{ apparmor__xdg_user_dirs.content | b64decode }}"
+    _match: "{{ _content | regex_search('XDG_DOCUMENTS_DIR=\"\\$HOME/([^\"]+)\"', '\\1') }}"
+  when:
+    - apparmor__xdg_user_dirs.content is defined
+    - _match is not none
+    - _match | length > 0
+  tags: apparmor
+
 - name: Stat XDG Pictures/Screenshots directory
   ansible.builtin.stat:
     path: "/home/{{ apparmor_target_user }}/{{ apparmor_xdg_pictures_subdir }}/Screenshots"

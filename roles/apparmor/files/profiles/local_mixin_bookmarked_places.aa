@@ -1,0 +1,11 @@
+# Managed by Ansible - do not edit manually
+# Bookmarked places - file-dialog "Places" sidebar - /etc/apparmor.d/abstractions/local_mixin_bookmarked_places
+#
+# OPT-IN, split-policy. Include ONLY in network-denied LOCAL KIO apps (gwenview,
+# mscore3, ...) whose file dialog shows the "Places" sidebar. user-places.xbel
+# holds low-value path metadata (bookmarked locations + mounted devices), not
+# contents/secrets. KIO-specific - GTK apps use ~/.config/gtk-3.0/bookmarks - so
+# it is separate from the cross-toolkit local_mixin_recent_file_list. Do NOT
+# include in network-facing apps (they would leak the user's bookmarked paths).
+
+owner @{HOME}/.local/share/user-places.xbel r,
