@@ -5,9 +5,15 @@ Output is consumed by roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py at p
 run time to produce the per-category AppArmor abstractions
     /etc/apparmor.d/abstractions/local_mixin_personal_dirs__for__<category>
 
-Every scaffolded entry starts with `allow: []` (no app may access). Edit the
-file to open specific directories to specific app categories. See
+Every NEW entry starts with `allow: []` (no app may access). Edit the file to
+open specific directories to specific app categories. See
 roles/apparmor/app_categories.yml for the category list.
+
+Re-running is a merge, not an overwrite: entries already in the output file are
+preserved verbatim (their hand-edited `allow` lists are kept), directories given
+again are deduplicated, and only directories not yet present are appended with
+`allow: []`. A malformed existing file aborts the run instead of being
+overwritten, so hand-edits are never silently lost.
 
 Usage examples:
   python3 roles/apparmor/scripts/gen_personal_dirs_definitions_yaml.py ~/secrets ~/Personal/Projects/*
@@ -19,11 +25,21 @@ import glob
 import os
 import sys
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 # Reuse the schema builder + writer from the abstraction generator so the
 # scaffold and the playbook-time builder cannot disagree on schema shape.
+# `_ANY_SENTINEL` ("*") comes from the same module so both scripts agree on the
+# reserved "every category allows" marker when rendering existing entries.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gen_personal_dirs_aa_mixins import load_categories, schema_path_for, write_schema  # noqa: E402
+from gen_personal_dirs_aa_mixins import (  # noqa: E402
+    _ANY_SENTINEL,
+    load_categories,
+    schema_path_for,
+    write_schema,
+)
 
 # `roles/apparmor/scripts/<this file>` -> `roles/apparmor/` is two `parent`s up.
 _ROLE_DIR = Path(__file__).resolve().parent.parent
@@ -46,9 +62,19 @@ def _quote(p: str) -> str:
     return '"' + p.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def build_yaml(dirs: list[Path], schema_basename: str) -> str:
-    """Render the scaffold YAML body. Paths are always double-quoted so spaces
-    and other YAML-special characters are unambiguous.
+def _render_allow(allow: list[str]) -> str:
+    """Render an `allow` list as an inline YAML sequence. The `*` sentinel is
+    double-quoted (a bare `*` is a YAML alias indicator and would not parse);
+    plain category names are emitted bare to match the rest of the file."""
+    rendered = [f'"{value}"' if value == _ANY_SENTINEL else value for value in allow]
+    return "[" + ", ".join(rendered) + "]"
+
+
+def build_yaml(entries: list[dict[str, Any]], schema_basename: str) -> str:
+    """Render the definitions YAML body. Paths are always double-quoted so
+    spaces and other YAML-special characters are unambiguous; each entry's
+    `allow` list is rendered as-is, so existing hand-edited grants survive a
+    merge.
 
     The first line is a `yaml-language-server` directive pointing at the
     companion JSON Schema, so editors with the Red Hat YAML extension (or
@@ -68,11 +94,73 @@ def build_yaml(dirs: list[Path], schema_basename: str) -> str:
         "# Categories: see roles/apparmor/app_categories.yml",
         "",
     ]
-    for d in sorted(dirs, key=str):
-        p = str(d).rstrip("/")
-        lines.append(f"- path: {_quote(p)}")
-        lines.append("  allow: []")
+    for entry in sorted(entries, key=lambda e: e["path"]):
+        path_without_trailing_slash = entry["path"].rstrip("/")
+        lines.append(f"- path: {_quote(path_without_trailing_slash)}")
+        lines.append(f"  allow: {_render_allow(entry['allow'])}")
     return "\n".join(lines) + "\n"
+
+
+def load_existing_entries(output_path: Path) -> list[dict[str, Any]]:
+    """Parse an existing definitions file into a list of `{path, allow}` dicts.
+
+    Returns `[]` when the file is absent or holds only comments. Raises on
+    malformed content (not a list, or an item missing `path` / `allow`) so a
+    broken file is reported and left untouched rather than silently
+    overwritten - overwriting would destroy the user's hand-edited grants."""
+    if not output_path.exists():
+        return []
+    data = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    if data is None:
+        return []
+    if not isinstance(data, list):
+        raise ValueError(
+            f"{output_path}: expected a top-level YAML list of entries, got "
+            f"{type(data).__name__}. Refusing to overwrite - fix or remove the file."
+        )
+    for index, entry in enumerate(data):
+        if not isinstance(entry, dict) or "path" not in entry or "allow" not in entry:
+            raise ValueError(
+                f"{output_path}: entry [{index}] must be a mapping with `path` "
+                f"and `allow` keys, got {entry!r}. Refusing to overwrite."
+            )
+        if not isinstance(entry["path"], str):
+            raise ValueError(
+                f"{output_path}: entry [{index}].path must be a string, got "
+                f"{entry['path']!r}. Refusing to overwrite."
+            )
+        if not isinstance(entry["allow"], list):
+            raise ValueError(
+                f"{output_path}: entry [{index}].allow must be a list, got "
+                f"{entry['allow']!r}. Refusing to overwrite."
+            )
+    return data
+
+
+def merge_entries(
+    existing_entries: list[dict[str, Any]],
+    new_dir_paths: list[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Union existing entries with newly-resolved directories.
+
+    Existing entries are kept as-is (their `allow` lists are preserved). A new
+    directory whose path is already present is skipped (dedup); one not yet
+    present is appended with `allow: []`. Returns `(merged_entries,
+    added_paths)`; `added_paths` is reported to the user. `build_yaml` sorts,
+    so the merged list is left in insertion order here."""
+    paths_already_present: set[str] = {
+        entry["path"].rstrip("/") for entry in existing_entries
+    }
+    merged_entries: list[dict[str, Any]] = list(existing_entries)
+    added_paths: list[str] = []
+    for new_dir_path in new_dir_paths:
+        path_without_trailing_slash = new_dir_path.rstrip("/")
+        if path_without_trailing_slash in paths_already_present:
+            continue
+        paths_already_present.add(path_without_trailing_slash)
+        merged_entries.append({"path": path_without_trailing_slash, "allow": []})
+        added_paths.append(path_without_trailing_slash)
+    return merged_entries, added_paths
 
 
 def main() -> None:
@@ -137,9 +225,27 @@ def main() -> None:
     output_path = Path(args.output).expanduser()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Merge, never clobber: load whatever is already there so hand-edited
+    # `allow` lists survive a re-run. A malformed file aborts here instead of
+    # being overwritten.
+    try:
+        existing_entries = load_existing_entries(output_path)
+    except (OSError, ValueError, yaml.YAMLError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    merged_entries, added_paths = merge_entries(
+        existing_entries, [str(p) for p in unique]
+    )
+
     schema_path = schema_path_for(output_path)
-    body = build_yaml(unique, schema_path.name)
-    output_path.write_text(body, encoding="utf-8")
+    body = build_yaml(merged_entries, schema_path.name)
+
+    # Skip the write when the merged body is byte-identical to what is on disk,
+    # so a no-op re-run does not churn the file's mtime.
+    current_text = output_path.read_text(encoding="utf-8") if output_path.exists() else None
+    if body != current_text:
+        output_path.write_text(body, encoding="utf-8")
 
     # Write the companion schema upfront so editors get autocomplete on first
     # open, before the playbook has ever run. Builder rewrites it on every
@@ -151,10 +257,25 @@ def main() -> None:
         sys.exit(1)
     write_schema(output_path, categories)
 
-    n = len(unique)
-    print(f"Scaffolded {n} director{'y' if n == 1 else 'ies'}:")
-    for p in unique:
-        print(f"  {p}")
+    if existing_entries:
+        preserved_count = len(merged_entries) - len(added_paths)
+        print(f"Merged into {output_path.resolve()}:")
+        if added_paths:
+            label = "directory" if len(added_paths) == 1 else "directories"
+            print(f"  Added ({len(added_paths)}) new {label} with `allow: []`:")
+            for path in sorted(added_paths):
+                print(f"    {path}")
+        else:
+            print("  Added 0 - every given directory was already present.")
+        label = "entry" if preserved_count == 1 else "entries"
+        print(f"  Preserved {preserved_count} existing {label} (allow lists kept).")
+        if body == current_text:
+            print("  File unchanged.")
+    else:
+        n = len(merged_entries)
+        print(f"Scaffolded {n} director{'y' if n == 1 else 'ies'}:")
+        for entry in sorted(merged_entries, key=lambda e: e["path"]):
+            print(f"  {entry['path']}")
     print(f"\nOutput file:\n  {output_path.resolve()}")
     print(f"Companion schema: {schema_path.resolve()}")
     print(

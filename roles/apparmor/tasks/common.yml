@@ -88,39 +88,6 @@
   tags: apparmor
 
 # =============================================
-# DEPRECATED: legacy single-mixin personal_dirs (in-flight migration only)
-# =============================================
-# These tasks still deploy /etc/apparmor.d/abstractions/local_mixin_deny_personal_dirs
-# for profiles that have NOT yet been switched to the per-category includes
-# (local_mixin_personal_dirs__for__<category>). Remove this block once every
-# pathbased profile has migrated.
-
-- name: Check that `{{ role_path }}/local_vars/deny_personal_dirs.aa` exists (DEPRECATED)
-  ansible.builtin.stat:
-    path: "{{ role_path }}/local_vars/deny_personal_dirs.aa"
-  register: _deny_personal_dirs_stat
-  tags: apparmor
-
-- name: Fail with instructions if `{{ role_path }}/local_vars/deny_personal_dirs.aa` is missing (DEPRECATED)
-  ansible.builtin.fail:
-    msg: >-
-      {{ role_path }}/local_vars/deny_personal_dirs.aa not found.
-      Run roles/apparmor/scripts/_gen_deny_personal_dirs.py first to generate it.
-  when: not _deny_personal_dirs_stat.stat.exists
-  tags: apparmor
-
-- name: Write personal dirs deny mixin to /etc/apparmor.d/abstractions/local_mixin_deny_personal_dirs (DEPRECATED)
-  ansible.builtin.template:
-    src: local_mixin_deny_personal_dirs.aa.j2
-    dest: /etc/apparmor.d/abstractions/local_mixin_deny_personal_dirs
-    owner: root
-    group: root
-    mode: '0644'
-  become: true
-  notify: Reload apparmor
-  tags: apparmor
-
-# =============================================
 # Per-category personal_dirs abstractions
 # =============================================
 # Replacement for the deprecated single-mixin above. Source of truth is
@@ -159,14 +126,14 @@
   changed_when: false
   tags: apparmor
 
-- name: Find generated `local_mixin_personal_dirs__for__*` files in `{{ role_path }}/local_vars/generated_abstractions/`
+- name: Find generated `local_mixin_personal_dirs__*` files (per-category + `__DENY_ALL`) in `{{ role_path }}/local_vars/generated_abstractions/`
   ansible.builtin.find:
     paths: "{{ role_path }}/local_vars/generated_abstractions"
-    patterns: "local_mixin_personal_dirs__for__*"
+    patterns: "local_mixin_personal_dirs__*"
   register: _personal_dirs_generated
   tags: apparmor
 
-- name: Deploy each `local_mixin_personal_dirs__for__<category>` to `/etc/apparmor.d/abstractions/`
+- name: Deploy each generated `local_mixin_personal_dirs__*` abstraction (per-category + `__DENY_ALL`) to `/etc/apparmor.d/abstractions/`
   ansible.builtin.copy:
     src: "{{ item.path }}"
     dest: "/etc/apparmor.d/abstractions/{{ item.path | basename }}"

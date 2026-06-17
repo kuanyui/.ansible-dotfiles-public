@@ -14,7 +14,7 @@
 #include <abstractions/local_mixin_deny_probably_credentials>
 #include <abstractions/local_mixin_deny_browser_config>
 #include <abstractions/local_mixin_deny_mounted_external_media>
-#include <abstractions/local_mixin_deny_personal_dirs>
+#include <abstractions/local_mixin_personal_dirs__DENY_ALL>
 
 # Container sockets - a process that can reach these can spawn new containers
 # with arbitrary bind mounts, bypassing all namespace and AppArmor isolation.

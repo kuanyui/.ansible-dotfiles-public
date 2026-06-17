@@ -114,9 +114,11 @@ gitignored). The scaffolded YAML's first line is a `yaml-language-server`
 directive pointing at it, so editors with the Red Hat YAML extension (or
 coc-yaml / lsp-mode) validate inline and autocomplete categories.
 
-The legacy `local_mixin_deny_personal_dirs` abstraction is DEPRECATED but
-still deployed during the gradual profile migration. Do not add new
-`#include` lines for it.
+The `local_mixin_personal_dirs__DENY_ALL` abstraction denies every listed
+directory regardless of its `allow` list (generated from the same
+`personal_dirs.yml` source). Include it in profiles that must never touch any
+customized directory - e.g. container base profiles. It replaced the old,
+separately-sourced `local_mixin_deny_personal_dirs`.
 
 ## AppArmor profile #include layout
 
