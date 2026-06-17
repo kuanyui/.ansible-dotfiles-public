@@ -46,7 +46,7 @@ owner @{HOME}/.config/dolphinrc r,            # user KFileWidget view settings (
 # shared here rather than inlined per app. KF5 audited; KF6 (kservices6/,
 # ksycoca6*) not yet seen.
 /usr/share/kservices5/ r,                     # KF5 service-type / handler directory listing
-owner @{HOME}/.cache/ksycoca5* rw,            # KF5 ksycoca cache: binary DB + its QLockFile (regenerable; QLockFile, no flock)
+owner @{HOME}/.cache/ksycoca5* rwk,           # KF5 ksycoca cache: binary DB + its .lock/.lock.rmlock (regenerable; k = flock on the lock)
 
 # XDG trash data dir. KIO writes here when user deletes a file via file
 # dialog / right-click "Move to Trash". Per freedesktop XDG trash spec:

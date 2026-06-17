@@ -28,4 +28,4 @@ deny network inet6,
 # rejected create every few seconds - a `network` deny does NOT suppress that
 # "failed af match" audit, but an allow makes the match succeed (kernel rejects it
 # anyway). Real egress stays blocked by the inet/inet6 denies above. (LP#1546455)
-network unspec,
+network unspec dgram,

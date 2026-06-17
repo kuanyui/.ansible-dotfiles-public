@@ -80,6 +80,11 @@ profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconne
     owner @{PROC}/@{pid}/comm r,
     owner @{PROC}/@{pid}/cmdline r,
 
+    # KIO worker sockets: KIO binds a per-worker socket via O_TMPFILE + linkat
+    # (the `#<inode>` target is covered by the runtime-temp rule above + the
+    # mediate_deleted flag). `rwl` = socket traffic + the link step.
+    owner /run/user/*/MuseScore*.kioworker.socket rwl,
+
     # systemd journal: denied, not granted. Qt/libsystemd try to log to the
     # journal socket; a local score editor needs no host-journal access. The
     # socket is an AF_UNIX dgram whose dentry is disconnected from the policy
