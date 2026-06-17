@@ -99,6 +99,20 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "gui": "open a SPICE graphical console, detached from the shell",
     "info": "show the VM's live state (status/image/hw/network/mounts/storage)",
 }
+# Short aliases for the most-typed subcommands. argparse stores the alias VERBATIM
+# in `args.subcommand` (e.g. `sh`, not `shell`), so main() folds it back to the
+# canonical name via SUBCOMMAND_ALIAS_TO_CANONICAL before dispatch - one dict drives
+# BOTH the parser's `aliases=` and that fold-back. Keys MUST be in CWD_RESOLVED.
+CWD_RESOLVED_ALIASES: dict[str, tuple[str, ...]] = {
+    "shell": ("sh",),
+    "shell-user": ("sh-user",),
+    "shell-root": ("sh-root",),
+}
+SUBCOMMAND_ALIAS_TO_CANONICAL: dict[str, str] = {
+    alias: canonical
+    for canonical, aliases in CWD_RESOLVED_ALIASES.items()
+    for alias in aliases
+}
 # Subcommands taking a positional `<username>` (set/unset a login password).
 PASSWORD_SUBCOMMANDS: tuple[str, ...] = ("set-password", "unset-password")
 
@@ -2256,7 +2270,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name in CWD_RESOLVED:
         sp: argparse.ArgumentParser = sub.add_parser(
-            name, help=CWD_RESOLVED_HELP[name], description=CWD_RESOLVED_HANDLER[name].__doc__)
+            name, aliases=list(CWD_RESOLVED_ALIASES.get(name, ())),
+            help=CWD_RESOLVED_HELP[name], description=CWD_RESOLVED_HANDLER[name].__doc__)
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name in PASSWORD_SUBCOMMANDS:
@@ -2306,6 +2321,9 @@ def main() -> None:
     args: argparse.Namespace
     extras: list[str]
     args, extras = parser.parse_known_args()
+    # A subparser alias (e.g. `sh`) is stored verbatim in args.subcommand; fold it back
+    # to the canonical subcommand (`shell`) so the dispatch below needs no alias cases.
+    args.subcommand = SUBCOMMAND_ALIAS_TO_CANONICAL.get(args.subcommand, args.subcommand)
     root: Path = args.root
     shared_prebuilt_provision_assets_root: Path = args.shared_assets_root
     # init / env / list don't act on an existing VM, so they don't resolve a target.

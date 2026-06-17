@@ -9,8 +9,11 @@ local -a _ivm_subcommands
 _ivm_subcommands=(
   'init:create a VM from a template'
   'shell:open a zsh shell as user (cwd-resolved)'
+  'sh:alias of shell'
   'shell-user:open a zsh shell as user'
+  'sh-user:alias of shell-user'
   'shell-root:open a zsh shell as root'
+  'sh-root:alias of shell-root'
   'start:start the target VM'
   'reboot:restart the target VM (incus restart)'
   'stop:stop the target VM'
