@@ -79,8 +79,8 @@ The repo is already a multi-distro provisioning system. The launcher's bash
 | `roles/zsh` `install-zsh-from-distro-repo.yml` | install zsh + plugins + chsh, os_family-aware | multi |
 | `roles/emacs` `install-emacs-from-distro-repo.yml` | install emacs + emacs packages, os_family-aware | multi |
 | `roles/bash` + `roles/tmux` | stage zshrc/bashrc/etc.; already included by `vm_incus/tasks/install.yml` | - |
-| JSON Schema precedent | `roles/apparmor/local_vars/personal_dirs.schema.json` + python validator | - |
-| Python precedent | `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py` (type-annotated, per CLAUDE.md) | - |
+| JSON Schema precedent | `roles/apparmor/local_vars/customized_extra_dirs.schema.json` + python validator | - |
+| Python precedent | `roles/apparmor/scripts/gen_customized_extra_dirs_aa_mixins.py` (type-annotated, per CLAUDE.md) | - |
 
 Key fact: **openSUSE support already exists in the repo's roles**; the
 `vm_incus` launcher just does not use it.

@@ -57,7 +57,7 @@ unapply-podman-oci-runtimes:  ## Revert podman to distro default runtime (delete
 	$(PLAYBOOK) --diff --ask-become-pass -e podman_runtime=default $(PLAYBOOKS)/podman_oci_runtimes.yml
 
 apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chromium / VLC / VSCode / etc.; bypasses `setup_apparmor` gate). Python pre-flight validates + previews + asks y/N before ansible runs. Needs sudo.
-	python3 roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py --confirm
+	python3 roles/apparmor/scripts/gen_customized_extra_dirs_aa_mixins.py --confirm
 	$(PLAYBOOK) --diff --ask-become-pass -e apparmor_non_interactive=true $(PLAYBOOKS)/apparmor.yml
 
 apply-trusted-pubkeys:  ## Pin GitHub/GitLab SSH host keys (~/.ssh/known_hosts) + Debian CD signing keys (dedicated GPG keyring) for the current user (bypasses `setup_trusted_pubkeys` gate). Idempotent; user-level, no sudo.

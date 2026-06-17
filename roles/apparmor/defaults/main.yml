@@ -8,7 +8,7 @@ apparmor_xdg_pictures_subdir: "Pictures"   # fallback; overridden at runtime fro
 apparmor_xdg_documents_subdir: "Documents" # fallback; overridden at runtime from user-dirs.dirs
 apparmor_xdg_screenshots_exists: false     # fallback; overridden at runtime by stat task
 
-# `apparmor_non_interactive`: skip the `personal_dirs.yml` preview + y/N
+# `apparmor_non_interactive`: skip the `customized_extra_dirs.yml` preview + y/N
 # confirm pair in `tasks/main.yml`. Off by default - safety net for
 # `make apply-apparmor`. The sandbox config (`scripts/sandbox/configs/apparmor.py`)
 # sets it to true because sandbox does its own preview in `_pre_flight`
@@ -130,20 +130,20 @@ apparmor_template_abstraction_names:
   - local_base_mpv
   - local_mixin_xdg_dir_pictures_screenshots
   - local_mixin_xdg_dir_downloads
-  # Per-category personal_dirs abstractions, generated at playbook run time by
-  # roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py. Names must match the categories
+  # Per-category customized_extra_dirs abstractions, generated at playbook run time by
+  # roles/apparmor/scripts/gen_customized_extra_dirs_aa_mixins.py. Names must match the categories
   # listed in roles/apparmor/app_categories.yml.
-  - local_mixin_personal_dirs__for__web_browser
-  - local_mixin_personal_dirs__for__image_viewer
-  - local_mixin_personal_dirs__for__pdf_viewer
-  - local_mixin_personal_dirs__for__video_player
-  - local_mixin_personal_dirs__for__ide
-  - local_mixin_personal_dirs__for__music_score_editor
-  - local_mixin_personal_dirs__for__others
+  - local_mixin_customized_extra_dirs__for__web_browser
+  - local_mixin_customized_extra_dirs__for__image_viewer
+  - local_mixin_customized_extra_dirs__for__pdf_viewer
+  - local_mixin_customized_extra_dirs__for__video_player
+  - local_mixin_customized_extra_dirs__for__ide
+  - local_mixin_customized_extra_dirs__for__music_score_editor
+  - local_mixin_customized_extra_dirs__for__others
   # Category-agnostic deny-all, generated alongside the per-category files from
   # the same source. NOT a category - denies every listed dir. Included by
-  # container base profiles. Replaces the deprecated local_mixin_deny_personal_dirs.
-  - local_mixin_personal_dirs__DENY_ALL
+  # container base profiles. Replaces the old all-or-nothing deny mixin.
+  - local_mixin_customized_extra_dirs__DENY_ALL
 
 # Profiles deployed under old names that do not match local_* and therefore
 # cannot be caught by the idempotent cleanup. Remove entries once all managed

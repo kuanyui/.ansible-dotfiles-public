@@ -82,13 +82,13 @@ File extensions:
 - Static profiles: `.aa` suffix (e.g., `local_attachmentless_glycin.aa`)
 - Jinja2 templates that generate profiles: `.aa.j2` suffix (e.g., `local_attachmentless_firefox.aa.j2`)
 
-## Per-category personal_dirs abstractions
+## Per-category customized_extra_dirs abstractions
 
 Every pathbased profile must `#include` exactly one of the per-category
 abstractions generated at playbook run time:
 
 ```
-#include <abstractions/local_mixin_personal_dirs__for__<category>>
+#include <abstractions/local_mixin_customized_extra_dirs__for__<category>>
 ```
 
 where `<category>` is one of the names listed in
@@ -98,10 +98,10 @@ category use `others`.
 Source of truth:
 
 - `roles/apparmor/app_categories.yml` - the category list (single source).
-- `roles/apparmor/local_vars/personal_dirs.yml` - per-path access policy,
-  gitignored. Scaffolded by `roles/apparmor/scripts/gen_personal_dirs_definitions_yaml.py` and
+- `roles/apparmor/local_vars/customized_extra_dirs.yml` - per-path access policy,
+  gitignored. Scaffolded by `roles/apparmor/scripts/gen_customized_extra_dirs_definitions_yaml.py` and
   then hand-edited.
-- `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py` - validates the YAML against
+- `roles/apparmor/scripts/gen_customized_extra_dirs_aa_mixins.py` - validates the YAML against
   a JSON Schema (with the category enum injected from `app_categories.yml` at
   run time) and emits one abstraction per category.
 
@@ -109,16 +109,16 @@ Hard runtime dep: the builder requires the distro-provided
 `python3-jsonschema` package. See `roles/apparmor/TODO.md`.
 
 The companion JSON Schema is written next to the YAML on every scaffold and
-every playbook run (`roles/apparmor/local_vars/personal_dirs.schema.json`,
+every playbook run (`roles/apparmor/local_vars/customized_extra_dirs.schema.json`,
 gitignored). The scaffolded YAML's first line is a `yaml-language-server`
 directive pointing at it, so editors with the Red Hat YAML extension (or
 coc-yaml / lsp-mode) validate inline and autocomplete categories.
 
-The `local_mixin_personal_dirs__DENY_ALL` abstraction denies every listed
+The `local_mixin_customized_extra_dirs__DENY_ALL` abstraction denies every listed
 directory regardless of its `allow` list (generated from the same
-`personal_dirs.yml` source). Include it in profiles that must never touch any
+`customized_extra_dirs.yml` source). Include it in profiles that must never touch any
 customized directory - e.g. container base profiles. It replaced the old,
-separately-sourced `local_mixin_deny_personal_dirs`.
+separately-sourced all-or-nothing deny mixin.
 
 ## AppArmor profile #include layout
 

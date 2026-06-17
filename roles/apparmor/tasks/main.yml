@@ -9,7 +9,7 @@
 # `_pre_flight`) install jsonschema themselves before ansible starts -
 # faster (no ansible startup + sub-role for a probe that always rc=0 on
 # repeat runs) and avoids a second sudo prompt mid-playbook.
-- name: Ensure `python3-jsonschema` (hard dep of `roles/apparmor/scripts/gen_personal_dirs_aa_mixins.py`)
+- name: Ensure `python3-jsonschema` (hard dep of `roles/apparmor/scripts/gen_customized_extra_dirs_aa_mixins.py`)
   ansible.builtin.include_role:
     name: _install_distro_packages
     apply:
@@ -42,19 +42,19 @@
 # aborts before this prompt is reached. Skipped in sandbox flow via the
 # var below, because sandbox does its own preview in `_pre_flight` before
 # podman starts.
-- name: Schema-validate and render preview of `personal_dirs.yml` via `--validate-only`
+- name: Schema-validate and render preview of `customized_extra_dirs.yml` via `--validate-only`
   ansible.builtin.command:
-    cmd: python3 {{ role_path }}/scripts/gen_personal_dirs_aa_mixins.py --validate-only --color=always
-  register: _personal_dirs_preview
+    cmd: python3 {{ role_path }}/scripts/gen_customized_extra_dirs_aa_mixins.py --validate-only --color=always
+  register: _customized_extra_dirs_preview
   changed_when: false
   when:
     - not (apparmor_non_interactive | default(false) | bool)
   tags: apparmor
 
-- name: Preview `personal_dirs.yml` and confirm before applying
+- name: Preview `customized_extra_dirs.yml` and confirm before applying
   ansible.builtin.pause:
     prompt: |
-      {{ _personal_dirs_preview.stdout }}
+      {{ _customized_extra_dirs_preview.stdout }}
 
       Proceed with applying the AppArmor profiles? [y/N]
   register: _apparmor_confirm

@@ -26,7 +26,7 @@ transient/
 __pycache__/
 *.pyc
 .mypy_cache/
-# host-specific apparmor inputs (personal_dirs.yml + personal_dirs.schema.json + generated_abstractions/)
+# host-specific apparmor inputs (customized_extra_dirs.yml + customized_extra_dirs.schema.json + generated_abstractions/)
 roles/apparmor/local_vars/
 .claude/settings.local.json
 /REFS/

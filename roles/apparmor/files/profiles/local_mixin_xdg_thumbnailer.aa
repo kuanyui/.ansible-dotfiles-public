@@ -18,7 +18,7 @@
 # Broad `rwk` is safe here because:
 #   - own-user cache (`owner` keyword) - no cross-user exposure
 #   - contents are PNG derivatives of images the app already has access
-#     to via its personal_dirs grants, so writing them does not reveal
+#     to via its customized_extra_dirs grants, so writing them does not reveal
 #     anything new
 #   - the directory is dedicated to thumbnails (not shared with other
 #     app data), so broadening does not cross app boundaries

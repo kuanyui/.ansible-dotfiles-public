@@ -1,6 +1,6 @@
-"""ANSI syntax highlighting for the personal_dirs.yml preview.
+"""ANSI syntax highlighting for the customized_extra_dirs.yml preview.
 
-Used by gen_personal_dirs_aa_mixins.py --validate-only (which
+Used by gen_customized_extra_dirs_aa_mixins.py --validate-only (which
 sandbox-apparmor and apply-apparmor both feed through). Token types:
 
   blue         path values        (after `path:` on each entry)
@@ -13,7 +13,7 @@ sandbox-apparmor and apply-apparmor both feed through). Token types:
 Anything else (yaml keys, dashes, brackets, quotes) keeps the default
 terminal color. Pure-Python, no external deps.
 
-The patterns are tailored to personal_dirs.yml's schema (path + allow);
+The patterns are tailored to customized_extra_dirs.yml's schema (path + allow);
 this is not a general-purpose YAML highlighter.
 """
 
@@ -40,7 +40,7 @@ _INLINE_ALLOW_RE = re.compile(r"^(\s*allow:\s*)\[(.*?)\](\s*)$")
 _LIST_ITEM_RE = re.compile(r"^(\s+-\s+)(.+?)(\s*)$")
 # Trailing `  # ...` after a value. Requires `\s+` before `#` so we never
 # split a bare `#` that's part of a token (e.g. an unlikely path containing
-# `#`). Quoted strings containing ` # ` would be mis-split, but personal_dirs
+# `#`). Quoted strings containing ` # ` would be mis-split, but customized_extra_dirs
 # entries don't carry such paths in practice.
 _INLINE_COMMENT_RE = re.compile(r"^(.+?)(\s+#.*)$")
 
@@ -102,7 +102,7 @@ def colorize_preview(
     color: bool,
     star_sentinel: str = _DEFAULT_STAR_SENTINEL,
 ) -> str:
-    """Apply ANSI coloring to personal_dirs.yml preview text. No-op when
+    """Apply ANSI coloring to customized_extra_dirs.yml preview text. No-op when
     `color` is False. `star_sentinel` is the value treated as "all
     categories" (default `*`)."""
     if not color:

@@ -20,7 +20,7 @@ DUMMY_COMMANDS_DIR = SANDBOX_DIR / "dummy_commands"
 
 
 def _pre_flight(project_dir: Path) -> None:
-    """Preview `personal_dirs.yml` + schema-validate it BEFORE any container
+    """Preview `customized_extra_dirs.yml` + schema-validate it BEFORE any container
     work (image build, apt install, project copy - the ~1-2 min preamble).
     Lets the user `Ctrl+C` immediately if the YAML looks wrong, instead of
     paying the container-setup cost only to see the preview from inside the
@@ -29,7 +29,7 @@ def _pre_flight(project_dir: Path) -> None:
     The validator script self-bootstraps `python3-jsonschema` via sudo when
     missing (see `_ensure_jsonschema()` inside it), so sandbox does not
     duplicate that logic."""
-    validator = project_dir / "roles" / "apparmor" / "scripts" / "gen_personal_dirs_aa_mixins.py"
+    validator = project_dir / "roles" / "apparmor" / "scripts" / "gen_customized_extra_dirs_aa_mixins.py"
     subprocess.run([sys.executable, str(validator), "--validate-only"], check=True)
 
 
@@ -64,7 +64,7 @@ CONFIG = SandboxConfig(
     description="AppArmor profile deployment + apparmor_parser --skip-kernel-load syntax validation.",
     playbook=Path("playbooks/apparmor.yml"),
     # `python3-jsonschema` is a hard runtime dep of the builder script
-    # (gen_personal_dirs_aa_mixins.py) that the playbook invokes; without
+    # (gen_customized_extra_dirs_aa_mixins.py) that the playbook invokes; without
     # it, the role's command task crashes with ModuleNotFoundError. The
     # script's own `_ensure_jsonschema()` handles the host side (triggered
     # during _pre_flight's --validate-only call); this covers the sandbox
