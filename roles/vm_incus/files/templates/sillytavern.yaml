@@ -84,3 +84,62 @@ post_install_script: |
   WantedBy=multi-user.target
   EOF
   systemctl enable --now sillytavern
+  # Guest-local backup/restore helper at ~/.local/bin/st-backup (on PATH via the zsh
+  # dotfiles). It writes/reads plain tars under the host-shared ~/Downloads, so backups
+  # land on the host by themselves (virtio-fs). No sudo, no ivm/Makefile - self-contained.
+  # (One script with subcommands: backup/list/restore share the path + tar logic.)
+  su - user -c 'mkdir -p ~/.local/bin && cat > ~/.local/bin/st-backup && chmod +x ~/.local/bin/st-backup' <<'STSCRIPT'
+  #!/usr/bin/env bash
+  # SillyTavern backup/restore (guest-local, no sudo). Tars ST's data + config.yaml into
+  # ~/Downloads/SillyTavernBackups/ (host-shared). Restore is destructive; restart ST after.
+  set -euo pipefail
+  ST_DIR="$HOME/SillyTavern"
+  BACKUP_DIR="$HOME/Downloads/SillyTavernBackups"
+  die() { printf 'st-backup: %s\n' "$1" >&2; exit 1; }
+  usage() {
+    printf '%s\n' \
+      "st-backup - SillyTavern backup/restore (dir: $BACKUP_DIR)" \
+      "  st-backup [backup]         write STBackup_YYYYMMDD_HHmm.tar (default action)" \
+      "  st-backup list             list existing backups" \
+      "  st-backup restore <file>   restore a named backup (destructive)" \
+      "  st-backup restore latest   restore the newest backup (destructive)" >&2
+  }
+  do_backup() {
+    [ -d "$ST_DIR/data" ] || die "no $ST_DIR/data - is SillyTavern installed?"
+    mkdir -p "$BACKUP_DIR"
+    local out; out="$BACKUP_DIR/STBackup_$(date +%Y%m%d_%H%M).tar"
+    local extra=(); [ -f "$ST_DIR/config.yaml" ] && extra=(config.yaml)
+    tar -C "$ST_DIR" -cf "$out" data "${extra[@]}"
+    sync
+    printf 'st-backup: wrote %s (%s)\n' "$out" "$(du -h "$out" | cut -f1)"
+    printf 'st-backup: ST was not stopped; back up when idle for a fully consistent tar.\n'
+  }
+  do_list() {
+    ls -lh "$BACKUP_DIR"/STBackup_*.tar 2>/dev/null || die "no backups in $BACKUP_DIR"
+  }
+  do_restore() {
+    local target="$1" ans
+    [ -n "$target" ] || { usage; exit 1; }
+    if [ "$target" = latest ]; then
+      target="$(ls -1t "$BACKUP_DIR"/STBackup_*.tar 2>/dev/null | head -n1 || true)"
+      [ -n "$target" ] || die "no backups in $BACKUP_DIR"
+    fi
+    if [ ! -f "$target" ] && [ -f "$BACKUP_DIR/$target" ]; then target="$BACKUP_DIR/$target"; fi
+    [ -f "$target" ] || die "not found: $target"
+    printf 'st-backup: this OVERWRITES %s/data from:\n  %s\nContinue? [y/N] ' "$ST_DIR" "$target"
+    read -r ans
+    case "$ans" in [yY]*) ;; *) die "aborted" ;; esac
+    tar -C "$ST_DIR" -xf "$target"
+    sync
+    printf 'st-backup: restored. Restart SillyTavern to load it:\n'
+    printf '  from the HOST:  ivm reboot\n'
+    printf '  or in-guest:    ivm shell-root  ->  systemctl restart sillytavern\n'
+  }
+  case "${1:-}" in
+    ""|backup) do_backup ;;
+    list)      do_list ;;
+    restore)   do_restore "${2:-}" ;;
+    -h|--help) usage ;;
+    *)         usage; exit 1 ;;
+  esac
+  STSCRIPT
