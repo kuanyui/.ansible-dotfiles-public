@@ -575,6 +575,13 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
         # right per-family dotfiles bucket (dotfiles/<feature>/<family>/) without re-reading the template.
         "--config", f"user.ivm_ansible_os_family={ansible_os_family_of(doc)}",
     ]
+    # Optional: the template's preferred initial cwd for `ivm shell`, stored as a
+    # user.* tag and read at runtime (passed as `incus exec --cwd`). It ONLY sets
+    # where the shell starts - `$HOME` and a bare `cd` are unaffected. Omitted when
+    # unset -> incus's default cwd.
+    template_shell_login_dir: str = doc.get("shell_default_dir_after_login", "")
+    if template_shell_login_dir:
+        cmd += ["--config", f"user.ivm_shell_default_dir_after_login={template_shell_login_dir}"]
     if "disk" in hw:
         cmd += ["--device", f"root,size={g_to_gib(hw['disk'])}"]
     return cmd
@@ -1413,17 +1420,51 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, shared_preb
     print(f"==> {colorize_vm_name(name)} ready. Enter with: {enter_hint}", file=sys.stderr)
 
 
+def shell_login_dir(name: str, *, dry_run: bool) -> str:
+    """The initial working directory for `ivm shell`, read from the VM's
+    `user.ivm_shell_default_dir_after_login` tag (set at init from the template field of
+    the same name). Returns "" when the tag is unset -> the caller omits `--cwd` and
+    incus uses its default cwd. If the tag is set but the directory is ABSENT in the
+    guest (e.g. a mount failed to attach), warn and return "" so `ivm shell` still opens
+    in the default cwd instead of failing on `incus exec --cwd <missing>`."""
+    if dry_run:
+        return ""  # don't probe a possibly-nonexistent VM under --dry-run
+    configured_dir: str = capture(
+        ["incus", "config", "get", name, "user.ivm_shell_default_dir_after_login"]).strip()
+    if not configured_dir:
+        return ""
+    # `incus exec --cwd <dir>` fails hard if <dir> is missing, which would block the
+    # shell entirely; probe with `test -d` first and fall back to the default cwd.
+    probe = subprocess.run(
+        ["incus", "exec", name, "--", "test", "-d", configured_dir], capture_output=True)
+    if probe.returncode != 0:
+        print(f"==> warning: shell dir '{configured_dir}' "
+              f"(user.ivm_shell_default_dir_after_login) not found in {colorize_vm_name(name)}; "
+              f"starting in the default directory instead.", file=sys.stderr)
+        return ""
+    return configured_dir
+
+
 def cmd_shell(name: str, root: Path, *, as_root: bool, dry_run: bool) -> None:
     """Open an interactive zsh in the target VM (starting it first if stopped): as
     `root` when `as_root`, else as the unprivileged `user` (uid/gid 1000). Auth is the
-    host incus socket - no in-guest password needed."""
+    host incus socket - no in-guest password needed.
+
+    Starts in the VM's `user.ivm_shell_default_dir_after_login` directory when that tag
+    is set (from the template field) and the directory exists in the guest, via
+    `incus exec --cwd`; this ONLY sets the starting directory - `$HOME` and a bare `cd`
+    are unchanged. Applies to shell / shell-user / shell-root alike."""
     ensure_up(name, dry_run=dry_run)
+    cmd: list[str] = ["incus", "exec"]
+    login_dir: str = shell_login_dir(name, dry_run=dry_run)
+    if login_dir:
+        cmd += ["--cwd", login_dir]
     if as_root:
-        cmd: list[str] = ["incus", "exec", "--env", "HOME=/root", "--env", "USER=root",
-                          name, "--", "zsh"]
+        cmd += ["--env", "HOME=/root", "--env", "USER=root"]
     else:
-        cmd = ["incus", "exec", "--user", "1000", "--group", "1000",
-               "--env", "HOME=/home/user", "--env", "USER=user", name, "--", "zsh"]
+        cmd += ["--user", "1000", "--group", "1000",
+                "--env", "HOME=/home/user", "--env", "USER=user"]
+    cmd += [name, "--", "zsh"]
     exec_into(cmd, dry_run=dry_run)
 
 

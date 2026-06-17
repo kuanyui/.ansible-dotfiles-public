@@ -122,6 +122,10 @@
         }
       }
     },
+    "shell_default_dir_after_login": {
+      "type": "string",
+      "description": "Initial working directory for `ivm shell` / `shell-user` / `shell-root`, passed as `incus exec --cwd`. ONLY sets where the interactive shell starts: `$HOME` and a bare `cd` are unchanged. Typically a mounted project path (e.g. `/workspaces/<name>`). Stored on the VM as `user.ivm_shell_default_dir_after_login`; if the dir is absent in the guest (e.g. a mount failed), `ivm shell` warns and starts in the default cwd. Optional; omit to start in incus's default (the home dir). Linux only."
+    },
     "distro_package_groups": {
       "type": "array",
       "items": { "type": "string" },
@@ -177,7 +181,8 @@
             { "required": ["distro_package_groups"] },
             { "required": ["thirdparty_software"] },
             { "required": ["dotfiles"] },
-            { "required": ["post_install_script"] }
+            { "required": ["post_install_script"] },
+            { "required": ["shell_default_dir_after_login"] }
           ]
         },
         "properties": { "os": { "not": { "required": ["distro"] } } }
