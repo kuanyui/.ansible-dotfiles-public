@@ -1,0 +1,79 @@
+#!/bin/bash
+# =============================================================================
+# MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY
+# Source: roles/kde_touchscreen_desktop_entries/files/bin/rotate_screen
+# =============================================================================
+my_rotate_screen__cursor() {
+    for p in $(xinput | grep slave | grep pointer | sed -e 's/^.*id=\([[:digit:]]\+\).*$/\1/')
+    do
+        xinput set-prop "$p" "Coordinate Transformation Matrix" "$@"
+        echo xinput set-prop "$p" "Coordinate Transformation Matrix" "$@"
+    done
+    # xinput set-prop "Virtual core pointer" "Coordinate Transformation Matrix" "$@"
+}
+
+# When no argv
+if [ $# -eq 0 ]; then
+    if [ -n "$WAYLAND_DISPLAY" ]; then
+        CUR=$(kscreen-doctor -j | jq -r '.outputs[] | select(.connected==true) | .rotation' | head -n1)
+        # Avoid magic number
+        case "$CUR" in
+            1) CUR="normal" ;;
+            2) CUR="left" ;;
+            4) CUR="inverted" ;;
+            8) CUR="right" ;;
+        esac
+        case "$CUR" in
+            normal|inverted) set -- left ;;   # normal(1) or inverted(4) -> switch to left(8)
+            # left|right) set -- normal ;;  # left(2) or right(8) -> switch to normal(1)
+            left) set -- right ;;  # left(2) -> switch to right(8)
+            right) set -- normal ;;
+        esac
+    else
+        # ATTENTION: detection under X11 is not test.
+        CUR=$(xrandr --verbose | awk -v scr="$MAIN_SCREEN" '
+            $1==scr {f=1}
+            f && /Rotation:/ {print $2; exit}
+        ')
+        case "$CUR" in
+            normal|inverted) set -- right ;;
+            left|right)      set -- normal ;;
+        esac
+    fi
+fi
+
+MAIN_SCREEN=$(xrandr --current | grep connected | awk '/primary/ {print $1}')
+case "$@" in
+    inverted|bottom-up|3)
+        if [ -n $WAYLAND_DISPLAY ]; then
+            kscreen-doctor output.1.rotation.inverted
+        else
+            xrandr --output "$MAIN_SCREEN" --rotate inverted
+            my_rotate_screen__cursor -1 0 1 0 -1 1 0 0 1
+        fi
+        ;;
+    right|right-up|2)
+        if [ -n $WAYLAND_DISPLAY ]; then
+            kscreen-doctor output.1.rotation.right
+        else
+            xrandr --output "$MAIN_SCREEN" --rotate right
+            my_rotate_screen__cursor 0 1 0 -1 0 1 0 0 1
+        fi
+        ;;
+    left|left-up|1)
+        if [ -n $WAYLAND_DISPLAY ]; then
+            kscreen-doctor output.1.rotation.left
+        else
+            xrandr --output "$MAIN_SCREEN" --rotate left
+            my_rotate_screen__cursor 0 -1 1 1 0 0 0 0 1
+        fi
+        ;;
+    none|normal|0|*)
+        if [ -n $WAYLAND_DISPLAY ]; then
+            kscreen-doctor output.1.rotation.none
+        else
+            xrandr --output "$MAIN_SCREEN" --rotate normal
+            my_rotate_screen__cursor 1 0 0 0 1 0 0 0 1
+        fi
+        ;;
+esac

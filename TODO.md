@@ -1075,6 +1075,36 @@ only xauth changed) + `mpv --vo=wlshm` playing fine under the broken profile on 
   `local_pathbased_mpv.aa.j2` (silences the card1 audit noise; completes the existing
   renderD/nvidiactl/udmabuf deny block). Uncommitted in the working tree.
 
+## kde_touchscreen_desktop_entries role (built + verified on throwaway env; needs a real-host run)
+
+Migrate the user's touchscreen KDE menu entries from the legacy stow
+`xdg-desktop-screen-rotation` package (source: `REFS/STOW_DOTFILES`, untracked) into a new
+role. Bundles 3 concerns under ONE role per the user's "one role" request: screen rotation,
+screenshots, a display-settings shortcut. Named for the touchscreen use case ("desktop
+entries" = the XDG term for `.desktop` files).
+
+- [x] **Create `roles/kde_touchscreen_desktop_entries`.** DONE: deploys 6 `.desktop` files
+  to `~/.local/share/applications/` (`ansible_`-prefixed per the repo convention - cf.
+  `ansible_bwrap_telegram`; `ansible_display_*` = 3 rotation entries + 1 systemsettings
+  display shortcut, `ansible_take_screenshot_*` = 2 spectacle screenshots that save to
+  `$(xdg-user-dir PICTURES)/Screenshots` - resolved at click time, NOT a hardcoded
+  `~/Pictures`; the role resolves the same dir at deploy and `mkdir`s it) + the
+  `rotate_screen` helper to `~/.local/bin/` (the rotation entries Exec it by absolute path -
+  graphical launches do not inherit the interactive-shell PATH). Helper is a FAITHFUL copy of
+  the stow `scripts` package's `rotate_screen` (only a MANAGED-BY-ANSIBLE header added,
+  `~/.scripts` -> `~/.local/bin`, `->` ASCII-normalized in comments). SANITIZATION: source
+  held no private data (no username / real home paths); Japanese `GenericName` -> English.
+  Ported-as-is quirks KEPT (documented in README): unquoted `[ -n $WAYLAND_DISPLAY ]` (X11
+  branch dead; fine on the user's Wayland), `output.1` hardcoded, short CLI flags verbatim.
+  Wired: `playbooks/kde_touchscreen_desktop_entries.yml`, `make
+  apply-kde-touchscreen-desktop-entries` / `check-...` (+ `.PHONY`), README. No gate (the
+  `setup_*` model is gone). VERIFIED: `bash -n` + `--syntax-check`; end-to-end on a throwaway
+  `target_home` (all 7 files land, run2 `changed=0`, render correct, 0 leftover Jinja, 0
+  non-ASCII); stow-symlink guard refuses with the `stow --delete xdg-desktop-screen-rotation`
+  hint and writes 0 files through the link. PENDING on the real host: `stow --delete
+  xdg-desktop-screen-rotation`, `make apply-kde-touchscreen-desktop-entries`, then confirm the
+  menu entries appear and rotation works on the touchscreen.
+
 ## quickemu_vm role + `qvm` launcher (v1 built; needs a real-host run)
 
 Sibling of `ivm` on the axis incus can't do (Windows/macOS guests, 3D desktop

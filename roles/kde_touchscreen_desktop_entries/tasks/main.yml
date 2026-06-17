@@ -1,0 +1,102 @@
+---
+- name: Verify required variables are set
+  ansible.builtin.assert:
+    that:
+      - target_home != ""
+      - target_user != ""
+      - target_group != ""
+    msg: "target_home, target_user, target_group must all be set by the calling playbook"
+
+# The user's previous setup symlinked these entries into
+# `~/.local/share/applications/` from the legacy stow `xdg-desktop-screen-rotation`
+# package. This role deploys its own `ansible_display_*` / `ansible_take_screenshot_*` copies
+# (different filenames), so a leftover stow symlink is NOT overwritten - it lingers and produces
+# DUPLICATE menu entries next to the managed ones. Refuse until the user unstows, in the
+# same migration-safety spirit as `roles/mpv`. (These are the original stow filenames; the
+# managed copies carry the `ansible_` prefix, hence the names here differ from the deploy
+# loop below.)
+- name: Stat the `.desktop` paths a legacy stow checkout may have symlinked
+  ansible.builtin.stat:
+    path: "{{ target_home }}/.local/share/applications/{{ item }}"
+  loop:
+    - "Horizontal.desktop"
+    - "Vertical.desktop"
+    - "Toggle Rotation.desktop"
+    - "Display Settings.desktop"
+    - "screenshot_full.desktop"
+    - "screenshot_rectangle.desktop"
+  register: _kde_touchscreen_legacy_stow_stat_results
+
+- name: Refuse to leave legacy stow symlinks in place (unstow the old `xdg-desktop-screen-rotation` package first)
+  ansible.builtin.assert:
+    that: not (item.stat.islnk | default(false))
+    msg: >-
+      {{ target_home }}/.local/share/applications/{{ item.item }} is a symlink from the
+      legacy stow `xdg-desktop-screen-rotation` package. This role deploys its own
+      `ansible_display_*` / `ansible_take_screenshot_*` copies, so leaving the old symlink would show
+      DUPLICATE menu entries. Run `stow --delete xdg-desktop-screen-rotation` in the old
+      stow dotfiles repo first, then re-run this playbook.
+  loop: "{{ _kde_touchscreen_legacy_stow_stat_results.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Create `~/.local/bin/` and `~/.local/share/applications/`
+  ansible.builtin.file:
+    path: "{{ target_home }}/{{ item }}"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+  loop:
+    - .local/bin
+    - .local/share/applications
+
+# The screenshot entries save under the user's XDG pictures dir resolved at click time
+# (`$(xdg-user-dir PICTURES)/Screenshots`), NOT a hardcoded `~/Pictures` - the user may have
+# relocated or localized it via `~/.config/user-dirs.dirs`. Resolve the same dir here and
+# create it so `spectacle -o` has somewhere to write. `xdg-user-dir` is read-only, so run it
+# even in `--check`.
+- name: Resolve the XDG pictures directory (`xdg-user-dir PICTURES`)
+  ansible.builtin.command:
+    cmd: xdg-user-dir PICTURES
+  register: _kde_touchscreen_xdg_pictures_dir
+  changed_when: false
+  check_mode: false
+
+- name: Create the screenshots directory `<XDG PICTURES>/Screenshots` (the screenshot entries' `spectacle -o` target)
+  ansible.builtin.file:
+    path: "{{ _kde_touchscreen_xdg_pictures_dir.stdout }}/Screenshots"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+
+# `~/.local/bin` is on PATH (see `roles/zsh/templates/.zshrc.j2`), but the rotation
+# `.desktop` entries Exec it by absolute path (a graphical launch does not inherit the
+# interactive shell PATH). The original stow package kept this script at
+# `~/.scripts/rotate_screen`; the repo convention is `~/.local/bin/`.
+- name: Deploy the `rotate_screen` helper to `~/.local/bin/rotate_screen` (the rotation entries Exec it)
+  ansible.builtin.copy:
+    src: bin/rotate_screen
+    dest: "{{ target_home }}/.local/bin/rotate_screen"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+
+# Filenames carry the `ansible_` prefix - the repo convention for ansible-managed entries
+# in `~/.local/share/applications/` (cf. `ansible_bwrap_telegram.desktop`,
+# `ansible_aa_firefox_*.desktop`). The `Name=` field, not the filename, drives the menu label.
+- name: Deploy the KDE touchscreen `.desktop` entries to `~/.local/share/applications/`
+  ansible.builtin.template:
+    src: "applications/{{ item }}.j2"
+    dest: "{{ target_home }}/.local/share/applications/{{ item }}"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0644"
+  loop:
+    - ansible_display_horizontal.desktop
+    - ansible_display_vertical.desktop
+    - ansible_display_toggle_rotation.desktop
+    - ansible_display_settings.desktop
+    - ansible_take_screenshot_full.desktop
+    - ansible_take_screenshot_rectangle.desktop

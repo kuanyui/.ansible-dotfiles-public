@@ -1,0 +1,5 @@
+---
+# Must be set by the calling playbook (see `playbooks/kde_touchscreen_desktop_entries.yml`).
+target_home: ""
+target_user: ""
+target_group: ""

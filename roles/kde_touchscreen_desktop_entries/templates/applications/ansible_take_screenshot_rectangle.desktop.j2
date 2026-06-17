@@ -1,0 +1,17 @@
+# MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY
+# Source: roles/kde_touchscreen_desktop_entries/templates/applications/ansible_take_screenshot_rectangle.desktop.j2
+
+[Desktop Entry]
+Comment=
+Exec=bash -c 'spectacle -b -r -o "$(xdg-user-dir PICTURES)/Screenshots/Screenshot_`date +%Y%%m%%d_%H%M%S`.png"'
+Icon=ratiocrop
+Name=Screenshot (Rectangle)
+GenericName=Take a screenshot of a selected region
+NoDisplay=false
+Path=
+StartupNotify=false
+Terminal=false
+TerminalOptions=
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=

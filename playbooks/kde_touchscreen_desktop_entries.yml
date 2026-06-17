@@ -1,0 +1,11 @@
+---
+- name: Deploy KDE touchscreen desktop entries for the current user via `roles/kde_touchscreen_desktop_entries`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    target_home: "{{ ansible_facts['env']['HOME'] }}"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+  roles:
+    - kde_touchscreen_desktop_entries
