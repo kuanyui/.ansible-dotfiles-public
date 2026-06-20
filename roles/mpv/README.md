@@ -6,8 +6,7 @@ dotfiles `mpv/` package, with sensitive bits dropped (see table below).
 Config-style face role (standard dotfile location, like `zsh` / `emacs`) - no
 `~/.local/share/ansible-managed/` namespace dir.
 
-Gate: `setup_mpv` (default `false` in `group_vars/all.yml`). Dedicated entry:
-`make apply-mpv` / `make check-mpv` (bypasses the gate via `playbooks/mpv.yml`).
+No opt-in gate - run `make apply-mpv` / `make check-mpv` (via `playbooks/mpv.yml`).
 
 ## Deployed files
 

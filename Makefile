@@ -60,13 +60,13 @@ apply-apparmor:  ## Deploy AppArmor profiles for desktop GUI apps (Firefox / Chr
 	python3 roles/apparmor/scripts/gen_customized_extra_dirs_aa_mixins.py --confirm
 	$(PLAYBOOK) --diff --ask-become-pass -e apparmor_non_interactive=true $(PLAYBOOKS)/apparmor.yml
 
-apply-trusted-pubkeys:  ## Pin GitHub/GitLab SSH host keys (~/.ssh/known_hosts) + Debian CD signing keys (dedicated GPG keyring) for the current user (bypasses `setup_trusted_pubkeys` gate). Idempotent; user-level, no sudo.
+apply-trusted-pubkeys:  ## Pin GitHub/GitLab SSH host keys (~/.ssh/known_hosts) + Debian CD signing keys (dedicated GPG keyring) for the current user. Idempotent; user-level, no sudo.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/trusted_pubkeys.yml
 
-apply-firefox-tunes:  ## Apply Firefox about:config tweaks (session-store interval + cache off the SSD) to every profile of the current user (bypasses `setup_firefox_tunes` gate). Writes user.js per profile; restart Firefox to apply. No sudo.
+apply-firefox-tunes:  ## Apply Firefox about:config tweaks (session-store interval + cache off the SSD) to every profile of the current user. Writes user.js per profile; restart Firefox to apply. No sudo.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/firefox_tunes.yml
 
-apply-mpv:  ## Deploy mpv config (mpv.conf with `vo=wlshm` + input.conf + Lua scripts) to ~/.config/mpv/ (bypasses `setup_mpv` gate). Refuses to overwrite legacy stow symlinks. No sudo.
+apply-mpv:  ## Deploy mpv config (mpv.conf with `vo=wlshm` + input.conf + Lua scripts) to ~/.config/mpv/.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/mpv.yml
 
 apply-kde-touchscreen-desktop-entries:  ## Deploy KDE touchscreen .desktop entries (screen rotation + screenshots + display settings) to ~/.local/share/applications/ + the rotate_screen helper to ~/.local/bin/. Refuses to overwrite legacy stow symlinks. No sudo.

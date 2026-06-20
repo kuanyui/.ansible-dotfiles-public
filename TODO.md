@@ -610,7 +610,7 @@ in different places; keep them separate:
 
 Apply `about:config` tweaks (mainly disk-cache, to cut SSD writes) to ALL Firefox
 profiles of the current user. Config-style role (writes per-profile dotfiles);
-wire into `playbooks/user.yml`, gate `setup_firefox_tunes` (default false).
+opt-in via its own `make apply-firefox-tunes` target (no `user.yml` wiring, no gate).
 
 - [x] **RESOLVED (verified, Mozilla docs + support forum): use `user.js` per
   profile.** Three external mechanisms exist; `user.js` is the right one here:
@@ -668,8 +668,8 @@ wire into `playbooks/user.yml`, gate `setup_firefox_tunes` (default false).
 - [x] **Apply semantics** - DONE: prints "restart Firefox to apply" + the profile
   count. (No "Firefox is running" warning - user.js is harmless to write live, just
   applies next launch.)
-- [x] **Wiring + verification** - `playbooks/firefox_tunes.yml` + `setup_firefox_tunes`
-  (default false) + `make apply-firefox-tunes` / `check-firefox-tunes` (+ `.PHONY`,
+- [x] **Wiring + verification** - `playbooks/firefox_tunes.yml` +
+  `make apply-firefox-tunes` / `check-firefox-tunes` (+ `.PHONY`,
   README role-table + playbook tree), same pattern as trusted_pubkeys. Verified
   end-to-end on a FAKE `profiles.ini` + 2 profile dirs in a temp HOME: syntax-check;
   ram run1 changed / run2 changed=0 (idempotent); BOTH profiles get user.js;

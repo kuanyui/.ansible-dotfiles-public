@@ -3,7 +3,7 @@
 Pin well-known **public** keys for the current user. User-level only - no
 system-wide trust, no `sudo`.
 
-Gate: `setup_trusted_pubkeys` (default `false`, in `group_vars/all.yml`).
+No opt-in gate - run `make apply-trusted-pubkeys` (its dedicated target).
 
 ## What it does
 

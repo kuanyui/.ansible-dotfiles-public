@@ -3,7 +3,8 @@
 Apply `about:config` tweaks to **every** Firefox profile of the current user, to
 cut SSD writes. User-level only, no `sudo`. Native Firefox (`~/.mozilla/firefox/`).
 
-Gate: `setup_firefox_tunes` (default `false`, in `group_vars/all.yml`).
+No opt-in gate - run `make apply-firefox-tunes` (its dedicated target). Not wired
+into `playbooks/user.yml`.
 
 ## How
 
