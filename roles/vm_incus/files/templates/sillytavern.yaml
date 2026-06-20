@@ -37,12 +37,13 @@ distro_packages:
   - nodejs   # Debian 13 ships Node.js >= 20 (SillyTavern's floor)
   - npm
   - git
+  - dbus-user-session   # per-user D-Bus, so `systemctl --user` works for the ST user service
 dotfiles:
   - bash
   - zsh
 # Everything below runs as ROOT after packages install. Heredocs are kept at a FLAT indent
 # on purpose: the `|` block strips the common 2 spaces, so the written files (config.yaml
-# keys, the unit's `[Section]` headers) and the heredoc `EOF` terminators land at column 0.
+# keys, the unit's `[Section]` headers) and the heredoc terminators land at column 0.
 post_install_script: |
   # Install SillyTavern (user-scoped). Guarded by the node_modules check so a re-init is a
   # no-op, not a clone-into-existing-dir failure. Upstream's "SillyTavern-Launcher" is an
@@ -67,52 +68,70 @@ post_install_script: |
   whitelistMode: true
   whitelist: ["::1", "127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   EOF
-  # Run ST as the unprivileged `user` on boot, so the host browser can reach it any time
-  # without `ivm shell` (Debian's `nodejs` package provides /usr/bin/node).
-  cat > /etc/systemd/system/sillytavern.service <<'EOF'
+  # Run ST as a PER-USER systemd service (~/.config/systemd/user), so `user` - who has no
+  # sudo - fully controls it: the st-backup helper stops/starts it for a consistent snapshot
+  # and a one-command restore, no root and no reboot. `loginctl enable-linger` makes the user
+  # manager run headless at boot (no login needed); `dbus-user-session` (a distro_package)
+  # gives the per-user D-Bus that `systemctl --user` talks to. `%h` = the user's home.
+  su - user -c 'mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/sillytavern.service' <<'EOF'
   [Unit]
   Description=SillyTavern
-  After=network-online.target
-  Wants=network-online.target
   [Service]
   Type=simple
-  User=user
-  WorkingDirectory=/home/user/SillyTavern
+  WorkingDirectory=%h/SillyTavern
   ExecStart=/usr/bin/node server.js
   Restart=on-failure
   [Install]
-  WantedBy=multi-user.target
+  WantedBy=default.target
   EOF
-  systemctl enable --now sillytavern
+  loginctl enable-linger user
+  # enable-linger asks logind to bring up the lingering user manager + its D-Bus
+  # ASYNCHRONOUSLY; wait for the user bus socket before driving systemctl --user (else
+  # "Failed to connect to bus"). `su` is not a PAM login, so XDG_RUNTIME_DIR and
+  # DBUS_SESSION_BUS_ADDRESS are unset - set BOTH (XDG alone is not always enough).
+  st_uid="$(id -u user)"
+  for _ in $(seq 1 100); do [ -S "/run/user/$st_uid/bus" ] && break; sleep 0.2; done
+  su - user -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; systemctl --user daemon-reload; systemctl --user enable --now sillytavern'
   # Guest-local backup/restore helper at ~/.local/bin/st-backup (on PATH via the zsh
-  # dotfiles). It writes/reads plain tars under the host-shared ~/Downloads, so backups
-  # land on the host by themselves (virtio-fs). No sudo, no ivm/Makefile - self-contained.
-  # (One script with subcommands: backup/list/restore share the path + tar logic.)
+  # dotfiles). It writes/reads plain tars under the host-shared ~/Downloads, so backups land
+  # on the host by themselves (virtio-fs). It drives ST's own per-user unit, so backups are
+  # taken stopped (consistent) and restore brings it back - no sudo, no reboot, no ivm/Makefile.
   su - user -c 'mkdir -p ~/.local/bin && cat > ~/.local/bin/st-backup && chmod +x ~/.local/bin/st-backup' <<'STSCRIPT'
   #!/usr/bin/env bash
   # SillyTavern backup/restore (guest-local, no sudo). Tars ST's data + config.yaml into
-  # ~/Downloads/SillyTavernBackups/ (host-shared). Restore is destructive; restart ST after.
+  # ~/Downloads/SillyTavernBackups/ (host-shared). Stops ST around the tar for a consistent
+  # copy and restarts it after, via the per-user systemd unit. Restore is destructive.
   set -euo pipefail
+  # su/cron contexts don't set these, and systemctl --user needs both to reach the user bus.
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
   ST_DIR="$HOME/SillyTavern"
   BACKUP_DIR="$HOME/Downloads/SillyTavernBackups"
   die() { printf 'st-backup: %s\n' "$1" >&2; exit 1; }
+  st_active() { [ "$(systemctl --user is-active sillytavern 2>/dev/null || true)" = active ]; }
+  st_stop()  { systemctl --user stop sillytavern 2>/dev/null || true; }
+  st_start() { systemctl --user start sillytavern 2>/dev/null || true; }
   usage() {
     printf '%s\n' \
       "st-backup - SillyTavern backup/restore (dir: $BACKUP_DIR)" \
-      "  st-backup [backup]         write STBackup_YYYYMMDD_HHmm.tar (default action)" \
+      "  st-backup [backup]         stop ST, write STBackup_YYYYMMDD_HHmm.tar, restart" \
       "  st-backup list             list existing backups" \
-      "  st-backup restore <file>   restore a named backup (destructive)" \
-      "  st-backup restore latest   restore the newest backup (destructive)" >&2
+      "  st-backup restore <file>   stop ST, restore a backup (destructive), restart" \
+      "  st-backup restore latest   restore the newest backup" >&2
   }
   do_backup() {
     [ -d "$ST_DIR/data" ] || die "no $ST_DIR/data - is SillyTavern installed?"
     mkdir -p "$BACKUP_DIR"
     local out; out="$BACKUP_DIR/STBackup_$(date +%Y%m%d_%H%M).tar"
-    local extra=(); [ -f "$ST_DIR/config.yaml" ] && extra=(config.yaml)
+    local extra=()
+    if [ -f "$ST_DIR/config.yaml" ]; then extra=(config.yaml); fi
+    local was_running=0
+    if st_active; then was_running=1; fi
+    st_stop
     tar -C "$ST_DIR" -cf "$out" data "${extra[@]}"
+    if [ "$was_running" = 1 ]; then st_start; fi
     sync
     printf 'st-backup: wrote %s (%s)\n' "$out" "$(du -h "$out" | cut -f1)"
-    printf 'st-backup: ST was not stopped; back up when idle for a fully consistent tar.\n'
   }
   do_list() {
     ls -lh "$BACKUP_DIR"/STBackup_*.tar 2>/dev/null || die "no backups in $BACKUP_DIR"
@@ -129,11 +148,11 @@ post_install_script: |
     printf 'st-backup: this OVERWRITES %s/data from:\n  %s\nContinue? [y/N] ' "$ST_DIR" "$target"
     read -r ans
     case "$ans" in [yY]*) ;; *) die "aborted" ;; esac
+    st_stop
     tar -C "$ST_DIR" -xf "$target"
+    st_start
     sync
-    printf 'st-backup: restored. Restart SillyTavern to load it:\n'
-    printf '  from the HOST:  ivm reboot\n'
-    printf '  or in-guest:    ivm shell-root  ->  systemctl restart sillytavern\n'
+    printf 'st-backup: restored and SillyTavern restarted.\n'
   }
   case "${1:-}" in
     ""|backup) do_backup ;;
