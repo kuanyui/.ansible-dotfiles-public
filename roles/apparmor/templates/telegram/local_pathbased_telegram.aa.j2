@@ -5,11 +5,22 @@ abi <abi/5.0>,
 # Telegram Desktop AppArmor profile - /etc/apparmor.d/local_pathbased_telegram
 # Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
 #
-# Auto-attaches to /usr/bin/Telegram when bwrap exec's it inside the sandbox.
-# No aa-exec needed in the launcher script - the profile kicks in at that exec point.
+# Auto-attaches to /usr/bin/Telegram at execve - no aa-exec needed; the profile
+# kicks in whenever that exact path is executed (the .desktop runs it directly).
 #
-# flags=(attach_disconnected): required because Telegram runs inside bwrap's mount namespace;
-# /proc and /dev inside bwrap are new mounts (not bind-mounts) and appear disconnected from host root.
+# NOTE - bwrap removed 2026-06-21: this profile was authored to run together with a
+# bwrap wrapper (mount namespace; --tmpfs / and --tmpfs /run/user/<uid>; GPU + audio
+# left unbound). The wrapper is gone - Telegram now relies on AppArmor alone. Some
+# rules below were only safe BECAUSE of bwrap and are now stale or over-broad; they
+# need a complain-mode re-tightening pass on a real machine (cannot audit headless).
+# See roles/apparmor/TODO.md "Telegram: bwrap wrapper dropped". Most important:
+#   - `owner /run/user/*/* rwk` (below) hit only bwrap's throwaway tmpfs before; with
+#     no bwrap it now reaches the REAL runtime dir (pipewire / keyring / other sockets).
+#   - `flags=(attach_disconnected)` may no longer be needed (no bwrap namespace).
+#
+# flags=(attach_disconnected): originally required because Telegram ran inside bwrap's
+# mount namespace - /proc and /dev there were fresh mounts that appeared disconnected
+# from the host root. Revisit during the re-tightening pass (see NOTE above).
 #
 # flags=(mediate_deleted): Telegram is a Qt app and writes tdata/ atomically with the
 # O_TMPFILE + linkat() pattern - open an unnamed temp inode, write, then link it to its final

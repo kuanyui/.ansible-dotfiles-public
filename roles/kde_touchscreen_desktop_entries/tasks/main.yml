@@ -84,7 +84,7 @@
     mode: "0755"
 
 # Filenames carry the `ansible_` prefix - the repo convention for ansible-managed entries
-# in `~/.local/share/applications/` (cf. `ansible_bwrap_telegram.desktop`,
+# in `~/.local/share/applications/` (cf. `ansible_telegram.desktop`,
 # `ansible_aa_firefox_*.desktop`). The `Name=` field, not the filename, drives the menu label.
 - name: Deploy the KDE touchscreen `.desktop` entries to `~/.local/share/applications/`
   ansible.builtin.template:

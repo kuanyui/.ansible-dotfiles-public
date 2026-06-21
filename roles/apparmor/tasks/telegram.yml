@@ -81,40 +81,37 @@
   tags: telegram
 
 # =============================================
-# Deploy launcher script
+# Remove bwrap launcher artifacts (idempotent)
 # =============================================
+# bwrap dropped: Telegram is now confined by the path-based AppArmor profile
+# alone, which auto-attaches at execve of /usr/bin/Telegram regardless of how it
+# is launched. Remove the old bwrap wrapper + its .desktop. `state: absent` is a
+# no-op on re-runs and when the artifacts were never present (idempotent).
 
-- name: Ensure ~/.local/bin exists for {{ apparmor_target_user }}
-  ansible.builtin.file:
-    path: "/home/{{ apparmor_target_user }}/.local/bin"
-    state: directory
-    owner: "{{ apparmor_target_user }}"
-    group: "{{ apparmor_target_user }}"
-    mode: '0755'
-  tags: telegram
-
-- name: Remove legacy launchers superseded by Telegram
+- name: "[IDEMPOTENCE] Remove deprecated file ~/.local/bin/{{ item }}"
   ansible.builtin.file:
     path: "/home/{{ apparmor_target_user }}/.local/bin/{{ item }}"
     state: absent
   loop:
-    - telegram-desktop
-    - ansible_bwrap_telegram_desktop
-    - ansible_bwrap_telegram
+    - Telegram                          # bwrap wrapper script (dropped in this change)
+    - telegram-desktop                  # legacy name
+    - ansible_bwrap_telegram_desktop    # legacy name
+    - ansible_bwrap_telegram            # legacy name
   tags: telegram
 
-- name: Deploy Telegram bwrap launcher to ~/.local/bin/Telegram
-  ansible.builtin.template:
-    src: telegram/bwrap_telegram.sh.j2
-    dest: "/home/{{ apparmor_target_user }}/.local/bin/Telegram"
-    owner: "{{ apparmor_target_user }}"
-    group: "{{ apparmor_target_user }}"
-    mode: '0755'
+- name: "[IDEMPOTENCE] Remove deprecated file ~/.local/share/applications/ansible_bwrap_telegram.desktop"
+  ansible.builtin.file:
+    path: "/home/{{ apparmor_target_user }}/.local/share/applications/ansible_bwrap_telegram.desktop"
+    state: absent
   tags: telegram
 
 # =============================================
-# Deploy .desktop launcher
+# Deploy .desktop launcher (AppArmor-only, no bwrap)
 # =============================================
+# Exec runs /usr/bin/Telegram directly so the path-based profile attaches.
+# `env`: `LIBGL_ALWAYS_SOFTWARE=1` keeps the GPU-off posture (the profile denies
+# `/dev/dri`); `LD_LIBRARY_PATH` / `PYTHONPATH` are unset to block library
+# injection via the environment (the dropped bwrap wrapper used to do both).
 
 - name: Create directory ~/.local/share/applications for {{ apparmor_target_user }}
   ansible.builtin.file:
@@ -124,10 +121,10 @@
     mode: '0755'
   tags: telegram
 
-- name: Write ansible_bwrap_telegram.desktop launcher
+- name: Write ~/.local/share/applications/ansible_telegram.desktop
   ansible.builtin.template:
-    src: telegram/ansible_bwrap_telegram.desktop.j2
-    dest: "/home/{{ apparmor_target_user }}/.local/share/applications/ansible_bwrap_telegram.desktop"
+    src: telegram/ansible_telegram.desktop.j2
+    dest: "/home/{{ apparmor_target_user }}/.local/share/applications/ansible_telegram.desktop"
     owner: "{{ apparmor_target_user }}"
     mode: '0644'
   tags: telegram

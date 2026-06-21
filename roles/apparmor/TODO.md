@@ -1,5 +1,28 @@
 # TODO
 
+## Telegram: bwrap wrapper dropped - 2026-06-21
+
+Removed the bwrap launcher (`~/.local/bin/Telegram` wrapper + `ansible_bwrap_telegram.desktop`).
+Telegram now runs under the path-based profile alone, launched directly via
+`ansible_telegram.desktop` (`Exec=/usr/bin/env ... /usr/bin/Telegram`). Profile attachment is
+unchanged - the `profile ... /usr/bin/Telegram` rule attaches at execve regardless of launcher.
+
+The profile body still carries bwrap-era rules that were only safe under the namespace; they
+need a complain-mode re-tightening pass on a real machine (cannot audit headless):
+
+- [ ] `owner /run/user/*/* rwk` - under bwrap this hit only a throwaway `--tmpfs /run/user/<uid>`;
+  with no bwrap it now grants r/w to the REAL runtime dir (pipewire / keyring / other apps'
+  sockets). Complain-pass to capture which `/run/user` names Telegram's webview actually needs,
+  then replace with narrow rules.
+- [ ] `flags=(attach_disconnected)` - was needed for bwrap's disconnected /proc + /dev. Likely
+  removable now; test (may still be needed for the journal-socket disconnected-path reporting).
+- [ ] Stale comments referencing "bind-mounted by launcher" / "bwrap mounts --tmpfs /" and the
+  `~/.config/` + `~/.cache/` mkdir rules (only existed because bwrap used `--tmpfs /`). Clean up
+  in the same pass.
+
+Procedure: `aa-complain local_pathbased_telegram`, exercise Telegram, `make aa-log-recent` /
+`make aa-notify-snapshot`, tighten, `aa-enforce`.
+
 ## `personal_dirs` -> `customized_extra_dirs` rename - done 2026-06-17
 
 Renamed the whole concept across the role (the old `personal_dirs` name was

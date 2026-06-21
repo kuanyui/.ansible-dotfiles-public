@@ -1085,7 +1085,7 @@ entries" = the XDG term for `.desktop` files).
 
 - [x] **Create `roles/kde_touchscreen_desktop_entries`.** DONE: deploys 6 `.desktop` files
   to `~/.local/share/applications/` (`ansible_`-prefixed per the repo convention - cf.
-  `ansible_bwrap_telegram`; `ansible_display_*` = 3 rotation entries + 1 systemsettings
+  `ansible_telegram`; `ansible_display_*` = 3 rotation entries + 1 systemsettings
   display shortcut, `ansible_take_screenshot_*` = 2 spectacle screenshots that save to
   `$(xdg-user-dir PICTURES)/Screenshots` - resolved at click time, NOT a hardcoded
   `~/Pictures`; the role resolves the same dir at deploy and `mkdir`s it) + the
