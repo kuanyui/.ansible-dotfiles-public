@@ -10,14 +10,18 @@
 # The user's previous setup symlinked these entries into
 # `~/.local/share/applications/` from the legacy stow `xdg-desktop-screen-rotation`
 # package. This role deploys its own `ansible_display_*` / `ansible_take_screenshot_*` copies
-# (different filenames), so a leftover stow symlink is NOT overwritten - it lingers and produces
-# DUPLICATE menu entries next to the managed ones. Refuse until the user unstows, in the
-# same migration-safety spirit as `roles/mpv`. (These are the original stow filenames; the
-# managed copies carry the `ansible_` prefix, hence the names here differ from the deploy
-# loop below.)
-- name: Stat the `.desktop` paths a legacy stow checkout may have symlinked
-  ansible.builtin.stat:
+# (DIFFERENT filenames), so a leftover at the old name is NOT overwritten by the deploy loop
+# below - it lingers and produces DUPLICATE menu entries next to the managed ones. So remove
+# the old names. Safe and idempotent: `state: absent` is a no-op once gone, and on a symlink it
+# unlinks the symlink itself WITHOUT following it - it never writes into the legacy stow
+# checkout (unlike `roles/mpv`, whose managed files reuse the stow names and so MUST refuse
+# rather than delete). Re-runs converge with no manual `stow --delete`. (These are the original
+# stow filenames; the managed copies carry the `ansible_` prefix, hence the names here differ
+# from the deploy loop below.)
+- name: "[IDEMPOTENCE] Remove deprecated file {{ target_home }}/.local/share/applications/{{ item }}"
+  ansible.builtin.file:
     path: "{{ target_home }}/.local/share/applications/{{ item }}"
+    state: absent
   loop:
     - "Horizontal.desktop"
     - "Vertical.desktop"
@@ -25,20 +29,6 @@
     - "Display Settings.desktop"
     - "screenshot_full.desktop"
     - "screenshot_rectangle.desktop"
-  register: _kde_touchscreen_legacy_stow_stat_results
-
-- name: Refuse to leave legacy stow symlinks in place (unstow the old `xdg-desktop-screen-rotation` package first)
-  ansible.builtin.assert:
-    that: not (item.stat.islnk | default(false))
-    msg: >-
-      {{ target_home }}/.local/share/applications/{{ item.item }} is a symlink from the
-      legacy stow `xdg-desktop-screen-rotation` package. This role deploys its own
-      `ansible_display_*` / `ansible_take_screenshot_*` copies, so leaving the old symlink would show
-      DUPLICATE menu entries. Run `stow --delete xdg-desktop-screen-rotation` in the old
-      stow dotfiles repo first, then re-run this playbook.
-  loop: "{{ _kde_touchscreen_legacy_stow_stat_results.results }}"
-  loop_control:
-    label: "{{ item.item }}"
 
 - name: Create `~/.local/bin/` and `~/.local/share/applications/`
   ansible.builtin.file:

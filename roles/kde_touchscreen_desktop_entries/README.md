@@ -77,7 +77,7 @@ Tell me if you want any of these fixed.
 | `.desktop` `Exec` `${HOME}/...` -> rendered absolute `{{ target_home }}/...` | a graphical launch does not inherit the interactive-shell PATH; matches the `roles/apparmor` Telegram launcher pattern |
 | Japanese `GenericName` on the screenshot entries -> English | repo rule: all strings in English |
 | added `MANAGED BY ANSIBLE` headers | repo rule for `~/.local/bin` + `~/.local/share/applications` files |
-| `.desktop` filenames -> `ansible_display_*` / `ansible_take_screenshot_*` | repo convention: `ansible_`-prefixed for ansible-managed desktop entries (cf. `ansible_telegram`, `ansible_aa_firefox_*`); also keeps them distinct from the legacy stow names, so the migration guard can detect leftover symlinks |
+| `.desktop` filenames -> `ansible_display_*` / `ansible_take_screenshot_*` | repo convention: `ansible_`-prefixed for ansible-managed desktop entries (cf. `ansible_telegram`, `ansible_aa_firefox_*`); also keeps them distinct from the legacy stow names, so the migration cleanup can remove the leftover old-named symlinks (`state: absent`, idempotent) without touching the managed copies |
 | screenshot dir hardcoded `$HOME/Pictures/Screenshots` -> `$(xdg-user-dir PICTURES)/Screenshots` | respects the user's real XDG pictures dir instead of assuming `~/Pictures`; the role also `mkdir`s it (spectacle `-o` needs the dir to exist) |
 
 No private data was carried over: the source held no username and no real home paths
