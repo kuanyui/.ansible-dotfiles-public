@@ -3,7 +3,7 @@
 # fpath - see the `ansible-managed/*/zsh-completions` glob in roles/zsh/.zshrc.j2.
 # Two levels: subcommands, then their args - template names for `init`/`env`, unit
 # names for `provision`, `snapshot` actions + existing snapshot names, `user`/`root`
-# for set-/unset-password.
+# for set-/unset-password and set-/unset-ssh-server.
 
 local -a _ivm_subcommands
 _ivm_subcommands=(
@@ -30,6 +30,8 @@ _ivm_subcommands=(
   'unset-password:lock a guest account'\''s password'
   'enable-user-sudo:let `user` sudo via root'\''s password'
   'disable-user-sudo:revert enable-user-sudo'
+  'set-ssh-server:authorize key-based SSH login for a guest account'
+  'unset-ssh-server:revoke a guest account'\''s SSH access'
   'snapshot:incus snapshot (create/list/restore/delete/rename/show)'
   'gui:open a SPICE graphical console'
   'resize:change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk)'
@@ -145,6 +147,7 @@ case "$state" in
         _ivm_provision_units=(${(f)"$(_ivm_unit_names)"})
         _describe -t units 'provision unit' _ivm_provision_units ;;
       set-password|unset-password) compadd -- user root ;;
+      set-ssh-server|unset-ssh-server) compadd -- user root --pubkey; _files ;;
       snapshot)
         # `$words` here: 1=snapshot, then the action, then a snapshot name. Flags may
         # sit between (e.g. `create --reuse`), so skip them while locating the action

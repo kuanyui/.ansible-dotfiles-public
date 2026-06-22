@@ -87,6 +87,8 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 | `overwrite-dotfiles` | Re-push the host-staged dotfiles into the VM (no re-provision). |
 | `set-password <username>` | Set a guest account's login password (e.g. `user` for console/TTY login). Password only - prompted, sent via stdin. |
 | `unset-password <username>` | Lock that account's password. |
+| `set-ssh-server <username> [--pubkey FILE]` | Authorize key-based SSH login for a guest account (`user`/`root`) - e.g. for VS Code Remote-SSH. Appends `--pubkey` (repeatable; default `~/.ssh/id_ed25519.pub`) to that account's `authorized_keys` (idempotent - keeps keys you added by hand) and ensures sshd is up; `root` also gets `PermitRootLogin prohibit-password`. Key-only, no password auth. Port/password tuning lives in the template's `sys.ssh_server`. |
+| `unset-ssh-server <username> [--pubkey FILE]` | Remove that key from the account's `authorized_keys` (reverses `set-ssh-server`); `root` also drops the `PermitRootLogin` override. Leaves sshd running. |
 | `enable-user-sudo` | Opt into in-guest sudo: `user` may sudo, gated by ROOT's password (`Defaults:user rootpw`). Needs `set-password root` first. |
 | `disable-user-sudo` | Remove the sudoers drop-in (back to locked-down default). |
 | `snapshot [create\|list\|restore\|delete] [name]` | Thin wrapper over `incus snapshot`, with the VM filled in. |

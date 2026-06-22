@@ -19,9 +19,14 @@ Builds `ivm`, the launcher that replaces the bash launchers. Design = `REDESIGN.
 
 - `ivm init <template>` - the only one taking a template id; interactive name
   prompt + dir-binding (REDESIGN §8.9).
-- `ivm <shell|shell-root|start|stop|delete|env|overwrite-dotfiles|update|set-password|unset-password|enable-user-sudo|disable-user-sudo|snapshot|gui>` -
-  resolve the VM by cwd via `user.ivm_init_at_dir`; no VM-name arg
-  (`set-password`/`unset-password` take a guest `<username>`).
+- `ivm <shell|shell-root|start|stop|delete|env|overwrite-dotfiles|update|set-password|unset-password|set-ssh-server|unset-ssh-server|enable-user-sudo|disable-user-sudo|snapshot|gui>` -
+  resolve the VM by cwd via `user.ivm_init_at_dir`; no VM-name arg.
+  `set-password`/`unset-password` and `set-ssh-server`/`unset-ssh-server` take a guest
+  `<username>` positional (`user`/`root`); the SSH pair also take optional `--pubkey FILE`
+  (repeatable; default `~/.ssh/id_ed25519.pub`). `set-ssh-server` appends the key to that
+  account's `authorized_keys` (idempotent) + ensures sshd is up (`root` ->
+  `PermitRootLogin prohibit-password`); `unset-ssh-server` removes it (leaves sshd
+  running). Modelled 1:1 on the password pair - do NOT reinvent the arg shape per session.
 - Global: `--dry-run` (print the incus commands, run nothing), `--yes`.
 
 ## Reuse (do not reinvent)

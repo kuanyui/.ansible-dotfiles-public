@@ -10,7 +10,7 @@ Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 `delete`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set-password`/`unset-password`/
-`enable-user-sudo`/`disable-user-sudo`/`info` (target VM status/hw/mounts/storage); `env`; `list` (incus list passthrough);
+`enable-user-sudo`/`disable-user-sudo`/`set-ssh-server`/`unset-ssh-server`/`info` (target VM status/hw/mounts/storage); `env`; `list` (incus list passthrough);
 `adopt` (bring an unmanaged VM - hand-made or older-ivm - under ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
@@ -73,7 +73,7 @@ DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
 CWD_RESOLVED: tuple[str, ...] = (
     "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete",
     "overwrite-dotfiles", "update", "provision", "resize", "mount", "push", "set-password", "unset-password",
-    "enable-user-sudo", "disable-user-sudo", "snapshot", "gui", "info",
+    "enable-user-sudo", "disable-user-sudo", "set-ssh-server", "unset-ssh-server", "snapshot", "gui", "info",
 )
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
 # share one useless generic line. Keys MUST match CWD_RESOLVED exactly.
@@ -95,6 +95,8 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "unset-password": "lock a guest account's password",
     "enable-user-sudo": "let `user` sudo, gated by root's password",
     "disable-user-sudo": "revert enable-user-sudo (remove the sudoers drop-in)",
+    "set-ssh-server": "authorize key-based SSH login for a guest account (e.g. for VS Code Remote-SSH)",
+    "unset-ssh-server": "revoke a guest account's SSH access (reverses set-ssh-server)",
     "snapshot": "`incus snapshot` wrapper (create/list/restore/delete/rename/show)",
     "gui": "open a SPICE graphical console, detached from the shell",
     "info": "show the VM's live state (status/image/hw/network/mounts/storage)",
@@ -115,6 +117,9 @@ SUBCOMMAND_ALIAS_TO_CANONICAL: dict[str, str] = {
 }
 # Subcommands taking a positional `<username>` (set/unset a login password).
 PASSWORD_SUBCOMMANDS: tuple[str, ...] = ("set-password", "unset-password")
+# Subcommands taking a positional `<username>` + optional `--pubkey` (grant/revoke
+# key-based SSH for that guest account). Modelled on the password pair above.
+SSH_SERVER_SUBCOMMANDS: tuple[str, ...] = ("set-ssh-server", "unset-ssh-server")
 
 # Installed on EVERY guest at first provision (the ivm-guest floor: zsh + login
 # shell, sudo, ssh, basics). Defined as a bundle in the distro_packages registry
@@ -806,6 +811,53 @@ def _authorized_keys_install(home: str, owner: str, keys: list[str]) -> str:
         f"cat > {home}/.ssh/authorized_keys <<'IVM_EOF'\n" + "".join(k + "\n" for k in keys) + "IVM_EOF\n"
         f"chmod 600 {home}/.ssh/authorized_keys\n"
         f"chown {owner}:{owner} {home}/.ssh/authorized_keys\n"
+    )
+
+
+# Default host public key authorized by `ivm set-ssh-server` when `--pubkey` is
+# omitted. Matches the `sys.ssh_server.authorized_keys` default in the templates.
+DEFAULT_SSH_PUBKEY: str = "~/.ssh/id_ed25519.pub"
+
+
+def _guest_home_for(username: str) -> str:
+    """Guest home directory for a login account: `/root` for root, `/home/<user>`
+    otherwise. ivm's standard accounts are `user` (-> /home/user) and `root`."""
+    return "/root" if username == "root" else f"/home/{username}"
+
+
+def _authorized_keys_append(home: str, owner: str, keys: list[str]) -> str:
+    """Append each of `keys` to `<home>/.ssh/authorized_keys`, but only if not already
+    present (idempotent). Unlike `_authorized_keys_install`, this never clobbers keys
+    the user added by hand. Creates `.ssh` with the right owner/mode if absent. The
+    per-key `if` keeps it safe under `bash -e` (an absent key is the normal path)."""
+    block: str = "".join(k + "\n" for k in keys)
+    ak: str = f"{home}/.ssh/authorized_keys"
+    return (
+        f"install --directory --mode=700 --owner={owner} --group={owner} {home}/.ssh\n"
+        f"touch {ak}\n"
+        f"chmod 600 {ak}\n"
+        f"chown {owner}:{owner} {ak}\n"
+        f"while IFS= read -r _ivm_key; do\n"
+        f'  if [ -n "$_ivm_key" ] && ! grep -qxF "$_ivm_key" {ak}; then\n'
+        f"    printf '%s\\n' \"$_ivm_key\" >> {ak}\n"
+        f"  fi\n"
+        f"done <<'IVM_EOF'\n{block}IVM_EOF\n"
+    )
+
+
+def _authorized_keys_remove(home: str, owner: str, keys: list[str]) -> str:
+    """Remove exactly `keys` from `<home>/.ssh/authorized_keys` if present (the reverse
+    of `_authorized_keys_append`); any other keys are left untouched. No-op if the file
+    is absent. `|| true` guards the `grep -v` exit-1 when every line was removed."""
+    block: str = "".join(k + "\n" for k in keys)
+    ak: str = f"{home}/.ssh/authorized_keys"
+    return (
+        f"if [ -f {ak} ]; then\n"
+        f"  grep -vxF -f - {ak} > {ak}.ivm_tmp <<'IVM_EOF' || true\n{block}IVM_EOF\n"
+        f"  mv {ak}.ivm_tmp {ak}\n"
+        f"  chmod 600 {ak}\n"
+        f"  chown {owner}:{owner} {ak}\n"
+        f"fi\n"
     )
 
 
@@ -1600,6 +1652,53 @@ def cmd_disable_user_sudo(name: str, *, dry_run: bool) -> None:
     print(f"==> `user` sudo removed on {colorize_vm_name(name)}; back to the locked-down default.", file=sys.stderr)
 
 
+def cmd_set_ssh_server(name: str, username: str, *, pubkey_files: list[str] | None, dry_run: bool) -> None:
+    """Authorize key-based SSH login for `<username>` in the guest - e.g. so VS Code
+    Remote-SSH can attach without going through `incus exec`. Appends the given host
+    public key(s) to that account's `~/.ssh/authorized_keys` (idempotent - never
+    clobbers keys you added by hand) and makes sure sshd is running; `root` also gets
+    `PermitRootLogin prohibit-password`. Key-only, no password auth. Reverse with
+    `unset-ssh-server`. Port / password-login tuning lives in the template's
+    `sys.ssh_server` block, not here."""
+    keys: list[str] = read_authorized_keys(pubkey_files or [DEFAULT_SSH_PUBKEY], Path.cwd())
+    ensure_up(name, dry_run=dry_run)
+    home: str = _guest_home_for(username)
+    # sshd ships in the guest baseline; enable + start it, then authorize the key(s).
+    script: str = "systemctl enable --now sshd 2>/dev/null || systemctl enable --now ssh\n"
+    script += _authorized_keys_append(home, username, keys)
+    if username == "root":
+        # Most distros block root key login by default; allow key-only root via a drop-in.
+        script += (
+            "mkdir -p /etc/ssh/sshd_config.d\n"
+            "printf 'PermitRootLogin prohibit-password\\n' > /etc/ssh/sshd_config.d/ivm-set-ssh-server.conf\n"
+            "systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true\n"
+        )
+    run(["incus", "exec", name, "--", "bash", "-ec", script], dry_run=dry_run)
+    print(f"==> SSH authorized for `{username}` on {colorize_vm_name(name)} "
+          f"({len(keys)} key(s)). Connect with `ssh {username}@<vm-ip>` (see `ivm info` "
+          f"for the address). Reverse with `ivm unset-ssh-server {username}`.", file=sys.stderr)
+
+
+def cmd_unset_ssh_server(name: str, username: str, *, pubkey_files: list[str] | None, dry_run: bool) -> None:
+    """Revoke the access granted by `set-ssh-server` for `<username>`: remove the given
+    host public key(s) from that account's `~/.ssh/authorized_keys` (other keys left
+    untouched), and for `root` drop the `PermitRootLogin` override. sshd itself is left
+    running, since another account may still use it (mirrors `unset-password`, which
+    only locks the account)."""
+    keys: list[str] = read_authorized_keys(pubkey_files or [DEFAULT_SSH_PUBKEY], Path.cwd())
+    ensure_up(name, dry_run=dry_run)
+    home: str = _guest_home_for(username)
+    script: str = _authorized_keys_remove(home, username, keys)
+    if username == "root":
+        script += (
+            "rm -f /etc/ssh/sshd_config.d/ivm-set-ssh-server.conf\n"
+            "systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true\n"
+        )
+    run(["incus", "exec", name, "--", "bash", "-ec", script], dry_run=dry_run)
+    print(f"==> SSH access revoked for `{username}` on {colorize_vm_name(name)} "
+          f"({len(keys)} key(s) removed; sshd left running).", file=sys.stderr)
+
+
 def cmd_update(name: str, *, dry_run: bool) -> None:
     """Refresh metadata + upgrade all packages in the VM (per-family pkg-mgr)."""
     ensure_up(name, dry_run=dry_run)
@@ -2256,6 +2355,7 @@ CWD_RESOLVED_HANDLER: dict[str, Callable[..., None]] = {
     "overwrite-dotfiles": cmd_overwrite_dotfiles, "update": cmd_update, "provision": cmd_provision,
     "set-password": cmd_set_password, "unset-password": cmd_unset_password,
     "enable-user-sudo": cmd_enable_user_sudo, "disable-user-sudo": cmd_disable_user_sudo,
+    "set-ssh-server": cmd_set_ssh_server, "unset-ssh-server": cmd_unset_ssh_server,
     "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info, "resize": cmd_resize,
     "mount": cmd_mount, "push": cmd_push,
 }
@@ -2317,6 +2417,10 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name in PASSWORD_SUBCOMMANDS:
             sp.add_argument("username", help="guest account to set/lock the password for (e.g. `user`, `root`)")
+        if name in SSH_SERVER_SUBCOMMANDS:
+            sp.add_argument("username", help="guest account to grant/revoke key-based SSH for (e.g. `user`, `root`)")
+            sp.add_argument("--pubkey", action="append", metavar="FILE",
+                            help="host public-key file to authorize/remove (repeatable; default ~/.ssh/id_ed25519.pub)")
         if name == "provision":
             sp.add_argument("names", nargs="*",
                             help="unit(s) to install: a distro_package_groups bundle, a thirdparty_software recipe, or a dotfiles feature; omit to list all units + descriptions")
@@ -2422,6 +2526,10 @@ def main() -> None:
         cmd_set_password(name, args.username, dry_run=args.dry_run)
     elif args.subcommand == "unset-password":
         cmd_unset_password(name, args.username, dry_run=args.dry_run)
+    elif args.subcommand == "set-ssh-server":
+        cmd_set_ssh_server(name, args.username, pubkey_files=args.pubkey, dry_run=args.dry_run)
+    elif args.subcommand == "unset-ssh-server":
+        cmd_unset_ssh_server(name, args.username, pubkey_files=args.pubkey, dry_run=args.dry_run)
     elif args.subcommand == "enable-user-sudo":
         cmd_enable_user_sudo(name, dry_run=args.dry_run)
     elif args.subcommand == "disable-user-sudo":
