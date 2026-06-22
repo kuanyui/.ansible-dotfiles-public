@@ -9,3 +9,13 @@ PS1="%F{gray}[%f%B%F{green}%n%f%b@%B%F{blue}%M%f%b%F{gray}:%f%B%F{red}%~%f%b%F{g
 # PS1="%F{247}[%f%B%F{154}%n%f%b@%B%F{81}%M%f%b%F{247}:%f%B%F{231}%~%f%b%F{247}]%f"   # 256 colors
 {%- endraw %}
 {%- endif %}
+# Managed-guest prompt badge: ivm/qvm/pvm each write their launcher id into
+# `/etc/ansible-managed-guest-type`; prefix the prompt with one box glyph per isolation
+# level (full VM = 3, shared-kernel container = 1). The host runs these SAME dotfiles but
+# has no marker, so its prompt is unchanged.
+if [ -r /etc/ansible-managed-guest-type ]; then
+  case "$(cat /etc/ansible-managed-guest-type)" in
+    ivm|qvm) PS1="📦📦📦 ${PS1}" ;;
+    pvm) PS1="📦 ${PS1}" ;;
+  esac
+fi

@@ -459,12 +459,35 @@ def resolve_packages(template: dict[str, Any], registry: dict[str, Any], family:
     return list(dict.fromkeys(packages))
 
 
+# Marker every launcher (ivm/qvm/pvm) drops into its guest so the shared shell dotfiles
+# can badge the prompt. Its CONTENTS are this launcher's id; the shared PS1 snippet
+# (`roles/_shared_j2_snippets/templates/{zsh,bash}_ps1_*.j2`) reads it and prefixes the
+# prompt with one box glyph per isolation level (full VM = 3, container = 1). The host
+# runs the SAME dotfiles but has no marker, so its prompt is unchanged. pvm is a podman
+# container (shared-kernel, weaker isolation) -> one glyph.
+MANAGED_GUEST_TYPE_MARKER_PATH: str = "/etc/ansible-managed-guest-type"
+GUEST_TYPE: str = "pvm"
+
+
+def guest_type_marker_script() -> str:
+    """Shell (run as root in the build container) writing this launcher's id (the
+    `GUEST_TYPE` constant) to `MANAGED_GUEST_TYPE_MARKER_PATH`, baked into the committed
+    image so every container off it badges the prompt via the shared PS1 snippet."""
+    return (
+        f"echo '==> managed-guest marker: {MANAGED_GUEST_TYPE_MARKER_PATH} ({GUEST_TYPE})' >&2\n"
+        f"printf '%s\\n' {GUEST_TYPE} > {MANAGED_GUEST_TYPE_MARKER_PATH}\n"
+    )
+
+
 def build_provision_script(template: dict[str, Any], distro_registry: dict[str, Any],
                            tp_registry: dict[str, Any], family: str) -> str:
     """The shell run as ROOT in the build container: packages -> create user ->
     bundle post_installs -> thirdparty recipes -> the template's post_install_script."""
     packages: list[str] = resolve_packages(template, distro_registry, family)
     parts: list[str] = ["set -e"]
+    # Bake the managed-guest marker into the image so every container off it badges the
+    # prompt; the shared PS1 snippet reads it (pvm = one box glyph, container isolation).
+    parts.append(guest_type_marker_script())
     if packages:
         parts.append(install_packages_script(family, packages))
     parts.append(CREATE_USER_SCRIPT)

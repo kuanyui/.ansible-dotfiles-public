@@ -453,22 +453,16 @@ provision_distro_packages_desktop_lxqt:
 # `pasta` (from `passt`) for the unprivileged network namespace; newuidmap/newgidmap
 # (the `uidmap` package on Debian - bundled in shadow-utils/shadow on Fedora/openSUSE);
 # and /etc/subuid + /etc/subgid ranges for `user`. `fuse-overlayfs` covers rootless
-# overlay storage on older kernels (native otherwise). `podman-docker` is the Docker-CLI
-# compat shim - a `/usr/bin/docker` wrapper that runs podman + docker(1) man-page links -
-# so `docker ...` commands work unchanged. It prints "Emulate Docker CLI using podman" to
-# stderr on each call unless /etc/containers/nodocker exists; we leave that file ABSENT on
-# purpose (the line is a deliberate this-is-actually-podman signal, not noise to silence).
-# GUEST-ONLY (dict form: `post_install` runs as ROOT in an ivm guest). Package names verified
-# 2026-06: `passt` / `fuse-overlayfs` via repology (Debian trixie+/Fedora/openSUSE); `podman-docker`
-# is the SAME name in all three default repos (packages.debian.org/trixie,
-# packages.fedoraproject.org/pkgs/podman, openSUSE TW) -> `__common__`; the Debian-only `uidmap`
+# overlay storage on older kernels (native otherwise). GUEST-ONLY (dict form: `post_install`
+# runs as ROOT in an ivm guest). Package names verified via repology 2026-06 (`passt`
+# Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three); the Debian-only `uidmap`
 # split is the one divergence. (No HOST toggle - dict-form bundles are guest-only.)
 provision_distro_packages_podman_rootless:
   description: "rootless podman in the guest - podman (+ docker CLI compat), pasta, subuid/subgid + linger"
   __common__:
     install:
       - podman
-      - podman-docker   # `docker`-CLI compat shim -> podman (same pkg name all 3 families)
+      - podman-docker   # docker->podman CLI shim (same name all 3 families)
       - passt
       - fuse-overlayfs
     post_install: |

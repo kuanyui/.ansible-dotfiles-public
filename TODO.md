@@ -5,17 +5,41 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## guest prompt badge: ivm/qvm/pvm prompt prefix (📦 = isolation level)
+
+Prompt prefix flagging "inside a managed guest"; the box-glyph count encodes isolation
+strength. All three launchers share ONE dotfiles set, so the mechanism is generic (NOT
+ivm-only). Marker `/etc/ansible-managed-guest-type`, contents = launcher id; the shared
+PS1 snippet reads it and the host (no marker) is unchanged.
+
+- [x] shared PS1 j2 (`roles/_shared_j2_snippets/templates/{zsh,bash}_ps1_*.j2`): read the
+  marker, `case` -> `ivm`|`qvm` = 📦📦📦 (full VM), `pvm` = 📦 (container); reuses the
+  existing `[ -f ... ] &&` host-harmless rc idiom
+- [x] ivm writes the marker (`ivm`): `provision_script` (init) + `cmd_overwrite_dotfiles`
+  (backfills VMs created before this)
+- [x] qvm writes the marker (`qvm`): `cmd_provision` always writes it (QGA root script)
+- [x] pvm writes the marker (`pvm`): baked into the image by `build_provision_script`
+- [x] verified: py_compile x3 + jinja render + bash/zsh execution test (4 cases correct)
+- [ ] sandbox: this exec env cannot build the podman image (fails at the apt build step -
+  no systemd session / no outbound net, matching the note below) -> run
+  `make vm-incus-sandbox` / `vm-podman-sandbox` / `sandbox-essentials-user` on a real host
+- [ ] apply to existing guests: re-run `make vm-incus-install` (re-stage dotfiles) then
+  `ivm overwrite-dotfiles` (or `make vm-incus-push-dotfiles`); new guests get it automatically
+
 ## ivm provision: dev_go / dev_node / dev_gvm / dev_nvm (lang toolchains + version managers)
 
 - [x] `dev_go` distro bundle - the main `go` (Debian `golang-go` / Suse `go` / RedHat `golang`)
 - [x] `dev_node` distro bundle - the main `node` (`nodejs` + `npm`)
-- [x] `dev_gvm` = distro prereqs (`bison`/`make`/`binutils`) + thirdparty recipe (gvm pinned @`dd652539`, `gvm install -B` binary; for pinned/old Go e.g. go1.9)
+- [x] `dev_gvm` = distro deps (`bison`/`gcc`/`make`/`binutils` + Debian `bsdextrautils` for `hexdump`) + thirdparty recipe (gvm pinned @`dd652539`, `gvm install -B`; for pinned/old Go e.g. go1.9)
 - [x] `dev_nvm` thirdparty recipe (nvm `v0.40.5` + current LTS Node)
 - [x] register all 5 keys in `_shared_prebuilt_provision_assets` render dict (distro + thirdparty)
 - [x] shell wiring via `.zshrc.j2` / `.bashrc.j2` templates (guarded; survives the dotfiles push that runs AFTER recipes)
-- [ ] **`make vm-incus-sandbox`** - confirm render dict -> JSON, completions, template render
-- [ ] **real-guest verify** (sandbox is podman, not an incus VM): `ivm provision dev_gvm` then `gvm install go1.9.7 -B` + `go version`; nvm LTS; templated source lines load both
-- [ ] KNOWN/accepted: gvm `-B` does NOT verify tarball SHA256 (TLS-only) - documented in the recipe; user chose gvm over goenv/g knowingly
+- [x] **live-tested on debian 13** (exec env is an incus KVM): go1.9.7 binary downloads + builds + runs OK. Found+fixed via real runs:
+  - gvm hard-requires `hexdump` + `gcc` even for `-B` (was missing/excluded) -> added to the `dev_gvm` distro bundle
+  - gvm strip-loop `[ -f ] && sed` aborted the provision under ivm's `bash -ec` when the last rc file was absent -> fixed with `if/fi`
+  - `dev_nvm` probe `test -s nvm.sh` marked a C-c-interrupted install "done" forever -> fixed: probe `~/.nvm/alias/default` (last step), so partials re-run
+- [ ] **`make vm-incus-sandbox`** (host-side wiring) - blocked in THIS env (no rootless-podman: missing passt + no systemd session); run on a real host
+- [ ] KNOWN/accepted: gvm `-B` does NOT verify tarball SHA256 (TLS-only, verified in gvm `scripts/install`) - documented in the recipe; user chose gvm over goenv/g knowingly
 
 ## incus_vm storage pool: re-run footgun + reboot-disappearance fix
 

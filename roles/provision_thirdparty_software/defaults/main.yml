@@ -99,8 +99,9 @@ provision_thirdparty_software_dev_android:
 #
 # Pinned to commit dd652539 (moovweb/gvm master HEAD, 2023-08-14): gvm has NO usable release
 # tag (newest 1.0.22 is from 2014), so a commit SHA is the only pin. Installs are BINARY via
-# `gvm install <ver> -B` - downloads the PREBUILT toolchain from go.dev/dl, no C compiler /
-# source bootstrap.
+# `gvm install <ver> -B` - downloads the PREBUILT toolchain from go.dev/dl (no source bootstrap).
+# gvm STILL hard-requires bison/gcc/binutils/hexdump present (it checks them even for `-B`,
+# verified live) - those come from the paired `dev_gvm` distro bundle, applied first.
 #
 # SUPPLY-CHAIN NOTE (verified against gvm scripts/install, 2026-06): gvm's `-B` path downloads
 # over HTTPS from go.dev/dl but does NOT verify the tarball SHA256 (unlike goenv / g / the
@@ -122,9 +123,12 @@ provision_thirdparty_software_dev_gvm:
         curl -s -S -L "https://raw.githubusercontent.com/moovweb/gvm/${GVM_PIN}/binscripts/gvm-installer" | bash -s -- "${GVM_PIN}"'
       # gvm-installer self-appends a `source ~/.gvm/scripts/gvm` line to whatever rc files it
       # detects (not configurable). Strip them so the templated ~/.zshrc/~/.bashrc is the ONE
-      # source (no double-source via a surviving .zprofile/.bash_profile/.zshenv).
+      # source (no double-source via a surviving .zprofile/.bash_profile/.zshenv). Use `if/fi`,
+      # NOT `[ -f ] && sed`: the recipe runs under ivm's `bash -ec`, so a trailing `&&` that is
+      # FALSE on the last rc file (e.g. an absent ~/.zshenv) makes the loop exit non-zero and
+      # aborts the whole provision. `if/fi` exits 0 when the file is absent.
       su - user -c 'for rc in ~/.bashrc ~/.zshrc ~/.bash_profile ~/.zprofile ~/.profile ~/.zshenv; do
-        [ -f "$rc" ] && sed -i "/\.gvm\/scripts\/gvm/d" "$rc"
+        if [ -f "$rc" ]; then sed -i "/\.gvm\/scripts\/gvm/d" "$rc"; fi
       done'
       su - user -c 'echo "==> gvm ready. Install a version:  gvm install go1.9.7 -B   then:  gvm use go1.9.7" >&2'
 
@@ -141,7 +145,11 @@ provision_thirdparty_software_dev_gvm:
 provision_thirdparty_software_dev_nvm:
   description: "nvm (Node Version Manager) v0.40.5 + current LTS Node - alongside distro node"
   __common__:
-    already_installed: su - user -c 'test -s ~/.nvm/nvm.sh'
+    # Probe the LAST step's artifact (the `default` alias from `nvm alias default`), NOT just
+    # nvm.sh. An install interrupted mid-way (nvm cloned, but `nvm install --lts` not done) then
+    # FAILS this probe and correctly RE-RUNS to completion, instead of nvm.sh's mere presence
+    # marking it "installed" forever.
+    already_installed: su - user -c 'test -f ~/.nvm/alias/default'
     install_script: |
       # PROFILE=/dev/null: no rc self-wiring (the template wires it). Pinned tag v0.40.5.
       su - user -c 'PROFILE=/dev/null bash -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash"'

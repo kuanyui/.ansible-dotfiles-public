@@ -774,6 +774,25 @@ def cmd_list_provision_units(shared_root: Path) -> None:
     print(("    " + ", ".join(dotfiles)) if dotfiles else "    (none)")
 
 
+# Marker every launcher (ivm/qvm/pvm) drops into its guest so the shared shell dotfiles
+# can badge the prompt. Its CONTENTS are this launcher's id; the shared PS1 snippet
+# (`roles/_shared_j2_snippets/templates/{zsh,bash}_ps1_*.j2`) reads it and prefixes the
+# prompt with one box glyph per isolation level (full VM = 3, container = 1). The host
+# runs the SAME dotfiles but has no marker, so its prompt is unchanged.
+MANAGED_GUEST_TYPE_MARKER_PATH: str = "/etc/ansible-managed-guest-type"
+GUEST_TYPE: str = "qvm"
+
+
+def guest_type_marker_script() -> str:
+    """Shell (run as root in the guest) writing this launcher's id (the `GUEST_TYPE`
+    constant) to `MANAGED_GUEST_TYPE_MARKER_PATH`, the marker the shared PS1 snippet keys
+    its box-glyph prompt prefix off. Idempotent (truncating write)."""
+    return (
+        f"echo '==> managed-guest marker: {MANAGED_GUEST_TYPE_MARKER_PATH} ({GUEST_TYPE})' >&2\n"
+        f"printf '%s\\n' {GUEST_TYPE} > {MANAGED_GUEST_TYPE_MARKER_PATH}\n"
+    )
+
+
 def cmd_provision(vm_record: VmRecord, unit_names: list[str], shared_root: Path,
                   *, dry_run: bool) -> None:
     """Install named units onto an EXISTING VM via the QEMU Guest Agent - the post-`init`
@@ -809,7 +828,9 @@ def cmd_provision(vm_record: VmRecord, unit_names: list[str], shared_root: Path,
                 f"  thirdparty software: {', '.join(sorted(thirdparty_registry))}\n"
                 f"  dotfiles features:   {', '.join(available_features)}")
     ansible_os_family: str = vm_ansible_os_family(vm_record)
-    script: str = ""
+    # Always (re)write the managed-guest marker so the shared PS1 snippet can badge the
+    # prompt; `script` is therefore never empty, so the qga_run_script below always runs.
+    script: str = guest_type_marker_script()
     if distro_bundles:
         packages: list[str] = []
         for bundle in distro_bundles:

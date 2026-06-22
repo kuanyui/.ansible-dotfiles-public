@@ -940,6 +940,25 @@ def thirdparty_install_script(recipes: list[dict[str, Any]]) -> str:
     return script
 
 
+# Marker every launcher (ivm/qvm/pvm) drops into its guest so the shared shell dotfiles
+# can badge the prompt. Its CONTENTS are this launcher's id; the shared PS1 snippet
+# (`roles/_shared_j2_snippets/templates/{zsh,bash}_ps1_*.j2`) reads it and prefixes the
+# prompt with one box glyph per isolation level (full VM = 3, container = 1). The host
+# runs the SAME dotfiles but has no marker, so its prompt is unchanged.
+MANAGED_GUEST_TYPE_MARKER_PATH: str = "/etc/ansible-managed-guest-type"
+GUEST_TYPE: str = "ivm"
+
+
+def guest_type_marker_script() -> str:
+    """Shell (run as root in the guest) writing this launcher's id (the `GUEST_TYPE`
+    constant) to `MANAGED_GUEST_TYPE_MARKER_PATH`, the marker the shared PS1 snippet keys
+    its box-glyph prompt prefix off. Idempotent (truncating write)."""
+    return (
+        f"echo '==> managed-guest marker: {MANAGED_GUEST_TYPE_MARKER_PATH} ({GUEST_TYPE})' >&2\n"
+        f"printf '%s\\n' {GUEST_TYPE} > {MANAGED_GUEST_TYPE_MARKER_PATH}\n"
+    )
+
+
 def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: Path,
                      shared_prebuilt_provision_assets_root: Path) -> str:
     """First-provision shell, run as root via `incus exec`: install packages
@@ -970,6 +989,9 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: P
         # the idmapped mount contents alone).
         'chown user:user /home/user\n'
     )
+    # Drop the managed-guest marker right after the core guest identity exists (user +
+    # zsh shells set up); the shared PS1 snippet keys its box-glyph prompt prefix off it.
+    script += guest_type_marker_script()
     if is_gui:
         # Seed ~/.config/user-dirs.dirs + ~/{Downloads,Desktop,...} now, as `user`
         # (a minimal icewm/lightdm session may not run this at login). It never
@@ -1589,6 +1611,9 @@ def cmd_overwrite_dotfiles(name: str, shared_prebuilt_provision_assets_root: Pat
     ensure_up(name, dry_run=dry_run)
     for push_cmd in push_baseline_dotfiles_commands(vm_ansible_os_family(name, dry_run=dry_run), name, shared_prebuilt_provision_assets_root):
         run(push_cmd, dry_run=dry_run)
+    # Ensure the managed-guest marker too, so a VM created before this existed lights up
+    # the box-glyph prompt after a plain `overwrite-dotfiles` (no full re-provision).
+    run(["incus", "exec", name, "--", "bash", "-ec", guest_type_marker_script()], dry_run=dry_run)
     print(f"==> dotfiles re-pushed into {colorize_vm_name(name)} (/home/user + /root).", file=sys.stderr)
 
 

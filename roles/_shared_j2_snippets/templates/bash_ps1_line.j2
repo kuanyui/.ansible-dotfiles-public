@@ -3,3 +3,13 @@ PS1='\[\e[1;31m\]\u@\h:\W\$\[\e[m\] '
 {%- else -%}
 PS1='\[\e[1;32m\]\u@\h\[\e[m\]:\[\e[1;34m\]\W\[\e[1;33m\]\$\[\e[m\] '
 {%- endif %}
+# Managed-guest prompt badge: ivm/qvm/pvm each write their launcher id into
+# `/etc/ansible-managed-guest-type`; prefix the prompt with one box glyph per isolation
+# level (full VM = 3, shared-kernel container = 1). The host runs these SAME dotfiles but
+# has no marker, so its prompt is unchanged.
+if [ -r /etc/ansible-managed-guest-type ]; then
+  case "$(cat /etc/ansible-managed-guest-type)" in
+    ivm|qvm) PS1="📦📦📦 ${PS1}" ;;
+    pvm) PS1="📦 ${PS1}" ;;
+  esac
+fi
