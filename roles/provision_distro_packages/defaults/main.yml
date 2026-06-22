@@ -303,21 +303,25 @@ provision_distro_packages_dev_node:
     - nodejs
     - npm
 
-# Prerequisites for `gvm` (the Go Version Manager THIRDPARTY recipe,
-# roles/provision_thirdparty_software). PAIRS with the `dev_gvm` THIRDPARTY recipe -
-# `ivm provision dev_gvm` applies BOTH, distro FIRST (cmd_provision order), so gvm's
-# prereqs are present when its installer runs. These cover the gvm-installer's checks +
-# the `gvm install <ver> -B` BINARY path (`curl`/`git` already ride in via the guest
-# baseline). `-B` downloads PREBUILT toolchains, so NO C compiler is needed; only SOURCE
-# builds (non `-B`) would want `gcc`, deliberately left out (you picked gvm for binary
-# installs). `bison`/`make`/`binutils` are identically named across the three families'
-# default repos.
+# gvm (Go Version Manager) + the deps it HARD-REQUIRES. PAIRS with the `dev_gvm` THIRDPARTY
+# recipe - `ivm provision dev_gvm` applies BOTH, distro FIRST (cmd_provision order), so the
+# deps are present when gvm loads. VERIFIED LIVE (debian 13, 2026-06): gvm checks for
+# `bison` + `gcc` + `binutils` + `hexdump` UNCONDITIONALLY - even `gvm install <ver> -B`
+# (binary, no compile) refuses without them, so `gcc` IS required (not optional, as first
+# assumed). On Debian `hexdump` is split into `bsdextrautils` (NOT installed by default); on
+# openSUSE/Fedora it rides in base `util-linux`. bison/gcc/make/binutils are identically named
+# across the three families' default repos.
 provision_distro_packages_dev_gvm:
-  description: "gvm (Go Version Manager) + build prereqs - pinned/old Go e.g. go1.9, binary `-B` installs"
+  description: "gvm (Go Version Manager) for pinned/old Go e.g. go1.9 (+ its bison/gcc/binutils/hexdump deps)"
   __common__:
     - bison
+    - gcc
     - make
     - binutils
+  Debian:
+    - bsdextrautils   # `hexdump` - gvm needs it to even load; Debian split it out of util-linux (not default-installed)
+  Suse: []            # hexdump rides in base util-linux; compiler deps come from __common__
+  RedHat: []          # hexdump rides in base util-linux; compiler deps come from __common__
 
 # A complete, autologin icewm desktop - the WM/DE + display-manager layer that `gui_x11`
 # (the X server stack) deliberately leaves out. RIDES ON gui_x11: provision them together,
@@ -449,15 +453,22 @@ provision_distro_packages_desktop_lxqt:
 # `pasta` (from `passt`) for the unprivileged network namespace; newuidmap/newgidmap
 # (the `uidmap` package on Debian - bundled in shadow-utils/shadow on Fedora/openSUSE);
 # and /etc/subuid + /etc/subgid ranges for `user`. `fuse-overlayfs` covers rootless
-# overlay storage on older kernels (native otherwise). GUEST-ONLY (dict form: `post_install`
-# runs as ROOT in an ivm guest). Package names verified via repology 2026-06 (`passt`
-# Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three); the Debian-only `uidmap`
+# overlay storage on older kernels (native otherwise). `podman-docker` is the Docker-CLI
+# compat shim - a `/usr/bin/docker` wrapper that runs podman + docker(1) man-page links -
+# so `docker ...` commands work unchanged. It prints "Emulate Docker CLI using podman" to
+# stderr on each call unless /etc/containers/nodocker exists; we leave that file ABSENT on
+# purpose (the line is a deliberate this-is-actually-podman signal, not noise to silence).
+# GUEST-ONLY (dict form: `post_install` runs as ROOT in an ivm guest). Package names verified
+# 2026-06: `passt` / `fuse-overlayfs` via repology (Debian trixie+/Fedora/openSUSE); `podman-docker`
+# is the SAME name in all three default repos (packages.debian.org/trixie,
+# packages.fedoraproject.org/pkgs/podman, openSUSE TW) -> `__common__`; the Debian-only `uidmap`
 # split is the one divergence. (No HOST toggle - dict-form bundles are guest-only.)
 provision_distro_packages_podman_rootless:
-  description: "rootless podman in the guest - podman, pasta, subuid/subgid + linger"
+  description: "rootless podman in the guest - podman (+ docker CLI compat), pasta, subuid/subgid + linger"
   __common__:
     install:
       - podman
+      - podman-docker   # `docker`-CLI compat shim -> podman (same pkg name all 3 families)
       - passt
       - fuse-overlayfs
     post_install: |
