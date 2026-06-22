@@ -44,6 +44,9 @@
         'emacs': provision_distro_packages_emacs,
         'dev_qt': provision_distro_packages_dev_qt,
         'dev_android': provision_distro_packages_dev_android,
+        'dev_go': provision_distro_packages_dev_go,
+        'dev_node': provision_distro_packages_dev_node,
+        'dev_gvm': provision_distro_packages_dev_gvm,
         'desktop_icewm': provision_distro_packages_desktop_icewm,
         'desktop_lxqt': provision_distro_packages_desktop_lxqt,
         'guest_spice': provision_distro_packages_guest_spice,
@@ -65,6 +68,8 @@
         'codex': provision_thirdparty_software_codex,
         'dev_rust': provision_thirdparty_software_dev_rust,
         'dev_android': provision_thirdparty_software_dev_android,
+        'dev_gvm': provision_thirdparty_software_dev_gvm,
+        'dev_nvm': provision_thirdparty_software_dev_nvm,
       } | to_nice_json }}
 
 # ---------- Stage the feature-first dotfiles tree ----------

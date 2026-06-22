@@ -90,3 +90,61 @@ provision_thirdparty_software_dev_android:
         yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null
         "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" platform-tools "platforms;android-36" "build-tools;36.0.0"
       '
+
+# Go Version Manager (gvm, moovweb/gvm) - user-scoped, for installing SPECIFIC/old Go
+# versions (e.g. go1.9). PAIRS with the `dev_gvm` DISTRO bundle (bison/make/binutils),
+# applied first. You typically use EITHER the distro go (`dev_go`) OR gvm-managed versions;
+# `gvm use <ver> --default` makes that version your default go (shadowing distro go - that
+# is the normal way to drive go through gvm, and fine).
+#
+# Pinned to commit dd652539 (moovweb/gvm master HEAD, 2023-08-14): gvm has NO usable release
+# tag (newest 1.0.22 is from 2014), so a commit SHA is the only pin. Installs are BINARY via
+# `gvm install <ver> -B` - downloads the PREBUILT toolchain from go.dev/dl, no C compiler /
+# source bootstrap.
+#
+# SUPPLY-CHAIN NOTE (verified against gvm scripts/install, 2026-06): gvm's `-B` path downloads
+# over HTTPS from go.dev/dl but does NOT verify the tarball SHA256 (unlike goenv / g / the
+# official golang.org/dl wrapper, which do). Integrity rests on TLS alone. Stated, not hidden.
+#
+# Shell wiring lives in the TEMPLATED ~/.zshrc + ~/.bashrc (file-existence guarded; see
+# roles/zsh, roles/bash), so it survives ivm's dotfiles push (which OVERWRITES .zshrc/.bashrc
+# AFTER recipes run). The recipe strips gvm-installer's own self-added source lines so the
+# template stays the single source.
+provision_thirdparty_software_dev_gvm:
+  description: "gvm (Go Version Manager) for pinned/old Go e.g. go1.9 - binary installs (-B), alongside distro go"
+  __common__:
+    already_installed: su - user -c 'test -s ~/.gvm/scripts/gvm'
+    install_script: |
+      # Pin to a commit SHA (no release tag). gvm-installer takes the git ref as $1; fetch
+      # the installer at that ref too. Piped (not `bash < <()`) so the outer login shell need
+      # not be bash/zsh.
+      su - user -c 'GVM_PIN=dd652539fa4b771840846f8319fad303c7d0a8d2
+        curl -s -S -L "https://raw.githubusercontent.com/moovweb/gvm/${GVM_PIN}/binscripts/gvm-installer" | bash -s -- "${GVM_PIN}"'
+      # gvm-installer self-appends a `source ~/.gvm/scripts/gvm` line to whatever rc files it
+      # detects (not configurable). Strip them so the templated ~/.zshrc/~/.bashrc is the ONE
+      # source (no double-source via a surviving .zprofile/.bash_profile/.zshenv).
+      su - user -c 'for rc in ~/.bashrc ~/.zshrc ~/.bash_profile ~/.zprofile ~/.profile ~/.zshenv; do
+        [ -f "$rc" ] && sed -i "/\.gvm\/scripts\/gvm/d" "$rc"
+      done'
+      su - user -c 'echo "==> gvm ready. Install a version:  gvm install go1.9.7 -B   then:  gvm use go1.9.7" >&2'
+
+# Node Version Manager (nvm, nvm-sh/nvm) - user-scoped, for SPECIFIC/newer Node versions.
+# Pinned to v0.40.5 (latest, fixes CVE-2026-10796). Installs nvm + the current LTS Node as
+# the default. Coexists with the distro node (`dev_node`); nvm's node takes PATH precedence
+# when active.
+#
+# The installer needs bash (NOT sh). Run with PROFILE=/dev/null so it does NOT self-wire any
+# rc file - shell wiring lives in the TEMPLATED ~/.zshrc + ~/.bashrc (guarded; survives the
+# dotfiles push that overwrites .zshrc/.bashrc after recipes). nvm is incompatible with a
+# preset npm `prefix`; the ivm guest sets none (no conflict) - a guest that ALSO ran the
+# `codex` recipe would have ~/.npmrc prefix set, an edge case.
+provision_thirdparty_software_dev_nvm:
+  description: "nvm (Node Version Manager) v0.40.5 + current LTS Node - alongside distro node"
+  __common__:
+    already_installed: su - user -c 'test -s ~/.nvm/nvm.sh'
+    install_script: |
+      # PROFILE=/dev/null: no rc self-wiring (the template wires it). Pinned tag v0.40.5.
+      su - user -c 'PROFILE=/dev/null bash -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash"'
+      # Install the current LTS Node + make it the default for new shells. (One-shot source of
+      # nvm.sh here only to drive the install; persistent load is via the template.)
+      su - user -c 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm install --lts; nvm alias default "lts/*"'

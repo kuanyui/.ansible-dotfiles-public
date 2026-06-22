@@ -5,6 +5,18 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## ivm provision: dev_go / dev_node / dev_gvm / dev_nvm (lang toolchains + version managers)
+
+- [x] `dev_go` distro bundle - the main `go` (Debian `golang-go` / Suse `go` / RedHat `golang`)
+- [x] `dev_node` distro bundle - the main `node` (`nodejs` + `npm`)
+- [x] `dev_gvm` = distro prereqs (`bison`/`make`/`binutils`) + thirdparty recipe (gvm pinned @`dd652539`, `gvm install -B` binary; for pinned/old Go e.g. go1.9)
+- [x] `dev_nvm` thirdparty recipe (nvm `v0.40.5` + current LTS Node)
+- [x] register all 5 keys in `_shared_prebuilt_provision_assets` render dict (distro + thirdparty)
+- [x] shell wiring via `.zshrc.j2` / `.bashrc.j2` templates (guarded; survives the dotfiles push that runs AFTER recipes)
+- [ ] **`make vm-incus-sandbox`** - confirm render dict -> JSON, completions, template render
+- [ ] **real-guest verify** (sandbox is podman, not an incus VM): `ivm provision dev_gvm` then `gvm install go1.9.7 -B` + `go version`; nvm LTS; templated source lines load both
+- [ ] KNOWN/accepted: gvm `-B` does NOT verify tarball SHA256 (TLS-only) - documented in the recipe; user chose gvm over goenv/g knowingly
+
 ## incus_vm storage pool: re-run footgun + reboot-disappearance fix
 
 A host set up with `make INCUS_STORAGE_POOL_SOURCE=/data/...img ... incus-install`

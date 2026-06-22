@@ -11,6 +11,16 @@
 # file is absent.
 [ -f "${HOME}/.local-lang-pkg-managers/local-lang-pkg-managers.env.sh" ] && . "${HOME}/.local-lang-pkg-managers/local-lang-pkg-managers.env.sh"
 
+### ============================================
+### Version managers: nvm / gvm (opt-in via `ivm provision dev_nvm` / `dev_gvm`)
+### ============================================
+# Sourced HERE (interactive rc), not ~/.zshenv, so they load only for interactive shells -
+# and survive `ivm`'s dotfiles push because this template IS the pushed file. Each line is a
+# harmless no-op when the tool is absent (the `[ -s ... ]` guard).
+export NVM_DIR="${HOME}/.nvm"
+[ -s "${NVM_DIR}/nvm.sh" ] && . "${NVM_DIR}/nvm.sh"
+[ -s "${HOME}/.gvm/scripts/gvm" ] && . "${HOME}/.gvm/scripts/gvm"
+
 {{ shared_zsh_ps1_lines }}
 ### ============================================
 # [Backspace] don't seem / as part of word.

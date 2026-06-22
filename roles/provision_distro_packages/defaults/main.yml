@@ -278,6 +278,47 @@ provision_distro_packages_dev_android:
   RedHat:
     - java-21-openjdk-devel
 
+# Go toolchain from the distro repos - the MAIN `go` for general use (distro-signed,
+# distro-updated). Coexists with `dev_gvm` (the gvm version manager): distro `go` stays
+# `/usr/bin/go`, gvm sits on top for SPECIFIC/old versions (e.g. go1.9 via `gvm install
+# go1.9 -B`). Package name diverges per family (verified against each family's default repo):
+# Debian `golang-go` (the compiler; `golang` is just the meta), openSUSE `go` (meta -> current
+# `go1.x`), Fedora `golang`.
+provision_distro_packages_dev_go:
+  description: "Go toolchain from distro repos (the main `go`; pair `dev_gvm` for pinned/old versions)"
+  Debian:
+    - golang-go
+  Suse:
+    - go
+  RedHat:
+    - golang
+
+# Node.js + npm from the distro repos - the MAIN `node`/`npm` for general use. Coexists
+# with `dev_nvm` (nvm): distro node stays `/usr/bin/node`, nvm sits on top for
+# SPECIFIC/newer versions (`nvm install <ver>`). `nodejs` + `npm` are the package names in
+# all three families' default repos.
+provision_distro_packages_dev_node:
+  description: "Node.js + npm from distro repos (the main `node`; pair `dev_nvm` for pinned/newer versions)"
+  __common__:
+    - nodejs
+    - npm
+
+# Prerequisites for `gvm` (the Go Version Manager THIRDPARTY recipe,
+# roles/provision_thirdparty_software). PAIRS with the `dev_gvm` THIRDPARTY recipe -
+# `ivm provision dev_gvm` applies BOTH, distro FIRST (cmd_provision order), so gvm's
+# prereqs are present when its installer runs. These cover the gvm-installer's checks +
+# the `gvm install <ver> -B` BINARY path (`curl`/`git` already ride in via the guest
+# baseline). `-B` downloads PREBUILT toolchains, so NO C compiler is needed; only SOURCE
+# builds (non `-B`) would want `gcc`, deliberately left out (you picked gvm for binary
+# installs). `bison`/`make`/`binutils` are identically named across the three families'
+# default repos.
+provision_distro_packages_dev_gvm:
+  description: "gvm (Go Version Manager) + build prereqs - pinned/old Go e.g. go1.9, binary `-B` installs"
+  __common__:
+    - bison
+    - make
+    - binutils
+
 # A complete, autologin icewm desktop - the WM/DE + display-manager layer that `gui_x11`
 # (the X server stack) deliberately leaves out. RIDES ON gui_x11: provision them together,
 # `ivm provision gui_x11 desktop_icewm`. The shared packages + the (identical) setup wiring
