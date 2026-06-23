@@ -2097,6 +2097,8 @@ def cmd_info(name: str, root: Path) -> None:
         print("  forwards:")
         for _expose_device_name, expose_host_port, expose_guest_port in expose_forwards:
             print(f"    host :{expose_host_port} -> guest :{expose_guest_port}")
+    else:
+        print("  forwards:      (none; `ivm expose <port>` to add)")
     # Host->guest mounts are the non-root disk devices ivm attaches; skip the
     # `_shadow_` masking devices (internal, not user-meaningful).
     mount_lines: list[str] = [
