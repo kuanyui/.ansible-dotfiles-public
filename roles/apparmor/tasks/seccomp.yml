@@ -1,0 +1,113 @@
+---
+# =============================================================================
+# Hardened seccomp launchers (see roles/apparmor/docs/SECCOMP.md)
+# =============================================================================
+# Deploys the generic wrapper ~/.local/bin/seccomp-launch and derives a
+# `(hardened)` .desktop per registered app, routing its GUI launch through the
+# wrapper (transient systemd --user service + seccomp syscall denylist). All
+# user-home only - no privileged tasks, so no `become` anywhere in this file.
+
+- name: "[seccomp] Resolve home-relative paths for {{ apparmor_target_user }}"
+  ansible.builtin.set_fact:
+    _seccomp_bin_dir: "/home/{{ apparmor_target_user }}/.local/bin"
+    _seccomp_apps_dir: "/home/{{ apparmor_target_user }}/.local/share/applications"
+    _seccomp_wrapper: "/home/{{ apparmor_target_user }}/.local/bin/seccomp-launch"
+  tags: [apparmor, seccomp]
+
+- name: Create directory {{ _seccomp_bin_dir }}
+  ansible.builtin.file:
+    path: "{{ _seccomp_bin_dir }}"
+    state: directory
+    owner: "{{ apparmor_target_user }}"
+    mode: '0755'
+  tags: [apparmor, seccomp]
+
+- name: Write seccomp launcher wrapper to {{ _seccomp_wrapper }}
+  ansible.builtin.copy:
+    src: seccomp-launch
+    dest: "{{ _seccomp_wrapper }}"
+    owner: "{{ apparmor_target_user }}"
+    mode: '0755'
+  tags: [apparmor, seccomp]
+
+- name: Create directory {{ _seccomp_apps_dir }}
+  ansible.builtin.file:
+    path: "{{ _seccomp_apps_dir }}"
+    state: directory
+    owner: "{{ apparmor_target_user }}"
+    mode: '0755'
+  tags: [apparmor, seccomp]
+
+# --- derive a hardened .desktop per registered, installed app ----------------
+
+- name: "[seccomp] Stat distro source .desktop for each registered launcher"
+  ansible.builtin.stat:
+    path: "/usr/share/applications/{{ item.id }}"
+  loop: "{{ apparmor_seccomp_launchers }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: _seccomp_src_stat
+  tags: [apparmor, seccomp]
+
+- name: "[seccomp] WARN and skip when a registered source .desktop is missing"
+  ansible.builtin.debug:
+    msg: >-
+      SKIP {{ item.item.id }} - /usr/share/applications/{{ item.item.id }} not found
+      (app not installed, or the distro renamed its .desktop ID). Hardened launcher not
+      generated; any distro entry is left unshadowed.
+  loop: "{{ _seccomp_src_stat.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+  when: not item.stat.exists
+  tags: [apparmor, seccomp]
+
+- name: "[seccomp] Stat dest .desktop for the pre-clobber safety check"
+  ansible.builtin.stat:
+    path: "{{ _seccomp_apps_dir }}/{{ item.id }}"
+  loop: "{{ apparmor_seccomp_launchers }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: _seccomp_dest_stat
+  tags: [apparmor, seccomp]
+
+- name: "[seccomp] SAFETY refuse to overwrite a user-authored .desktop (no MANAGED BY ANSIBLE marker)"
+  ansible.builtin.fail:
+    msg: >-
+      {{ _seccomp_apps_dir }}/{{ item.item.id }} exists but has no 'MANAGED BY ANSIBLE'
+      marker - refusing to overwrite a user-authored file. Move it aside if you want the
+      hardened override.
+  loop: "{{ _seccomp_dest_stat.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+  when: item.stat.exists and ('MANAGED BY ANSIBLE' not in lookup('file', _seccomp_apps_dir + '/' + item.item.id))
+  tags: [apparmor, seccomp]
+
+- name: "[seccomp] Derive hardened .desktop into {{ _seccomp_apps_dir }}/ (regenerated each apply)"
+  ansible.builtin.copy:
+    dest: "{{ _seccomp_apps_dir }}/{{ item.id }}"
+    owner: "{{ apparmor_target_user }}"
+    mode: '0644'
+    content: |
+      # MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY
+      # Derived from /usr/share/applications/{{ item.id }} by roles/apparmor - regenerated each apply
+      {{ lookup('file', '/usr/share/applications/' + item.id)
+         | regex_replace('(?m)^Exec=', 'Exec=' + _seccomp_wrapper + ' ' + ((item.extra_env | join(' ')) + ' ' if (item.extra_env | default([])) else ''))
+         | regex_replace('(?m)^Name=(.*)$', 'Name=\1 (hardened)')
+         | regex_replace('(?m)^Name(\[[^\]]+\])=(.*)$', 'Name\1=\2 (hardened)')
+         | regex_replace('(?m)^DBusActivatable\s*=\s*true\b', 'DBusActivatable=false') }}
+  loop: "{{ apparmor_seccomp_launchers }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when: item.id in (_seccomp_src_stat.results | selectattr('stat.exists') | map(attribute='item.id') | list)
+  tags: [apparmor, seccomp]
+
+# --- idempotent cleanup of de-registered launchers --------------------------
+
+- name: "[IDEMPOTENCE] Remove deprecated hardened .desktop entries from {{ _seccomp_apps_dir }}/"
+  ansible.builtin.file:
+    path: "{{ _seccomp_apps_dir }}/{{ item }}"
+    state: absent
+  loop: "{{ apparmor_seccomp_launchers_deprecated }}"
+  loop_control:
+    label: "{{ item }}"
+  tags: [apparmor, seccomp]

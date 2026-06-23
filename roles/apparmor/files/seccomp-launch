@@ -1,0 +1,67 @@
+#!/bin/bash
+# =============================================================================
+# MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY
+# (src: roles/apparmor/files/seccomp-launch, deployed by roles/apparmor/tasks/seccomp.yml)
+# =============================================================================
+#
+# Hardened GUI launcher (see roles/apparmor/docs/SECCOMP.md). Runs <binary> inside a transient
+# systemd --user service carrying a seccomp syscall denylist that blocks the AppArmor-blind LPE
+# primitives. AppArmor still attaches by path at execve; this only adds the syscall layer.
+#
+# Usage: seccomp-launch [VAR=value ...] <binary> [args...]
+set -euo pipefail
+
+# Per-app env arrives as leading VAR=value tokens (env(1)-style); the .desktop writes e.g.
+#   seccomp-launch LIBGL_ALWAYS_SOFTWARE=1 Telegram %u
+# Collect them; the first non-assignment arg is the target binary.
+EXTRA_ENV=()
+while [[ "${1:-}" == *=* && "${1%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; do
+  EXTRA_ENV+=("$1"); shift
+done
+if [ "$#" -eq 0 ]; then
+  echo "seccomp-launch: no target binary given" >&2
+  echo "Usage: seccomp-launch [VAR=value ...] <binary> [args...]" >&2
+  exit 64
+fi
+target="$1"; shift
+
+# A transient --user service inherits the systemd --user MANAGER env block, NOT the caller env,
+# and that block is shared + runtime-mutable: any same-user process can
+# `systemctl --user set-environment LD_PRELOAD=...` and it lands in every later unit. So do NOT
+# trust it - `env -i` wipes the inherited block and we re-add ONLY this vetted allowlist (values
+# read here, in the live caller session). Default-deny, like sudo's env_reset; this also keeps
+# session secrets (SSH_AUTH_SOCK, *_TOKEN) out of the confined app.
+# Safe to extend with display-tuning vars (GTK_THEME QT_SCALE_FACTOR GDK_SCALE ...);
+# NEVER add an injection var (LD_*, QT_PLUGIN_PATH, GTK_PATH, GIO_MODULE_DIR, GST_PLUGIN_PATH,
+# PERL5LIB, NODE_OPTIONS, ...) - that re-opens exactly the hole env -i closes.
+ALLOW=()
+for v in HOME PATH USER LOGNAME \
+         XDG_RUNTIME_DIR XDG_DATA_DIRS XDG_CONFIG_DIRS \
+         XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME \
+         WAYLAND_DISPLAY DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE \
+         DBUS_SESSION_BUS_ADDRESS XDG_ACTIVATION_TOKEN DESKTOP_STARTUP_ID \
+         LANG LANGUAGE LC_ALL LC_CTYPE LC_MESSAGES \
+         GTK_IM_MODULE QT_IM_MODULE XMODIFIERS QT_QPA_PLATFORM; do
+  [ -n "${!v:-}" ] && ALLOW+=("$v=${!v}")
+done
+
+# seccomp DENYLIST (deliberate; see SECCOMP.md section 5). Blocks syscalls these apps never use
+# and that AppArmor cannot mediate but have been frequent LPE roots. Verified group contents
+# against systemd seccomp-util.c:
+#   userfaultfd, perf_event_open, @io_uring   - 2022-2023 kernel-exploit favourites
+#   keyctl/add_key/request_key                - keyring API (AppArmor only gates key file paths)
+#   bpf                                        - eBPF verifier LPEs (@privileged member)
+#   @mount                                     - new mount API (fsopen/move_mount/mount_setattr/...)
+#   @clock @swap @reboot(kexec) @module @raw-io- privileged, never used by a GUI app
+#   @obsolete @cpu-emulation @debug            - legacy + introspection/injection (ptrace/pidfd_getfd)
+SECCOMP_DENY='~userfaultfd perf_event_open keyctl add_key request_key bpf @io_uring @mount @clock @obsolete @cpu-emulation @raw-io @swap @reboot @module @debug'
+
+CMD=(systemd-run --user --pipe --wait --collect
+  -p SystemCallArchitectures=native          # close 32-bit/x32 ABI seccomp bypass
+  -p SystemCallErrorNumber=EPERM             # denied syscall -> EPERM, not SIGSYS kill (fail-soft)
+  -p "SystemCallFilter=${SECCOMP_DENY}"
+  /usr/bin/env -i "${ALLOW[@]}" "${EXTRA_ENV[@]}"   # default-deny env: only allowlist + per-app env survive
+  "$target")
+
+printf 'seccomp-launch: %q ' "${CMD[@]}" "$@"; echo   # transparency: print the full command (incl. args)
+exec "${CMD[@]}" "$@"

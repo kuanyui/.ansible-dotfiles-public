@@ -150,3 +150,30 @@ apparmor_template_abstraction_names:
 # hosts have been converged.
 apparmor_static_profiles_stale: []
   # - glycin
+
+# =============================================================================
+# Hardened seccomp launchers (see roles/apparmor/docs/SECCOMP.md)
+# =============================================================================
+# Each entry derives a `(hardened)` .desktop that shadows the distro one (same ID,
+# higher-precedence dir) and routes the launch through ~/.local/bin/seccomp-launch
+# (transient systemd --user service + seccomp syscall denylist).
+#   - id:        distro .desktop ID under /usr/share/applications/ (filename incl. `.desktop`).
+#   - extra_env: per-app env injected via `env -i`, as VAR=value strings. Leave EMPTY for most;
+#                media players must NOT force software GL.
+# Apps not installed on the target are skipped with a visible warning (never fatal).
+# Browsers / Electron are intentionally ABSENT: they self-apply a stronger seccomp-bpf sandbox
+# to their content processes, and an outer filter is inherited by those children and can break
+# it (SECCOMP.md section 2).
+apparmor_seccomp_launchers:
+  # NOTE: confirm the Telegram ID on the host: `ls /usr/share/applications/ | grep -i telegram`.
+  # If it differs from below, the derive step warns + skips (the old launcher keeps working).
+  - id: org.telegram.desktop.desktop
+    extra_env: ['LIBGL_ALWAYS_SOFTWARE=1']
+  # mpv / vlc: enable only after checking the wrapper does not clash with mpv's aa-exec GPU
+  # launcher (local_attachmentless_mpv_gpu). Media players keep extra_env EMPTY (no software GL).
+  # - { id: mpv.desktop, extra_env: [] }
+  # - { id: vlc.desktop, extra_env: [] }
+
+# Deprecated hardened .desktop IDs to remove from ~/.local/share/applications/ on apply
+# (idempotent cleanup of de-registered launchers). Add an ID here when retiring one.
+apparmor_seccomp_launchers_deprecated: []
