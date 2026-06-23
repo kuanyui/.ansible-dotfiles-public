@@ -20,6 +20,8 @@ AppArmor-blind LPE (local privilege escalation) primitives we want gone - none u
 | `keyctl` / `add_key` / `request_key` | no (deny_keyrings blocks only file paths) | seccomp |
 | `io_uring` setup | yes (`audit deny io_uring`) | seccomp = defense-in-depth |
 | SysV shm/sem (`shmget`/`semget`) | no (mqueue deny = msg queues only) | seccomp |
+| `bpf` | no | seccomp, or `kernel.unprivileged_bpf_disabled=1` |
+| new mount API (`fsopen`/`move_mount`/`mount_setattr`/...) | partial (AppArmor mediates `mount`) | seccomp `@mount` = defense-in-depth |
 
 ## 2. Scope (calibration - do NOT blanket-apply)
 
@@ -78,7 +80,7 @@ done
 CMD=(systemd-run --user --pipe --wait --collect
   -p SystemCallArchitectures=native          # close 32-bit/x32 ABI seccomp bypass
   -p SystemCallErrorNumber=EPERM             # denied syscall -> EPERM, not SIGSYS kill (fail-soft)
-  -p 'SystemCallFilter=~userfaultfd perf_event_open keyctl add_key request_key @io_uring @obsolete @cpu-emulation @raw-io @swap @reboot @module @debug'
+  -p 'SystemCallFilter=~userfaultfd perf_event_open keyctl add_key request_key bpf @io_uring @mount @clock @obsolete @cpu-emulation @raw-io @swap @reboot @module @debug'
   /usr/bin/env -i "${ALLOW[@]}" "${EXTRA_ENV[@]}"   # default-deny env: only allowlist + per-app env survive
   "$target")
 
@@ -196,7 +198,18 @@ prefix. Use the same pattern the role already uses for profiles:
 - Denylist (`~...`), not an `@system-service` allowlist: the workflow is enforce-only with no
   `SystemCallLog=` validation pass, so an allowlist risks EPERM-breaking the app. The denylist
   kills exactly the AppArmor-blind primitives (section 1); these apps never use them => near-zero
-  breakage.
+  breakage. (Opposite of the env handling in 3A, which IS an allowlist: there the *needed* set is
+  small and the *dangerous* set unbounded, so allowlist wins; here the *needed* set is huge and
+  the *dangerous* set small, so denylist wins.)
+- The set (group contents verified against systemd `seccomp-util.c`):
+  `~userfaultfd perf_event_open keyctl add_key request_key bpf @io_uring @mount @clock @obsolete
+  @cpu-emulation @raw-io @swap @reboot @module @debug`. Recent-LPE-driven members: `@io_uring` /
+  `userfaultfd` / `perf_event_open` (2022-23 kernel-exploit favourites), `bpf` (eBPF verifier
+  LPEs; member of `@privileged`), `@mount` (new mount API - `fsopen`/`move_mount`/`mount_setattr`).
+  `@debug` already covers `perf_event_open`/`ptrace`/`pidfd_getfd`, `@reboot` covers `kexec_load`
+  (kept the explicit names for readability). Add `process_vm_readv`/`process_vm_writev` only if a
+  target app proves not to need them (some crash handlers do) - they are ptrace-mediated by
+  AppArmor anyway.
 - Scope of value: this PATCHES AppArmor's syscall blind spot. It is NOT a full sandbox -
   `setsockopt`/`futex`/`ioctl` etc. stay open (an allowlist would not block those either).
 - Upgrade path (later, stronger): base on `@system-service`, run once with `-p SystemCallLog=`
