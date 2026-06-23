@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Deny kernel attack-surface for general apps - /etc/apparmor.d/abstractions/local_mixin_kernel_surface_general_app
 #
 # Include in every confined app that is NOT a browser sandbox (IM, viewers, players, editors).

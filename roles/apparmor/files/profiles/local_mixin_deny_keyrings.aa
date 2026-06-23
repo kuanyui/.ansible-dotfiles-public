@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Deny cryptographic key stores (ssh, gpg, syncthing) - /etc/apparmor.d/abstractions/local_mixin_deny_keyrings
 #
 # Include this in any profile that should not access private keys, certificates,

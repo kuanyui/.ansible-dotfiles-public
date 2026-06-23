@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Deny live audio (no sound output) - /etc/apparmor.d/abstractions/local_mixin_deny_audio
 #
 # Include in any profile that has no legitimate reason to play sound (telegram,

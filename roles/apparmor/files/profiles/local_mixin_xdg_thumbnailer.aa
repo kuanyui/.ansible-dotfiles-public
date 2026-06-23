@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # XDG thumbnail cache writer -
 # /etc/apparmor.d/abstractions/local_mixin_xdg_thumbnailer
 #

@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Temporary directory access rules - /etc/apparmor.d/abstractions/local_mixin_tmpdir
 #
 # Include this in any profile that needs read/write access to /tmp, /var/tmp, and ~/tmp.

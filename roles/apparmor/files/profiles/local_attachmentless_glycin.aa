@@ -1,7 +1,7 @@
 abi <abi/5.0>,
 #include <tunables/global>
 
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Glycin image loader AppArmor profile - /etc/apparmor.d/local_attachmentless_glycin
 #
 # Attachment-less: no executable path attached. Must be invoked via explicit Px transition:

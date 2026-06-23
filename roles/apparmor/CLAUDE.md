@@ -16,24 +16,50 @@ Section headers in task files and templates must use this format:
 # =============================================
 ```
 
-## Ansible-managed files deployed to user home directories
+## Ansible-managed files: the THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY marker (ALL file types, ALL destinations)
 
-Every file deployed to `~/.local/bin/` or `~/.local/share/applications/` must include a prominent
-"MANAGED BY ANSIBLE" warning so the user knows not to edit it manually and knows where the source
-lives.
+Every file this role writes OUTSIDE the repo - ANY type, ANY destination a human might find and
+hand-edit (`~/.local/bin/`, `~/.local/share/applications/`, `/etc/apparmor.d/`, XDG config dirs,
+...) - must carry a prominent `THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY` marker at its top, so the
+reader knows not to hand-edit it and where the source lives. This is UNIVERSAL - not only bash
+scripts, not only `.desktop` files.
+
+Placement: if the format has a mandatory first line (shebang `#!`, `<?xml?>`, ...) the marker goes
+IMMEDIATELY AFTER it; otherwise the marker IS the first line. Use the file type's native comment leader:
+
+| File type | Marker line |
+|-----------|-------------|
+| shell, YAML, `.desktop`, `.aa` (AppArmor), `.conf`/`.ini`, Python, Dockerfile | `# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY` |
+| C-like / JSONC | `// THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY` |
+| XML / HTML | `<!-- THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY -->` |
+
+Formats with NO comment syntax (strict JSON, `key=value` configs that reject `#`, binary) cannot
+carry an inline marker - do NOT inject an invalid line; note the management elsewhere or accept the
+exception explicitly.
+
+The token `THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY` is a load-bearing machine
+sentinel - one whitespace-free, all-caps string chosen so a `grep -F` detects it with zero
+case/whitespace/wrap ambiguity and effectively never collides with human prose. Two uses:
+- A deployed file CONTAINS the token => it is OURS (regenerable) - safe to delete / clobber /
+  regenerate on sight.
+- A target path EXISTS but the token is ABSENT => user-authored - NEVER clobber (e.g. the
+  pre-clobber assert in `tasks/seccomp.yml`).
+Keep it verbatim everywhere - it is the contract.
+
+Concrete forms:
 
 Shell scripts in `~/.local/bin/`: place the warning block immediately after the shebang line:
 ```
 #!/bin/bash
 # =============================================================================
-# MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # =============================================================================
 ```
 
 `.desktop` files in `~/.local/share/applications/`: place a `#` comment line at the very top of
 the file, before the `[Desktop Entry]` section:
 ```
-# MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 ```
 
 ## AppArmor pathbased profile task files

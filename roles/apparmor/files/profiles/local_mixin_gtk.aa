@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # GTK desktop integration rules - /etc/apparmor.d/abstractions/local_mixin_gtk
 #
 # Include this in any profile that needs GTK theming and the dconf settings backend.

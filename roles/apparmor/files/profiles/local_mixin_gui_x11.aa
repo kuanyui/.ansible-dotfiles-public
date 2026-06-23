@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # X11 display-server access (high risk) - /etc/apparmor.d/abstractions/local_mixin_gui_x11
 #
 # TL;DR - include in: any GUI app that may run on X11 / XWayland, ONLY inside the

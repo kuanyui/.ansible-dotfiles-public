@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Audio config probe (config reads + pulse client setup, NOT live audio) -
 # /etc/apparmor.d/abstractions/local_mixin_audio_probe
 #

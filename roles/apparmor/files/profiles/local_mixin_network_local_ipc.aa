@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Local-IPC AF_UNIX socket grant - /etc/apparmor.d/abstractions/local_mixin_network_local_ipc
 #
 # Include in EVERY confined GUI app. At abi/4.0+ AppArmor mediates AF_UNIX (local

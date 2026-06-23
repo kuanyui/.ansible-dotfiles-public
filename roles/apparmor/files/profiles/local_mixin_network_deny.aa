@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Deny network egress (local IPC stays allowed) - /etc/apparmor.d/abstractions/local_mixin_network_deny
 #
 # Include in local-only viewers (image / video / PDF / score) that must have no

@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Network family whitelist for networked apps - /etc/apparmor.d/abstractions/local_mixin_network_app
 #
 # Include in confined apps that need network egress (IM, remote desktop) INSTEAD of a bare

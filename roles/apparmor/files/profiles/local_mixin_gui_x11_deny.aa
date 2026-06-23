@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Silence X11 probes when X11 is disabled - /etc/apparmor.d/abstractions/local_mixin_gui_x11_deny
 #
 # TL;DR - include in: the same apps as local_mixin_gui_x11, in the `{% else %}` branch

@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # GPU hardware access rules - /etc/apparmor.d/abstractions/local_mixin_gpu
 #
 # Include this in any profile that needs hardware-accelerated GPU rendering.

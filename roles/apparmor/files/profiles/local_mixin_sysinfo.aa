@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # System hardware/kernel information rules - /etc/apparmor.d/abstractions/local_mixin_sysinfo
 #
 # Include this in any profile that needs to read CPU topology, memory topology,

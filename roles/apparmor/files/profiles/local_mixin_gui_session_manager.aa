@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Desktop session-management (ICE) auth - /etc/apparmor.d/abstractions/local_mixin_gui_session_manager
 #
 # TL;DR - include in: GUI apps that use libSM session management (the Mozilla / Chromium /

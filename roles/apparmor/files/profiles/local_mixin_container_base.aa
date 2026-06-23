@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Container base deny mixin - /etc/apparmor.d/abstractions/local_mixin_container_base
 #
 # Include in every per-container attachmentless profile to apply a standard deny

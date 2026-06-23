@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Deny host machine-id reads - /etc/apparmor.d/abstractions/local_mixin_deny_machine_id
 #
 # Include in any networked / telemetry-prone profile that must not read the host's stable

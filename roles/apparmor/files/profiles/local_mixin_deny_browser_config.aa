@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Deny browser config/data directories - /etc/apparmor.d/abstractions/local_mixin_deny_browser_config
 #
 # Include this in non-browser profiles to prevent access to browser data directories

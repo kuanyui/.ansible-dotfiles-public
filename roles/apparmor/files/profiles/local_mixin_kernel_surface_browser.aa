@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Browser content-process sandbox: kernel-surface grants + never-needed tripwire denies - /etc/apparmor.d/abstractions/local_mixin_kernel_surface_browser
 #
 # Include ONLY in Chromium / Gecko / Electron browser profiles (firefox, chromium, msedge,

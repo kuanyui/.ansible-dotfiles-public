@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Deny mounted external media - /etc/apparmor.d/abstractions/local_mixin_deny_mounted_external_media
 #
 # Blocks all access to removable/external storage mount points.

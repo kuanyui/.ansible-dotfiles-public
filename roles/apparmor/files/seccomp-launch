@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # (src: roles/apparmor/files/seccomp-launch, deployed by roles/apparmor/tasks/seccomp.yml)
 # =============================================================================
 #

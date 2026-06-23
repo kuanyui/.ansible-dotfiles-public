@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Qt framework integration rules - /etc/apparmor.d/abstractions/local_mixin_qt
 #
 # Include this in any profile that uses Qt for rendering or UI. Covers Qt

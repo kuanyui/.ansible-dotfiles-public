@@ -1,3 +1,5 @@
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
+# (src: roles/apparmor/files/desktops/ansible-mpv-gpu.desktop)
 [Desktop Entry]
 Type=Application
 Name=mpv Media Player (GPU)

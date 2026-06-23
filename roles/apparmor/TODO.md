@@ -162,7 +162,7 @@ mediation; this is the syscall layer). All user-home only - no `become`.
   `@mount` (new mount API: fsopen/move_mount/mount_setattr LPEs), `@clock`.
 - [x] `tasks/seccomp.yml`: deploy wrapper + derive .desktop (read distro entry via `lookup('file')`,
   regex-rewrite `Exec`/`Name`/`DBusActivatable`, write to `~/.local/share/applications/`) +
-  missing-source WARN + pre-clobber `MANAGED BY ANSIBLE` safety assert + deprecated-id cleanup.
+  missing-source WARN + pre-clobber `THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY` safety assert + deprecated-id cleanup.
 - [x] `defaults/main.yml`: `apparmor_seccomp_launchers` + `_deprecated` lists.
 - [x] wired into `tasks/_install.yml`.
 - [ ] CONFIRM Telegram's distro .desktop ID on the real host: `ls /usr/share/applications/ | grep -i telegram`.

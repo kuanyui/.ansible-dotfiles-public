@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Chromium-based GPU access rules - /etc/apparmor.d/abstractions/local_mixin_gpu_chromium_based
 #
 # Include this in profiles for Chromium-based apps (Chromium, Electron) that bypass the

@@ -1,6 +1,6 @@
 #include <tunables/global>
 
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # AI agent container AppArmor profile - /etc/apparmor.d/local_attachmentless_podman_ai_agent
 #
 # For rootless podman containers running AI coding agents (e.g. Codex, Claude Code).

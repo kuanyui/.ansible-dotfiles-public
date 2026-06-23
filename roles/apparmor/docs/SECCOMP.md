@@ -45,7 +45,7 @@ minimal env from a vetted allowlist with `env -i` (default-deny, like sudo's `en
 
 ```bash
 #!/bin/bash
-# MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY (src: roles/apparmor/templates/.../seccomp-launch.j2)
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY (src: roles/apparmor/templates/.../seccomp-launch.j2)
 set -euo pipefail
 
 # Per-app env arrives as leading VAR=value tokens (env(1)-style); the .desktop writes e.g.
@@ -148,10 +148,10 @@ prefix. Use the same pattern the role already uses for profiles:
 - **Marker line (DECIDED): reuse the existing repo convention, do not invent a new one.** Zero
   migration; already documented in `roles/apparmor/CLAUDE.md`.
   - `.desktop` first line (injected on derive; the distro source has none):
-    `# MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY`
+    `# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY`
   - `~/.local/bin/seccomp-launch`: the shell-script BLOCK form (`# ===` lines around
-    `MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY`), per the role CLAUDE.md.
-  - Greppable load-bearing token: `MANAGED BY ANSIBLE`.
+    `THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY`), per the role CLAUDE.md.
+  - Greppable load-bearing token: `THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY`.
 - Its ONLY machine job is a pre-clobber SAFETY ASSERT: before overwriting/removing the one
   target path `~/.local/share/applications/<id>.desktop`, if it already exists and does NOT
   contain the token, it is a user-authored file -> WARN and refuse, never clobber. A generic

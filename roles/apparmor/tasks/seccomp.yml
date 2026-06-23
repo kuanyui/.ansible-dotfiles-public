@@ -70,16 +70,16 @@
   register: _seccomp_dest_stat
   tags: [apparmor, seccomp]
 
-- name: "[seccomp] SAFETY refuse to overwrite a user-authored .desktop (no MANAGED BY ANSIBLE marker)"
+- name: "[seccomp] SAFETY refuse to overwrite a user-authored .desktop (no THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY token)"
   ansible.builtin.fail:
     msg: >-
-      {{ _seccomp_apps_dir }}/{{ item.item.id }} exists but has no 'MANAGED BY ANSIBLE'
-      marker - refusing to overwrite a user-authored file. Move it aside if you want the
-      hardened override.
+      {{ _seccomp_apps_dir }}/{{ item.item.id }} exists but has no
+      THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY token - refusing to overwrite a
+      user-authored file. Move it aside if you want the hardened override.
   loop: "{{ _seccomp_dest_stat.results }}"
   loop_control:
     label: "{{ item.item.id }}"
-  when: item.stat.exists and ('MANAGED BY ANSIBLE' not in lookup('file', _seccomp_apps_dir + '/' + item.item.id))
+  when: item.stat.exists and ('THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY' not in lookup('file', _seccomp_apps_dir + '/' + item.item.id))
   tags: [apparmor, seccomp]
 
 - name: "[seccomp] Derive hardened .desktop into {{ _seccomp_apps_dir }}/ (regenerated each apply)"
@@ -88,7 +88,7 @@
     owner: "{{ apparmor_target_user }}"
     mode: '0644'
     content: |
-      # MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY
+      # THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
       # Derived from /usr/share/applications/{{ item.id }} by roles/apparmor - regenerated each apply
       {{ lookup('file', '/usr/share/applications/' + item.id)
          | regex_replace('(?m)^Exec=', 'Exec=' + _seccomp_wrapper + ' ' + ((item.extra_env | join(' ')) + ' ' if (item.extra_env | default([])) else ''))

@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # KDE native-app framework rules -
 # /etc/apparmor.d/abstractions/local_mixin_kde_native_apps
 #

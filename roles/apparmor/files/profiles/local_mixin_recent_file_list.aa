@@ -1,4 +1,4 @@
-# Managed by Ansible - do not edit manually
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
 # Recent-file-list / file-dialog history state - /etc/apparmor.d/abstractions/local_mixin_recent_file_list
 #
 # OPT-IN, split-policy mixin. Include ONLY in network-denied LOCAL apps
