@@ -144,3 +144,34 @@ documented in `roles/apparmor/CLAUDE.md` ("every pathbased profile must
 likely with `__for__others`. Defer until a deliberate review of what anydesk
 actually needs - remote-desktop access patterns differ enough that the safest
 default may not be the right one.
+
+## seccomp hardened launchers (SECCOMP.md) - in progress 2026-06-23
+
+Implements `roles/apparmor/docs/SECCOMP.md`: a generic `~/.local/bin/seccomp-launch` wrapper +
+per-app derived `(hardened)` .desktop that routes a GUI launch through a transient systemd
+`--user` service carrying a seccomp syscall denylist (blocks AppArmor-blind LPE primitives).
+Complementary to the AppArmor "Kernel attack-surface hardening" section above (that is LSM
+mediation; this is the syscall layer). All user-home only - no `become`.
+
+- [x] `files/seccomp-launch`: `env -i` env allowlist (default-deny; blocks `LD_PRELOAD` etc. from
+  the shared/mutable systemd `--user` manager env), per-app `extra_env` via leading `VAR=value`
+  tokens, seccomp denylist.
+- [x] seccomp denylist (group contents verified against systemd `seccomp-util.c`):
+  `~userfaultfd perf_event_open keyctl add_key request_key bpf @io_uring @mount @clock @obsolete
+  @cpu-emulation @raw-io @swap @reboot @module @debug`. New vs spec: `bpf` (eBPF verifier LPEs),
+  `@mount` (new mount API: fsopen/move_mount/mount_setattr LPEs), `@clock`.
+- [x] `tasks/seccomp.yml`: deploy wrapper + derive .desktop (read distro entry via `lookup('file')`,
+  regex-rewrite `Exec`/`Name`/`DBusActivatable`, write to `~/.local/share/applications/`) +
+  missing-source WARN + pre-clobber `MANAGED BY ANSIBLE` safety assert + deprecated-id cleanup.
+- [x] `defaults/main.yml`: `apparmor_seccomp_launchers` + `_deprecated` lists.
+- [x] wired into `tasks/_install.yml`.
+- [ ] CONFIRM Telegram's distro .desktop ID on the real host: `ls /usr/share/applications/ | grep -i telegram`.
+  `defaults` assumes `org.telegram.desktop.desktop`; fix the entry if different.
+- [ ] VERIFY on a real desktop session (sandbox CANNOT - no display, app absent): launch the
+  `(hardened)` entry, then `grep Seccomp /proc/$(pgrep -x Telegram)/status` -> `2`.
+- [ ] RETIRE old `ansible_telegram.desktop` (in `telegram.yml`) once the derived entry is confirmed
+  working. Until then BOTH show in the menu (old "Telegram (AppArmor)" + new "(hardened)").
+- [ ] mpv / vlc: add to the list AFTER checking the wrapper does not clash with mpv's aa-exec GPU
+  launcher (`local_attachmentless_mpv_gpu`). Media players keep `extra_env` EMPTY (no software GL).
+- [ ] Browsers / Electron: intentionally EXCLUDED (self-apply stronger seccomp-bpf to content
+  processes; an inherited outer filter can break their sandbox). See SECCOMP.md section 2.
