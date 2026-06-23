@@ -12,6 +12,13 @@
 # / by users who manage incus themselves. Off by default.
 vm_incus_skip_host_setup: false
 
+# `vm_incus_allow_proxy_devices`: allow proxy devices in the per-user incus project
+# (`user-<uid>`) so `ivm expose` can forward a host port into a VM. incus blocks them in
+# restricted projects by default (a non-root user could otherwise bind host ports - even
+# privileged <1024 - through the root daemon). Defaulted ON: ivm's typical host is
+# single-user, where that "escalation" is just you. Set false on a shared/multi-user host.
+vm_incus_allow_proxy_devices: true
+
 # `incus_install_assume_yes`: skip the interactive first-time storage-pool
 # confirmation (the `pause` in `tasks/incus_host_install.yml`). Off by default, so
 # a first-time `make vm-incus-install` prompts before `incus admin init` bakes in the

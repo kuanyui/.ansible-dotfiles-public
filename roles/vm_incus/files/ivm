@@ -2053,9 +2053,9 @@ def cmd_expose(name: str, *, port_spec: str | None, dry_run: bool) -> None:
             run(pin_rollback_command, dry_run=dry_run)
         die('could not add the proxy device (see the incus error above).\n'
             '  If it says "Proxy devices are forbidden": ivm\'s VMs live in a RESTRICTED incus\n'
-            '  project (user-<uid>) that blocks proxy devices by default - forwarding a host\n'
-            '  port is a privilege incus grants only when an admin opts the project in. Allow\n'
-            '  it once (needs admin/sudo on the incus host):\n'
+            '  project (user-<uid>) that blocks proxy devices by default. Re-run\n'
+            '  `make vm-incus-install` (it allows them for your user project unless you set\n'
+            '  `vm_incus_allow_proxy_devices: false`), or do it manually as admin:\n'
             '      sudo incus project set user-$(id -u) restricted.devices.proxy=allow\n'
             '  then re-run `ivm expose`.')
     print(f"==> {colorize_vm_name(name)}: host :{host_port} -> guest :{guest_port}. "

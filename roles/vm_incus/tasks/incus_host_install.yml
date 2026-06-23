@@ -748,6 +748,26 @@
     - _incus_user_net_route.rc is defined
     - _incus_user_net_route.rc != 0
 
+# `restricted.devices.proxy` defaults to `block` in the per-user project, so `ivm expose`
+# (which adds an incus proxy device to forward a host port into a VM) is refused. Allow it
+# here - gated ON by default via `vm_incus_allow_proxy_devices` (single-user host = the
+# only one who gains the privilege is you). Idempotent: only set when not already `allow`.
+- name: "Allow proxy devices in `user-{{ _incus_user_uid.stdout | trim }}` so `ivm expose` can forward host ports into a VM (set `vm_incus_allow_proxy_devices: false` on a shared/multi-user host to keep incus's stricter default)"
+  ansible.builtin.shell: |
+    set -eu
+    incus_project="user-{{ _incus_user_uid.stdout | trim }}"
+    if [ "$(incus project get "$incus_project" restricted.devices.proxy)" != "allow" ]; then
+      incus project set "$incus_project" restricted.devices.proxy=allow
+      echo PROXY_DEVICES_ALLOWED
+    fi
+  become: true
+  when:
+    - _incus_user_project_show.rc == 0
+    - vm_incus_allow_proxy_devices
+  register: _incus_user_proxy_allow
+  changed_when: "'PROXY_DEVICES_ALLOWED' in _incus_user_proxy_allow.stdout"
+  failed_when: false
+
 # ---------- firewalld: trust the incusbr0 bridge (only on firewalld hosts) ----------
 # On firewalld-managed hosts (Fedora, openSUSE) the `incusbr0` bridge is NOT
 # assigned to any zone, so it falls into the default zone (usually `public`),

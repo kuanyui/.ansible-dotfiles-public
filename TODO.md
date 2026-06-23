@@ -22,8 +22,8 @@ alternative to building a host bridge (incus proxy device `nat=true`, not nmcli)
   you to `sudo incus project set user-$(id -u) restricted.devices.proxy=allow` (admin, one-time)
 - [ ] LIVE-TEST on a real host: after the allow above, does expose actually forward (proxy
   `nat=true` on a VM)? not verifiable in this exec env (no incus perms)
-- [ ] decide: leave the project-allow manual (current: friendly error teaches it), or add
-  an opt-in flag to `vm-incus-install` that sets it (security trade-off - keep opt-in)
+- [x] `vm-incus-install` allows proxy devices in the user project by default
+  (`vm_incus_allow_proxy_devices: true`, opt-out for shared hosts) - `incus_host_install.yml`
 - [ ] sandbox = `make vm-incus-sandbox` (blocked in this exec env - no podman build; run on a real host)
 - [ ] only host<->VM + this one LAN port; "VM as a full LAN host" still needs a bridge
 
