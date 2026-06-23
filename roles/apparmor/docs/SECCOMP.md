@@ -102,10 +102,28 @@ distro's `Icon` / `MimeType` / `Actions`, and drift on distro updates. Instead, 
 3. Rewrite `Name=` (and every localized `Name[xx]=`) to append ` (hardened)` - this is the
    VISIBLE marker that you launched the wrapped entry, and the distro's plain entry is hidden
    by the same-ID override, so the menu shows exactly one `X (hardened)`.
-4. Keep `TryExec=` as-is (points at the real binary; correctly gates visibility).
-5. Write to `~/.local/share/applications/<id>.desktop` (same ID, higher precedence => overrides).
+4. **Neutralize `DBusActivatable`** - replace `DBusActivatable=true` with `DBusActivatable=false`
+   (if the key is absent, default is already `false` - nothing to do). REQUIRED: per the Desktop
+   Entry Spec a `true` value makes launchers "ignore the `Exec` key and send a D-Bus message"
+   (4), so a spec-compliant launcher (GNOME Shell, KDE) would skip our rewritten `Exec=` and
+   start the app UNWRAPPED. AppArmor still attaches (path-based, every execve) but seccomp would
+   be silently absent. No downside to forcing `false`: the app's own single-instance logic still
+   forwards a second launch to the running instance.
+5. Keep `TryExec=` as-is (points at the real binary; correctly gates visibility).
+6. Write to `~/.local/share/applications/<id>.desktop` (same ID, higher precedence => overrides).
 
-ansible-core feasible: `slurp` -> `regex_replace('(?m)^Exec=', ...)` + `regex_replace('(?m)^Name(\[[^]]*\])?=', ... ' (hardened)')` -> `copy`.
+> **Second D-Bus surface** (separate from the key above): a `DBusActivatable` app usually also
+> ships a bus *service activation file* `/usr/share/dbus-1/services/<id>.service` (keys
+> `Name`/`Exec`/`SystemdService`). A client that activates it by BUS NAME (not via the
+> `.desktop`) hits that file directly => unwrapped. `DBusActivatable=false` does NOT cover this.
+> Per dbus-daemon(1) `$XDG_DATA_HOME/dbus-1/services` (`~/.local/share`) precedes `/usr/share`,
+> so it CAN be shadowed the same way (same-`Name` file, `Exec=seccomp-launch ...`, omit
+> `SystemdService=`). DECISION for the first batch (telegram/mpv/vlc - none use GApplication
+> D-Bus activation, so none ship such a file): accept it as an escape hatch (AppArmor on,
+> seccomp off), like the bare-name path in 6. Add the service-file shadow only if a target app
+> actually ships one.
+
+ansible-core feasible: `slurp` -> `regex_replace('(?m)^Exec=', ...)` + `regex_replace('(?m)^Name(\[[^]]*\])?=', ... ' (hardened)')` + `regex_replace('(?m)^DBusActivatable=true\b', 'DBusActivatable=false')` -> `copy`.
 
 Re-derived on every apply => tracks distro `Icon`/`MimeType`/`Actions` updates automatically.
 
@@ -166,6 +184,12 @@ prefix. Use the same pattern the role already uses for profiles:
   subdir) the ID equals the filename. Same ID across dirs: the higher-precedence dir wins, and
   `~/.local/share/applications` (`$XDG_DATA_HOME`) is searched before `/usr/share/applications`.
   Source: https://specifications.freedesktop.org/desktop-entry/latest/file-naming.html
+- **`DBusActivatable=true` makes launchers ignore `Exec`.** Desktop Entry Spec: "If the value is
+  `true` then implementations should ignore the `Exec` key and send a D-Bus message to launch the
+  application." Hence the derive forces it `false` (3B), else the `Exec=` rewrite - and the
+  seccomp wrapper with it - is bypassed. A bus-NAME activation instead reads a `.service` file
+  from the `$XDG_DATA_HOME`-first search path (dbus-daemon(1)) - a separate surface (note in 3B).
+  Source: https://specifications.freedesktop.org/desktop-entry/latest/recognized-keys.html
 
 ## 5. seccomp filter: denylist (deliberate)
 
@@ -208,6 +232,9 @@ prefix. Use the same pattern the role already uses for profiles:
 ## Sources
 
 - https://specifications.freedesktop.org/desktop-entry/latest/file-naming.html
+- https://specifications.freedesktop.org/desktop-entry/latest/recognized-keys.html (DBusActivatable)
 - https://wiki.archlinux.org/title/Systemd/Sandboxing
 - https://man.archlinux.org/man/systemd-run.1.en
+- https://man.archlinux.org/man/systemctl.1.en (set-environment: shared mutable manager env)
+- https://man.archlinux.org/man/dbus-daemon.1.en (D-Bus service activation file search/precedence)
 - https://wiki.archlinux.org/title/Systemd/User
