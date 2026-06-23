@@ -5,6 +5,21 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## ivm expose / unexpose: LAN port forwards (incus proxy device)
+
+Open a host TCP port to a VM so the LAN can reach a service in it - the lightweight
+alternative to building a host bridge (incus proxy device `nat=true`, not nmcli).
+
+- [x] `cmd_expose` / `cmd_unexpose` in `roles/vm_incus/files/ivm`: `expose <port>` or
+  `<host>:<guest>` (docker `-p` style); pins the VM's incusbr0 IPv4 (proxy needs a static
+  target; pinned to the current lease -> no reboot) then adds an `expose-tcp-<port>` proxy device
+- [x] `expose` no-arg = list forwards; `unexpose` no-arg = remove all (confirms); host-port-in-use + dup checks; `--dry-run`
+- [x] `cmd_info` shows a `forwards:` section
+- [x] completion: `_ivm` + `ivm.bash` (`unexpose` completes the VM's open host ports)
+- [x] verified: py_compile + `--help` + `--dry-run` (parse / range / non-numeric / would-run); bash+zsh completion `-n`
+- [ ] sandbox = `make vm-incus-sandbox` (blocked in this exec env - no podman build; run on a real host)
+- [ ] only host<->VM + this one LAN port; "VM as a full LAN host" still needs a bridge
+
 ## guest prompt badge: ivm/qvm/pvm prompt prefix (📦 = isolation level)
 
 Prompt prefix flagging "inside a managed guest"; the box-glyph count encodes isolation

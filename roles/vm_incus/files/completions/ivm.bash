@@ -32,7 +32,7 @@ _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init shell sh shell-user sh-user shell-root sh-root start reboot stop delete env list info adopt storage-status overwrite-dotfiles update provision set-password unset-password enable-user-sudo disable-user-sudo set-ssh-server unset-ssh-server snapshot gui resize mount push"
+    local subcommands="init shell sh shell-user sh-user shell-root sh-root start reboot stop delete env list info adopt storage-status overwrite-dotfiles update provision set-password unset-password enable-user-sudo disable-user-sudo set-ssh-server unset-ssh-server snapshot gui resize mount push expose unexpose"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}/templates"
 
     # --name / --root take a value: complete VM names after --name.
@@ -109,6 +109,19 @@ _ivm() {
             ;;
         push)
             COMPREPLY=( $(compgen -W "--as-root" -- "$cur") $(compgen -A file -- "$cur") )
+            ;;
+        unexpose)
+            # Existing forwards: the `expose-tcp-<port>` proxy device names on the target
+            # VM (--name, else the cwd-bound VM), stripped to bare host ports. (`expose`
+            # takes a free port number -> nothing to complete, so no case for it.)
+            local unexpose_vm="" name_index
+            for (( name_index = 1; name_index < COMP_CWORD; name_index++ )); do
+                if [[ "${COMP_WORDS[name_index]}" == "--name" ]]; then
+                    unexpose_vm="${COMP_WORDS[name_index+1]}"; break
+                fi
+            done
+            [[ -z "$unexpose_vm" ]] && unexpose_vm="$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)"
+            [[ -n "$unexpose_vm" ]] && COMPREPLY=( $(compgen -W "$(incus config device list "$unexpose_vm" 2>/dev/null | sed -n 's/^expose-tcp-//p')" -- "$cur") )
             ;;
         storage-status)
             COMPREPLY=( $(compgen -W "--json" -- "$cur") )

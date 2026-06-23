@@ -37,6 +37,8 @@ _ivm_subcommands=(
   'resize:change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk)'
   'mount:inspect/change virtio-fs shares post-init (ls/attach/detach; hotplug)'
   'push:copy a host file/dir into the VM (incus file push; --as-root)'
+  'expose:forward a host TCP port to the VM for LAN access (no arg lists forwards)'
+  'unexpose:remove a port forward (no arg removes all; confirms)'
 )
 
 # All installable unit names for `provision`: keys of the materialized distro-bundle
@@ -141,6 +143,13 @@ case "$state" in
         fi
         ;;
       push) compadd -- --as-root; _files ;;
+      expose) _message 'host port, or host-port:guest-port (e.g. 8000 or 9000:8000)' ;;
+      unexpose)
+        # Existing forwards on the target VM (--name, else the cwd-bound VM): the
+        # `expose-tcp-<port>` proxy device names, stripped to bare host ports.
+        local _ivm_unexpose_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
+        [[ -n "$_ivm_unexpose_vm" ]] && compadd -- ${(f)"$(incus config device list ${_ivm_unexpose_vm} 2>/dev/null | sed -n 's/^expose-tcp-//p')"}
+        ;;
       provision)
         # `_describe` renders each "name:description" line as `name  -- description`.
         local -a _ivm_provision_units

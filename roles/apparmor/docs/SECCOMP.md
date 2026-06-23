@@ -34,32 +34,55 @@ AppArmor-blind LPE (local privilege escalation) primitives we want gone - none u
 
 ### A. Generic wrapper `~/.local/bin/seccomp-launch`
 
-One file, app-agnostic. Signature: `seccomp-launch <binary> [args...]`. Applies seccomp via a
-transient systemd `--user` **service** (NOT `--scope` - see verified facts). Universal
-hardening only; per-app env (e.g. Telegram's `LIBGL_ALWAYS_SOFTWARE=1`) comes from the
-registered list (3C), not hardcoded here.
+One file, app-agnostic. Signature: `seccomp-launch [VAR=value ...] <binary> [args...]` -
+leading `VAR=value` tokens (env(1)-style) carry per-app env (e.g. Telegram's
+`LIBGL_ALWAYS_SOFTWARE=1`) from the registered list (3C); the first non-assignment arg is the
+target binary. Applies seccomp via a transient systemd `--user` **service** (NOT `--scope` -
+see verified facts). The service does NOT see your session env (see 4); the wrapper rebuilds a
+minimal env from a vetted allowlist with `env -i` (default-deny, like sudo's `env_reset`).
 
 ```bash
 #!/bin/bash
 # MANAGED BY ANSIBLE - DO NOT EDIT MANUALLY (src: roles/apparmor/templates/.../seccomp-launch.j2)
 set -euo pipefail
+
+# Per-app env arrives as leading VAR=value tokens (env(1)-style); the .desktop writes e.g.
+#   seccomp-launch LIBGL_ALWAYS_SOFTWARE=1 /usr/bin/Telegram %u
+# Collect them; the first non-assignment arg is the target binary.
+EXTRA_ENV=()
+while [[ "${1:-}" == *=* && "${1%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; do
+  EXTRA_ENV+=("$1"); shift
+done
 target="$1"; shift
 
-# A transient --user service does NOT inherit the caller env; forward GUI vars (skip unset).
-ENV_FWD=()
-for v in WAYLAND_DISPLAY DISPLAY XAUTHORITY XDG_RUNTIME_DIR \
-         DBUS_SESSION_BUS_ADDRESS XDG_CURRENT_DESKTOP XDG_SESSION_TYPE; do
-  [ -n "${!v:-}" ] && ENV_FWD+=(-E "$v")
+# The transient --user service inherits the systemd --user MANAGER env block, NOT the caller
+# env, and that block is shared + runtime-mutable: any same-user process can `systemctl --user
+# set-environment LD_PRELOAD=...` and it lands in every later unit (see 4). So do NOT trust it:
+# `env -i` wipes the inherited block and we re-add only a vetted allowlist (values read here, in
+# the live caller session). Default-deny env, like sudo's env_reset; this also keeps session
+# secrets (SSH_AUTH_SOCK, *_TOKEN) out of the confined app.
+# Safe to extend with display-tuning vars if needed (GTK_THEME QT_SCALE_FACTOR GDK_SCALE ...);
+# NEVER add an injection var (LD_*, QT_PLUGIN_PATH, GTK_PATH, GIO_MODULE_DIR, GST_PLUGIN_PATH,
+# PERL5LIB, NODE_OPTIONS, ...) - that re-opens exactly the hole env -i closes.
+ALLOW=()
+for v in HOME PATH USER LOGNAME \
+         XDG_RUNTIME_DIR XDG_DATA_DIRS XDG_CONFIG_DIRS \
+         XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME \
+         WAYLAND_DISPLAY DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE \
+         DBUS_SESSION_BUS_ADDRESS \
+         LANG LANGUAGE LC_ALL LC_CTYPE LC_MESSAGES \
+         GTK_IM_MODULE QT_IM_MODULE XMODIFIERS QT_QPA_PLATFORM; do
+  [ -n "${!v:-}" ] && ALLOW+=("$v=${!v}")
 done
 
-CMD=(systemd-run --user --pipe --wait --collect "${ENV_FWD[@]}"
+CMD=(systemd-run --user --pipe --wait --collect
   -p SystemCallArchitectures=native          # close 32-bit/x32 ABI seccomp bypass
   -p SystemCallErrorNumber=EPERM             # denied syscall -> EPERM, not SIGSYS kill (fail-soft)
   -p 'SystemCallFilter=~userfaultfd perf_event_open keyctl add_key request_key @io_uring @obsolete @cpu-emulation @raw-io @swap @reboot @module @debug'
-  /usr/bin/env --unset=LD_LIBRARY_PATH --unset=PYTHONPATH      # block library-injection via env
+  /usr/bin/env -i "${ALLOW[@]}" "${EXTRA_ENV[@]}"   # default-deny env: only allowlist + per-app env survive
   "$target")
 
-printf 'seccomp-launch: %q ' "${CMD[@]}"; echo   # transparency: print before exec
+printf 'seccomp-launch: %q ' "${CMD[@]}" "$@"; echo   # transparency: print the FULL command (incl. args)
 exec "${CMD[@]}" "$@"
 ```
 
@@ -72,7 +95,10 @@ distro's `Icon` / `MimeType` / `Actions`, and drift on distro updates. Instead, 
 1. Read the distro entry `/usr/share/applications/<id>.desktop`.
 2. Rewrite every `Exec=` line (including each `[Desktop Action ...]` block - the right-click
    jump-list sub-launchers, each has its own `Exec=`) to route through the wrapper:
-   `Exec=<orig>` -> `Exec=<seccomp-launch> <orig-tail>` (plus optional per-app env prefix).
+   `Exec=<orig>` -> `Exec=<seccomp-launch> <extra_env as VAR=value ...> <orig-tail>`. Per-app
+   env is emitted as leading `VAR=value` tokens the wrapper folds into `env -i` (3A) - NOT a
+   session-level `env VAR=x` prefix: that sets it in the caller, and the transient service does
+   not inherit the caller env, so `env -i` would never see it (see 4).
 3. Rewrite `Name=` (and every localized `Name[xx]=`) to append ` (hardened)` - this is the
    VISIBLE marker that you launched the wrapped entry, and the distro's plain entry is hidden
    by the same-ID override, so the menu shows exactly one `X (hardened)`.
@@ -119,8 +145,18 @@ prefix. Use the same pattern the role already uses for profiles:
 
 - **`systemd-run --scope` cannot apply seccomp.** `SystemCallFilter` is service-unit only; a
   scope is forked by systemd-run, bypassing the manager exec path. => use a transient service.
-- **A transient `--user` service does NOT inherit the caller env** (runs detached, manager as
-  parent). Forward GUI vars with `-E VAR` (no `=value` imports the caller's current value).
+- **A transient `--user` service runs with the systemd `--user` MANAGER env block, not the
+  caller's env** (the manager is its parent). That block is shared and runtime-mutable: any
+  same-user process can `systemctl --user set-environment VAR=value`, and per systemctl(1) the
+  two blocks are "combined ... and passed to" every later-spawned unit. So a compromised
+  same-user process could inject `LD_PRELOAD`/`LD_AUDIT` into the next hardened launch. The
+  wrapper therefore does NOT trust it: `/usr/bin/env -i` wipes the inherited block and re-adds
+  only a vetted allowlist (values read from the live caller session), `env(1)`-style.
+  Allowlist (default-deny), not a denylist of "dangerous" vars: the injection-var set (ld.so
+  family + every toolkit's `*_PLUGIN_PATH`/`*_MODULE*` + interpreter vars) is unbounded and
+  grows per release, so one missed entry = full bypass. Same rationale as sudo's `env_reset`.
+  (Note: this is the OPPOSITE choice from the seccomp syscall filter in 5, which is a denylist -
+  there the *needed* set is huge and the *dangerous* set small, so the asymmetry flips.)
 - **`--pipe --wait`** => synchronous, stdio passes through (behaves like a normal command from
   a terminal too).
 - **Repeated `-p SystemCallFilter=` merge-vs-override is undocumented** => use a single
@@ -159,8 +195,9 @@ prefix. Use the same pattern the role already uses for profiles:
 ## 8. Open decisions
 
 - [ ] Wrapper name (`seccomp-launch`?).
-- [ ] Per-app `extra_env` representation in the registered list (Telegram needs
-      `LIBGL_ALWAYS_SOFTWARE=1`; media players must NOT force software GL).
+- [x] Per-app `extra_env` representation: DECIDED - emitted as leading `VAR=value` tokens on the
+      `Exec=` line, folded into `env -i` by the wrapper (3A/3B). The list stays per-app, never
+      global (Telegram needs `LIBGL_ALWAYS_SOFTWARE=1`; media players must NOT force software GL).
 - [ ] Append ` (hardened)` to localized `Name[xx]=` too, or only the main `Name=`?
 - [ ] Which apps in the first batch (telegram + mpv + vlc?), which deferred.
 - [ ] Allowlist upgrade vs keep denylist.

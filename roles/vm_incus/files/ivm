@@ -74,6 +74,7 @@ CWD_RESOLVED: tuple[str, ...] = (
     "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete",
     "overwrite-dotfiles", "update", "provision", "resize", "mount", "push", "set-password", "unset-password",
     "enable-user-sudo", "disable-user-sudo", "set-ssh-server", "unset-ssh-server", "snapshot", "gui", "info",
+    "expose", "unexpose",
 )
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
 # share one useless generic line. Keys MUST match CWD_RESOLVED exactly.
@@ -99,7 +100,9 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "unset-ssh-server": "revoke a guest account's SSH access (reverses set-ssh-server)",
     "snapshot": "`incus snapshot` wrapper (create/list/restore/delete/rename/show)",
     "gui": "open a SPICE graphical console, detached from the shell",
-    "info": "show the VM's live state (status/image/hw/network/mounts/storage)",
+    "info": "show the VM's live state (status/image/hw/network/forwards/mounts/storage)",
+    "expose": "forward a host TCP port to the VM so the LAN can reach a service in it (no arg lists current forwards)",
+    "unexpose": "remove a port forward added by `expose` (no arg removes ALL; confirms, --yes skips)",
 }
 # Short aliases for the most-typed subcommands. argparse stores the alias VERBATIM
 # in `args.subcommand` (e.g. `sh`, not `shell`), so main() folds it back to the
@@ -1927,6 +1930,144 @@ def cmd_env(template_name: str, root: Path, shared_prebuilt_provision_assets_roo
         print(f"-> resolved   : ({ansible_os_family}) {' '.join(resolved)}")
 
 
+# ---------- expose / unexpose: LAN-reachable port forwards (incus proxy device) ----------
+
+# Device-name prefix for the proxy devices `expose` adds; the host port is the key, so
+# `unexpose <host-port>` and `info` can find them again. TCP only for now (the common
+# case - a dev HTTP server); a UDP flag can hang off this later without touching callers.
+EXPOSE_DEVICE_PREFIX: str = "expose-tcp-"
+
+
+def parse_host_guest_ports(port_spec: str) -> tuple[int, int]:
+    """`<port>` (host == guest) or `<host-port>:<guest-port>` -> (host_port, guest_port),
+    the docker/podman `-p` convention. `die`s on a non-numeric or out-of-range port."""
+    host_port_text, _, guest_port_text = port_spec.partition(":")
+    guest_port_text = guest_port_text or host_port_text
+    if not (host_port_text.isdigit() and guest_port_text.isdigit()):
+        die(f"invalid port '{port_spec}' - use <port> or <host-port>:<guest-port> (e.g. 8000 or 9000:8000)")
+    host_port, guest_port = int(host_port_text), int(guest_port_text)
+    for port in (host_port, guest_port):
+        if not 1 <= port <= 65535:
+            die(f"port {port} out of range (1-65535)")
+    return host_port, guest_port
+
+
+def instance_level_devices(name: str) -> dict[str, Any]:
+    """The VM's INSTANCE-level devices only (not profile-inherited), parsed from
+    `incus config device show <name>`. Read-only; {} on any failure."""
+    import yaml  # lazy, same as cmd_info (ships with ansible-core / python3-yaml)
+    parsed: Any = yaml.safe_load(capture(["incus", "config", "device", "show", name]) or "")
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def expose_proxy_forwards(name: str) -> list[tuple[str, str, str]]:
+    """This VM's `expose`-added proxy devices as (device_name, host_port, guest_port),
+    from its instance-level devices. Read-only - used by `info` and bare `expose`."""
+    forwards: list[tuple[str, str, str]] = []
+    for device_name, device in instance_level_devices(name).items():
+        if not device_name.startswith(EXPOSE_DEVICE_PREFIX) or device.get("type") != "proxy":
+            continue
+        host_port: str = str(device.get("listen", "")).rsplit(":", 1)[-1] or "?"
+        guest_port: str = str(device.get("connect", "")).rsplit(":", 1)[-1] or "?"
+        forwards.append((device_name, host_port, guest_port))
+    return forwards
+
+
+def vm_primary_ipv4(name: str) -> str:
+    """The VM's current IPv4 (its incusbr0 DHCP lease), parsed from `incus list`. Empty
+    string if it has none yet (not running, or no lease)."""
+    raw_ipv4_column: str = capture(["incus", "list", name, "--format", "csv", "--columns", "4"])
+    for token in raw_ipv4_column.replace(",", " ").split():
+        if token.count(".") == 3 and all(octet.isdigit() for octet in token.split(".")):
+            return token
+    return ""
+
+
+def host_tcp_port_in_use(host_port: int) -> bool:
+    """Best-effort: is something already LISTENing on this TCP port on the host? Uses
+    `ss`; if `ss` is absent (empty output) returns False and lets incus catch a genuine
+    conflict when the proxy device is added."""
+    return bool(capture(["ss", "-Hltn", f"sport = :{host_port}"]).strip())
+
+
+def pin_vm_ipv4(name: str, *, dry_run: bool) -> str:
+    """Ensure eth0 has a STATIC IPv4 (incus proxy `nat=true` needs a fixed target IP) and
+    return it. If already pinned, reuse it. Otherwise pin it to the CURRENT lease - same
+    address, so the VM does not change IP and needs no reboot. Under --dry-run with no
+    lease yet, return a placeholder so the would-run commands still print."""
+    import yaml  # lazy
+    expanded: Any = yaml.safe_load(capture(["incus", "config", "show", "--expanded", name]) or "")
+    eth0_device: dict[str, Any] = ((expanded or {}).get("devices", {}) or {}).get("eth0", {}) or {}
+    already_pinned_ipv4: str = eth0_device.get("ipv4.address", "")
+    if already_pinned_ipv4:
+        return already_pinned_ipv4
+    current_ipv4: str = vm_primary_ipv4(name)
+    if not current_ipv4:
+        if dry_run:
+            return "<vm-ipv4>"
+        die(f"{name} has no IPv4 yet (running and on incusbr0?); cannot set up the forward")
+    # `override` lifts the profile's eth0 onto the instance so we can edit it; `set` edits
+    # an eth0 that is already instance-level (e.g. a bridged/macvlan VM, or a re-run).
+    override_or_set: str = "set" if "eth0" in instance_level_devices(name) else "override"
+    run(["incus", "config", "device", override_or_set, name, "eth0", f"ipv4.address={current_ipv4}"],
+        dry_run=dry_run)
+    return current_ipv4
+
+
+def cmd_expose(name: str, *, port_spec: str | None, dry_run: bool) -> None:
+    """`ivm expose [<port>|<host-port>:<guest-port>]`: forward a host TCP port to this VM
+    so the LAN can reach a service inside it. host<->VM already works over incusbr0 NAT;
+    this only ADDS the LAN path, via an incus proxy device (`nat=true`). With no port it
+    lists the VM's current forwards. The VM's incusbr0 IPv4 is pinned first (proxy
+    `nat=true` needs a static target) - pinned to the current lease, so no reboot."""
+    if not port_spec:
+        forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
+        if not forwards:
+            print(f"==> {colorize_vm_name(name)} has no forwards.", file=sys.stderr)
+            return
+        for _device_name, host_port_text, guest_port_text in forwards:
+            print(f"host :{host_port_text} -> guest :{guest_port_text}")
+        return
+    host_port, guest_port = parse_host_guest_ports(port_spec)
+    device_name: str = f"{EXPOSE_DEVICE_PREFIX}{host_port}"
+    if device_name in instance_level_devices(name):
+        die(f"host port {host_port} is already exposed on {name} - `ivm unexpose {host_port}` first")
+    if host_tcp_port_in_use(host_port):
+        die(f"host TCP port {host_port} is already in use on this machine - pick another "
+            f"host port, e.g. `ivm expose {host_port + 1}:{guest_port}`")
+    ensure_up(name, dry_run=dry_run)
+    target_ipv4: str = pin_vm_ipv4(name, dry_run=dry_run)
+    run(["incus", "config", "device", "add", name, device_name, "proxy",
+         f"listen=tcp:0.0.0.0:{host_port}", f"connect=tcp:{target_ipv4}:{guest_port}", "nat=true"],
+        dry_run=dry_run)
+    print(f"==> {colorize_vm_name(name)}: host :{host_port} -> guest :{guest_port}. "
+          f"LAN reaches it at <this-host-ip>:{host_port} (host<->VM unchanged).", file=sys.stderr)
+
+
+def cmd_unexpose(name: str, *, port_spec: str | None, assume_yes: bool, dry_run: bool) -> None:
+    """`ivm unexpose [<host-port>]`: remove a forward added by `expose`. With no port it
+    removes ALL of this VM's forwards (confirms; --yes skips). The pinned IPv4 is left in
+    place - harmless, and a later `expose` reuses it."""
+    forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
+    if not forwards:
+        print(f"==> {colorize_vm_name(name)} has no forwards to remove.", file=sys.stderr)
+        return
+    if port_spec:
+        host_port, _guest_port = parse_host_guest_ports(port_spec)
+        device_name: str = f"{EXPOSE_DEVICE_PREFIX}{host_port}"
+        if device_name not in {forward[0] for forward in forwards}:
+            open_host_ports: str = ", ".join(forward[1] for forward in forwards)
+            die(f"no forward on host port {host_port} (open: {open_host_ports})")
+        device_names_to_remove: list[str] = [device_name]
+    else:
+        confirm_action(name, "remove ALL forwards from", assume_yes=assume_yes, dry_run=dry_run)
+        device_names_to_remove = [forward[0] for forward in forwards]
+    for device_name in device_names_to_remove:
+        run(["incus", "config", "device", "remove", name, device_name], dry_run=dry_run)
+    print(f"==> {colorize_vm_name(name)}: removed {len(device_names_to_remove)} forward(s).",
+          file=sys.stderr)
+
+
 def cmd_info(name: str, root: Path) -> None:
     """`ivm info`: the TARGET VM's live state - status, image, hw, network, mounts
     (from `incus config show --expanded`) + the storage pool its disk lives in.
@@ -1951,6 +2092,11 @@ def cmd_info(name: str, root: Path) -> None:
     print(f"  hw:            cpu={config.get('limits.cpu', '?')} "
           f"memory={config.get('limits.memory', '?')} disk={root_device.get('size', '?')}")
     print(f"  network:       {network}")
+    expose_forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
+    if expose_forwards:
+        print("  forwards:")
+        for _expose_device_name, expose_host_port, expose_guest_port in expose_forwards:
+            print(f"    host :{expose_host_port} -> guest :{expose_guest_port}")
     # Host->guest mounts are the non-root disk devices ivm attaches; skip the
     # `_shadow_` masking devices (internal, not user-meaningful).
     mount_lines: list[str] = [
@@ -2383,6 +2529,7 @@ CWD_RESOLVED_HANDLER: dict[str, Callable[..., None]] = {
     "set-ssh-server": cmd_set_ssh_server, "unset-ssh-server": cmd_unset_ssh_server,
     "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info, "resize": cmd_resize,
     "mount": cmd_mount, "push": cmd_push,
+    "expose": cmd_expose, "unexpose": cmd_unexpose,
 }
 
 
@@ -2478,6 +2625,13 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("guest", help="absolute destination path in the guest")
             sp.add_argument("--as-root", action="store_true",
                             help="own the pushed files as root (uid/gid 0); default is user (1000)")
+        if name == "expose":
+            sp.add_argument("port", nargs="?",
+                            help="<port> (host==guest) or <host-port>:<guest-port> (e.g. 8000 or 9000:8000); "
+                                 "omit to list this VM's current forwards")
+        if name == "unexpose":
+            sp.add_argument("port", nargs="?",
+                            help="host port to stop forwarding; omit to remove ALL forwards (confirms; --yes skips)")
     return parser
 
 
@@ -2578,6 +2732,10 @@ def main() -> None:
                   target=getattr(args, "target", None), root=root, dry_run=args.dry_run)
     elif args.subcommand == "push":
         cmd_push(name, args.local, args.guest, as_root=args.as_root, dry_run=args.dry_run)
+    elif args.subcommand == "expose":
+        cmd_expose(name, port_spec=args.port, dry_run=args.dry_run)
+    elif args.subcommand == "unexpose":
+        cmd_unexpose(name, port_spec=args.port, assume_yes=args.yes, dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 
