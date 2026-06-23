@@ -1990,28 +1990,34 @@ def host_tcp_port_in_use(host_port: int) -> bool:
     return bool(capture(["ss", "-Hltn", f"sport = :{host_port}"]).strip())
 
 
-def pin_vm_ipv4(name: str, *, dry_run: bool) -> str:
-    """Ensure eth0 has a STATIC IPv4 (incus proxy `nat=true` needs a fixed target IP) and
-    return it. If already pinned, reuse it. Otherwise pin it to the CURRENT lease - same
-    address, so the VM does not change IP and needs no reboot. Under --dry-run with no
-    lease yet, return a placeholder so the would-run commands still print."""
+def pin_vm_ipv4(name: str, *, dry_run: bool) -> tuple[str, list[str] | None]:
+    """Ensure eth0 has a STATIC IPv4 (incus proxy `nat=true` needs a fixed target IP).
+    Returns (ipv4, rollback_command): if it was already pinned, (the IP, None); if we pin
+    it now - to the CURRENT lease, same address so no reboot - (the IP, the argv that
+    undoes the pin) so a later failure can leave no half-state. Under --dry-run with no
+    lease yet, ("<vm-ipv4>", None)."""
     import yaml  # lazy
     expanded: Any = yaml.safe_load(capture(["incus", "config", "show", "--expanded", name]) or "")
     eth0_device: dict[str, Any] = ((expanded or {}).get("devices", {}) or {}).get("eth0", {}) or {}
     already_pinned_ipv4: str = eth0_device.get("ipv4.address", "")
     if already_pinned_ipv4:
-        return already_pinned_ipv4
+        return already_pinned_ipv4, None
     current_ipv4: str = vm_primary_ipv4(name)
     if not current_ipv4:
         if dry_run:
-            return "<vm-ipv4>"
+            return "<vm-ipv4>", None
         die(f"{name} has no IPv4 yet (running and on incusbr0?); cannot set up the forward")
     # `override` lifts the profile's eth0 onto the instance so we can edit it; `set` edits
     # an eth0 that is already instance-level (e.g. a bridged/macvlan VM, or a re-run).
     override_or_set: str = "set" if "eth0" in instance_level_devices(name) else "override"
     run(["incus", "config", "device", override_or_set, name, "eth0", f"ipv4.address={current_ipv4}"],
         dry_run=dry_run)
-    return current_ipv4
+    # The undo matches what we did: `override` created an instance-level eth0 -> remove it
+    # (falls back to the profile's); `set` edited an existing one -> just unset the address.
+    rollback_command: list[str] = (
+        ["incus", "config", "device", "remove", name, "eth0"] if override_or_set == "override"
+        else ["incus", "config", "device", "unset", name, "eth0", "ipv4.address"])
+    return current_ipv4, rollback_command
 
 
 def cmd_expose(name: str, *, port_spec: str | None, dry_run: bool) -> None:
@@ -2036,10 +2042,22 @@ def cmd_expose(name: str, *, port_spec: str | None, dry_run: bool) -> None:
         die(f"host TCP port {host_port} is already in use on this machine - pick another "
             f"host port, e.g. `ivm expose {host_port + 1}:{guest_port}`")
     ensure_up(name, dry_run=dry_run)
-    target_ipv4: str = pin_vm_ipv4(name, dry_run=dry_run)
-    run(["incus", "config", "device", "add", name, device_name, "proxy",
-         f"listen=tcp:0.0.0.0:{host_port}", f"connect=tcp:{target_ipv4}:{guest_port}", "nat=true"],
-        dry_run=dry_run)
+    target_ipv4, pin_rollback_command = pin_vm_ipv4(name, dry_run=dry_run)
+    try:
+        run(["incus", "config", "device", "add", name, device_name, "proxy",
+             f"listen=tcp:0.0.0.0:{host_port}", f"connect=tcp:{target_ipv4}:{guest_port}", "nat=true"],
+            dry_run=dry_run)
+    except subprocess.CalledProcessError:
+        # Undo the IP pin we just made, so a failed expose leaves no half-configured VM.
+        if pin_rollback_command is not None:
+            run(pin_rollback_command, dry_run=dry_run)
+        die('could not add the proxy device (see the incus error above).\n'
+            '  If it says "Proxy devices are forbidden": ivm\'s VMs live in a RESTRICTED incus\n'
+            '  project (user-<uid>) that blocks proxy devices by default - forwarding a host\n'
+            '  port is a privilege incus grants only when an admin opts the project in. Allow\n'
+            '  it once (needs admin/sudo on the incus host):\n'
+            '      sudo incus project set user-$(id -u) restricted.devices.proxy=allow\n'
+            '  then re-run `ivm expose`.')
     print(f"==> {colorize_vm_name(name)}: host :{host_port} -> guest :{guest_port}. "
           f"LAN reaches it at <this-host-ip>:{host_port} (host<->VM unchanged).", file=sys.stderr)
 

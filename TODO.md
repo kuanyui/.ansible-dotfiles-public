@@ -17,6 +17,13 @@ alternative to building a host bridge (incus proxy device `nat=true`, not nmcli)
 - [x] `cmd_info` shows a `forwards:` section
 - [x] completion: `_ivm` + `ivm.bash` (`unexpose` completes the VM's open host ports)
 - [x] verified: py_compile + `--help` + `--dry-run` (parse / range / non-numeric / would-run); bash+zsh completion `-n`
+- [x] restricted-project gotcha: `user-<uid>` projects block proxy devices by default
+  (`restricted.devices.proxy=block`); expose now rolls back the IP pin on failure + tells
+  you to `sudo incus project set user-$(id -u) restricted.devices.proxy=allow` (admin, one-time)
+- [ ] LIVE-TEST on a real host: after the allow above, does expose actually forward (proxy
+  `nat=true` on a VM)? not verifiable in this exec env (no incus perms)
+- [ ] decide: leave the project-allow manual (current: friendly error teaches it), or add
+  an opt-in flag to `vm-incus-install` that sets it (security trade-off - keep opt-in)
 - [ ] sandbox = `make vm-incus-sandbox` (blocked in this exec env - no podman build; run on a real host)
 - [ ] only host<->VM + this one LAN port; "VM as a full LAN host" still needs a bridge
 
