@@ -904,6 +904,24 @@ def cmd_update(container_name: str, *, dry_run: bool) -> None:
     print(f"==> {colorize_container_name(container_name)} packages updated.", file=sys.stderr)
 
 
+def cmd_resize(container_name: str, *, cpu: str | None, memory: str | None, dry_run: bool) -> None:
+    """Change the container's vCPU and/or memory limit IN PLACE (`podman update`). ivm
+    `resize` parity, cpu/memory only: a rootless container's overlay rootfs is not resizable,
+    so there is NO --disk. At least one of --cpu/--memory is required. The ivm-aligned flag
+    names (--cpu/--memory) map onto podman's --cpus/--memory."""
+    update_argv: list[str] = ["podman", "update"]
+    if cpu is not None:
+        update_argv += ["--cpus", cpu]
+    if memory is not None:
+        update_argv += ["--memory", memory]
+    if len(update_argv) == 2:
+        die("resize: specify --cpu and/or --memory (no --disk: a rootless container's rootfs "
+            "is not resizable)")
+    update_argv.append(container_name)
+    run(update_argv, dry_run=dry_run)
+    print(f"==> {colorize_container_name(container_name)} resized.", file=sys.stderr)
+
+
 def cmd_build(template_name: str, *, shared_root: Path, network: str | None,
               rebuild: bool, dry_run: bool) -> None:
     """Build (provision + commit) the per-template image only - no container run.
@@ -1126,6 +1144,13 @@ def build_parser() -> argparse.ArgumentParser:
     push_parser.add_argument("--as-root", action="store_true",
                              help="re-own the pushed path to root inside the container (chown -R)")
 
+    resize_parser = subparsers.add_parser(
+        "resize", help="change the container's vCPU/memory limit in place (podman update)")
+    resize_parser.add_argument("--cpu", metavar="<n>", default=None,
+                               help="vCPU limit (maps to podman --cpus), e.g. 2")
+    resize_parser.add_argument("--memory", metavar="<size>", default=None,
+                               help="memory limit (maps to podman --memory), e.g. 4g")
+
     top_parser = subparsers.add_parser(
         "top", help="live resource stats (passthrough to podman stats)")
     top_parser.add_argument("stats_args", nargs="*", metavar="[args]",
@@ -1200,6 +1225,9 @@ def main() -> None:
     elif subcommand == "push":
         cmd_push(container_name, parsed_arguments.local, parsed_arguments.guest,
                  as_root=parsed_arguments.as_root, dry_run=dry_run)
+    elif subcommand == "resize":
+        cmd_resize(container_name, cpu=parsed_arguments.cpu, memory=parsed_arguments.memory,
+                   dry_run=dry_run)
     elif subcommand == "agent":
         cmd_agent(container_name, runtime=runtime, dry_run=dry_run)
 
