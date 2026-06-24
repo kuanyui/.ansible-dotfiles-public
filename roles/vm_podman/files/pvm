@@ -877,6 +877,33 @@ def cmd_push(container_name: str, local_path: str, guest_path: str, *,
           file=sys.stderr)
 
 
+# In-place upgrade run as ROOT inside the container. Detects the package manager itself, so
+# it needs neither the template nor the image->family mapping (the container may have drifted).
+CONTAINER_UPDATE_SCRIPT: str = (
+    "set -e\n"
+    "if command -v apt-get >/dev/null 2>&1; then\n"
+    "  export DEBIAN_FRONTEND=noninteractive\n"
+    "  apt-get update -qq && apt-get upgrade --yes\n"
+    "elif command -v zypper >/dev/null 2>&1; then\n"
+    "  zypper --non-interactive refresh && zypper --non-interactive update\n"
+    "elif command -v dnf >/dev/null 2>&1; then\n"
+    "  dnf upgrade --assumeyes\n"
+    "else\n"
+    "  echo 'pvm update: no supported package manager (apt-get/zypper/dnf) in the container' >&2\n"
+    "  exit 1\n"
+    "fi\n"
+)
+
+
+def cmd_update(container_name: str, *, dry_run: bool) -> None:
+    """Refresh + upgrade all distro packages inside the container, as root (detects
+    apt-get / zypper / dnf). ivm `update` parity. Starts the container if it is stopped."""
+    ensure_started(container_name, dry_run=dry_run)
+    run(["podman", "exec", "--user", "root", container_name, "bash", "-ec", CONTAINER_UPDATE_SCRIPT],
+        dry_run=dry_run)
+    print(f"==> {colorize_container_name(container_name)} packages updated.", file=sys.stderr)
+
+
 def cmd_build(template_name: str, *, shared_root: Path, network: str | None,
               rebuild: bool, dry_run: bool) -> None:
     """Build (provision + commit) the per-template image only - no container run.
@@ -1059,6 +1086,7 @@ def build_parser() -> argparse.ArgumentParser:
             ("rmi", "remove the per-template image (keeps containers)"),
             ("rma", "remove the container AND its image"),
             ("info", "show the cwd container's status/image/hw/network/ports/mounts/agent"),
+            ("update", "refresh + upgrade all distro packages in the container (apt/zypper/dnf)"),
             ("shell", "interactive shell (zsh, user); ivm-aligned alias: sh"),
             ("sh", "alias of shell (zsh, user)"),
             ("shell-user", "zsh as the unprivileged user (ivm-aligned; alias sh-user)"),
@@ -1147,6 +1175,8 @@ def main() -> None:
         cmd_delete(container_name, assume_yes=parsed_arguments.yes, dry_run=dry_run)
     elif subcommand == "info":
         cmd_info(container_name)
+    elif subcommand == "update":
+        cmd_update(container_name, dry_run=dry_run)
     elif subcommand == "push":
         cmd_push(container_name, parsed_arguments.local, parsed_arguments.guest,
                  as_root=parsed_arguments.as_root, dry_run=dry_run)

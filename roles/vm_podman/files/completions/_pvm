@@ -18,6 +18,7 @@ _pvm_subcommands=(
   'reboot:restart the cwd container (confirms; --yes skips)'
   'delete:remove the cwd container, keeping the image (confirms)'
   'info:show the cwd container status/image/hw/network/ports/mounts/agent'
+  'update:refresh + upgrade all distro packages in the container'
   'push:copy a host file/dir into the container (podman cp; --as-root)'
   'shell:interactive shell (zsh, user); alias sh'
   'sh:alias of shell (zsh, user)'
