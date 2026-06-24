@@ -301,6 +301,17 @@ No conflict, no visibility either.
 - Default networks do not overlap: libvirt `virbr0` = `192.168.122.0/24`, incus `incusbr0` = an auto-picked subnet.
 - Both stacks add their own nftables rules. Usually harmless.
 
+### Two bridges exist: `incusbr0` vs the per-user `incusbr-1000` - which does my VM use?
+
+Your VMs use **`incusbr0`**. The confusion is real because incus's DEFAULT would use the other one:
+
+- **`incusbr-<uid>`** (here **`incusbr-1000`**, subnet `10.106.195.0/24`) - incus AUTO-creates this per-user bridge for your restricted project `user-<uid>`, and by default would attach that project's VMs to it. But it is flaky (can come up with no IPv4), so this role does NOT use it.
+- **`incusbr0`** (subnet `10.93.37.0/24`, IPv4 NAT + DNS) - the standard managed bridge in the `default` project. This role REPOINTS the `user-<uid>` project's default-profile `eth0` to it (`tasks/incus_host_install.yml:722-734`), so your VMs ride `incusbr0`. Full rationale: [DESIGN.md §4](../DESIGN.md).
+
+`incusbr-1000` still EXISTS as an unused leftover (incus created it; the role does not delete it - its own `dnsmasq` shows in `systemctl status incus`), which is why you keep seeing it and assume it is in use. It is not.
+
+**Proof, and why the firewall rule targets `incusbr0` not `incusbr-1000`:** a working VM here leases an IP like `10.93.37.146` - that is `incusbr0`'s subnet, not `incusbr-1000`'s (`10.106.195.0/24`). The VM taps are enslaved to `incusbr0` (`ip link show master incusbr0` lists them). So the DHCP-dropped-by-firewalld problem is on `incusbr0`, and that is the interface to trust; trusting `incusbr-1000` would do nothing because no VM is on it. (Trusting `incusbr0` is what made DHCP start working - direct confirmation the VMs are on it.)
+
 ### firewalld hosts: VMs get an IPv6 address but no IPv4, apt fails with "Temporary failure resolving"
 
 Symptom: VM has only an `fd42:...` (IPv6 SLAAC) address, `ip -4 addr` shows nothing, `ping 1.1.1.1` is "Network is unreachable".
@@ -316,17 +327,36 @@ incus restart <vm>            # re-trigger DHCP
 incus exec <vm> -- ip -4 addr show    # expect 10.x.x.x
 ```
 
-`trusted` scope is one interface only - a private internal NAT segment carrying only your own VMs - so it does NOT widen your real NICs (still in `public`).
+#### Why does my own VM need the firewall "opened" just to get a 10.x internal IP?
 
-**Why the zones coexist (so `trusted` works while the default stays `public`):** firewalld matches PER-INTERFACE. The default zone is only the fallback for interfaces NOT explicitly bound to a zone, so binding only `incusbr0` to `trusted` (target: accept-all) leaves every real NIC in `public`. They do not conflict.
+The trap is the mental model "firewall = blocks the internet". A host firewall's INPUT chain filters every packet addressed to the HOST, on EVERY interface - internal bridges included. Two facts put `incusbr0` in that path:
 
-**Why you may not see `incusbr0` in YaST** (openSUSE's YaST Firewall manages this same firewalld):
+- **In NAT mode the host IS the VM's router + DHCP server + DNS.** A managed bridge means the host runs `dnsmasq` bound to the bridge gateway (e.g. `10.93.37.1`) to hand out the 10.x leases and resolve DNS, and NATs the VM's outbound traffic. So "VM gets an IP" = the VM sends a DHCP request TO the host's dnsmasq - an INBOUND-to-host packet. The host firewall sees it like any other inbound.
+- **firewalld zones are per-interface; an unassigned interface gets the default `public` zone - the profile meant for an untrusted, internet-facing NIC** - which drops inbound DHCP (udp/67). So the host was applying "hostile internet" rules to its OWN private VM bridge. That mismatch is the bug - you are NOT "poking a hole to the internet".
+
+Putting `incusbr0` in `trusted` does not widen exposure: it scopes to that ONE interface - a host-only NAT segment (10.x/24, your own VMs) the LAN and internet cannot reach. Your real NICs stay in `public`. You are just telling the firewall "this interface is internal, accept its traffic to me" - which is exactly what it is.
+
+You don't hit this on every distro: without firewalld (e.g. Debian + bare nftables) incus manages its own nftables rules and already allows DHCP/DNS on its bridges, so it just works. On firewalld hosts (Fedora / openSUSE) firewalld owns the ruleset and its zone policy wins for the unassigned bridge - hence the one-time trust. The role's job is to make that automatic so you never think about it.
+
+#### Why does `trusted` work while the default zone stays `public`?
+
+firewalld matches PER-INTERFACE. The default zone is only the fallback for interfaces NOT explicitly bound to a zone, so binding only `incusbr0` to `trusted` (target: accept-all) leaves every real NIC in `public`. They do not conflict.
+
+#### Why don't I see `incusbr0` in YaST Firewall?
+
+(openSUSE's YaST Firewall manages this same firewalld.)
 
 - **Runtime vs permanent.** `firewall-cmd --change-interface` WITHOUT `--permanent` changes only the live RUNTIME state: it works at once, but is not written to `/etc/firewalld/zones/*.xml`, so it does not show in YaST and is lost on `--reload` / reboot. The `--permanent` form above writes it into `trusted.xml` -> survives reboot and shows in YaST. **Caveat:** while the binding is runtime-only, opening YaST Firewall and applying reloads from permanent and WIPES it - set `--permanent` first.
 - **Unassigned = invisible.** firewalld lists only interfaces explicitly assigned to a zone, so an unassigned `incusbr0` appears in no zone list at all (there is no command to list unassigned interfaces).
 - **Not NetworkManager-managed.** `incusbr0` is created by the incus daemon, so it never appears in YaST's interface PICKER; the `--permanent` CLI binding is the way to set it.
 
 This is also the root of "works until reboot": on boot firewalld loads only its PERMANENT config, so an `incusbr0` that was only ever bound at runtime falls back to `public` and DHCP breaks again.
+
+#### If YaST doesn't list `incusbr0`, how can I add it to a zone with `firewall-cmd`?
+
+Because YaST's interface list and firewalld's binding capability are not the same thing. YaST Firewall only shows interfaces it knows from the system network config (NetworkManager / wicked connections) - a curated convenience view. `incusbr0` is created at runtime by the incus daemon, managed by neither, so it never appears in YaST's picker.
+
+firewalld itself has no such restriction: `--change-interface` binds a zone to an interface by NAME, and the name need not be NetworkManager-managed (or even exist yet). For an interface NOT under NetworkManager, firewalld records the binding in its own config directly. So the CLI exposes the full capability; the YaST UI only surfaces the subset of interfaces it manages. `incusbr0` is a real, live interface (`ip link show incusbr0`) - it just is not YaST-managed, so the CLI is the way to zone it.
 
 ### How to pick NAT vs Bridge for a VM?
 
