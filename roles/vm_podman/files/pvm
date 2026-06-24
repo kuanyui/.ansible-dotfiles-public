@@ -859,6 +859,24 @@ def cmd_agent(container_name: str, *, runtime: str, dry_run: bool) -> None:
               runtime=runtime, dry_run=dry_run)
 
 
+def cmd_push(container_name: str, local_path: str, guest_path: str, *,
+             as_root: bool, dry_run: bool) -> None:
+    """Copy a host file/dir into the container at <guest_path> (`podman cp`). It lands owned
+    by the container `user` (--userns=keep-id maps the host user in); --as-root then re-owns
+    the pushed path to root (chown -R). ivm `push` parity. The optional chown starts the
+    container (`podman exec` needs it running); plain copy works stopped too."""
+    if not dry_run and not Path(local_path).exists():
+        die(f"local path does not exist: {local_path}")
+    run(["podman", "cp", local_path, f"{container_name}:{guest_path}"], dry_run=dry_run)
+    if as_root:
+        ensure_started(container_name, dry_run=dry_run)
+        run(["podman", "exec", "--user", "root", container_name,
+             "chown", "-R", "root:root", guest_path], dry_run=dry_run)
+    ownership: str = " (root-owned)" if as_root else ""
+    print(f"==> pushed {local_path} -> {colorize_container_name(container_name)}:{guest_path}{ownership}",
+          file=sys.stderr)
+
+
 def cmd_build(template_name: str, *, shared_root: Path, network: str | None,
               rebuild: bool, dry_run: bool) -> None:
     """Build (provision + commit) the per-template image only - no container run.
@@ -1062,6 +1080,13 @@ def build_parser() -> argparse.ArgumentParser:
         confirming_parser.add_argument("--yes", action="store_true",
                                        help="skip the confirmation prompt")
 
+    push_parser = subparsers.add_parser(
+        "push", help="copy a host file/dir into the container (podman cp)")
+    push_parser.add_argument("local", metavar="<local>", help="host file or directory to copy in")
+    push_parser.add_argument("guest", metavar="<guest>", help="destination path inside the container")
+    push_parser.add_argument("--as-root", action="store_true",
+                             help="re-own the pushed path to root inside the container (chown -R)")
+
     subparsers.add_parser("list", help="list pvm-managed containers (name, status, image)")
     subparsers.add_parser("help", help="show this help")
     return parser
@@ -1122,6 +1147,9 @@ def main() -> None:
         cmd_delete(container_name, assume_yes=parsed_arguments.yes, dry_run=dry_run)
     elif subcommand == "info":
         cmd_info(container_name)
+    elif subcommand == "push":
+        cmd_push(container_name, parsed_arguments.local, parsed_arguments.guest,
+                 as_root=parsed_arguments.as_root, dry_run=dry_run)
     elif subcommand == "agent":
         cmd_agent(container_name, runtime=runtime, dry_run=dry_run)
 
