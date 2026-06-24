@@ -922,6 +922,105 @@ def cmd_resize(container_name: str, *, cpu: str | None, memory: str | None, dry_
     print(f"==> {colorize_container_name(container_name)} resized.", file=sys.stderr)
 
 
+def container_family(container_name: str) -> str:
+    """The container's ansible_os_family (Debian/Suse/RedHat) for provisioning, from its
+    pvm.template label -> the template's image_name. Dies if it cannot be resolved."""
+    template_name: str = container_template_name(container_name)
+    template: dict[str, Any] | None = load_template_quiet(template_name) if template_name else None
+    family: str | None = distro_family_of_image(str(template.get("image_name", ""))) if template else None
+    if family is None:
+        die(f"cannot resolve the distro family of {container_name} (pvm.template label "
+            f"'{template_name or '(unset)'}' missing or unmapped)")
+    return family
+
+
+def cmd_list_provision_units(shared_root: Path) -> None:
+    """List every provisionable unit - distro package groups + thirdparty software + dotfiles
+    features - with descriptions. Bare `pvm provision` (ivm parity). Lists for bash users too
+    (CLAUDE.md), the same data the completions read."""
+    distro_registry: dict[str, Any] = load_package_groups(shared_root)
+    tp_registry: dict[str, Any] = load_thirdparty_software(shared_root)
+    dotfiles_root: Path = shared_root / "dotfiles"
+    print("distro package groups:")
+    for group_name in sorted(distro_registry):
+        entry: Any = distro_registry[group_name]
+        description: str = entry.get("description", "") if isinstance(entry, dict) else ""
+        print(f"  {group_name:<22} {description}")
+    print("thirdparty software:")
+    for software_name in sorted(tp_registry):
+        entry = tp_registry[software_name]
+        description = entry.get("description", "") if isinstance(entry, dict) else ""
+        print(f"  {software_name:<22} {description}")
+    print("dotfiles features:")
+    dotfiles_features: list[str] = (sorted(child.name for child in dotfiles_root.iterdir() if child.is_dir())
+                                    if dotfiles_root.is_dir() else [])
+    for feature_name in dotfiles_features:
+        print(f"  {feature_name}")
+    if not dotfiles_features:
+        print("  (none)")
+
+
+def cmd_provision(container_name: str, units: list[str], *, shared_root: Path, dry_run: bool) -> None:
+    """Install distro package groups / thirdparty software / dotfiles features into the RUNNING
+    container's writable layer (persists across stop/start like a VM's disk; lost on delete).
+    ivm `provision <unit>` parity. A unit present in more than one registry applies ALL of them
+    (e.g. `emacs` = the package group AND its dotfiles; `dev_android` = the bundle AND the
+    recipe). Order: distro packages + their post_install, then thirdparty recipes, then dotfiles.
+    The container's family comes from its pvm.template label."""
+    distro_registry: dict[str, Any] = load_package_groups(shared_root)
+    tp_registry: dict[str, Any] = load_thirdparty_software(shared_root)
+    dotfiles_root: Path = shared_root / "dotfiles"
+
+    # Classify each unit FIRST (no podman needed) so a typo fails fast before we touch the
+    # container. A unit can land in more than one bucket (applies all - ivm parity).
+    groups: list[str] = []
+    thirdparty_names: list[str] = []
+    dotfiles_features: list[str] = []
+    unknown: list[str] = []
+    for unit in units:
+        matched: bool = False
+        if unit in distro_registry:
+            groups.append(unit); matched = True
+        if unit in tp_registry:
+            thirdparty_names.append(unit); matched = True
+        if (dotfiles_root / unit).is_dir():
+            dotfiles_features.append(unit); matched = True
+        if not matched:
+            unknown.append(unit)
+    if unknown:
+        die(f"unknown provision unit(s): {', '.join(unknown)} (run `pvm provision` with no "
+            f"args to list every available unit)")
+
+    family: str = container_family(container_name)
+    ensure_started(container_name, dry_run=dry_run)
+
+    packages: list[str] = []
+    for group in groups:
+        packages += resolve_group(distro_registry, group, family)
+    script_parts: list[str] = ["set -e"]
+    if packages:
+        script_parts.append(install_packages_script(family, list(dict.fromkeys(packages))))
+    if groups:
+        script_parts.append(groups_post_install_script(groups, distro_registry, family))
+    if thirdparty_names:
+        script_parts.append(thirdparty_install_script(
+            resolve_thirdparty_software(thirdparty_names, tp_registry, family)))
+    provision_script: str = "\n".join(part for part in script_parts if part.strip()) + "\n"
+    if provision_script.strip() != "set -e":
+        run(["podman", "exec", "--user", "root", container_name, "bash", "-ec", provision_script],
+            dry_run=dry_run)
+
+    if dotfiles_features:
+        for copy_argv in dotfiles_copy_argv(container_name, {"dotfiles": dotfiles_features}, family, shared_root):
+            run(copy_argv, dry_run=dry_run)
+        run(["podman", "exec", container_name, "chown", "-R", "1000:1000", "/home/user"], dry_run=dry_run)
+        run(["podman", "exec", "--user", "root", container_name, "bash", "-ec", overlay_append_script()],
+            dry_run=dry_run)
+
+    print(f"==> provisioned {', '.join(units)} into {colorize_container_name(container_name)}.",
+          file=sys.stderr)
+
+
 def cmd_build(template_name: str, *, shared_root: Path, network: str | None,
               rebuild: bool, dry_run: bool) -> None:
     """Build (provision + commit) the per-template image only - no container run.
@@ -1151,6 +1250,12 @@ def build_parser() -> argparse.ArgumentParser:
     resize_parser.add_argument("--memory", metavar="<size>", default=None,
                                help="memory limit (maps to podman --memory), e.g. 4g")
 
+    provision_parser = subparsers.add_parser(
+        "provision",
+        help="install distro groups / thirdparty / dotfiles into the container (bare = list units)")
+    provision_parser.add_argument("units", nargs="*", metavar="[unit]",
+                                  help="units to install; none = list every available unit")
+
     top_parser = subparsers.add_parser(
         "top", help="live resource stats (passthrough to podman stats)")
     top_parser.add_argument("stats_args", nargs="*", metavar="[args]",
@@ -1196,6 +1301,9 @@ def main() -> None:
     if subcommand == "top":
         cmd_top(parsed_arguments.stats_args, dry_run=dry_run)
         return
+    if subcommand == "provision" and not parsed_arguments.units:
+        cmd_list_provision_units(shared_root)
+        return
 
     # Container-acting subcommands: resolve the target by cwd binding or --name.
     container_name: str = resolve_container_for_cwd(parsed_arguments.name)
@@ -1228,6 +1336,8 @@ def main() -> None:
     elif subcommand == "resize":
         cmd_resize(container_name, cpu=parsed_arguments.cpu, memory=parsed_arguments.memory,
                    dry_run=dry_run)
+    elif subcommand == "provision":
+        cmd_provision(container_name, parsed_arguments.units, shared_root=shared_root, dry_run=dry_run)
     elif subcommand == "agent":
         cmd_agent(container_name, runtime=runtime, dry_run=dry_run)
 

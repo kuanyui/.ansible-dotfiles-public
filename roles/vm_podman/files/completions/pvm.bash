@@ -19,11 +19,34 @@ _pvm_container_names() {
     podman ps --all --filter 'name=^pvm-' --format '{{.Names}}' 2>/dev/null
 }
 
+# Provisionable unit names for `provision`: distro package groups + thirdparty software
+# (shared cache JSON) + dotfiles features. Names only (bash shows no descriptions). Same
+# dynamic pattern as ivm's _ivm_unit_names.
+_pvm_unit_names() {
+    local shared_root="${SHARED_PREBUILT_PROVISION_ASSETS_ROOT:-$HOME/.local/share/ansible-managed/shared-prebuilt-provision-assets}"
+    python3 - "$shared_root" 2>/dev/null <<'PY'
+import json, os, sys
+shared_root = sys.argv[1]
+names = []
+for f in ("distro-package-groups.json", "thirdparty-software.json"):
+    p = os.path.join(shared_root, f)
+    if os.path.exists(p):
+        try:
+            names += list(json.load(open(p)))
+        except Exception:
+            pass
+dotfiles = os.path.join(shared_root, "dotfiles")
+if os.path.isdir(dotfiles):
+    names += sorted(os.listdir(dotfiles))
+print("\n".join(dict.fromkeys(names)))
+PY
+}
+
 _pvm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init build run env start stop rmc rmi rma reboot delete info update push resize shell sh shell-user sh-user shell-root sh-root zsh-user zsh-root bash-user bash-root agent top list help"
+    local subcommands="init build run env start stop rmc rmi rma reboot delete info update push resize provision shell sh shell-user sh-user shell-root sh-root zsh-user zsh-root bash-user bash-root agent top list help"
 
     # Flags that take a value: complete that value, not a subcommand.
     if [[ "$prev" == "--name" ]]; then
@@ -71,6 +94,9 @@ _pvm() {
             ;;
         resize)
             COMPREPLY=( $(compgen -W "--cpu --memory" -- "$cur") )
+            ;;
+        provision)
+            COMPREPLY=( $(compgen -W "$(_pvm_unit_names)" -- "$cur") )
             ;;
     esac
 }
