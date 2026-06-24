@@ -30,10 +30,23 @@ per-project container is then run from that image, mounting the cwd.
 
 ## Status
 
-Sub-phase 3.0 scaffold: the role installs `pvm` (only `env` / `list` / `help`
-wired), completions, and co-produces the shared cache. Templates, the build
-pipeline, the real podman drive, and the isolation gates land in 3.1-3.3 per
-[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+Fully wired: the build pipeline (`init` / `build` / `run`), the real podman drive,
+the isolation gates, and a management surface aligned with `ivm` (the reference
+launcher). `libkrun` (microVM runtime) stays deferred - `--runtime libkrun` is
+accepted but not yet driven. See [TODO.md](TODO.md) for the ivm->pvm alignment map
+(what ports, what podman cannot do).
+
+## Subcommands
+
+- **build/run**: `init` (build image if needed + run cwd container), `build`, `run`, `env`
+- **lifecycle**: `start`, `stop`, `reboot`, `rmc` / `rmi` / `rma`, `delete`
+- **enter**: `shell`/`sh`, `shell-user`, `shell-root` (+ `zsh-*` / `bash-*`), `agent`
+- **manage**: `info`, `update`, `provision [unit...]`, `overwrite-dotfiles`, `push`, `resize`, `mount ls`, `top`, `list`
+
+podman cannot hot-change a running container's mounts/ports or give it a VM console,
+so ivm's `expose` / `mount attach` / `gui` / `snapshot` / `set ssh-server` are NOT
+ported (the container's mounts/ports are fixed at `init` from the template; see
+[TODO.md](TODO.md)).
 
 ## Files
 
@@ -43,6 +56,7 @@ roles/vm_podman/
   files/test_pvm.py          unit tests (pure helpers)
   files/completions/         _pvm (zsh) + pvm.bash
   IMPLEMENTATION_PLAN.md     the phased build plan (durable, in-repo)
+  TODO.md                    ivm->pvm subcommand alignment map + status
 ~/.local/share/ansible-managed/vm-podman/   pvm program data + completions (uninstall = rm -rf)
 podman image/container storage              built images/containers (NEVER touched by ansible)
 ```
