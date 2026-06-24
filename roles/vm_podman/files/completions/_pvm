@@ -15,11 +15,18 @@ _pvm_subcommands=(
   'rmc:remove the container (keeps the image)'
   'rmi:remove the per-template image (keeps containers)'
   'rma:remove the container AND its image'
-  'shell:interactive shell in the container (zsh, user)'
-  'bash-user:bash in the container as the unprivileged user'
-  'bash-root:bash in the container as root'
+  'reboot:restart the cwd container (confirms; --yes skips)'
+  'delete:remove the cwd container, keeping the image (confirms)'
+  'shell:interactive shell (zsh, user); alias sh'
+  'sh:alias of shell (zsh, user)'
+  'shell-user:zsh as the unprivileged user (alias sh-user)'
+  'sh-user:alias of shell-user'
+  'shell-root:zsh as root (alias sh-root)'
+  'sh-root:alias of shell-root'
   'zsh-user:zsh in the container as the unprivileged user'
   'zsh-root:zsh in the container as root'
+  'bash-user:bash in the container as the unprivileged user'
+  'bash-root:bash in the container as root'
   'agent:run the template-configured agent (e.g. claude) in the container'
   'list:list pvm-managed containers (name, status, image)'
   'help:show help'
@@ -63,6 +70,9 @@ case "$state" in
           init) compadd -- --rebuild --yes ;;
           build) compadd -- --rebuild ;;
         esac
+        ;;
+      reboot|delete)
+        compadd -- --yes
         ;;
     esac
     ;;

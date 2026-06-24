@@ -23,7 +23,7 @@ _pvm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init build run env start stop rmc rmi rma shell bash-user bash-root zsh-user zsh-root agent list help"
+    local subcommands="init build run env start stop rmc rmi rma reboot delete shell sh shell-user sh-user shell-root sh-root zsh-user zsh-root bash-user bash-root agent list help"
 
     # Flags that take a value: complete that value, not a subcommand.
     if [[ "$prev" == "--name" ]]; then
@@ -59,6 +59,9 @@ _pvm() {
             ;;
         run|env)
             COMPREPLY=( $(compgen -W "$(_pvm_template_names)" -- "$cur") )
+            ;;
+        reboot|delete)
+            COMPREPLY=( $(compgen -W "--yes" -- "$cur") )
             ;;
     esac
 }

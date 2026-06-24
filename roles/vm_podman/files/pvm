@@ -815,6 +815,23 @@ def cmd_rma(container_name: str, *, dry_run: bool) -> None:
     cmd_rmi(container_name, dry_run=dry_run)
 
 
+def cmd_reboot(container_name: str, *, assume_yes: bool, dry_run: bool) -> None:
+    """Restart the cwd container (`podman restart`). Confirms first (ivm `reboot` parity)."""
+    confirm_or_die(f"restart container {container_name}?", assume_yes=assume_yes)
+    run(["podman", "restart", container_name], dry_run=dry_run)
+    print(f"==> {colorize_container_name(container_name)} restarted.", file=sys.stderr)
+
+
+def cmd_delete(container_name: str, *, assume_yes: bool, dry_run: bool) -> None:
+    """Remove the cwd container, KEEPING the shared per-template image (ivm `delete`
+    parity). The image is reused by other projects' containers, so removing it is the
+    explicit `rmi`/`rma`, never `delete`."""
+    confirm_or_die(f"delete container {container_name} (keeps the per-template image)?",
+                   assume_yes=assume_yes)
+    run(["podman", "rm", "--force", container_name], dry_run=dry_run)
+    print(f"==> deleted container {colorize_container_name(container_name)}.", file=sys.stderr)
+
+
 def cmd_agent(container_name: str, *, runtime: str, dry_run: bool) -> None:
     """Run the template's configured agent command in the container, as `user`. The
     template is read from the container's pvm.template label (read-only, so this also
@@ -858,6 +875,17 @@ def cmd_help(parser: argparse.ArgumentParser) -> None:
 
 
 # ---------- CLI ----------
+
+# Shell-entry subcommands -> (shell binary, run as root?). ivm-aligned names: shell / sh /
+# shell-user / sh-user = zsh as the unprivileged user; shell-root / sh-root = zsh as root.
+# pvm keeps its explicit zsh-/bash- variants too. main() dispatches any of these via this table.
+SHELL_SUBCOMMANDS: dict[str, tuple[str, bool]] = {
+    "shell": ("zsh", False), "sh": ("zsh", False),
+    "shell-user": ("zsh", False), "sh-user": ("zsh", False),
+    "shell-root": ("zsh", True), "sh-root": ("zsh", True),
+    "zsh-user": ("zsh", False), "zsh-root": ("zsh", True),
+    "bash-user": ("bash", False), "bash-root": ("bash", True),
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -905,13 +933,26 @@ def build_parser() -> argparse.ArgumentParser:
             ("rmc", "remove the container (keeps the image)"),
             ("rmi", "remove the per-template image (keeps containers)"),
             ("rma", "remove the container AND its image"),
-            ("shell", "interactive shell in the container (zsh, user)"),
-            ("bash-user", "bash in the container as the unprivileged user"),
-            ("bash-root", "bash in the container as root"),
+            ("shell", "interactive shell (zsh, user); ivm-aligned alias: sh"),
+            ("sh", "alias of shell (zsh, user)"),
+            ("shell-user", "zsh as the unprivileged user (ivm-aligned; alias sh-user)"),
+            ("sh-user", "alias of shell-user"),
+            ("shell-root", "zsh as root (ivm-aligned; alias sh-root)"),
+            ("sh-root", "alias of shell-root"),
             ("zsh-user", "zsh in the container as the unprivileged user"),
             ("zsh-root", "zsh in the container as root"),
+            ("bash-user", "bash in the container as the unprivileged user"),
+            ("bash-root", "bash in the container as root"),
             ("agent", "run the template's configured agent (e.g. claude) in the container")):
         subparsers.add_parser(container_subcommand, help=subcommand_help)
+
+    # Container lifecycle verbs that confirm first (ivm-aligned reboot/delete).
+    for confirming_subcommand, subcommand_help in (
+            ("reboot", "restart the cwd container (podman restart); confirms, --yes skips"),
+            ("delete", "remove the cwd container, keeping the per-template image; confirms")):
+        confirming_parser = subparsers.add_parser(confirming_subcommand, help=subcommand_help)
+        confirming_parser.add_argument("--yes", action="store_true",
+                                       help="skip the confirmation prompt")
 
     subparsers.add_parser("list", help="list pvm-managed containers (name, status, image)")
     subparsers.add_parser("help", help="show this help")
@@ -952,6 +993,11 @@ def main() -> None:
 
     # Container-acting subcommands: resolve the target by cwd binding or --name.
     container_name: str = resolve_container_for_cwd(parsed_arguments.name)
+    shell_spec: tuple[str, bool] | None = SHELL_SUBCOMMANDS.get(subcommand)
+    if shell_spec is not None:
+        shell_binary, shell_as_root = shell_spec
+        exec_into(container_name, [shell_binary], as_root=shell_as_root, runtime=runtime, dry_run=dry_run)
+        return
     if subcommand == "start":
         cmd_start(container_name, dry_run=dry_run)
     elif subcommand == "stop":
@@ -962,16 +1008,10 @@ def main() -> None:
         cmd_rmi(container_name, dry_run=dry_run)
     elif subcommand == "rma":
         cmd_rma(container_name, dry_run=dry_run)
-    elif subcommand == "shell":
-        exec_into(container_name, ["zsh"], as_root=False, runtime=runtime, dry_run=dry_run)
-    elif subcommand == "bash-user":
-        exec_into(container_name, ["bash"], as_root=False, runtime=runtime, dry_run=dry_run)
-    elif subcommand == "bash-root":
-        exec_into(container_name, ["bash"], as_root=True, runtime=runtime, dry_run=dry_run)
-    elif subcommand == "zsh-user":
-        exec_into(container_name, ["zsh"], as_root=False, runtime=runtime, dry_run=dry_run)
-    elif subcommand == "zsh-root":
-        exec_into(container_name, ["zsh"], as_root=True, runtime=runtime, dry_run=dry_run)
+    elif subcommand == "reboot":
+        cmd_reboot(container_name, assume_yes=parsed_arguments.yes, dry_run=dry_run)
+    elif subcommand == "delete":
+        cmd_delete(container_name, assume_yes=parsed_arguments.yes, dry_run=dry_run)
     elif subcommand == "agent":
         cmd_agent(container_name, runtime=runtime, dry_run=dry_run)
 
