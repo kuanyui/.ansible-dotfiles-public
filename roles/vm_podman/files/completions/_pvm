@@ -18,10 +18,12 @@ _pvm_subcommands=(
   'reboot:restart the cwd container (confirms; --yes skips)'
   'delete:remove the cwd container, keeping the image (confirms)'
   'info:show the cwd container status/image/hw/network/ports/mounts/agent'
+  'mount:list the container bind mounts (mount ls)'
   'update:refresh + upgrade all distro packages in the container'
   'push:copy a host file/dir into the container (podman cp; --as-root)'
   'resize:change vCPU/memory limit in place (podman update; --cpu/--memory)'
   'provision:install distro groups / thirdparty / dotfiles (bare = list units)'
+  'overwrite-dotfiles:re-push the template dotfiles (no reprovision)'
   'shell:interactive shell (zsh, user); alias sh'
   'sh:alias of shell (zsh, user)'
   'shell-user:zsh as the unprivileged user (alias sh-user)'
@@ -124,6 +126,9 @@ case "$state" in
         local -a _pvm_units
         _pvm_units=(${(f)"$(_pvm_unit_names)"})
         _describe -t units 'provision unit' _pvm_units
+        ;;
+      mount)
+        compadd -- ls
         ;;
     esac
     ;;

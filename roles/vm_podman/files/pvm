@@ -1021,6 +1021,29 @@ def cmd_provision(container_name: str, units: list[str], *, shared_root: Path, d
           file=sys.stderr)
 
 
+def cmd_overwrite_dotfiles(container_name: str, *, shared_root: Path, dry_run: bool) -> None:
+    """Re-push the template's dotfiles slice into the container (NO reprovision) - refresh the
+    staged dotfiles after editing them on the host. ivm `overwrite-dotfiles` parity. The template
+    (-> its dotfiles list + family) comes from the container's pvm.template label."""
+    template_name: str = container_template_name(container_name)
+    template: dict[str, Any] | None = load_template_quiet(template_name) if template_name else None
+    if template is None:
+        die(f"cannot resolve the template of {container_name} (pvm.template label "
+            f"'{template_name or '(unset)'}' missing); recreate it via `pvm init`")
+    family: str | None = distro_family_of_image(str(template.get("image_name", "")))
+    if family is None:
+        die(f"template '{template_name}' image has no supported distro family")
+    if not template.get("dotfiles"):
+        die(f"template '{template_name}' declares no dotfiles to overwrite")
+    ensure_started(container_name, dry_run=dry_run)
+    for copy_argv in dotfiles_copy_argv(container_name, template, family, shared_root):
+        run(copy_argv, dry_run=dry_run)
+    run(["podman", "exec", container_name, "chown", "-R", "1000:1000", "/home/user"], dry_run=dry_run)
+    run(["podman", "exec", "--user", "root", container_name, "bash", "-ec", overlay_append_script()],
+        dry_run=dry_run)
+    print(f"==> re-pushed dotfiles into {colorize_container_name(container_name)}.", file=sys.stderr)
+
+
 def cmd_build(template_name: str, *, shared_root: Path, network: str | None,
               rebuild: bool, dry_run: bool) -> None:
     """Build (provision + commit) the per-template image only - no container run.
@@ -1150,6 +1173,24 @@ def cmd_info(container_name: str) -> None:
     print(f"  agent:        {agent_line}")
 
 
+def cmd_mount_ls(container_name: str) -> None:
+    """List the container's bind mounts - the cwd `--volume` + the hide-dir masks - read-only
+    `podman inspect`. ivm `mount ls` parity. pvm has ONLY `ls`: podman cannot hot-attach/detach
+    a volume on a running container (mounts are fixed at `pvm init` from the template), so there
+    is no attach/detach/shadow."""
+    return_code, stdout, _ = run_capture(["podman", "inspect", container_name])
+    if return_code == 127:
+        die("podman not found - run `make vm-podman-install` first")
+    if return_code != 0:
+        die(f"no such container: {container_name} (run `pvm init <template>` here? or pass --name)")
+    inspected: Any = json.loads(stdout or "[]")
+    if not inspected:
+        die(f"podman inspect returned nothing for {container_name}")
+    print(f"mounts for {colorize_container_name(container_name, stream=sys.stdout)}:")
+    for mount_line in _container_mount_lines(inspected[0]):
+        print(f"  {mount_line}")
+
+
 def cmd_help(parser: argparse.ArgumentParser) -> None:
     parser.print_help()
 
@@ -1215,6 +1256,7 @@ def build_parser() -> argparse.ArgumentParser:
             ("rma", "remove the container AND its image"),
             ("info", "show the cwd container's status/image/hw/network/ports/mounts/agent"),
             ("update", "refresh + upgrade all distro packages in the container (apt/zypper/dnf)"),
+            ("overwrite-dotfiles", "re-push the template's dotfiles into the container (no reprovision)"),
             ("shell", "interactive shell (zsh, user); ivm-aligned alias: sh"),
             ("sh", "alias of shell (zsh, user)"),
             ("shell-user", "zsh as the unprivileged user (ivm-aligned; alias sh-user)"),
@@ -1255,6 +1297,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="install distro groups / thirdparty / dotfiles into the container (bare = list units)")
     provision_parser.add_argument("units", nargs="*", metavar="[unit]",
                                   help="units to install; none = list every available unit")
+
+    mount_parser = subparsers.add_parser("mount", help="inspect the container's bind mounts")
+    mount_subparsers = mount_parser.add_subparsers(dest="mount_action", required=True)
+    mount_subparsers.add_parser("ls", help="list the container's mounts (cwd volume + hide-dir masks)")
 
     top_parser = subparsers.add_parser(
         "top", help="live resource stats (passthrough to podman stats)")
@@ -1338,6 +1384,11 @@ def main() -> None:
                    dry_run=dry_run)
     elif subcommand == "provision":
         cmd_provision(container_name, parsed_arguments.units, shared_root=shared_root, dry_run=dry_run)
+    elif subcommand == "overwrite-dotfiles":
+        cmd_overwrite_dotfiles(container_name, shared_root=shared_root, dry_run=dry_run)
+    elif subcommand == "mount":
+        if parsed_arguments.mount_action == "ls":
+            cmd_mount_ls(container_name)
     elif subcommand == "agent":
         cmd_agent(container_name, runtime=runtime, dry_run=dry_run)
 
