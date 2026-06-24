@@ -3,8 +3,7 @@
 
 Reads VM templates (`<root>/templates/<name>.yaml`) validated against
 `<root>/template.schema.json`, and drives incus from the HOST (no ansible/python in
-the guest). Design: roles/incus_vm/REDESIGN.md (esp. section 8) +
-roles/incus_vm/IMPLEMENTATION_PLAN.md.
+the guest). Design: roles/vm_incus/REDESIGN.md (esp. section 8).
 
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
@@ -2573,7 +2572,7 @@ def cmd_storage_status(root: Path, *, as_json: bool, dry_run: bool) -> None:
 
 
 def cmd_stub(subcommand: str) -> NoReturn:
-    die(f"`{subcommand}` is not implemented yet (see IMPLEMENTATION_PLAN.md phases).")
+    die(f"`{subcommand}` is not implemented yet.")
 
 
 # ---------- CLI ----------

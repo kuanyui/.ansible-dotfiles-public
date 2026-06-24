@@ -455,7 +455,6 @@ instance name is chosen interactively at init (below), NOT from `template_name`.
   the VM whose `user.ivm_init_at_dir` == cwd. Exact match -> operate. In a SUBDIR
   of an init'd dir -> "open the VM init'd at <parent>? [Y/n]"; N -> init flow.
   No match -> tell the user to `ivm init <template>`.
-- Other subcommands (env / overwrite-dotfiles / shell-root / set-password /
-  unset-password / enable-user-sudo / disable-user-sudo / update / snapshot /
-  gui) behave as in today's launchers.
+- Other subcommands (env / overwrite-dotfiles / shell-root / set / unset / update /
+  snapshot / gui) behave as in today's launchers.
 - **v1 scope: Linux only.** Windows / GPU passthrough / macvlan / tpm deferred.

@@ -105,13 +105,14 @@ checks above already cover this CLI-surface change (the role's file *deployment*
 bare `set`/`unset` must LIST (bash too, per CLAUDE.md); the final grep of the 6 old verbs must be
 ZERO everywhere (ivm + both completions + header + README/docs).
 
-**PARKED (needs user decision, SKIPPED for now):** `REDESIGN.md` (~L458) and
-`IMPLEMENTATION_PLAN.md` (~L22-28) still list the 6 old verbs. They are point-in-time design /
-implementation-plan records, so revising them is arguably rewriting history. Decide: reconcile to
-the `set`/`unset` namespace (consistency), or leave as historical record with a "superseded" note?
-(`README.md`, `survey-of-quickemu.md`, and the `ivm` code/completions ARE updated.) The kept
+**RESOLVED 2026-06-24** (per user "delete useless doc content"): `IMPLEMENTATION_PLAN.md` DELETED -
+a completed build plan (all phases done), superseded by `README.md` (surface) + `REDESIGN.md`
+(design) + the code + git history; its live references (ivm docstring, `cmd_stub`,
+`tasks/ivm_install.yml`) were repointed/removed. `REDESIGN.md` KEPT (design rationale; ivm's
+docstring points at its §8) with its stale old-verb bullet updated to `set`/`unset`. The kept
 `/etc/ssh/sshd_config.d/ivm-set-ssh-server.conf` filename is an internal artifact, deliberately NOT
-renamed (renaming would orphan the file on already-configured VMs).
+renamed (renaming would orphan the file on already-configured VMs). (Root `TODO.md` has 2 historical
+prose mentions of the old plan path - left as-is in the user's master tracker.)
 
 ## `ivm release-ram` - reclaim a running VM's host RAM without stopping it (NOT built)
 

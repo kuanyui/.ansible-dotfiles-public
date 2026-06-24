@@ -1,7 +1,7 @@
 ---
 # Install `ivm` (the launcher; replaces the old per-entry bash launchers).
 # `ivm` reads VM templates at runtime and drives incus from the HOST; the guest
-# gets no ansible/python. See files/ivm + REDESIGN.md / IMPLEMENTATION_PLAN.md.
+# gets no ansible/python. See files/ivm + REDESIGN.md.
 # Host-level prep (apt incus, `incus admin init`, group add) is done by
 # tasks/incus_host_install.yml (run from tasks/main.yml).
 
