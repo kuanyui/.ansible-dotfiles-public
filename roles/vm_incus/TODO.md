@@ -151,3 +151,108 @@ only non-stop lever is the balloon.
 gives a quick per-instance glance, but a VM's memory there is GUEST-reported and
 under-reports the host RSS - use `ps -eo pid,rss,comm --sort=-rss | grep qemu` for the
 true host cost.
+
+## `SPEC.md` + `DESIGN.md` for the role - PLAN (2026-06-24)
+
+**Why.** Today: `README.md` (user usage) + `REDESIGN.md` (historical redesign log; ivm's
+docstring points at its §8) + a ~2772-line `ivm` - but NO single normative SPEC and no clean
+current-state DESIGN. Goal: one doc that says WHAT ivm must do (contract) and one that says
+HOW/WHY it's built (architecture), so behavior is reviewable without reverse-engineering the script.
+
+**Decision needed FIRST (REDESIGN.md overlap - user dislikes useless doc content).** REDESIGN.md
+is already labelled "design". Proposal: `DESIGN.md` = clean CURRENT-state architecture distilled
+from REDESIGN §8 "converged design" (the live design); then REDESIGN.md is either archived as
+`docs/redesign-history.md` (decision log) or deleted once §8 is absorbed. Confirm before writing
+to avoid a 3rd overlapping design doc.
+
+**`SPEC.md` (normative - "what"):**
+- [ ] Purpose + non-goals (host-side-provisioned incus VMs; NOT a generic incus wrapper).
+- [ ] CLI contract: EVERY subcommand (init/env/list/top/adopt/storage-status; shell*/start/reboot/
+  stop/delete/overwrite-dotfiles/update/provision/resize/mount/push/snapshot/gui/info/expose/
+  unexpose; set/unset <aspect>) - args, behavior, confirm/dry-run/exit. Note the source-of-truth
+  tables (`CWD_RESOLVED*`, `SET_UNSET_ASPECTS`, handlers) + the drift risk (completions are hand-kept).
+- [ ] Template schema (point at `files/template.schema.json`; summarize field groups).
+- [ ] Invariants: name rules (`INCUS_NAME_RE`, `SUN_PATH_MAX`), project model (the per-user
+  `user-<uid>` RESTRICTED project, NOT `default`), network model (`eth0` -> `incusbr0` NAT),
+  the `~/.local/share/ansible-managed/vm-incus/` home namespace, the `wait_ready` readiness
+  contract (agent answers + IPv4 default route + DNS).
+- [ ] Host prerequisites (incus + `incus` group; firewalld `trusted` zone on FW hosts; storage pool).
+
+**`DESIGN.md` (architecture - "how/why"):**
+- [ ] Host-side provisioning (NO ansible/python in the guest; `incus exec` from host) - §5/§8.1.
+- [ ] Metadata-driven argparse (the tables + `build_parser`/`main` loops) - the "edit these together" map.
+- [ ] Key mechanisms: `wait_ready`, shadow masks, cwd->VM resolution, shared prebuilt provision
+  assets, storage-pool inspector, `expose` IPv4 pin.
+- [ ] Why `incusbr0` not the per-user `incusbr-<uid>`; the firewalld trusted-zone dependency.
+
+**Steps:** [ ] 0 confirm REDESIGN disposition -> [ ] 1 write SPEC -> [ ] 2 write DESIGN (distill
+§8) -> [ ] 3 repoint ivm docstring + README; retire/archive REDESIGN per step 0 -> [ ] 4 verify
+no dangling links.
+
+## `wait_ready` failure - print copy/paste diagnostics after the error - PLAN (2026-06-24)
+
+**Why.** When `wait_ready` dies ("no network connectivity after 60s ..."), it gives no next step
+(user: "meaningless"). Print the EXACT debug commands - the ones that cracked the 2026-06-24
+firewalld incident - right after the error, ready to copy/paste back.
+
+**What.** `wait_ready` (ivm ~L1080-1096) `die()`s with a static string. Append a DIAGNOSTICS block
+with values FILLED IN (no `<...>` placeholders - CLAUDE.md): real VM name + the VM's resolved
+bridge (read `devices.eth0.network` from `incus config show --expanded <name>`; fall back
+`incusbr0`). MUST get sudo right (the bug we just hit): **`incus exec` = NO sudo** (runs in the
+user's `user-<uid>` project; `sudo incus` -> root's `default` project -> "Instance not found");
+ONLY `incus network show` + `firewall-cmd` take sudo.
+
+Block to print (order that diagnosed it; `NAME`/`BR` substituted live):
+```
+  incus exec NAME -- ip addr show
+  incus exec NAME -- ip route show default
+  incus exec NAME -- networkctl status
+  incus exec NAME -- journalctl -u systemd-networkd --no-pager -n 50
+  sudo incus network show BR
+  sudo firewall-cmd --get-zone-of-interface=BR          # 'no zone'/'public' => DHCP dropped
+  sudo firewall-cmd --zone=trusted --change-interface=BR                       # runtime fix
+  sudo firewall-cmd --permanent --zone=trusted --change-interface=BR && sudo firewall-cmd --reload
+  ip link show master BR
+```
+
+**Steps:** [ ] 1 add `_resolve_vm_bridge(name)` (expanded cfg -> eth0.network; default incusbr0)
+-> [ ] 2 rewrite the die() to print cause + filled-in block to stderr, ONE message, reuse the
+existing TTY/NO_COLOR gating -> [ ] 3 verify `py_compile`, eyeball real name+bridge + correct
+sudo/no-sudo split, `make vm-incus-sandbox`.
+
+## `incusbr0` firewalld zone - survive reboot + ivm self-diagnose - PLAN (2026-06-24)
+
+**Incident (2026-06-24).** Host reboot -> all 5 `user-1000` VMs RUNNING but IPv6-only, no IPv4.
+Cause: `incusbr0` was in NO firewalld zone -> fell to default (`public`) -> DROP DHCP (udp/67)
+-> guests get IPv6 SLAAC (ICMPv6 RA allowed) but no DHCPv4 lease. Exactly the L771-817 comment's
+symptom. On THIS host `firewall-cmd --permanent --get-zone-of-interface=incusbr0` was EMPTY, so
+the role's L803 fix never persisted here. Upstream incus firewalld howto confirms `trusted` is
+the recommended fix AND warns the firewall can erase incus rules if started after the incus
+daemon - i.e. boot ordering matters.
+
+**Answer to "should ivm self-solve?"** ivm must NOT silently `sudo firewall-cmd` - it talks to
+incus as the UNPRIVILEGED user via the socket, never sudo, and CLAUDE.md requires transparency
+before privileged actions. Split the responsibility:
+- **ivm = DETECT + INSTRUCT** (no privilege): on `wait_ready` failure, if the agent answers AND
+  the guest has a global IPv6 but no IPv4 default route, print "host is dropping DHCP - likely
+  firewalld zone" + the fix command (the sibling PLAN's diagnostics block). User runs the sudo line.
+- **host-install role = make it DURABLE** so it stops happening.
+
+**Durability (host-install) steps:**
+- [ ] 1. Make the L803 task self-healing: set the `--permanent` trusted binding when EITHER
+  runtime OR permanent is missing (today it only checks runtime; this host had neither).
+- [ ] 2. REBOOT-TEST on a real host: with the permanent binding set, does firewalld re-apply
+  `incusbr0 -> trusted` when incus creates the bridge on boot? (Upstream does NOT promise it for
+  interfaces created AFTER firewalld loads.) **This is the open question.**
+- [ ] 3. If it does NOT survive: deploy (firewalld hosts only) a oneshot unit
+  `incusbr0-firewalld-trust.service`, `After=incus.service firewalld.service`,
+  `ExecStart=firewall-cmd --zone=trusted --change-interface=incusbr0`, `WantedBy=multi-user.target`
+  - re-asserts the zone last on every boot (also covers the "firewall after incus erases rules" warning).
+- [ ] 4. ivm self-diagnose: implement DETECT+INSTRUCT in `wait_ready` (shares `_resolve_vm_bridge`
+  with the diagnostics PLAN).
+- [ ] 5. Verify: re-run `vm-incus-install` (idempotent, sets permanent); reboot host; all VMs get
+  IPv4 with NO manual step; `make vm-incus-sandbox` for the role bits.
+
+**Interim (user, now):** `sudo firewall-cmd --permanent --zone=trusted --change-interface=incusbr0
+&& sudo firewall-cmd --reload`, then reboot once to feed step 2. Default zone staying `public` is
+correct - only the internal NAT bridge goes to trusted; real NICs stay public.
