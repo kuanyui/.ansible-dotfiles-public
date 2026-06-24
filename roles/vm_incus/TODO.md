@@ -158,7 +158,10 @@ ZERO everywhere (ivm + both completions + header + README/docs).
 a completed build plan (all phases done), superseded by `README.md` (surface) + `REDESIGN.md`
 (design) + the code + git history; its live references (ivm docstring, `cmd_stub`,
 `tasks/ivm_install.yml`) were repointed/removed. `REDESIGN.md` KEPT (design rationale; ivm's
-docstring points at its §8) with its stale old-verb bullet updated to `set`/`unset`. The kept
+docstring points at its §8) with its stale old-verb bullet updated to `set`/`unset`.
+[SUPERSEDED later the same day: `REDESIGN.md` archived -> `docs/redesign-history.md`; `SPEC.md`
+(contract) + `DESIGN.md` (architecture) now hold the live design - see the SPEC/DESIGN plan below.]
+The kept
 `/etc/ssh/sshd_config.d/ivm-set-ssh-server.conf` filename is an internal artifact, deliberately NOT
 renamed (renaming would orphan the file on already-configured VMs). (Root `TODO.md` has 2 historical
 prose mentions of the old plan path - left as-is in the user's master tracker.)
@@ -203,40 +206,49 @@ true host cost.
 
 ## `SPEC.md` + `DESIGN.md` for the role - PLAN (2026-06-24)
 
+**STATUS 2026-06-24: DONE.** `SPEC.md` + `DESIGN.md` written; `REDESIGN.md` archived to
+`docs/redesign-history.md` (user chose option A) with a historical banner pointing at SPEC/DESIGN
+as the current truth. Key finding while writing: REDESIGN had drifted from shipped reality - its
+header still said "nothing built yet", §1-7 dissect the gone `v-launcher.sh.j2`, and even §8 used
+stale names/paths (`redesign/vm.schema.json`, `package_groups`); the new docs match the SHIPPED
+code (verified against `files/ivm` tables + `template.schema.json` + `incus_host_install.yml`),
+not §8 verbatim. Refs repointed: ivm docstring (L6) + L1217, `template.schema.json` (L4),
+`tasks/ivm_install.yml` (L4), README (new NOTE block). Step 4 verify (link grep + py_compile +
+syntax-check) below.
+
 **Why.** Today: `README.md` (user usage) + `REDESIGN.md` (historical redesign log; ivm's
 docstring points at its §8) + a ~2772-line `ivm` - but NO single normative SPEC and no clean
 current-state DESIGN. Goal: one doc that says WHAT ivm must do (contract) and one that says
 HOW/WHY it's built (architecture), so behavior is reviewable without reverse-engineering the script.
 
-**Decision needed FIRST (REDESIGN.md overlap - user dislikes useless doc content).** REDESIGN.md
-is already labelled "design". Proposal: `DESIGN.md` = clean CURRENT-state architecture distilled
-from REDESIGN §8 "converged design" (the live design); then REDESIGN.md is either archived as
-`docs/redesign-history.md` (decision log) or deleted once §8 is absorbed. Confirm before writing
-to avoid a 3rd overlapping design doc.
+**Decision (RESOLVED 2026-06-24: option A).** `DESIGN.md` = clean CURRENT-state architecture
+(distilled from REDESIGN §8 but CORRECTED to shipped names/paths); `REDESIGN.md` archived as
+`docs/redesign-history.md` (decision log), NOT deleted - the §1-7 "why we chose this / what we
+rejected" rationale has historical value. Avoids a 3rd overlapping live design doc.
 
 **`SPEC.md` (normative - "what"):**
-- [ ] Purpose + non-goals (host-side-provisioned incus VMs; NOT a generic incus wrapper).
-- [ ] CLI contract: EVERY subcommand (init/env/list/top/adopt/storage-status; shell*/start/reboot/
+- [x] Purpose + non-goals (host-side-provisioned incus VMs; NOT a generic incus wrapper).
+- [x] CLI contract: EVERY subcommand (init/env/list/top/adopt/storage-status; shell*/start/reboot/
   stop/delete/overwrite-dotfiles/update/provision/resize/mount/push/snapshot/gui/info/expose/
   unexpose; set/unset <aspect>) - args, behavior, confirm/dry-run/exit. Note the source-of-truth
   tables (`CWD_RESOLVED*`, `SET_UNSET_ASPECTS`, handlers) + the drift risk (completions are hand-kept).
-- [ ] Template schema (point at `files/template.schema.json`; summarize field groups).
-- [ ] Invariants: name rules (`INCUS_NAME_RE`, `SUN_PATH_MAX`), project model (the per-user
+- [x] Template schema (point at `files/template.schema.json`; summarize field groups).
+- [x] Invariants: name rules (`INCUS_NAME_RE`, `SUN_PATH_MAX`), project model (the per-user
   `user-<uid>` RESTRICTED project, NOT `default`), network model (`eth0` -> `incusbr0` NAT),
   the `~/.local/share/ansible-managed/vm-incus/` home namespace, the `wait_ready` readiness
   contract (agent answers + IPv4 default route + DNS).
-- [ ] Host prerequisites (incus + `incus` group; firewalld `trusted` zone on FW hosts; storage pool).
+- [x] Host prerequisites (incus + `incus` group; firewalld `trusted` zone on FW hosts; storage pool).
 
 **`DESIGN.md` (architecture - "how/why"):**
-- [ ] Host-side provisioning (NO ansible/python in the guest; `incus exec` from host) - §5/§8.1.
-- [ ] Metadata-driven argparse (the tables + `build_parser`/`main` loops) - the "edit these together" map.
-- [ ] Key mechanisms: `wait_ready`, shadow masks, cwd->VM resolution, shared prebuilt provision
+- [x] Host-side provisioning (NO ansible/python in the guest; `incus exec` from host) - §5/§8.1.
+- [x] Metadata-driven argparse (the tables + `build_parser`/`main` loops) - the "edit these together" map.
+- [x] Key mechanisms: `wait_ready`, shadow masks, cwd->VM resolution, shared prebuilt provision
   assets, storage-pool inspector, `expose` IPv4 pin.
-- [ ] Why `incusbr0` not the per-user `incusbr-<uid>`; the firewalld trusted-zone dependency.
+- [x] Why `incusbr0` not the per-user `incusbr-<uid>`; the firewalld trusted-zone dependency.
 
-**Steps:** [ ] 0 confirm REDESIGN disposition -> [ ] 1 write SPEC -> [ ] 2 write DESIGN (distill
-§8) -> [ ] 3 repoint ivm docstring + README; retire/archive REDESIGN per step 0 -> [ ] 4 verify
-no dangling links.
+**Steps:** [x] 0 confirm REDESIGN disposition (option A: archive) -> [x] 1 write SPEC -> [x] 2 write
+DESIGN (distill §8, corrected) -> [x] 3 repoint ivm docstring + README + schema + ivm_install;
+archive REDESIGN -> docs/redesign-history.md -> [x] 4 verify no dangling links.
 
 ## `wait_ready` failure - print copy/paste diagnostics after the error - PLAN (2026-06-24)
 

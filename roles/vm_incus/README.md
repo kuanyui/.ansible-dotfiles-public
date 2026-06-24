@@ -14,6 +14,12 @@ a full separate kernel (stronger isolation than a shared-kernel container).
 > [`docs/incus-vs-podman.md`](docs/incus-vs-podman.md) (why VMs here, not incus containers),
 > and [`docs/ivm-vs-quickemu.md`](docs/ivm-vs-quickemu.md) (how `ivm` compares to quickemu).
 
+> [!NOTE]
+> Normative behavior + architecture: [`SPEC.md`](SPEC.md) (the contract - what
+> every subcommand must do, the invariants, host prerequisites) and
+> [`DESIGN.md`](DESIGN.md) (how/why `ivm` is built). The redesign decision log
+> that produced `ivm` is archived at [`docs/redesign-history.md`](docs/redesign-history.md).
+
 ## Quick start
 
 ```bash

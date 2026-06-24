@@ -1,14 +1,20 @@
-# vm_incus redesign notes
+# vm_incus redesign history (ARCHIVED decision log)
 
-Status: **design discussion, nothing built yet.** This file records the
-current-state analysis, the design directions explored, and the refactors that
-must land *before* the larger `vm_incus` rework can start. It is a
-working scratchpad, not a finished spec. Each decision below is tagged
-**DECIDED** / **LEANING** / **OPEN**.
+> [!IMPORTANT]
+> **This is a HISTORICAL log, not the current design.** It records the redesign
+> discussion that produced `ivm` - the current-state analysis (of code that no
+> longer exists, e.g. the old `v-launcher.sh.j2`), the directions explored, and
+> the rejected alternatives. Decisions are tagged **DECIDED** / **LEANING** /
+> **OPEN** as they stood DURING that discussion; some names/paths here
+> (`redesign/vm.schema.json`, the `package_groups` registry, the
+> `workstations`-vs-`workspaces` role name) were superseded before shipping.
+> For what `ivm` does and how it is built TODAY, see [`../SPEC.md`](../SPEC.md) +
+> [`../DESIGN.md`](../DESIGN.md). Kept only for the "why we chose this / what we
+> rejected" rationale.
 
-Terminology note: the current role is `roles/vm_incus`. The proposed
-successor is referred to as `vm_incus` here; the final name is itself
-**OPEN** (`workstations` vs `workspaces`).
+Original status line (as written then): *design discussion, nothing built yet.*
+Terminology note (as written then): the proposed successor was called `vm_incus`,
+final name **OPEN** (`workstations` vs `workspaces`) - it shipped as `vm_incus`.
 
 ---
 

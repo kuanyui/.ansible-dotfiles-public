@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "incus VM definition",
-  "description": "One incus VM, provisioned from the HOST via `incus exec` (no ansible/python inside the guest). See REDESIGN.md.",
+  "description": "One incus VM, provisioned from the HOST via `incus exec` (no ansible/python inside the guest). Field contract: ../SPEC.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["template_name", "os"],

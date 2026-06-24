@@ -3,7 +3,8 @@
 
 Reads VM templates (`<root>/templates/<name>.yaml`) validated against
 `<root>/template.schema.json`, and drives incus from the HOST (no ansible/python in
-the guest). Design: roles/vm_incus/REDESIGN.md (esp. section 8).
+the guest). Contract: roles/vm_incus/SPEC.md; architecture: roles/vm_incus/DESIGN.md
+(redesign history in docs/redesign-history.md).
 
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
@@ -1214,8 +1215,8 @@ def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
     -> use it. Several at the same cwd (made via explicit `ivm init <tpl> <name>`
     or different templates) -> TTY: numbered picker; non-TTY: die listing them +
     require `--name` (keeps scripted use predictable). No match at cwd -> walk
-    ancestors and offer the nearest dir that has any (REDESIGN 8.9), with the same
-    >1 handling there."""
+    ancestors and offer the nearest dir that has any (DESIGN.md "cwd -> VM
+    resolution"), with the same >1 handling there."""
     if dry_run:
         return "<vm-resolved-from-cwd>"
     bindings: list[VmBinding] = list_vm_bindings()
