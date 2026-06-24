@@ -1111,6 +1111,20 @@ def _network_diagnostics_block(name: str, bridge: str) -> str:
         f"  ip link show master {bridge}")
 
 
+def _guest_global_ipv6_but_no_ipv4(name: str) -> bool:
+    """True for the firewalld-drops-DHCPv4 signature (the 2026-06-24 incident): the
+    guest has a global IPv6 (kernel SLAAC, which the host firewall doesn't gate)
+    but no IPv4 default route (its DHCPv4 DISCOVER never reached the host dnsmasq).
+    Probed via the already-answering agent; best-effort - any probe failure yields
+    False, so the caller falls back to the generic message. NO sudo (`incus exec`
+    runs in the user's `user-<uid>` project)."""
+    has_ipv4_default: bool = bool(capture(
+        ["incus", "exec", name, "--", "ip", "-4", "route", "show", "default"]).strip())
+    has_global_ipv6: bool = bool(capture(
+        ["incus", "exec", name, "--", "ip", "-6", "addr", "show", "scope", "global"]).strip())
+    return has_global_ipv6 and not has_ipv4_default
+
+
 def wait_ready(name: str, *, dry_run: bool) -> None:
     """Block until the guest is ready to PROVISION: (1) the incus agent answers
     `exec`, then (2) the network is actually online. Without step 2 the very
@@ -1127,9 +1141,21 @@ def wait_ready(name: str, *, dry_run: bool) -> None:
     # an IANA-reserved name (no vendor dependency), used purely as a liveness probe.
     if not wait_until(name, "ip route show default | grep -q . && getent hosts example.com >/dev/null", 60):
         bridge: str = _resolve_vm_bridge(name)
-        die(f"VM '{colorize_vm_name(name)}' has no network connectivity after 60s "
-            f"(no default route or DNS).\n\n"
-            f"{_network_diagnostics_block(name, bridge)}")
+        # The agent already answered (we passed the 90s probe above), so the guest is up.
+        # DETECT the firewalld DHCP-drop signature and INSTRUCT - ivm never auto-sudo's (it
+        # talks to incus unprivileged via the socket; CLAUDE.md transparency rule), so it
+        # names the likely cause + prints the fix for the user to run.
+        if _guest_global_ipv6_but_no_ipv4(name):
+            cause: str = (
+                f"VM '{colorize_vm_name(name)}' came up with a global IPv6 but NO IPv4 default "
+                f"route after 60s - the host is DROPPING the guest's DHCPv4. Almost always {bridge} "
+                f"is in a firewalld zone that blocks DHCP (udp/67); bind it to the `trusted` zone "
+                f"(the `--change-interface` lines below) to fix it.")
+        else:
+            cause = (
+                f"VM '{colorize_vm_name(name)}' has no network connectivity after 60s "
+                f"(no default route or DNS).")
+        die(f"{cause}\n\n{_network_diagnostics_block(name, bridge)}")
 
 
 class VmBinding(NamedTuple):
