@@ -240,6 +240,14 @@ no dangling links.
 
 ## `wait_ready` failure - print copy/paste diagnostics after the error - PLAN (2026-06-24)
 
+**STATUS 2026-06-24: DONE + committed** (code `83b07e7`; firewalld-signature detect `69800cf`).
+Steps 1-2 done. Step 3 verify - `py_compile`, `ivm --help` smoke, and a render harness for BOTH
+die branches (generic "no connectivity" + the firewalld "IPv6 but no IPv4" signature) all GREEN;
+the diagnostics block fills in real name+bridge with the correct sudo/no-sudo split. `make
+vm-incus-sandbox` could NOT finish in the CI/Claude env (builds the image + starts the container,
+but systemd-as-PID1 never reaches ready in 90s - same documented limitation as the set/unset
+section); run it on a real host for the deployment check.
+
 **Why.** When `wait_ready` dies ("no network connectivity after 60s ..."), it gives no next step
 (user: "meaningless"). Print the EXACT debug commands - the ones that cracked the 2026-06-24
 firewalld incident - right after the error, ready to copy/paste back.
@@ -264,12 +272,19 @@ Block to print (order that diagnosed it; `NAME`/`BR` substituted live):
   ip link show master BR
 ```
 
-**Steps:** [ ] 1 add `_resolve_vm_bridge(name)` (expanded cfg -> eth0.network; default incusbr0)
--> [ ] 2 rewrite the die() to print cause + filled-in block to stderr, ONE message, reuse the
-existing TTY/NO_COLOR gating -> [ ] 3 verify `py_compile`, eyeball real name+bridge + correct
-sudo/no-sudo split, `make vm-incus-sandbox`.
+**Steps:** [x] 1 add `_resolve_vm_bridge(name)` (expanded cfg -> eth0.network; default incusbr0)
+-> [x] 2 rewrite the die() to print cause + filled-in block to stderr, ONE message, reuse the
+existing TTY/NO_COLOR gating -> [x] 3 verify `py_compile`, eyeball real name+bridge + correct
+sudo/no-sudo split (DONE); `make vm-incus-sandbox` blocked by the env (systemd-not-ready) - real host.
 
 ## `incusbr0` firewalld zone - survive reboot + ivm self-diagnose - PLAN (2026-06-24)
+
+**STATUS 2026-06-24: steps 1 + 4 DONE + committed; steps 2, 3, 5 BLOCKED on a real host.**
+Step 1 (host-install permanent binding self-heals) `0c758ec`; step 4 (ivm DETECT+INSTRUCT in
+`wait_ready`) `69800cf`. Steps 2 (reboot-test - "the open question"), 3 (conditional oneshot unit,
+only if step 2 fails), and 5 (reboot + all-VMs-get-IPv4 verify) NEED A REAL HOST with incus +
+firewalld; this CI/Claude env has neither a reboot nor a working systemd-in-podman sandbox. ->
+flagged in the closing question to the user.
 
 **Incident.** Full diagnosis + decisions: see the **"2026-06-24 network incident" log at the top**.
 TL;DR: incusbr0 in no firewalld zone -> default `public` DROPs DHCP udp/67 -> IPv6 SLAAC but no
@@ -286,8 +301,10 @@ before privileged actions. Split the responsibility:
 - **host-install role = make it DURABLE** so it stops happening.
 
 **Durability (host-install) steps:**
-- [ ] 1. Make the L803 task self-healing: set the `--permanent` trusted binding when EITHER
+- [x] 1. Make the L803 task self-healing: set the `--permanent` trusted binding when EITHER
   runtime OR permanent is missing (today it only checks runtime; this host had neither).
+  **DONE `0c758ec`** - now queries BOTH runtime AND permanent (`firewall-cmd --permanent
+  --get-zone-of-interface`, the documented permanent query) and re-asserts unless both are `trusted`.
 - [ ] 2. REBOOT-TEST on a real host: with the permanent binding set, does firewalld re-apply
   `incusbr0 -> trusted` when incus creates the bridge on boot? (Upstream does NOT promise it for
   interfaces created AFTER firewalld loads.) **This is the open question.**
@@ -295,8 +312,10 @@ before privileged actions. Split the responsibility:
   `incusbr0-firewalld-trust.service`, `After=incus.service firewalld.service`,
   `ExecStart=firewall-cmd --zone=trusted --change-interface=incusbr0`, `WantedBy=multi-user.target`
   - re-asserts the zone last on every boot (also covers the "firewall after incus erases rules" warning).
-- [ ] 4. ivm self-diagnose: implement DETECT+INSTRUCT in `wait_ready` (shares `_resolve_vm_bridge`
-  with the diagnostics PLAN).
+- [x] 4. ivm self-diagnose: implement DETECT+INSTRUCT in `wait_ready` (shares `_resolve_vm_bridge`
+  with the diagnostics PLAN). **DONE `69800cf`** - `_guest_global_ipv6_but_no_ipv4` probes via the
+  already-answering agent; on the signature the die() leads with "host is DROPPING the guest's
+  DHCPv4 ... firewalld zone" + the fix block. No auto-sudo (DETECT+INSTRUCT only).
 - [ ] 5. Verify: re-run `vm-incus-install` (idempotent, sets permanent); reboot host; all VMs get
   IPv4 with NO manual step; `make vm-incus-sandbox` for the role bits.
 
