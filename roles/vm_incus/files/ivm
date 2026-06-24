@@ -2126,6 +2126,29 @@ def cmd_unexpose(name: str, *, port_spec: str | None, assume_yes: bool, dry_run:
           file=sys.stderr)
 
 
+def _mount_ls_lines(disk_devices: dict[str, Any]) -> list[str]:
+    """Render a VM's virtio-fs mounts + shadow masks as display lines - shared by
+    `ivm mount ls` and `ivm info` so the two never drift. `disk_devices` = the VM's disk
+    devices EXCLUDING `root` (the ivm_mount_* shares + ivm_shadow_* / *_shadow_* masks).
+    Returns [] when there are none."""
+    base_mounts: dict[str, Any] = {n: d for n, d in disk_devices.items() if "_shadow_" not in n}
+    # Standalone masks from `ivm mount shadow` (ivm_shadow_<N>), not tied to a base mount.
+    standalone_shadows: dict[str, Any] = {
+        n: d for n, d in disk_devices.items() if re.fullmatch(r"ivm_shadow_[0-9]+", n)}
+    lines: list[str] = []
+    for mount_name, mount_device in sorted(base_mounts.items()):
+        ro_tag: str = "  [ro]" if str(mount_device.get("readonly", "")).lower() == "true" else ""
+        lines.append(f"  {mount_name:20} {mount_device.get('source', '?')} -> "
+                     f"{mount_device.get('path', '?')}{ro_tag}")
+        for shadow_name in sorted(disk_devices):
+            if shadow_name.startswith(f"{mount_name}_shadow_"):
+                lines.append(f"      masked: {disk_devices[shadow_name].get('path') or '?'}  ({shadow_name})")
+    for shadow_name in sorted(standalone_shadows):
+        lines.append(f"  {shadow_name:20} masked (empty ro): "
+                     f"{standalone_shadows[shadow_name].get('path') or '?'}")
+    return lines
+
+
 def cmd_info(name: str, root: Path) -> None:
     """`ivm info`: the TARGET VM's live state - status, image, hw, network, mounts
     (from `incus config show --expanded`) + the storage pool its disk lives in.
@@ -2149,6 +2172,8 @@ def cmd_info(name: str, root: Path) -> None:
     print(f"  image:         {image}")
     print(f"  hw:            cpu={config.get('limits.cpu', '?')} "
           f"memory={config.get('limits.memory', '?')} disk={root_device.get('size', '?')}")
+    shell_dir: str = config.get("user.ivm_shell_default_dir_after_login", "") or ""
+    print(f"  shell dir:     {shell_dir or '(unset - ivm sh starts in the home dir)'}")
     print(f"  network:       {network}")
     expose_forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
     if expose_forwards:
@@ -2157,18 +2182,18 @@ def cmd_info(name: str, root: Path) -> None:
             print(f"    host :{expose_host_port} -> guest :{expose_guest_port}")
     else:
         print("  forwards:      (none; `ivm expose <port>` to add)")
-    # Host->guest mounts are the non-root disk devices ivm attaches; skip the
-    # `_shadow_` masking devices (internal, not user-meaningful).
-    mount_lines: list[str] = [
-        f"    {device.get('source')} -> {device.get('path', '?')}"
-        for device_name, device in devices.items()
-        if device.get("type") == "disk" and device_name != "root"
-        and "shadow" not in device_name and device.get("source")
-    ]
+    # Mounts: full virtio-fs detail (device name, [ro], shadow masks) - SAME rendering as
+    # `ivm mount ls`, shared via _mount_ls_lines so info and mount-ls never drift.
+    info_disk_devices: dict[str, Any] = {
+        n: d for n, d in devices.items()
+        if isinstance(d, dict) and d.get("type") == "disk" and n != "root"}
+    mount_lines: list[str] = _mount_ls_lines(info_disk_devices)
     if mount_lines:
         print("  mounts:")
         for mount_line in mount_lines:
-            print(mount_line)
+            print("  " + mount_line)  # nest one level deeper under the "mounts:" header
+    else:
+        print("  mounts:        (none)")
     for line in preview_storage_pool(root, dry_run=False):
         print(line)
 
@@ -2295,24 +2320,13 @@ def cmd_mount_ls(name: str) -> None:
     """List the VM's virtio-fs shares + any shadow masks layered on them. Read-only."""
     if not instance_exists(name):
         die(f"no such incus VM: '{name}' (see `incus list`)")
-    disk_devices: dict[str, dict[str, Any]] = _vm_disk_devices(name)
-    base_mounts: dict[str, dict[str, Any]] = {n: d for n, d in disk_devices.items() if "_shadow_" not in n}
-    # Standalone masks added via `ivm mount shadow` (`ivm_shadow_<N>`), not tied to
-    # any base mount; listed in their own section so they are not silently hidden.
-    standalone_shadows: dict[str, dict[str, Any]] = {
-        n: d for n, d in disk_devices.items() if re.fullmatch(r"ivm_shadow_[0-9]+", n)}
-    if not base_mounts and not standalone_shadows:
+    lines: list[str] = _mount_ls_lines(_vm_disk_devices(name))
+    if not lines:
         print(f"{colorize_vm_name(name, stream=sys.stdout)}: no virtio-fs mounts.")
         return
     print(f"mounts on {colorize_vm_name(name, stream=sys.stdout)}:")
-    for mount_name, mount_device in sorted(base_mounts.items()):
-        ro_tag: str = "  [ro]" if str(mount_device.get("readonly", "")).lower() == "true" else ""
-        print(f"  {mount_name:20} {mount_device.get('source', '?')} -> {mount_device.get('path', '?')}{ro_tag}")
-        for shadow_name in sorted(disk_devices):
-            if shadow_name.startswith(f"{mount_name}_shadow_"):
-                print(f"      masked: {disk_devices[shadow_name].get('path') or '?'}  ({shadow_name})")
-    for shadow_name in sorted(standalone_shadows):
-        print(f"  {shadow_name:20} masked (empty ro): {standalone_shadows[shadow_name].get('path') or '?'}")
+    for line in lines:
+        print(line)
 
 
 def cmd_mount_attach(name: str, host: str, guest: str, *, ro: bool, shadow: list[str],
