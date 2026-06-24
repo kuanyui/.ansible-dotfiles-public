@@ -98,7 +98,7 @@ quickemu wins this whole category by design - it is a desktop-VM tool; `ivm` del
 
 ### Lifecycle + commands
 
-`ivm`: `init shell shell-root start stop reboot delete update overwrite-dotfiles set-password unset-password enable-user-sudo disable-user-sudo snapshot gui info list env` - all resolve the target VM by **cwd binding** (`user.ivm_init_at_dir`), so everyday commands take no args. quickemu: `start / stop / kill / snapshot / delete-disk / delete-vm` per `.conf`, plus `quickget`; `quickgui` (Flutter) is a separate GUI frontend.
+`ivm`: `init shell shell-root start stop reboot delete update overwrite-dotfiles set unset snapshot gui info list env` - all resolve the target VM by **cwd binding** (`user.ivm_init_at_dir`), so everyday commands take no args. quickemu: `start / stop / kill / snapshot / delete-disk / delete-vm` per `.conf`, plus `quickget`; `quickgui` (Flutter) is a separate GUI frontend.
 
 ### Host platform + maturity
 
