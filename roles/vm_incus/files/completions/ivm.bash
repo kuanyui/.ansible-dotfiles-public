@@ -32,7 +32,7 @@ _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init shell sh shell-user sh-user shell-root sh-root start reboot stop delete env list info adopt storage-status overwrite-dotfiles update provision set-password unset-password enable-user-sudo disable-user-sudo set-ssh-server unset-ssh-server snapshot gui resize mount push expose unexpose"
+    local subcommands="init shell sh shell-user sh-user shell-root sh-root start reboot stop delete env list info adopt storage-status overwrite-dotfiles update provision set unset snapshot gui resize mount push expose unexpose"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}/templates"
 
     # --name / --root take a value: complete VM names after --name.
@@ -69,11 +69,25 @@ _ivm() {
             fi
             COMPREPLY=( $(compgen -W "${templates}" -- "$cur") )
             ;;
-        set-password|unset-password)
-            COMPREPLY=( $(compgen -W "user root" -- "$cur") )
-            ;;
-        set-ssh-server|unset-ssh-server)
-            COMPREPLY=( $(compgen -W "user root --pubkey" -- "$cur") $(compgen -A file -- "$cur") )
+        set|unset)
+            # Two levels (like mount): the aspect after set/unset, then its args. `i` indexes
+            # the set/unset word; flags may sit between, so skip them to find the aspect. bash
+            # can't show descriptions - a bare `ivm set` (the Python lister) shows those.
+            local aspect="" aspect_word_index
+            for (( aspect_word_index = i + 1; aspect_word_index < COMP_CWORD; aspect_word_index++ )); do
+                [[ "${COMP_WORDS[aspect_word_index]}" == -* ]] && continue
+                aspect="${COMP_WORDS[aspect_word_index]}"; break
+            done
+            if [[ -z "$aspect" ]]; then
+                COMPREPLY=( $(compgen -W "password ssh-server shell-dir user-sudo" -- "$cur") )
+            else
+                case "$aspect" in
+                    password) COMPREPLY=( $(compgen -W "user root" -- "$cur") ) ;;
+                    ssh-server) COMPREPLY=( $(compgen -W "user root --pubkey" -- "$cur") $(compgen -A file -- "$cur") ) ;;
+                    # `set shell-dir <path>` is a GUEST path (not host-completable); `unset shell-dir`
+                    # and `(un)set user-sudo` take no further args -> nothing to complete.
+                esac
+            fi
             ;;
         resize)
             COMPREPLY=( $(compgen -W "--cpu --memory --disk" -- "$cur") )

@@ -2,8 +2,8 @@
 # ivm zsh completion (ansible-managed by roles/vm_incus). zsh autoloads this via
 # fpath - see the `ansible-managed/*/zsh-completions` glob in roles/zsh/.zshrc.j2.
 # Two levels: subcommands, then their args - template names for `init`/`env`, unit
-# names for `provision`, `snapshot` actions + existing snapshot names, `user`/`root`
-# for set-/unset-password and set-/unset-ssh-server.
+# names for `provision`, `snapshot` actions + existing snapshot names, and the two-level
+# `set`/`unset <aspect>` args (aspect, then `user`/`root`, `--pubkey`, a guest dir, etc.).
 
 local -a _ivm_subcommands
 _ivm_subcommands=(
@@ -26,12 +26,8 @@ _ivm_subcommands=(
   'overwrite-dotfiles:re-push staged dotfiles into the VM'
   'update:upgrade all packages in the VM'
   'provision:install distro bundle(s) / thirdparty recipe(s) onto the VM'
-  'set-password:set a guest account'\''s login password'
-  'unset-password:lock a guest account'\''s password'
-  'enable-user-sudo:let `user` sudo via root'\''s password'
-  'disable-user-sudo:revert enable-user-sudo'
-  'set-ssh-server:authorize key-based SSH login for a guest account'
-  'unset-ssh-server:revoke a guest account'\''s SSH access'
+  'set:configure a guest setting - password/ssh-server/shell-dir/user-sudo (no aspect lists them)'
+  'unset:clear a guest setting - password/ssh-server/shell-dir/user-sudo'
   'snapshot:incus snapshot (create/list/restore/delete/rename/show)'
   'gui:open a SPICE graphical console'
   'resize:change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk)'
@@ -155,8 +151,33 @@ case "$state" in
         local -a _ivm_provision_units
         _ivm_provision_units=(${(f)"$(_ivm_unit_names)"})
         _describe -t units 'provision unit' _ivm_provision_units ;;
-      set-password|unset-password) compadd -- user root ;;
-      set-ssh-server|unset-ssh-server) compadd -- user root --pubkey; _files ;;
+      set|unset)
+        # Two levels (like `mount`): 1=set/unset, then the aspect, then the aspect's args.
+        # Flags may sit between, so skip them while locating the aspect.
+        local _ivm_aspect="" _ivm_aspect_word_index
+        for (( _ivm_aspect_word_index = 2; _ivm_aspect_word_index < CURRENT; _ivm_aspect_word_index++ )); do
+          [[ "$words[_ivm_aspect_word_index]" == -* ]] && continue
+          _ivm_aspect="$words[_ivm_aspect_word_index]"; break
+        done
+        if [[ -z "$_ivm_aspect" ]]; then
+          local -a _ivm_aspects
+          _ivm_aspects=(
+            'password:a guest account'\''s login password'
+            'ssh-server:key-based SSH login for a guest account'
+            'shell-dir:the dir `ivm sh` starts in'
+            'user-sudo:whether `user` may sudo (root-password gated)'
+          )
+          _describe 'ivm aspect' _ivm_aspects
+        else
+          case "$_ivm_aspect" in
+            password) compadd -- user root ;;
+            ssh-server) compadd -- user root --pubkey; _files ;;
+            # `set shell-dir <path>` is a GUEST path (not host-completable) -> just hint;
+            # `unset shell-dir` and `(un)set user-sudo` take no further args.
+            shell-dir) [[ "$words[1]" == set ]] && _message 'absolute guest dir (e.g. /workspaces/<name>)' ;;
+          esac
+        fi
+        ;;
       snapshot)
         # `$words` here: 1=snapshot, then the action, then a snapshot name. Flags may
         # sit between (e.g. `create --reuse`), so skip them while locating the action
