@@ -798,13 +798,20 @@
 # task running fully as root. Root bypasses polkit entirely, so there is no
 # hang and no second password prompt (the become password is already cached
 # from `--ask-become-pass`). The read-decide-change-reload is collapsed into a
-# single privileged invocation so idempotency is decided in-script: if
-# `incusbr0` is already in `trusted` it is a true no-op (changed_when false).
-- name: Ensure `incusbr0` is in the firewalld `trusted` zone (fixes VMs not getting a DHCPv4 lease; no-op if already trusted)
+# single privileged invocation so idempotency is decided in-script. SELF-HEALING:
+# it re-asserts the PERMANENT binding unless BOTH the runtime AND the permanent
+# zone already say `trusted`. Checking only the runtime zone (the original bug)
+# let a runtime-only fix - which a reboot wipes - short-circuit the task so the
+# permanent binding was never written, and the DHCP drop returned on the next
+# boot. `[--permanent] --get-zone-of-interface` is the documented permanent query
+# (firewalld.org/documentation/man-pages/firewall-cmd.html); it prints `no zone`
+# when unbound. Both queries run as root here, so neither hits the polkit hang.
+- name: Ensure `incusbr0` is in the firewalld `trusted` zone in BOTH runtime and permanent config (self-healing - re-persists a runtime-only fix that a reboot would wipe; no-op only if both already trusted)
   ansible.builtin.shell: |
     set -eu
-    current_zone_of_incusbr0="$(firewall-cmd --get-zone-of-interface=incusbr0 2>/dev/null || true)"
-    if [ "$current_zone_of_incusbr0" = "trusted" ]; then
+    runtime_zone_of_incusbr0="$(firewall-cmd --get-zone-of-interface=incusbr0 2>/dev/null || true)"
+    permanent_zone_of_incusbr0="$(firewall-cmd --permanent --get-zone-of-interface=incusbr0 2>/dev/null || true)"
+    if [ "$runtime_zone_of_incusbr0" = "trusted" ] && [ "$permanent_zone_of_incusbr0" = "trusted" ]; then
         echo "INCUSBR0_ALREADY_TRUSTED"
         exit 0
     fi
