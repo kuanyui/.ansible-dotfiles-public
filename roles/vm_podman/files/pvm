@@ -930,6 +930,17 @@ def cmd_list() -> None:
     print("\n".join(container_rows))
 
 
+def cmd_top(stats_args: list[str], *, dry_run: bool) -> None:
+    """Live resource stats (CPU / memory / net / block IO) - passthrough to `podman stats`,
+    replacing the pvm process so streaming + Ctrl-C are clean. ivm `top` parity. No args = all
+    running containers; pass container names / `podman stats` flags (e.g. --no-stream) to scope."""
+    stats_argv: list[str] = ["podman", "stats", *stats_args]
+    print("+ " + shlex.join(stats_argv), file=sys.stderr)
+    if dry_run:
+        return
+    os.execvp("podman", stats_argv)
+
+
 def _container_cpu_limit(host_config: dict[str, Any]) -> str:
     """vCPU limit from inspect HostConfig.NanoCpus; `(host default)` when unset (0)."""
     nano_cpus: int = int(host_config.get("NanoCpus") or 0)
@@ -1115,6 +1126,12 @@ def build_parser() -> argparse.ArgumentParser:
     push_parser.add_argument("--as-root", action="store_true",
                              help="re-own the pushed path to root inside the container (chown -R)")
 
+    top_parser = subparsers.add_parser(
+        "top", help="live resource stats (passthrough to podman stats)")
+    top_parser.add_argument("stats_args", nargs="*", metavar="[args]",
+                            help="container names to scope; for podman stats flags use the "
+                                 "`--` form, e.g. `pvm top -- --no-stream`")
+
     subparsers.add_parser("list", help="list pvm-managed containers (name, status, image)")
     subparsers.add_parser("help", help="show this help")
     return parser
@@ -1150,6 +1167,9 @@ def main() -> None:
     if subcommand == "run":
         cmd_run(parsed_arguments.template, shared_root=shared_root, runtime=runtime,
                 network=network, dry_run=dry_run)
+        return
+    if subcommand == "top":
+        cmd_top(parsed_arguments.stats_args, dry_run=dry_run)
         return
 
     # Container-acting subcommands: resolve the target by cwd binding or --name.

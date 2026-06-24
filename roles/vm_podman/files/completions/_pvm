@@ -31,6 +31,7 @@ _pvm_subcommands=(
   'bash-user:bash in the container as the unprivileged user'
   'bash-root:bash in the container as root'
   'agent:run the template-configured agent (e.g. claude) in the container'
+  'top:live resource stats (podman stats; optional names/flags)'
   'list:list pvm-managed containers (name, status, image)'
   'help:show help'
 )
@@ -80,6 +81,9 @@ case "$state" in
       push)
         _files
         compadd -- --as-root
+        ;;
+      top)
+        compadd -- ${(f)"$(_pvm_container_names)"}
         ;;
     esac
     ;;
