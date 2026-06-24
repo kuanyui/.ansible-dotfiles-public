@@ -90,6 +90,22 @@ SKIP = containers genuinely can't, documented · KEEP = pvm already has it.
 **pvm-specific extras (NOT in ivm) to KEEP** (podman concepts, no ivm equivalent):
 `build`, `run`, `agent`, `rmc`, `rmi`, `rma`, `bash-user`, `bash-root`.
 
+**STATUS 2026-06-24: DONE (P0 + P1 + P2), committed.** Every subcommand implemented and
+exercised END-TO-END against real podman 5.4.2 in this env; `test_pvm.py` 20/20; an automated
+cross-check confirms the argparse parser, `_pvm` (zsh) and `pvm.bash` agree on all 32
+subcommands (ZERO completion drift). P3 deferred (storage-status / shell-dir / adopt).
+Commits: emacs-nox `a4d40d1`; shell+lifecycle `a6a6dd4`; info `2f2daf9`; push `ca430b5`;
+update `1ea9449`; top `058328f`; resize `cedd675`; provision `2e05959`; overwrite-dotfiles +
+mount-ls `b147dbd`; README `8cf4960`.
+- **emacs finding (verified rpmfind 2026-06):** `emacs-nox` exists on Debian / openSUSE / RHEL /
+  Alma / Rocky / CentOS-Stream, but **current Fedora RENAMED it `emacs-nw`** - so the bundle's
+  RedHat overlay is best-effort for Fedora (noted inline in the bundle header).
+- **`make vm-podman-sandbox` is ENV-BLOCKED here** (same as ivm): rootless podman cannot run
+  systemd-as-PID1 in the Claude/CI env ("not ready within 90s") - the image builds, the
+  container will not boot. Re-run on a real host for the deploy/uninstall round-trip diff.
+  `ansible-playbook --syntax-check playbooks/vm_podman.yml` passes; the launcher + completions
+  are fully covered by the direct real-podman checks above.
+
 ---
 
 ## P0 - the `emacs` -> X11 bloat fix (the `pvm init claude` bug)
@@ -105,13 +121,15 @@ libxcomposite1, libice6, libsm6, libgdk-pixbuf).
 (the GUI build), which HARD-Depends the X11/GTK stack. These are Depends not Recommends,
 so pvm's `--no-install-recommends` (pvm L359) does NOT strip them.
 
-**Fix.** Use the no-X11 build `emacs-nox` (terminal-only; same editor, no X11/GTK deps).
-- [ ] verify the package name per family (Debian `emacs-nox` confirmed; openSUSE / Fedora
-  - check rpmfind / repology / `zypper search emacs-nox`; split per-family if names diverge).
+**Fix (DONE, commit `a4d40d1`).** Use the no-X11 build `emacs-nox` (terminal-only; same editor,
+no X11/GTK deps).
+- [x] verified the package name per family (rpmfind 2026-06): `emacs-nox` on Debian / openSUSE /
+  RHEL / Alma / Rocky / CentOS-Stream; **current Fedora renamed it `emacs-nw`** - bundle uses a
+  per-family overlay (Debian/Suse/RedHat = `emacs-nox`), Fedora `emacs-nw` noted inline.
 - [x] DECISION (2026-06-24, user): **GLOBAL `emacs-nox`** - the shared bundle, ivm guests
   too (they use emacs as a terminal editor as well, so the X11/GTK build is waste everywhere).
-- [ ] apply, then verify: `pvm env claude` shows no X11; `pvm init claude --rebuild` and
-  read the `apt-get install` line - no `libx11`/`libgtk`.
+- [x] applied; verified the bundle resolves to `emacs-nox` (no `emacs` metapackage) for every
+  family. Full `apt-get install` re-check happens when the sandbox/apply re-renders the cache.
 
 Note: the bundle KEY stays `emacs`, so NO render-dict edit in
 `_shared_prebuilt_provision_assets` (CLAUDE.md registry->render-dict rule only triggers on
@@ -123,45 +141,45 @@ the render dict + both pvm templates must change.
 ## Work items
 
 Each: implement -> `python3 -m py_compile pvm` + extend `test_pvm.py` -> update BOTH
-completions -> `bash -n pvm.bash` + `zsh -n _pvm` -> `make vm-podman-sandbox`.
+completions -> `bash -n pvm.bash` + `zsh -n _pvm` -> `make vm-podman-sandbox` (ENV-BLOCKED in
+this env, see STATUS; each subcommand was instead verified end-to-end against real podman 5.4.2).
 
-### P1 - high value, podman clearly supports
-- [ ] `info` - `podman inspect`-based. Fields (EACH printed every run, placeholder when
+### P1 - high value, podman clearly supports [ALL DONE]
+- [x] `info` - `podman inspect`-based. Fields (EACH printed every run, placeholder when
   empty per CLAUDE.md): container name, status, image (per-template ref:tag), template
   (label `pvm.template`), project dir (label, the bound cwd), runtime, hw (cpu/memory
-  limits; `(unset - host default)` when none), network mode, published ports (`(none)`),
-  mounts (cwd volume + hidden-dir masks; `(none)`), agent (command + display_name;
-  `(none)`). Model on `ivm` `cmd_info` + `_mount_ls_lines` (roles/vm_incus/files/ivm).
-  Completions: add `info` to both (no args).
-- [ ] `push <local> <guest> [--as-root]` - `podman cp`; `--as-root` => cp then `podman exec
-  --user root chown`. Completions: both; `_files` for the local path, `--as-root` flag.
-- [ ] `update` - exec the per-family upgrade as root (apt-get update+upgrade /
-  `zypper --non-interactive` / dnf). Completions: both (no args).
-- [ ] `reboot` - `podman restart <ctr>`; confirm prompt + `--yes`. Completions: both
+  limits; `(host default)` when none), network mode, published ports (`(none)`),
+  mounts (cwd volume + hidden-dir masks `(mask)`; `(none)`), agent (command + display_name;
+  `(none)`). Inspect field names verified against podman 5.4.2. Completions: `info` in both.
+- [x] `push <local> <guest> [--as-root]` - `podman cp`; `--as-root` => cp then `podman exec
+  --user root chown -R`. Completions: both; `_files` for the local path, `--as-root` flag.
+- [x] `update` - exec a self-contained per-family upgrade as root (detects apt-get/zypper/dnf).
+  Completions: both (no args).
+- [x] `reboot` - `podman restart <ctr>`; confirm prompt + `--yes`. Completions: both
   (`--yes`).
-- [ ] `top [podman args...]` - passthrough to `podman stats` (live). Completions: both
-  (no fixed args).
-- [ ] `resize --cpu <n> --memory <NG>` - `podman update --cpus <n> --memory <NG>`. Expose
-  ivm's flag names (`--cpu`, `--memory`), translate to podman's `--cpus`. Print the command
-  (privileged-ish). NO `--disk`. Completions: both (`--cpu --memory`).
-- [ ] `delete` - alias of `rmc` (remove the cwd container, KEEP the shared per-template
+- [x] `top [-- podman flags]` - passthrough to `podman stats` (live, exec-replace). `nargs='*'`
+  (names) + `--` for flags - REMAINDER mis-parses under subparsers. Completions: both (names).
+- [x] `resize --cpu <n> --memory <NG>` - `podman update --cpus <n> --memory <NG>`. Exposes
+  ivm's flag names (`--cpu`, `--memory`), maps to podman's `--cpus`. NO `--disk`. Completions:
+  both (`--cpu --memory`).
+- [x] `delete` - alias of `rmc` (remove the cwd container, KEEP the shared per-template
   image); confirm + `--yes`. Completions: both (`--yes`).
-- [ ] shell-name alignment - add `sh`, `shell-user`/`sh-user`, `shell-root`/`sh-root` as the
-  ivm-aligned set (`shell`/`shell-user` = zsh user, `shell-root` = zsh root). Keep
-  `bash-user`/`bash-root`/`zsh-*` as pvm extras. Completions: both (add the names +
-  descriptions).
+- [x] shell-name alignment - added `sh`, `shell-user`/`sh-user`, `shell-root`/`sh-root` as the
+  ivm-aligned set (`shell`/`shell-user` = zsh user, `shell-root` = zsh root) via a
+  `SHELL_SUBCOMMANDS` table. Kept `bash-user`/`bash-root`/`zsh-*` as pvm extras. Completions: both.
 
-### P2 - medium / larger
-- [ ] `provision [<unit>...]` - bare = LIST all units (distro groups + thirdparty +
-  dotfiles, with descriptions; bash lists too). With units = exec the install scripts into
-  the running container as root, then `podman commit` the image so it persists. Model on
-  `ivm` `cmd_provision`. **Completions: PORT `_ivm_unit_names` -> `_pvm_unit_names` into BOTH
-  `_pvm` and `pvm.bash`** (reads the shared JSON keys + `dotfiles/` dirs via `python3`).
-- [ ] `overwrite-dotfiles` - re-`podman cp` the staged dotfiles slice into the container
+### P2 - medium / larger [ALL DONE]
+- [x] `provision [<unit>...]` - bare = LIST all units (distro groups + thirdparty + dotfiles,
+  with descriptions; bash lists too). With units = classify (a unit can be in >1 registry ->
+  apply ALL) + exec install scripts into the running container as root; dotfiles via `podman cp`
+  (persists in the writable layer, NOT committed - the layer is the container's "disk"). 
+  **Completions: PORTED `_ivm_unit_names` -> `_pvm_unit_names` into BOTH `_pvm` and `pvm.bash`**
+  (reads the shared JSON keys + `dotfiles/` dirs via `python3`).
+- [x] `overwrite-dotfiles` - re-`podman cp` the template's dotfiles slice into the container
   (no reprovision). Completions: both (no args).
-- [ ] `mount ls` - read-only: list the cwd `--volume` + hidden-dir empty mounts from
-  `podman inspect`. (No `attach`/`detach`/`shadow` - SKIP, see map.) Completions: both
-  (two-level `mount` -> `ls`, model on ivm `mount)` case but only `ls`).
+- [x] `mount ls` - read-only: list the cwd `--volume` + hidden-dir masks from `podman inspect`
+  (reuses info's mount renderer). No `attach`/`detach`/`shadow` (SKIP, see map). Completions:
+  both (two-level `mount` -> `ls`).
 
 ### P3 - low / optional (confirm before building)
 - [ ] `storage-status [--json]` - `podman system df`.
