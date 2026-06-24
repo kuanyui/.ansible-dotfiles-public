@@ -76,14 +76,26 @@ provision_distro_packages_tools_wayland:
   __common__:
     - wl-clipboard
 
-# The emacs PACKAGE only. Its `~/.emacs.d` config is a SEPARATE config-file set that
-# `ivm` stages once and pushes (see roles/vm_incus) - so `ivm provision emacs` =
-# this package + that config set. `emacs` is the package name in all three families'
-# default repos.
+# The emacs editor, NO-X11 build (terminal-only). Same editor; drops the ~13 X11/GTK libs the
+# GUI build HARD-depends on (libgtk-3, libx11, libcairo, libxrender, ...). WHY: every consumer
+# runs emacs in a TERMINAL - pvm agent containers are headless, ivm guests use it as a terminal
+# editor - so the GUI build's X11 deps are pure bloat. They were silently bulking up
+# `pvm init claude`: Debian `emacs` is a METAPACKAGE defaulting to `emacs-gtk`, whose X11/GTK deps
+# are Depends (not Recommends), so `--no-install-recommends` does NOT strip them (verified
+# packages.debian.org/trixie 2026-06). Its `~/.emacs.d` config is the SEPARATE emacs dotfiles
+# feature (`ivm`/`pvm provision emacs` = this package + that config set).
+# Package name DIVERGES per family (verified packages.debian.org + rpmfind 2026-06):
+#   Debian / openSUSE / RHEL / Alma / Rocky / CentOS-Stream = `emacs-nox`.
+#   CAVEAT: current Fedora RENAMED the no-window build to `emacs-nw` (its `emacs-nox` is gone), so
+#   a Fedora guest needs `emacs-nw` - best-effort, same Fedora caveat as the desktop bundles.
 provision_distro_packages_emacs:
-  description: "Emacs editor package (its ~/.emacs.d is the separate emacs dotfiles feature)"
-  __common__:
-    - emacs
+  description: "Emacs editor, no-X11 build (terminal-only; its ~/.emacs.d is the separate emacs dotfiles feature)"
+  Debian:
+    - emacs-nox
+  Suse:
+    - emacs-nox
+  RedHat:
+    - emacs-nox   # RHEL/Alma/Rocky/CentOS-Stream; current Fedora renamed it `emacs-nw` (see header)
 
 # Minimal X11 stack any X WM/DE needs: server + startx + xauth + the libinput
 # input driver (without it X gets no mouse/keyboard events). Video needs no
