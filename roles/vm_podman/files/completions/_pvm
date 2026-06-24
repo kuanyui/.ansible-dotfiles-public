@@ -17,6 +17,7 @@ _pvm_subcommands=(
   'rma:remove the container AND its image'
   'reboot:restart the cwd container (confirms; --yes skips)'
   'delete:remove the cwd container, keeping the image (confirms)'
+  'info:show the cwd container status/image/hw/network/ports/mounts/agent'
   'shell:interactive shell (zsh, user); alias sh'
   'sh:alias of shell (zsh, user)'
   'shell-user:zsh as the unprivileged user (alias sh-user)'

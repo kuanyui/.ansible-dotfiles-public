@@ -242,6 +242,21 @@ def load_template(template_name: str) -> dict[str, Any]:
     return loaded
 
 
+def load_template_quiet(template_name: str) -> dict[str, Any] | None:
+    """Best-effort template load for READ-ONLY display (`info`): returns None instead of
+    dying when the file is missing or unparseable, so `info` never aborts over a template
+    issue (the agent line just shows a placeholder)."""
+    import yaml
+    template_path: Path = TEMPLATES_DIR / f"{template_name}.yaml"
+    if not template_path.is_file():
+        return None
+    try:
+        loaded: Any = yaml.safe_load(template_path.read_text())
+    except (yaml.YAMLError, OSError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
 def validate_template(doc: dict[str, Any], template_name: str) -> None:
     """Validate against template.schema.json with jsonschema when available; else a
     minimal manual check of the required fields (jsonschema is a pvm host dep, but
@@ -870,6 +885,98 @@ def cmd_list() -> None:
     print("\n".join(container_rows))
 
 
+def _container_cpu_limit(host_config: dict[str, Any]) -> str:
+    """vCPU limit from inspect HostConfig.NanoCpus; `(host default)` when unset (0)."""
+    nano_cpus: int = int(host_config.get("NanoCpus") or 0)
+    if nano_cpus <= 0:
+        return "(host default)"
+    return f"{nano_cpus / 1_000_000_000:g}"
+
+
+def _container_memory_limit(host_config: dict[str, Any]) -> str:
+    """Memory limit from inspect HostConfig.Memory (bytes); `(host default)` when unset (0)."""
+    memory_bytes: int = int(host_config.get("Memory") or 0)
+    if memory_bytes <= 0:
+        return "(host default)"
+    size: float = float(memory_bytes)
+    for unit in ("B", "K", "M", "G", "T"):
+        if size < 1024 or unit == "T":
+            return f"{size:.0f}{unit}"
+        size /= 1024
+    return f"{memory_bytes}B"
+
+
+def _container_published_ports(host_config: dict[str, Any]) -> str:
+    """Published ports from inspect HostConfig.PortBindings as `host->guest/proto`;
+    `(none)` when the container publishes nothing."""
+    port_bindings: dict[str, Any] = host_config.get("PortBindings") or {}
+    entries: list[str] = []
+    for guest_port_proto, bindings in sorted(port_bindings.items()):
+        for binding in (bindings or []):
+            host_ip: str = binding.get("HostIp") or ""
+            host_port: str = binding.get("HostPort") or "?"
+            entries.append(f"{(host_ip + ':') if host_ip else ''}{host_port}->{guest_port_proto}")
+    return ", ".join(entries) if entries else "(none)"
+
+
+def _container_mount_lines(info: dict[str, Any]) -> list[str]:
+    """One line per mount: `<source> -> <dest> [ro]`; the empty MASK_DIR masked over a
+    hide_dir is flagged `(mask)`. `(none)` when the container has no mounts."""
+    mounts: list[dict[str, Any]] = info.get("Mounts") or []
+    lines: list[str] = []
+    for mount in mounts:
+        source: str = mount.get("Source") or "?"
+        destination: str = mount.get("Destination") or "?"
+        read_only: str = "" if mount.get("RW", True) else " [ro]"
+        mask: str = " (mask)" if source == str(MASK_DIR) else ""
+        lines.append(f"{source} -> {destination}{read_only}{mask}")
+    return lines or ["(none)"]
+
+
+def cmd_info(container_name: str) -> None:
+    """Show the cwd container's state: status/image/template/hw/network/ports/mounts/
+    agent. Read-only `podman inspect`; EVERY field prints with a placeholder when empty
+    (never hide a row - CLAUDE.md launcher-info rule). ivm `info` parity. Works stopped
+    or running."""
+    return_code, stdout, _ = run_capture(["podman", "inspect", container_name])
+    if return_code == 127:
+        die("podman not found - run `make vm-podman-install` first")
+    if return_code != 0:
+        die(f"no such container: {container_name} (run `pvm init <template>` here? "
+            f"or pass --name <container>)")
+    inspected: Any = json.loads(stdout or "[]")
+    if not inspected:
+        die(f"podman inspect returned nothing for {container_name}")
+    info: dict[str, Any] = inspected[0]
+    config: dict[str, Any] = info.get("Config") or {}
+    labels: dict[str, Any] = config.get("Labels") or {}
+    host_config: dict[str, Any] = info.get("HostConfig") or {}
+    state: dict[str, Any] = info.get("State") or {}
+
+    template_name: str = labels.get(LABEL_TEMPLATE) or ""
+    agent_line: str = "(none)"
+    if template_name:
+        agent: dict[str, Any] = (load_template_quiet(template_name) or {}).get("agent") or {}
+        if agent.get("command"):
+            display_name: str = agent.get("display_name") or ""
+            agent_line = str(agent["command"]) + (f" ({display_name})" if display_name else "")
+
+    print(f"container: {colorize_container_name(container_name, stream=sys.stdout)}")
+    print(f"  status:       {state.get('Status') or '(unknown)'}")
+    print(f"  image:        {info.get('ImageName') or config.get('Image') or '(unknown)'}")
+    print(f"  template:     {template_name or '(unset)'}")
+    print(f"  project dir:  {labels.get(LABEL_PROJECT_DIR) or '(unset)'}")
+    print(f"  runtime:      {host_config.get('Runtime') or '(unknown)'}")
+    print(f"  hw:           cpu={_container_cpu_limit(host_config)} "
+          f"memory={_container_memory_limit(host_config)}")
+    print(f"  network:      {host_config.get('NetworkMode') or '(default)'}")
+    print(f"  published:    {_container_published_ports(host_config)}")
+    print("  mounts:")
+    for mount_line in _container_mount_lines(info):
+        print(f"    {mount_line}")
+    print(f"  agent:        {agent_line}")
+
+
 def cmd_help(parser: argparse.ArgumentParser) -> None:
     parser.print_help()
 
@@ -933,6 +1040,7 @@ def build_parser() -> argparse.ArgumentParser:
             ("rmc", "remove the container (keeps the image)"),
             ("rmi", "remove the per-template image (keeps containers)"),
             ("rma", "remove the container AND its image"),
+            ("info", "show the cwd container's status/image/hw/network/ports/mounts/agent"),
             ("shell", "interactive shell (zsh, user); ivm-aligned alias: sh"),
             ("sh", "alias of shell (zsh, user)"),
             ("shell-user", "zsh as the unprivileged user (ivm-aligned; alias sh-user)"),
@@ -1012,6 +1120,8 @@ def main() -> None:
         cmd_reboot(container_name, assume_yes=parsed_arguments.yes, dry_run=dry_run)
     elif subcommand == "delete":
         cmd_delete(container_name, assume_yes=parsed_arguments.yes, dry_run=dry_run)
+    elif subcommand == "info":
+        cmd_info(container_name)
     elif subcommand == "agent":
         cmd_agent(container_name, runtime=runtime, dry_run=dry_run)
 
