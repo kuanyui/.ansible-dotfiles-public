@@ -8,7 +8,7 @@ runtimes:
   - crun
 distro_package_groups:
   - tools_basic
-  - emacs    # the `emacs` dotfiles feature below needs the editor itself
+  # emacs is NOT a default - run `pvm provision emacs` to add the editor + its ~/.emacs.d on demand
 distro_packages:
   - git
   - zsh              # the unprivileged user's login shell (+ the zsh dotfiles)
@@ -22,7 +22,6 @@ dotfiles:
   - bash
   - tmux
   - zsh
-  - emacs
 hide_dirs:
   - .git
   - .vscode
