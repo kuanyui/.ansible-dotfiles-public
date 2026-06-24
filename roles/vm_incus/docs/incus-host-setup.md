@@ -316,7 +316,17 @@ incus restart <vm>            # re-trigger DHCP
 incus exec <vm> -- ip -4 addr show    # expect 10.x.x.x
 ```
 
-`trusted` scope is one interface only - a private internal NAT segment carrying only your own VMs - so it does NOT widen your real NICs (still in `public`). On openSUSE this is the same firewalld that YaST Firewall manages; `incusbr0` won't appear in YaST's interface picker (it's not NetworkManager-managed), but YaST sees the binding after the CLI writes it.
+`trusted` scope is one interface only - a private internal NAT segment carrying only your own VMs - so it does NOT widen your real NICs (still in `public`).
+
+**Why the zones coexist (so `trusted` works while the default stays `public`):** firewalld matches PER-INTERFACE. The default zone is only the fallback for interfaces NOT explicitly bound to a zone, so binding only `incusbr0` to `trusted` (target: accept-all) leaves every real NIC in `public`. They do not conflict.
+
+**Why you may not see `incusbr0` in YaST** (openSUSE's YaST Firewall manages this same firewalld):
+
+- **Runtime vs permanent.** `firewall-cmd --change-interface` WITHOUT `--permanent` changes only the live RUNTIME state: it works at once, but is not written to `/etc/firewalld/zones/*.xml`, so it does not show in YaST and is lost on `--reload` / reboot. The `--permanent` form above writes it into `trusted.xml` -> survives reboot and shows in YaST. **Caveat:** while the binding is runtime-only, opening YaST Firewall and applying reloads from permanent and WIPES it - set `--permanent` first.
+- **Unassigned = invisible.** firewalld lists only interfaces explicitly assigned to a zone, so an unassigned `incusbr0` appears in no zone list at all (there is no command to list unassigned interfaces).
+- **Not NetworkManager-managed.** `incusbr0` is created by the incus daemon, so it never appears in YaST's interface PICKER; the `--permanent` CLI binding is the way to set it.
+
+This is also the root of "works until reboot": on boot firewalld loads only its PERMANENT config, so an `incusbr0` that was only ever bound at runtime falls back to `public` and DHCP breaks again.
 
 ### How to pick NAT vs Bridge for a VM?
 

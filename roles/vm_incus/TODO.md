@@ -3,6 +3,55 @@
 Durable, role-local notes (same convention as the repo-root TODO.md).
 Status: `[ ]` pending · `[~]` in progress · `[x]` done
 
+## 2026-06-24 network incident - diagnosis log + decisions (READ FIRST if debugging ivm networking)
+
+**Symptom.** After a HOST REBOOT, all 5 `user-1000` VMs showed `RUNNING` in `incus list` but had
+NO IPv4 (empty IPv4 column; IPv6 only). `ivm sh` failed with "has no network connectivity after 60s
+(no default route or DNS)" - `wait_ready` (ivm ~L1094) requires an IPv4 default route + DNS, and the
+guests had only an IPv6 SLAAC address.
+
+**Root cause (confirmed).** `incusbr0` was in NO firewalld zone -> fell to the default zone
+(`public`) -> that zone DROPs DHCP (udp/67) on INPUT -> the guest's DHCPv4 DISCOVER never reaches
+the host dnsmasq -> no IPv4 lease. IPv6 still worked because ICMPv6 RA / SLAAC is kernel-side and
+permitted. Runtime fix that worked: `sudo firewall-cmd --zone=trusted --change-interface=incusbr0`
+-> guest immediately leased `10.93.37.146/24`, `ivm sh` worked. Exactly the symptom the host-install
+comment at `tasks/incus_host_install.yml:771-817` describes.
+
+**Status (2026-06-24).** Fixed at RUNTIME only. The `--permanent` binding was EMPTY on this host
+(the role's L803 fix never persisted here), so it WILL break again on the next reboot until the
+durable fix lands. By design NOTHING should be needed after a host reboot - VMs autostart and
+re-DHCP; needing a manual step IS the bug. Interim: `sudo firewall-cmd --permanent --zone=trusted
+--change-interface=incusbr0 && sudo firewall-cmd --reload`, then reboot-test (feeds the firewalld PLAN).
+
+**Decisions (settled this session):**
+- **Bridge = `incusbr0`, NOT `incusbr-<uid>` (`incusbr-1000`).** incus auto-creates a per-user
+  bridge for the `user-<uid>` restricted project, but it is flaky (can come up with no IPv4); the
+  role repoints the project default-profile `eth0` to the standard `incusbr0`
+  (`incus_host_install.yml:722-734`). `incusbr-1000` lingers as a harmless leftover (own dnsmasq);
+  the VMs do NOT use it. (This is the OPPOSITE of any memory that "ivm switched to incusbr-1000".)
+- **`trusted` zone is correct** (incus-upstream-recommended). firewalld matches PER-INTERFACE, so
+  the host DEFAULT zone staying `public` is correct - binding only incusbr0 to trusted leaves real
+  NICs in `public`. Why it works with default=`public`, why a RUNTIME-only binding is invisible in
+  YaST + volatile (the runtime-vs-permanent gotcha): see `docs/incus-host-setup.md` -> Q&A
+  "firewalld hosts: VMs get an IPv6 address but no IPv4".
+- **ivm self-heals by DIAGNOSE+INSTRUCT, never auto-`sudo`** (it runs unprivileged via the incus
+  socket; CLAUDE.md transparency rule). The durable firewall fix lives in the host-install role,
+  not in ivm. -> see the two PLANs below.
+
+**Debug GOTCHAS (save the next session hours):**
+- **`incus exec` / `incus restart` take NO sudo.** They use YOUR `user-<uid>` project. `sudo incus`
+  -> root -> the `default` project -> "Failed to fetch instance ... in project default: Instance not
+  found". Only `firewall-cmd` and `incus network show` (managed bridge is in `default`) need sudo.
+- **Non-sudo `incus network show incusbr0` prints `config: {}` even when the bridge is fully
+  configured** - a restricted-project VIEW ARTIFACT (you only have use-access). Confirm the REAL
+  config with `sudo incus network show incusbr0` before concluding it is broken. (This nearly sent
+  us down a wrong "rebuild the bridge" path.)
+- **"RUNNING but no IPv4 (IPv6 present)" - check in this order:** (1) host firewall dropping udp/67
+  (firewalld zone; THIS incident), (2) guest DHCPv4 client off/misconfigured (`networkctl status`,
+  `journalctl -u systemd-networkd`), (3) tap not enslaved to the bridge (`ip link show master
+  incusbr0`), (4) bridge config actually wiped (`sudo incus network show`). The wait_ready PLAN
+  auto-prints this block.
+
 ## `ivm set`/`unset <aspect>` namespace - replace flat `set-*`/`unset-*` verbs - PLAN (2026-06-24)
 
 ### Background: how `ivm`'s CLI is wired TODAY (read this first - every step edits these)
@@ -222,13 +271,11 @@ sudo/no-sudo split, `make vm-incus-sandbox`.
 
 ## `incusbr0` firewalld zone - survive reboot + ivm self-diagnose - PLAN (2026-06-24)
 
-**Incident (2026-06-24).** Host reboot -> all 5 `user-1000` VMs RUNNING but IPv6-only, no IPv4.
-Cause: `incusbr0` was in NO firewalld zone -> fell to default (`public`) -> DROP DHCP (udp/67)
--> guests get IPv6 SLAAC (ICMPv6 RA allowed) but no DHCPv4 lease. Exactly the L771-817 comment's
-symptom. On THIS host `firewall-cmd --permanent --get-zone-of-interface=incusbr0` was EMPTY, so
-the role's L803 fix never persisted here. Upstream incus firewalld howto confirms `trusted` is
-the recommended fix AND warns the firewall can erase incus rules if started after the incus
-daemon - i.e. boot ordering matters.
+**Incident.** Full diagnosis + decisions: see the **"2026-06-24 network incident" log at the top**.
+TL;DR: incusbr0 in no firewalld zone -> default `public` DROPs DHCP udp/67 -> IPv6 SLAAC but no
+DHCPv4 lease; the `--permanent` binding was EMPTY on this host (L803 fix never persisted). Upstream
+incus firewalld howto confirms `trusted` is the fix AND warns the firewall can erase incus rules if
+started after the incus daemon - so boot ordering matters (drives step 3).
 
 **Answer to "should ivm self-solve?"** ivm must NOT silently `sudo firewall-cmd` - it talks to
 incus as the UNPRIVILEGED user via the socket, never sudo, and CLAUDE.md requires transparency
