@@ -1077,6 +1077,40 @@ def wait_until(name: str, probe: str, timeout: int) -> bool:
     return False
 
 
+def _resolve_vm_bridge(name: str) -> str:
+    """The bridge `name`'s eth0 is attached to - its `devices.eth0.network` in the
+    expanded config - so network-diagnostics commands name a real interface instead
+    of a `<...>` placeholder. Falls back to `incusbr0` (the standard ivm bridge)
+    when the field is absent or the config can't be read."""
+    import yaml  # lazy, same as cmd_info (ships with ansible-core / python3-yaml)
+    parsed: Any = yaml.safe_load(capture(["incus", "config", "show", "--expanded", name]) or "")
+    cfg: dict[str, Any] = parsed if isinstance(parsed, dict) else {}
+    eth0_device: dict[str, Any] = (cfg.get("devices", {}) or {}).get("eth0", {}) or {}
+    return eth0_device.get("network") or "incusbr0"
+
+
+def _network_diagnostics_block(name: str, bridge: str) -> str:
+    """The copy/paste commands that cracked the 2026-06-24 firewalld DHCP-drop
+    incident, with the VM name and bridge filled in (no `<...>` placeholders). The
+    sudo split is load-bearing: `incus exec` runs in the user's `user-<uid>`
+    project so it takes NO sudo (`sudo incus` -> root's `default` project ->
+    'Instance not found'); only `incus network show` (the managed bridge lives in
+    `default`) and `firewall-cmd` need sudo."""
+    return (
+        f"DIAGNOSE / FIX (copy/paste; `incus exec` takes NO sudo - only "
+        f"`incus network show` + `firewall-cmd` do):\n"
+        f"  incus exec {name} -- ip addr show\n"
+        f"  incus exec {name} -- ip route show default\n"
+        f"  incus exec {name} -- networkctl status\n"
+        f"  incus exec {name} -- journalctl -u systemd-networkd --no-pager -n 50\n"
+        f"  sudo incus network show {bridge}\n"
+        f"  sudo firewall-cmd --get-zone-of-interface={bridge}          # 'no zone'/'public' => DHCP dropped\n"
+        f"  sudo firewall-cmd --zone=trusted --change-interface={bridge}                       # runtime fix\n"
+        f"  sudo firewall-cmd --permanent --zone=trusted --change-interface={bridge} "
+        f"&& sudo firewall-cmd --reload\n"
+        f"  ip link show master {bridge}")
+
+
 def wait_ready(name: str, *, dry_run: bool) -> None:
     """Block until the guest is ready to PROVISION: (1) the incus agent answers
     `exec`, then (2) the network is actually online. Without step 2 the very
@@ -1092,8 +1126,10 @@ def wait_ready(name: str, *, dry_run: bool) -> None:
     # Network online = a default route exists AND DNS resolves. `example.com` is
     # an IANA-reserved name (no vendor dependency), used purely as a liveness probe.
     if not wait_until(name, "ip route show default | grep -q . && getent hosts example.com >/dev/null", 60):
-        die(f"VM '{name}' has no network connectivity after 60s (no default route or DNS); "
-            f"check the host's incus bridge (`incus network show incusbr0`: NAT + DNS).")
+        bridge: str = _resolve_vm_bridge(name)
+        die(f"VM '{colorize_vm_name(name)}' has no network connectivity after 60s "
+            f"(no default route or DNS).\n\n"
+            f"{_network_diagnostics_block(name, bridge)}")
 
 
 class VmBinding(NamedTuple):
