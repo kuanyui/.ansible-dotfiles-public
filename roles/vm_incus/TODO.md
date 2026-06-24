@@ -61,6 +61,16 @@ incus's mental load, so the namespace must add none). FULL symmetry: every aspec
 **Removed (6 flat verbs):** `set-password unset-password set-ssh-server unset-ssh-server
 enable-user-sudo disable-user-sudo`. Footprint to scrub: `ivm`=34, `_ivm`=9, `ivm.bash`=3.
 
+**STATUS 2026-06-24: DONE + committed.** Code `880d9fd`, completions `fd96fd4`, docs `5ff1661`.
+Steps 1-7 complete. Step 8 verify - ALL GREEN: `py_compile`; CLI smoke (`ivm --help`, bare
+`ivm set`/`ivm unset` aspect listing, every aspect `--help`); `bash -n` ivm.bash; `zsh -n` _ivm;
+grep-zero of the 6 old verbs (only the kept `ivm-set-ssh-server.conf` filename remains, by design).
+`make vm-incus-sandbox` could NOT finish in the CI/Claude env: rootless podman now BUILDS the image
+(force `cgroup_manager=cgroupfs`) and STARTS the container (`netns=host`, since `pasta` is absent),
+but systemd-as-PID1 never reaches ready (no systemd user session / `loginctl enable-linger` /
+cgroup delegation without root). Run it on a real host for that last integration check; the direct
+checks above already cover this CLI-surface change (the role's file *deployment* is unchanged).
+
 **Steps** (verify each):
 - [ ] 1. `ivm` metadata: drop the 6 from `CWD_RESOLVED`/`CWD_RESOLVED_HELP`/`CWD_RESOLVED_HANDLER`;
   drop `PASSWORD_SUBCOMMANDS`/`SSH_SERVER_SUBCOMMANDS`; add a `SET_UNSET_ASPECTS` registry
