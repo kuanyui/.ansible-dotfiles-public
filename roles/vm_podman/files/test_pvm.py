@@ -145,5 +145,83 @@ class TestSchemaAndTemplates(unittest.TestCase):
             pvm.load_template("does-not-exist")
 
 
+class TestNewSubcommandsParse(unittest.TestCase):
+    """The ivm-aligned subcommands parse (argparse acceptance only; no podman)."""
+
+    def _sub(self, *argv: str) -> object:
+        return pvm.build_parser().parse_args(list(argv))
+
+    def test_no_arg_container_subcommands(self) -> None:
+        for name in ("info", "update", "reboot", "delete", "overwrite-dotfiles", "start", "stop", "agent"):
+            self.assertEqual(self._sub(name).subcommand, name)
+
+    def test_shell_aliases_parse(self) -> None:
+        for name in ("shell", "sh", "shell-user", "sh-user", "shell-root", "sh-root",
+                     "zsh-user", "zsh-root", "bash-user", "bash-root"):
+            self.assertEqual(self._sub(name).subcommand, name)
+
+    def test_reboot_delete_yes_flag(self) -> None:
+        self.assertTrue(self._sub("reboot", "--yes").yes)
+        self.assertFalse(self._sub("delete").yes)
+
+    def test_push_args(self) -> None:
+        parsed = self._sub("push", "/host/f", "/guest/f", "--as-root")
+        self.assertEqual((parsed.local, parsed.guest, parsed.as_root), ("/host/f", "/guest/f", True))
+
+    def test_resize_flags(self) -> None:
+        parsed = self._sub("resize", "--cpu", "2", "--memory", "4g")
+        self.assertEqual((parsed.cpu, parsed.memory), ("2", "4g"))
+
+    def test_provision_units_optional(self) -> None:
+        self.assertEqual(self._sub("provision").units, [])
+        self.assertEqual(self._sub("provision", "tools_basic", "claude").units, ["tools_basic", "claude"])
+
+    def test_top_passthrough_after_double_dash(self) -> None:
+        self.assertEqual(self._sub("top").stats_args, [])
+        self.assertEqual(self._sub("top", "--", "--no-stream", "x").stats_args, ["--no-stream", "x"])
+
+    def test_mount_is_two_level_and_requires_action(self) -> None:
+        self.assertEqual(self._sub("mount", "ls").mount_action, "ls")
+        with self.assertRaises(SystemExit):
+            self._sub("mount")  # the action is required
+
+
+class TestShellSubcommands(unittest.TestCase):
+    def test_user_shells_are_zsh_nonroot(self) -> None:
+        for name in ("shell", "sh", "shell-user", "sh-user", "zsh-user"):
+            self.assertEqual(pvm.SHELL_SUBCOMMANDS[name], ("zsh", False))
+
+    def test_root_shells(self) -> None:
+        for name in ("shell-root", "sh-root", "zsh-root"):
+            self.assertEqual(pvm.SHELL_SUBCOMMANDS[name], ("zsh", True))
+        self.assertEqual(pvm.SHELL_SUBCOMMANDS["bash-root"], ("bash", True))
+
+
+class TestInfoFormatters(unittest.TestCase):
+    """The pure `info` field formatters (inspect dict -> display string)."""
+
+    def test_cpu_limit(self) -> None:
+        self.assertEqual(pvm._container_cpu_limit({"NanoCpus": 0}), "(host default)")
+        self.assertEqual(pvm._container_cpu_limit({"NanoCpus": 2_000_000_000}), "2")
+
+    def test_memory_limit(self) -> None:
+        self.assertEqual(pvm._container_memory_limit({"Memory": 0}), "(host default)")
+        self.assertEqual(pvm._container_memory_limit({"Memory": 512 * 1024 * 1024}), "512M")
+        self.assertEqual(pvm._container_memory_limit({"Memory": 4 * 1024 ** 3}), "4G")
+
+    def test_published_ports(self) -> None:
+        self.assertEqual(pvm._container_published_ports({"PortBindings": {}}), "(none)")
+        ports = {"1455/tcp": [{"HostIp": "0.0.0.0", "HostPort": "1455"}]}
+        self.assertEqual(pvm._container_published_ports({"PortBindings": ports}), "0.0.0.0:1455->1455/tcp")
+
+    def test_mount_lines_placeholder_and_mask(self) -> None:
+        self.assertEqual(pvm._container_mount_lines({"Mounts": []}), ["(none)"])
+        mounts = [{"Source": "/h/proj", "Destination": "/workspaces/proj", "RW": True},
+                  {"Source": str(pvm.MASK_DIR), "Destination": "/workspaces/proj/.git", "RW": False}]
+        lines = pvm._container_mount_lines({"Mounts": mounts})
+        self.assertEqual(lines[0], "/h/proj -> /workspaces/proj")
+        self.assertIn("[ro] (mask)", lines[1])
+
+
 if __name__ == "__main__":
     unittest.main()
