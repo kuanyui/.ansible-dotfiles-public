@@ -59,6 +59,34 @@ def _post_check_apparmor_syntax(project_dir: Path, container) -> int:
     return result.returncode
 
 
+def _post_check_seccomp_derive(project_dir: Path, container) -> int:
+    """Verify tasks/seccomp.yml derived a correct hardened .desktop from the stub
+    source planted in post_setup_commands. Exercises the riskiest logic - the
+    Exec/Name/DBusActivatable rewrite + the
+    THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY token - which the
+    apparmor_parser syntax check never touches.
+    """
+    derived = "/home/sandboxuser/.local/share/applications/org.telegram.desktop.desktop"
+    script = f"""
+        f="{derived}"
+        fail=0
+        if [ ! -f "$f" ]; then echo "  FAIL  seccomp derive: $f missing (derive skipped?)"; exit 1; fi
+        head -1 "$f" | grep -q 'THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY' || {{ echo "  FAIL  no token on line 1"; fail=1; }}
+        grep -Eq '^Exec=.*/seccomp-launch +LIBGL_ALWAYS_SOFTWARE=1 ' "$f" || {{ echo "  FAIL  Exec not routed through seccomp-launch + extra_env"; fail=1; }}
+        grep -q '^DBusActivatable=false' "$f" || {{ echo "  FAIL  DBusActivatable not forced false"; fail=1; }}
+        grep -q ' (hardened)' "$f" || {{ echo "  FAIL  Name not suffixed (hardened)"; fail=1; }}
+        if [ "$fail" -eq 0 ]; then echo "  OK    seccomp derive: token + seccomp-launch Exec + DBusActivatable=false + (hardened)"; fi
+        exit $fail
+    """
+    return container.exec("bash", "-c", script, user="root", check=False).returncode
+
+
+def _post_check_all(project_dir: Path, container) -> int:
+    """AppArmor profile syntax validation + the seccomp-derive check, combined so a
+    single post_check covers both. Returns the sum of return codes (non-zero fails)."""
+    return _post_check_apparmor_syntax(project_dir, container) + _post_check_seccomp_derive(project_dir, container)
+
+
 CONFIG = SandboxConfig(
     name="apparmor",
     description="AppArmor profile deployment + apparmor_parser --skip-kernel-load syntax validation.",
@@ -144,7 +172,34 @@ CONFIG = SandboxConfig(
         # failure mid-playbook).
         ["systemctl", "start", "apparmor.service"],
         ["systemctl", "reload", "apparmor.service"],
+        # Plant a stub distro Telegram .desktop so tasks/seccomp.yml's derive ALWAYS
+        # runs in the sandbox - the real app is never installed here, and without a
+        # source the derive (the riskiest logic: Exec/Name/DBusActivatable rewrite)
+        # would silently skip and never be tested. DBusActivatable=true + a
+        # [Desktop Action] are included on purpose so neutralization + per-action
+        # Exec rewrite are covered. Asserted by _post_check_seccomp_derive below.
+        ["bash", "-c",
+         "mkdir -p /usr/share/applications && cat > /usr/share/applications/org.telegram.desktop.desktop <<'EOF'\n"
+         "[Desktop Entry]\n"
+         "Version=1.0\n"
+         "Type=Application\n"
+         "Name=Telegram Desktop\n"
+         "GenericName=Messaging\n"
+         "TryExec=Telegram\n"
+         "Exec=Telegram -- %u\n"
+         "Icon=org.telegram.desktop\n"
+         "Terminal=false\n"
+         "Categories=Network;InstantMessaging;Qt;\n"
+         "MimeType=x-scheme-handler/tg;\n"
+         "DBusActivatable=true\n"
+         "Actions=quit;\n"
+         "StartupWMClass=TelegramDesktop\n"
+         "\n"
+         "[Desktop Action quit]\n"
+         "Name=Quit Telegram\n"
+         "Exec=Telegram -quit\n"
+         "EOF"],
     ],
     pre_flight=_pre_flight,
-    post_check=_post_check_apparmor_syntax,
+    post_check=_post_check_all,
 )

@@ -267,3 +267,15 @@ A no-network local viewer earns more allow-latitude than a browser. Do not copy 
 deny without checking its threat model applies: firefox denies `recently-used.xbel` because it is
 network-facing and runs untrusted content; mcomix allows it (its profile denies all network), so a
 compromised viewer cannot exfiltrate the recents, and the user keeps the feature.
+
+## Sandbox must exercise every feature (plant fixtures, assert output)
+
+`make sandbox-apparmor` is the verification gate. If a feature only runs when an external
+precondition holds - e.g. `tasks/seccomp.yml`'s derive needs an installed app's
+`/usr/share/applications/<id>.desktop` - the sandbox SILENTLY SKIPS it, leaving the riskiest
+logic untested. So for any such feature: (1) plant the fixture in
+`scripts/sandbox/configs/apparmor.py` (`post_setup_commands` writes a stub source, or
+`extra_files`), AND (2) assert the produced output in `post_check`. Never ship sandbox-skippable
+logic on "the real machine will test it" - that is exactly how the seccomp derive shipped
+untested once (the stub `org.telegram.desktop.desktop` + `_post_check_seccomp_derive` exist to
+prevent a repeat).
