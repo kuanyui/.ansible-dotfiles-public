@@ -305,12 +305,35 @@ No conflict, no visibility either.
 
 Your VMs use **`incusbr0`**. The confusion is real because incus's DEFAULT would use the other one:
 
-- **`incusbr-<uid>`** (here **`incusbr-1000`**, subnet `10.106.195.0/24`) - incus AUTO-creates this per-user bridge for your restricted project `user-<uid>`, and by default would attach that project's VMs to it. But it is flaky (can come up with no IPv4), so this role does NOT use it.
-- **`incusbr0`** (subnet `10.93.37.0/24`, IPv4 NAT + DNS) - the standard managed bridge in the `default` project. This role REPOINTS the `user-<uid>` project's default-profile `eth0` to it (`tasks/incus_host_install.yml:722-734`), so your VMs ride `incusbr0`. Full rationale: [DESIGN.md §4](../DESIGN.md).
+| Aspect | `incusbr0` | `incusbr-<uid>` (`incusbr-1000`) |
+|---|---|---|
+| Created by | the host-install preseed (standard managed bridge) | incus, AUTO, when an `incus`-group user first uses incus |
+| Lives in project | `default` | the per-user restricted project `user-<uid>` |
+| Subnet | an auto-picked private `/24` (incus `ipv4.address=auto` -> a random unused subnet, fixed once created; NOT a constant) | its own separate auto-picked `/24` |
+| IPv4 / DHCP | reliable - IPv4 NAT + DNS via `dnsmasq` | flaky - can come up with NO IPv4 on some hosts (the reason it is avoided) |
+| Your VMs attached? | **YES** - the role repoints `user-<uid>` `eth0` here (`tasks/incus_host_install.yml:722-734`) | **NO** - unused leftover (its own `dnsmasq` still runs) |
+| firewalld zone needed? | yes - must be in `trusted` (it carries the VMs' DHCP) | irrelevant - no VM uses it |
+| Security role | none (networking only) | none (NOT a security feature; just an auto artifact) |
+| Removed on | `vm-incus-uninstall` (delete-`incusbr0` step) | full teardown (`delete_autocreated_user_projects`) |
 
-`incusbr-1000` still EXISTS as an unused leftover (incus created it; the role does not delete it - its own `dnsmasq` shows in `systemctl status incus`), which is why you keep seeing it and assume it is in use. It is not.
+Full rationale for the choice: [DESIGN.md §4](../DESIGN.md). `incusbr-1000` still EXISTS as an unused leftover (incus created it; the role does not delete it on install - its own `dnsmasq` shows in `systemctl status incus`), which is why you keep seeing it and assume it is in use. It is not.
 
-**Proof, and why the firewall rule targets `incusbr0` not `incusbr-1000`:** a working VM here leases an IP like `10.93.37.146` - that is `incusbr0`'s subnet, not `incusbr-1000`'s (`10.106.195.0/24`). The VM taps are enslaved to `incusbr0` (`ip link show master incusbr0` lists them). So the DHCP-dropped-by-firewalld problem is on `incusbr0`, and that is the interface to trust; trusting `incusbr-1000` would do nothing because no VM is on it. (Trusting `incusbr0` is what made DHCP start working - direct confirmation the VMs are on it.)
+**Proof, and why the firewall rule targets `incusbr0` not `incusbr-1000`:** the two bridges have different subnets (compare `sudo incus network get incusbr0 ipv4.address` with the per-user bridge's), and a working VM's lease falls inside `incusbr0`'s subnet - so the lease alone tells you which bridge it is on. The VM taps are also enslaved to `incusbr0` (`ip link show master incusbr0` lists them). So the DHCP-dropped-by-firewalld problem is on `incusbr0`, and that is the interface to trust; trusting `incusbr-1000` would do nothing because no VM is on it. (Trusting `incusbr0` is what made DHCP start working - direct confirmation the VMs are on it.)
+
+### Where does the security come from - the bridge, or the `incus` group / restricted project?
+
+The bridge has nothing to do with it. Two independent layers get conflated here:
+
+| Layer | What it is | Security role |
+|---|---|---|
+| **Group / project** | You are in the unprivileged **`incus`** group (NOT `incus-admin`) -> incus confines you to a RESTRICTED per-user project **`user-<uid>`** (`restricted.*` limits). (`tasks/incus_host_install.yml:67-73`; `SPEC.md` "Project model") | **This is the security.** `incus-admin` = full daemon admin (all projects / storage / networks / daemon config - incus root); `incus` = boxed into your own restricted project, so an account compromise stays contained |
+| **Network / bridge** | Picking that restricted model makes incus AUTO-CREATE a per-user bridge `incusbr-<uid>` (`incusbr-1000`) as a side effect; the role then repoints VMs onto `incusbr0` (granting `restricted.networks.access=incusbr0`) | **None.** Just an auto artifact, dropped for `incusbr0` because it is flaky (no IPv4 on some hosts). The project stays restricted - only the L2 path changed |
+
+So the "secure switch" you remember was the GROUP / PROJECT (`incus`, not `incus-admin`) - not the bridge. `incusbr-1000` rode along automatically and was then dropped for `incusbr0` purely for reliability; it was never "more secure than `incusbr0`".
+
+(The `incusd --group=incus-admin` you may see in `systemctl status incus` only sets who OWNS the admin socket; YOU reach incus through the unprivileged `incus`-group path - which is why bare `incus` lands in `user-<uid>` and `sudo incus` lands in `default`.)
+
+The one dimension where a per-user bridge would differ at all is L2 ISOLATION between DIFFERENT users on a multi-user host (each user's VMs on their own segment). On a single-user host that is moot - only your own VMs are anywhere. The privilege/confinement boundary (the real security) is the restricted PROJECT, which the bridge choice does not touch.
 
 ### firewalld hosts: VMs get an IPv6 address but no IPv4, apt fails with "Temporary failure resolving"
 
@@ -331,7 +354,7 @@ incus exec <vm> -- ip -4 addr show    # expect 10.x.x.x
 
 The trap is the mental model "firewall = blocks the internet". A host firewall's INPUT chain filters every packet addressed to the HOST, on EVERY interface - internal bridges included. Two facts put `incusbr0` in that path:
 
-- **In NAT mode the host IS the VM's router + DHCP server + DNS.** A managed bridge means the host runs `dnsmasq` bound to the bridge gateway (e.g. `10.93.37.1`) to hand out the 10.x leases and resolve DNS, and NATs the VM's outbound traffic. So "VM gets an IP" = the VM sends a DHCP request TO the host's dnsmasq - an INBOUND-to-host packet. The host firewall sees it like any other inbound.
+- **In NAT mode the host IS the VM's router + DHCP server + DNS.** A managed bridge means the host runs `dnsmasq` bound to the bridge's gateway IP (the `.1` of its auto-picked subnet) to hand out leases and resolve DNS, and NATs the VM's outbound traffic. So "VM gets an IP" = the VM sends a DHCP request TO the host's dnsmasq - an INBOUND-to-host packet. The host firewall sees it like any other inbound.
 - **firewalld zones are per-interface; an unassigned interface gets the default `public` zone - the profile meant for an untrusted, internet-facing NIC** - which drops inbound DHCP (udp/67). So the host was applying "hostile internet" rules to its OWN private VM bridge. That mismatch is the bug - you are NOT "poking a hole to the internet".
 
 Putting `incusbr0` in `trusted` does not widen exposure: it scopes to that ONE interface - a host-only NAT segment (10.x/24, your own VMs) the LAN and internet cannot reach. Your real NICs stay in `public`. You are just telling the firewall "this interface is internal, accept its traffic to me" - which is exactly what it is.

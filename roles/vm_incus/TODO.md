@@ -14,7 +14,7 @@ guests had only an IPv6 SLAAC address.
 (`public`) -> that zone DROPs DHCP (udp/67) on INPUT -> the guest's DHCPv4 DISCOVER never reaches
 the host dnsmasq -> no IPv4 lease. IPv6 still worked because ICMPv6 RA / SLAAC is kernel-side and
 permitted. Runtime fix that worked: `sudo firewall-cmd --zone=trusted --change-interface=incusbr0`
--> guest immediately leased `10.93.37.146/24`, `ivm sh` worked. Exactly the symptom the host-install
+-> guest immediately leased an IPv4 in `incusbr0`'s subnet, `ivm sh` worked. Exactly the symptom the host-install
 comment at `tasks/incus_host_install.yml:771-817` describes.
 
 **Status (2026-06-24).** Fixed at RUNTIME only. The `--permanent` binding was EMPTY on this host
