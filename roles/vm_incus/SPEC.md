@@ -76,7 +76,7 @@ key-aligned.
 | `push` | `<local> <guest> [--as-root]` | copy a host file/dir into the VM (`incus file push`). Owns as `user` (1000) unless `--as-root`. | no |
 | `snapshot` | `[create\|list\|restore\|delete\|rename\|show] [name]` | `incus snapshot` wrapper, VM filled in. | no |
 | `gui` | - | open a SPICE graphical console, detached from the shell. | no |
-| `info` | - | print the VM's live state: status, image, hw, network, forwards, mounts, storage pool. Read-only. | no |
+| `info` | - | print the VM's live state, GROUPED: Basic (status/image/hw/snapshots/shell-dir/user-sudo), Network (ip, bridge, ssh-server, forwards), Mounts, Storage. Read-only. | no |
 | `expose` | `[<port>\|<host>:<guest>]` | forward a host TCP port to the VM so the LAN can reach a service in it (pins the VM's IPv4 first). NO arg => LIST current forwards. | no |
 | `unexpose` | `[<host-port>]` | remove a forward. NO arg => remove ALL of this VM's forwards. | yes (no-arg form) |
 | `overwrite-dotfiles` | - | re-push the host-staged dotfiles into the VM (no re-provision). | no |

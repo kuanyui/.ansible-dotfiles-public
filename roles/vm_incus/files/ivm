@@ -93,7 +93,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "push": "copy a host file/dir into the VM (incus file push; --as-root for root-owned)",
     "snapshot": "`incus snapshot` wrapper (create/list/restore/delete/rename/show)",
     "gui": "open a SPICE graphical console, detached from the shell",
-    "info": "show the VM's live state (status/image/hw/network/forwards/mounts/storage)",
+    "info": "show the VM's live state, grouped: Basic / Network (ip, bridge, ssh-server, forwards) / Mounts / Storage",
     "expose": "forward a host TCP port to the VM so the LAN can reach a service in it (no arg lists current forwards)",
     "unexpose": "remove a port forward added by `expose` (no arg removes ALL; confirms, --yes skips)",
 }
@@ -2212,14 +2212,16 @@ def _mount_ls_lines(disk_devices: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _guest_status_lines(name: str, status: str) -> list[str]:
-    """The `user-sudo` + `ssh-server` info lines, probed INSIDE the guest (needs it running).
-    user-sudo = the `/etc/sudoers.d/user` drop-in that `set user-sudo` writes; ssh-server =
-    which of root/user have a non-empty `authorized_keys` (what `set ssh-server` appends to).
-    Read-only. ALWAYS returns both lines with a placeholder ('(vm not running)' when stopped,
-    '?' if the probe fails, '(none)' when no account) - never hides a field."""
+def _guest_status_values(name: str, status: str) -> tuple[str, str]:
+    """The `user-sudo` + `ssh-server` display values, probed INSIDE the guest (needs it
+    running) in ONE exec. user-sudo = the `/etc/sudoers.d/user` drop-in that `set user-sudo`
+    writes; ssh-server = which of root/user have a non-empty `authorized_keys` (what
+    `set ssh-server` appends to). Read-only. ALWAYS returns both with a placeholder
+    ('(vm not running)' when stopped, '?' if the probe fails, '(none)'/'off' when empty) -
+    never hides a field. Returns (user_sudo, ssh_server); `cmd_info` places them in
+    different groups (user-sudo under Basic, ssh-server under Network)."""
     if status.upper() != "RUNNING":
-        return ["  user-sudo:     (vm not running)", "  ssh-server:    (vm not running)"]
+        return "(vm not running)", "(vm not running)"
     probe: str = (
         "sudo=off; [ -f /etc/sudoers.d/user ] && sudo=on; "
         "ssh=''; for u in root user; do "
@@ -2230,7 +2232,7 @@ def _guest_status_lines(name: str, status: str) -> list[str]:
     try:
         probe_out: str = capture(["incus", "exec", name, "--", "sh", "-c", probe])
     except Exception:
-        return ["  user-sudo:     ?", "  ssh-server:    ?"]
+        return "?", "?"
     sudo_val: str = "?"
     ssh_val: str = "?"
     for probe_line in probe_out.splitlines():
@@ -2239,13 +2241,15 @@ def _guest_status_lines(name: str, status: str) -> list[str]:
         elif probe_line.startswith("SSH="):
             ssh_val = probe_line[len("SSH="):].strip()
     ssh_display: str = "?" if ssh_val == "?" else (ssh_val.replace(" ", ", ") if ssh_val else "(none)")
-    return [f"  user-sudo:     {sudo_val}", f"  ssh-server:    {ssh_display}"]
+    return sudo_val, ssh_display
 
 
 def cmd_info(name: str, root: Path) -> None:
-    """`ivm info`: the TARGET VM's live state - status, image, hw, network, mounts
-    (from `incus config show --expanded`) + the storage pool its disk lives in.
-    Target resolved by cwd or `--name`, like the other VM subcommands. Read-only."""
+    """`ivm info`: the TARGET VM's live state, GROUPED for readability -
+    Basic (status/image/hw/snapshots/shell-dir/user-sudo), Network (ip/bridge/
+    ssh-server/forwards), Mounts, Storage. Read from `incus config show --expanded`
+    + `incus list`; target resolved by cwd or `--name`. Read-only. Prints EVERY
+    field every run, with a placeholder when empty (never hides a field)."""
     import yaml  # lazy, same as load_yaml (ships with ansible-core / python3-yaml)
     parsed: Any = yaml.safe_load(capture(["incus", "config", "show", "--expanded", name]) or "")
     cfg: dict[str, Any] = parsed if isinstance(parsed, dict) else {}
@@ -2260,39 +2264,51 @@ def cmd_info(name: str, root: Path) -> None:
                   or "?")
     root_device: dict[str, Any] = devices.get("root", {}) or {}
     eth0_device: dict[str, Any] = devices.get("eth0", {}) or {}
-    network: str = (eth0_device.get("network")
-                    or f"{eth0_device.get('nictype', '')} {eth0_device.get('parent', '')}".strip()
-                    or "?")
-    print(f"VM: {colorize_vm_name(name, stream=sys.stdout)}")
-    print(f"  status:        {status}")
-    print(f"  image:         {image}")
-    print(f"  hw:            cpu={config.get('limits.cpu', '?')} "
-          f"memory={config.get('limits.memory', '?')} disk={root_device.get('size', '?')}")
+    bridge: str = (eth0_device.get("network")
+                   or f"{eth0_device.get('nictype', '')} {eth0_device.get('parent', '')}".strip()
+                   or "?")
     shell_dir: str = config.get("user.ivm_shell_default_dir_after_login", "") or ""
-    print(f"  shell dir:     {shell_dir or '(unset - ivm sh starts in the home dir)'}")
-    print(f"  snapshots:     {snapshot_count}")
-    print(f"  network:       {network}")
+    user_sudo_value, ssh_server_value = _guest_status_values(name, status)
+    ipv4: str = vm_primary_ipv4(name)
+    ip_display: str = "(vm not running)" if status.upper() != "RUNNING" else (ipv4 or "(no IPv4 lease yet)")
+
+    def field(label: str, value: str) -> None:
+        # 2-space indent + label padded so all values line up at one column across groups.
+        print(f"  {label + ':':<14}{value}")
+
+    print(f"VM: {colorize_vm_name(name, stream=sys.stdout)}")
+    print("\nBasic")
+    field("status", status)
+    field("image", image)
+    field("hw", f"cpu={config.get('limits.cpu', '?')} "
+                f"memory={config.get('limits.memory', '?')} disk={root_device.get('size', '?')}")
+    field("snapshots", snapshot_count)
+    field("shell dir", shell_dir or "(unset - ivm sh starts in the home dir)")
+    field("user-sudo", user_sudo_value)
+    print("\nNetwork")
+    field("ip", ip_display)
+    field("bridge", bridge)
+    field("ssh-server", ssh_server_value)
     expose_forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
     if expose_forwards:
         print("  forwards:")
         for _expose_device_name, expose_host_port, expose_guest_port in expose_forwards:
             print(f"    host :{expose_host_port} -> guest :{expose_guest_port}")
     else:
-        print("  forwards:      (none; `ivm expose <port>` to add)")
-    for guest_status_line in _guest_status_lines(name, status):
-        print(guest_status_line)
+        field("forwards", "(none; `ivm expose <port>` to add)")
     # Mounts: full virtio-fs detail (device name, [ro], shadow masks) - SAME rendering as
     # `ivm mount ls`, shared via _mount_ls_lines so info and mount-ls never drift.
+    print("\nMounts")
     info_disk_devices: dict[str, Any] = {
         n: d for n, d in devices.items()
         if isinstance(d, dict) and d.get("type") == "disk" and n != "root"}
     mount_lines: list[str] = _mount_ls_lines(info_disk_devices)
     if mount_lines:
-        print("  mounts:")
         for mount_line in mount_lines:
-            print("  " + mount_line)  # nest one level deeper under the "mounts:" header
+            print(mount_line)
     else:
-        print("  mounts:        (none)")
+        print("  (none)")
+    print("\nStorage")
     for line in preview_storage_pool(root, dry_run=False):
         print(line)
 
