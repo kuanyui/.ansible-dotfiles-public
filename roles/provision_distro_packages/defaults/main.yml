@@ -473,7 +473,7 @@ provision_distro_packages_desktop_lxqt:
 # Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three); the Debian-only `uidmap`
 # split is the one divergence. (No HOST toggle - dict-form bundles are guest-only.)
 provision_distro_packages_podman_rootless:
-  description: "rootless podman in the guest - podman (+ docker CLI compat + compose), pasta, subuid/subgid + linger"
+  description: "rootless podman in the guest - podman (+ docker CLI compat + compose), pasta, subuid/subgid + linger + docker.io search"
   __common__:
     install:
       - podman
@@ -488,6 +488,17 @@ provision_distro_packages_podman_rootless:
       grep -q '^user:' /etc/subgid || usermod --add-subgids 100000-165535 user
       # cgroup delegation without an interactive login session (headless guest).
       loginctl enable-linger user
+      # podman defines NO unqualified-search-registries by default (unlike docker), so a
+      # short image name (`postgres`, `dpage/pgadmin4`, ... what compose files pull) fails:
+      # "short-name did not resolve ... no unqualified-search registries are defined". Point
+      # unqualified searches at docker.io via a registries.conf.d drop-in. This is a "simple
+      # knob": a drop-in REPLACES the distro's (empty) value entirely, last file alphabetically
+      # winning - hence the `zz-` prefix, robust against distro drop-ins. ONE registry => no
+      # ambiguity => no interactive short-name prompt, so it works under compose / non-TTY.
+      # (containers-registries.conf.5; add quay.io/ghcr.io to the list here if you need them.)
+      mkdir -p /etc/containers/registries.conf.d
+      printf 'unqualified-search-registries = ["docker.io"]\n' \
+        > /etc/containers/registries.conf.d/zz-unqualified-search-registries.conf
   Debian:
     install:
       - uidmap   # newuidmap/newgidmap; Fedora/openSUSE ship these in shadow-utils/shadow (base)
