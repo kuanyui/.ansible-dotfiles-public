@@ -212,6 +212,7 @@ case "$state" in
             'ssh-server:key-based SSH login for a guest account'
             'shell-dir:the dir `ivm sh` starts in'
             'user-sudo:whether `user` may sudo (root-password gated)'
+            'git-ssh-key:copy a host private ssh key in + wire git SSH for private repos'
           )
           _describe 'ivm aspect' _ivm_aspects
         else
@@ -221,6 +222,8 @@ case "$state" in
             # `set shell-dir <path>` takes an existing GUEST directory -> complete real guest dirs
             # (`unset shell-dir` and `(un)set user-sudo` take no further args).
             shell-dir) [[ "$words[1]" == set ]] && _ivm_guest_dirs ;;
+            # `set git-ssh-key <keyfile>` takes a HOST key file (-> _files); both verbs take --host.
+            git-ssh-key) compadd -- --host; [[ "$words[1]" == set ]] && _files ;;
           esac
         fi
         ;;

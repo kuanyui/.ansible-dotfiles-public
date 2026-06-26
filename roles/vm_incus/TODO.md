@@ -166,6 +166,22 @@ The kept
 renamed (renaming would orphan the file on already-configured VMs). (Root `TODO.md` has 2 historical
 prose mentions of the old plan path - left as-is in the user's master tracker.)
 
+## `ivm set git-ssh-key` - private repos for in-guest git / `go get` - DONE (2026-06-26)
+
+The `git-ssh` aspect earmarked above, built as **`git-ssh-key`**. `set git-ssh-key <keyfile>
+[--host HOST]` copies a host PRIVATE ssh key into the VM, renamed to its type's default name
+(`ssh-keygen -l` -> `id_ed25519`/`id_rsa`/...) so ssh auto-loads it (one key per VM, no
+`~/.ssh/config`); also `ssh-keyscan`s each `--host` (default github.com) into known_hosts and sets
+`git config --global url."git@HOST:".insteadOf "https://HOST/"` - the latter is what makes `go get`
+of a private module use SSH (Go fetches via https + proxy otherwise; verified). GOPRIVATE is NOT
+set (user opted out; set it yourself if a module hits proxy/sumdb). Hard-gated: prints the key's
+fingerprint/comment/path, warns the key lives in the VM, requires typing `yes i know` (ci); `--yes`
+does NOT skip it, no TTY refuses. Records the pushed name in `user.ivm_git_ssh_key_name` so `unset`
+deletes EXACTLY that key (never a user's own id_*). Verified: py_compile, CLI help, type-detect +
+confirm logic, `bash -n` of the rendered set/unset guest scripts, both completions (`zsh -n`/`bash
+-n`). NOT yet run on a real incus host (no incus here) - the deployment is unchanged, but the live
+`go get private` round-trip wants a host check.
+
 ## `ivm release-ram` - reclaim a running VM's host RAM without stopping it (NOT built)
 
 Deferred on purpose: the user wants to confirm the real behavior on a host before we

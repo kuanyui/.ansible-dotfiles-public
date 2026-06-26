@@ -108,6 +108,7 @@ MUST list the aspects + descriptions (needs no VM).
 | `ssh-server` | `<username> [--pubkey FILE ...]` | authorize key-based SSH for the account (append keys, default `~/.ssh/id_ed25519.pub`; ensure sshd up; `root` also gets `PermitRootLogin prohibit-password`). | revoke the key(s) (and root's override); leave sshd running. |
 | `shell-dir` | `<path>` | set the dir `ivm sh` starts in (`user.ivm_shell_default_dir_after_login`). `<path>` is an absolute GUEST path; need not exist yet. | clear it (revert to incus's default cwd). |
 | `user-sudo` | - | let `user` sudo, gated by ROOT's password (`Defaults:user rootpw`); needs `set password root` first. | remove the sudoers drop-in. |
+| `git-ssh-key` | `<keyfile> [--host HOST]` | copy a host PRIVATE ssh key into the VM (renamed to its type's default name so ssh auto-uses it), trust each `--host` (default github.com), and set git `insteadOf` to rewrite https->ssh - so in-guest git / `go get` reach private repos. MUST warn + require typing `yes i know` (not skippable by `--yes`; refuses with no TTY); records the pushed key name in `user.ivm_git_ssh_key_name`. | remove that recorded key + the `insteadOf` rewrite. |
 
 ### 2d. Completions drift risk
 

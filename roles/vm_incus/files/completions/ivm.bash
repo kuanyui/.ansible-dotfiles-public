@@ -79,11 +79,13 @@ _ivm() {
                 aspect="${COMP_WORDS[aspect_word_index]}"; break
             done
             if [[ -z "$aspect" ]]; then
-                COMPREPLY=( $(compgen -W "password ssh-server shell-dir user-sudo" -- "$cur") )
+                COMPREPLY=( $(compgen -W "password ssh-server shell-dir user-sudo git-ssh-key" -- "$cur") )
             else
                 case "$aspect" in
                     password) COMPREPLY=( $(compgen -W "user root" -- "$cur") ) ;;
                     ssh-server) COMPREPLY=( $(compgen -W "user root --pubkey" -- "$cur") $(compgen -A file -- "$cur") ) ;;
+                    # `set git-ssh-key <keyfile>` takes a HOST key file; both verbs take --host.
+                    git-ssh-key) COMPREPLY=( $(compgen -W "--host" -- "$cur") $(compgen -A file -- "$cur") ) ;;
                     # `set shell-dir <path>` is a GUEST path (not host-completable); `unset shell-dir`
                     # and `(un)set user-sudo` take no further args -> nothing to complete.
                 esac

@@ -127,6 +127,8 @@ SET_UNSET_ASPECTS: dict[str, tuple[str, str]] = {
                   "clear the shell start dir (revert to incus's default cwd)"),
     "user-sudo": ("let `user` sudo, gated by root's password",
                   "revert: remove the sudoers drop-in so `user` can no longer sudo"),
+    "git-ssh-key": ("copy a host PRIVATE ssh key in + wire git/go to SSH for private repos (warns; type 'yes i know')",
+                    "remove the pushed key + git's https->ssh rewrite"),
 }
 
 # Installed on EVERY guest at first provision (the ivm-guest floor: zsh + login
@@ -1820,6 +1822,152 @@ def cmd_unset_shell_dir(name: str, *, dry_run: bool) -> None:
           file=sys.stderr)
 
 
+# `set git-ssh-key`: copy a host PRIVATE ssh key into the VM so in-guest git / `go get`
+# can reach PRIVATE repos over SSH. The key is renamed to its TYPE's default filename
+# (`id_ed25519` / `id_rsa` / ...), because ssh only auto-loads those default names - one
+# key per VM, so no `~/.ssh/config` IdentityFile entry is needed. `set` also trusts the
+# host (ssh-keyscan) and rewrites https->ssh for git (`url.<...>.insteadOf`), the bit that
+# makes `go get` of a private module actually use the key (Go fetches via https by default).
+DEFAULT_GIT_SSH_HOST: str = "github.com"
+# The pushed key's default filename, stored on the VM so `unset` removes EXACTLY that key
+# (never a key the user generated in-guest themselves).
+GIT_SSH_KEY_NAME_TAG: str = "user.ivm_git_ssh_key_name"
+# ssh private-key TYPE (as `ssh-keygen -l` prints it in trailing parens) -> the default
+# filename ssh auto-tries. Only these names are auto-loaded without an IdentityFile.
+SSH_KEY_TYPE_TO_DEFAULT_NAME: dict[str, str] = {
+    "ED25519": "id_ed25519", "ED25519-SK": "id_ed25519_sk",
+    "RSA": "id_rsa", "ECDSA": "id_ecdsa", "ECDSA-SK": "id_ecdsa_sk", "DSA": "id_dsa",
+}
+
+
+def _ssh_key_default_name_and_summary(key_file: Path) -> tuple[str, str]:
+    """`(default_filename, human_summary)` for a host ssh PRIVATE key, read via
+    `ssh-keygen -l -f` (reads the key's embedded public part, so NO passphrase is
+    needed). `summary` is the raw `<bits> SHA256:.. <comment> (TYPE)` line, shown for
+    the user to eyeball before the key is copied into a VM. die()s if the file is not an
+    ssh key or its type has no default filename."""
+    listing: str = capture(["ssh-keygen", "-l", "-f", str(key_file)]).strip()
+    if not listing:
+        die(f"not an ssh key, or unreadable (a passphrase-encrypted OpenSSH key still "
+            f"works): {key_file}")
+    key_type_match: re.Match[str] | None = re.search(r"\(([A-Z0-9-]+)\)\s*$", listing)
+    key_type: str = key_type_match.group(1) if key_type_match else ""
+    default_name: str = SSH_KEY_TYPE_TO_DEFAULT_NAME.get(key_type, "")
+    if not default_name:
+        die(f"unsupported ssh key type '{key_type or '?'}' in {key_file} "
+            f"(supported: {', '.join(sorted(SSH_KEY_TYPE_TO_DEFAULT_NAME))})")
+    return default_name, listing
+
+
+def _confirm_typed_phrase(warning_lines: list[str], phrase: str) -> None:
+    """A STRONGER gate than the y/N confirms: print `warning_lines`, then require the
+    user to type `phrase` (case-insensitive) on a TTY. `--yes` does NOT bypass it -
+    pushing a private key into a VM is too consequential for a one-flag skip; with no
+    TTY it die()s rather than proceed unattended."""
+    for warning_line in warning_lines:
+        print(warning_line, file=sys.stderr)
+    if not sys.stdin.isatty():
+        die(f"refusing to push a private key unattended; type '{phrase}' at a TTY to confirm")
+    if input(f"Type '{phrase}' to proceed: ").strip().lower() != phrase.lower():
+        die("aborted (confirmation phrase not entered)")
+
+
+def _validate_git_ssh_hosts(hosts: list[str]) -> list[str]:
+    """Default to github.com; reject anything not a bare hostname (the value is
+    interpolated into a guest shell script + a git config key)."""
+    resolved_hosts: list[str] = hosts or [DEFAULT_GIT_SSH_HOST]
+    for host in resolved_hosts:
+        if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
+            die(f"invalid --host '{host}' (expected a bare hostname like github.com)")
+    return resolved_hosts
+
+
+def cmd_set_git_ssh_key(name: str, key_file_arg: str, hosts: list[str], *, dry_run: bool) -> None:
+    """`ivm set git-ssh-key <keyfile> [--host HOST]`: copy a host PRIVATE ssh key into
+    the VM and wire git/go to use SSH, so in-guest git / `go get` can reach PRIVATE repos.
+    The key is renamed to its type's default name (`id_ed25519` / `id_rsa` / ...) so ssh
+    auto-uses it - one key per VM, no `~/.ssh/config` needed. Also adds each `--host`
+    (default github.com) to known_hosts and sets
+    `git config --global url."git@HOST:".insteadOf "https://HOST/"` (needed for `go get`,
+    which fetches via https otherwise). WARNS hard and requires typing `yes i know` - the
+    key LIVES in the VM, so use a low-value, VM-only, PASSPHRASE-LESS key. `--yes` does not
+    skip the prompt. Reverse with `unset git-ssh-key`."""
+    target_hosts: list[str] = _validate_git_ssh_hosts(hosts)
+    key_file: Path = Path(sh_expand(key_file_arg, Path.cwd()))
+    if dry_run:
+        print(f"+ (verify {key_file} is an ssh key, WARN + require typing 'yes i know', then "
+              f"push it to the guest as ~user/.ssh/id_<type>, trust {', '.join(target_hosts)}, "
+              f"set git https->ssh insteadOf)", file=sys.stderr)
+        return
+    if not key_file.is_file():
+        die(f"ssh key not found: {key_file}")
+    default_name, key_summary = _ssh_key_default_name_and_summary(key_file)
+    guest_key_path: str = f"/home/user/.ssh/{default_name}"
+    _confirm_typed_phrase([
+        "",
+        "  !!  ABOUT TO COPY A PRIVATE SSH KEY INTO THE VM  !!",
+        f"    VM:         {name}",
+        f"    key file:   {key_file}",
+        f"    key:        {key_summary}",
+        f"    -> guest:   {guest_key_path}  (user:user, mode 0600; OVERWRITES if present)",
+        f"    git hosts:  {', '.join(target_hosts)}",
+        "",
+        "  The key will live INSIDE the VM - anyone who compromises the VM can read it.",
+        "  Use a LOW-VALUE, VM-ONLY, PASSPHRASE-LESS key. Check the fingerprint/comment above.",
+        "",
+    ], "yes i know")
+    ensure_up(name, dry_run=dry_run)
+    run(["incus", "file", "push", "--create-dirs", "--uid", "1000", "--gid", "1000",
+         "--mode", "0600", str(key_file), f"{name}{guest_key_path}"], dry_run=dry_run)
+    # Fix ~/.ssh perms (ssh refuses a group/other-accessible dir), trust the host key(s)
+    # non-interactively (ssh-keyscan; `sort -u` keeps re-runs idempotent), and rewrite
+    # https->ssh for git/go. git config runs AS `user` (login shell -> HOME=/home/user).
+    script: str = (
+        "install --directory --mode=700 --owner=user --group=user /home/user/.ssh\n"
+        f"chown user:user {guest_key_path}\n"
+        "touch /home/user/.ssh/known_hosts\n"
+    )
+    for host in target_hosts:
+        script += (
+            f"ssh-keyscan {shlex.quote(host)} >> /home/user/.ssh/known_hosts 2>/dev/null || true\n"
+            f"runuser -l user -c 'git config --global url.\"git@{host}:\".insteadOf \"https://{host}/\"'\n"
+        )
+    script += (
+        "sort -u -o /home/user/.ssh/known_hosts /home/user/.ssh/known_hosts\n"
+        "chmod 644 /home/user/.ssh/known_hosts\n"
+        "chown user:user /home/user/.ssh/known_hosts\n"
+    )
+    run(["incus", "exec", name, "--", "bash", "-ec", script], dry_run=dry_run)
+    # Record the pushed filename so `unset` removes exactly this key, not a user's own id_*.
+    run(["incus", "config", "set", name, GIT_SSH_KEY_NAME_TAG, default_name], dry_run=dry_run)
+    print(f"==> git SSH key installed on {colorize_vm_name(name)} (as {default_name}; "
+          f"hosts: {', '.join(target_hosts)}). In-guest git / `go get` can now reach private "
+          f"repos over SSH. Reverse with `ivm unset git-ssh-key`.", file=sys.stderr)
+
+
+def cmd_unset_git_ssh_key(name: str, hosts: list[str], *, dry_run: bool) -> None:
+    """Reverse `set git-ssh-key`: remove the key it pushed (read back from the
+    `user.ivm_git_ssh_key_name` tag, so only OUR key is deleted) and drop git's
+    https->ssh rewrite for each `--host` (default github.com). known_hosts entries are
+    left (harmless); a key/git-config the user added by hand is untouched."""
+    target_hosts: list[str] = _validate_git_ssh_hosts(hosts)
+    ensure_up(name, dry_run=dry_run)
+    pushed_key_name: str = "" if dry_run else capture(
+        ["incus", "config", "get", name, GIT_SSH_KEY_NAME_TAG]).strip()
+    script: str = ""
+    if pushed_key_name:
+        script += f"rm -f /home/user/.ssh/{shlex.quote(pushed_key_name)}\n"
+    for host in target_hosts:
+        script += (f"runuser -l user -c 'git config --global --unset url.\"git@{host}:\".insteadOf' "
+                   f"2>/dev/null || true\n")
+    run(["incus", "exec", name, "--", "bash", "-ec", script or "true"], dry_run=dry_run)
+    if pushed_key_name or dry_run:
+        run(["incus", "config", "unset", name, GIT_SSH_KEY_NAME_TAG], dry_run=dry_run)
+    print(f"==> git SSH key removed on {colorize_vm_name(name)} "
+          f"({'key ' + pushed_key_name + ' deleted; ' if pushed_key_name else ''}"
+          f"insteadOf for {', '.join(target_hosts)} dropped; known_hosts left).", file=sys.stderr)
+
+
 def cmd_list_set_aspects(verb: str) -> None:
     """Print the aspects available to `ivm set` / `ivm unset`, each with its one-line help -
     shown when `ivm set` / `ivm unset` runs with NO aspect (the bash-friendly alternative to
@@ -2788,6 +2936,13 @@ def build_parser() -> argparse.ArgumentParser:
             if aspect == "shell-dir" and verb == "set":
                 ap.add_argument("path",
                                 help="absolute guest dir `ivm sh` starts in (e.g. /workspaces/<name>)")
+            if aspect == "git-ssh-key" and verb == "set":
+                ap.add_argument("keyfile",
+                                help="host PRIVATE ssh key to copy in (e.g. ~/.ssh/dev_vm); renamed to "
+                                     "its type's default name (id_ed25519/id_rsa/...)")
+            if aspect == "git-ssh-key":
+                ap.add_argument("--host", action="append", metavar="HOST",
+                                help="git host to trust + rewrite https->ssh (repeatable; default github.com)")
 
     for name in CWD_RESOLVED:
         sp: argparse.ArgumentParser = sub.add_parser(
@@ -2917,6 +3072,8 @@ def main() -> None:
             cmd_set_shell_dir(name, args.path, dry_run=args.dry_run)
         elif args.aspect == "user-sudo":
             cmd_enable_user_sudo(name, dry_run=args.dry_run)
+        elif args.aspect == "git-ssh-key":
+            cmd_set_git_ssh_key(name, args.keyfile, args.host or [], dry_run=args.dry_run)
     elif args.subcommand == "unset":
         if args.aspect == "password":
             cmd_unset_password(name, args.username, dry_run=args.dry_run)
@@ -2926,6 +3083,8 @@ def main() -> None:
             cmd_unset_shell_dir(name, dry_run=args.dry_run)
         elif args.aspect == "user-sudo":
             cmd_disable_user_sudo(name, dry_run=args.dry_run)
+        elif args.aspect == "git-ssh-key":
+            cmd_unset_git_ssh_key(name, args.host or [], dry_run=args.dry_run)
     elif args.subcommand == "update":
         cmd_update(name, dry_run=args.dry_run)
     elif args.subcommand == "provision":
