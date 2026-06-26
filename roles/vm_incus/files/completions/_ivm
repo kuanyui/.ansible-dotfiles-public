@@ -93,6 +93,29 @@ for tf in sorted(glob.glob(os.path.join(root, "*.yaml"))):
 PY
 }
 
+# The VM a cwd-resolved subcommand targets, for completion: `--name <vm>` if given, else the
+# VM tagged with the current directory (`user.ivm_init_at_dir`). Empty if neither. REUSABLE.
+_ivm_target_vm() {
+  print -r -- "${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
+}
+
+# REUSABLE guest-path completion: complete an existing DIRECTORY inside the target RUNNING
+# guest VM - for any arg that takes a guest path (`mount shadow <guest_path>`,
+# `set shell-dir <path>`, ...). Asks the guest over `incus exec find` (silent + empty if the
+# VM is stopped/absent). Descends one path component per TAB (dirs only; guest paths are
+# absolute, so it starts at /). $1 = VM name; omit to resolve it from --name / cwd.
+_ivm_guest_dirs() {
+  local _ivm_gd_vm="${1:-$(_ivm_target_vm)}"
+  [[ -z "$_ivm_gd_vm" ]] && return 1
+  # The guest dir already typed (everything up to the last slash); default to / .
+  local _ivm_gd_base="/"
+  [[ "$PREFIX" == */* ]] && _ivm_gd_base="${PREFIX%/*}/"
+  # Immediate child directories of that dir in the guest (full paths); zsh filters by PREFIX.
+  local -a _ivm_gd_children
+  _ivm_gd_children=(${(f)"$(incus exec "$_ivm_gd_vm" -- find "$_ivm_gd_base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)"})
+  compadd -S / -- $_ivm_gd_children
+}
+
 local state
 
 _arguments -C \
@@ -131,8 +154,8 @@ case "$state" in
           compadd -- --ro --shadow
           _files
         elif [[ "$_ivm_mount_action" == shadow ]]; then
-          # <guest_path>: a directory inside the guest -> offer existing mount guest paths.
-          [[ -n "$_ivm_mount_vm" ]] && compadd -- ${(f)"$(incus config show ${_ivm_mount_vm} 2>/dev/null | awk '/^[[:space:]]+path:/ && $2 != "/" {print $2}')"}
+          # <guest_path>: an existing directory inside the guest to mask -> complete real guest dirs.
+          _ivm_guest_dirs "$_ivm_mount_vm"
         elif [[ "$_ivm_mount_action" == detach ]]; then
           # detach target: the VM's own mount/shadow device names (ivm_mount_* / ivm_shadow_*).
           [[ -n "$_ivm_mount_vm" ]] && compadd -- ${(f)"$(incus config device list ${_ivm_mount_vm} 2>/dev/null | grep '^ivm_')"}
@@ -172,9 +195,9 @@ case "$state" in
           case "$_ivm_aspect" in
             password) compadd -- user root ;;
             ssh-server) compadd -- user root --pubkey; _files ;;
-            # `set shell-dir <path>` is a GUEST path (not host-completable) -> just hint;
-            # `unset shell-dir` and `(un)set user-sudo` take no further args.
-            shell-dir) [[ "$words[1]" == set ]] && _message 'absolute guest dir (e.g. /workspaces/<name>)' ;;
+            # `set shell-dir <path>` takes an existing GUEST directory -> complete real guest dirs
+            # (`unset shell-dir` and `(un)set user-sudo` take no further args).
+            shell-dir) [[ "$words[1]" == set ]] && _ivm_guest_dirs ;;
           esac
         fi
         ;;
