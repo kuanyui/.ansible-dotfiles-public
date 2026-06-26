@@ -470,19 +470,17 @@ provision_distro_packages_desktop_lxqt:
 # and /etc/subuid + /etc/subgid ranges for `user`. `fuse-overlayfs` covers rootless
 # overlay storage on older kernels (native otherwise). GUEST-ONLY (dict form: `post_install`
 # runs as ROOT in an ivm guest). Package names verified via repology 2026-06 (`passt`
-# Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three); the Debian-only `uidmap`
-# split is the one divergence. (No HOST toggle - dict-form bundles are guest-only.)
+# Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three). Two Debian-only adds (see the
+# `Debian:` block): the `uidmap` name split, and `nftables` (netavark's `nft`, which Fedora/openSUSE
+# already ship in the base). (No HOST toggle - dict-form bundles are guest-only.)
 provision_distro_packages_podman_rootless:
-  description: "rootless podman in the guest - podman (+ docker CLI compat + compose), pasta + nftables, subuid/subgid + linger + docker.io search"
+  description: "rootless podman in the guest - podman (+ docker CLI compat + compose), pasta, subuid/subgid + linger + docker.io search"
   __common__:
     install:
       - podman
       - podman-docker   # docker->podman CLI shim (same name all 3 families)
       - podman-compose  # `podman compose` provider (compose.yml -> podman; small, same name all 3 families)
       - passt
-      - nftables        # netavark's firewall backend (provides `nft`); `podman compose` builds a custom
-                        # bridge network and netavark defaults to nftables (netavark >=1.10), so without
-                        # `nft` it dies "unable to execute 'nft'". Same package name all 3 families.
       - fuse-overlayfs
     post_install: |
       # rootless podman maps `user` into a userns via /etc/subuid + /etc/subgid;
@@ -504,4 +502,8 @@ provision_distro_packages_podman_rootless:
         > /etc/containers/registries.conf.d/zz-unqualified-search-registries.conf
   Debian:
     install:
-      - uidmap   # newuidmap/newgidmap; Fedora/openSUSE ship these in shadow-utils/shadow (base)
+      - uidmap     # newuidmap/newgidmap; Fedora/openSUSE ship these in shadow-utils/shadow (base)
+      - nftables   # netavark's firewall backend (`nft`): `podman compose` builds a custom bridge network
+                   # and netavark (>=1.10) defaults to nftables, so without `nft` it dies "unable to
+                   # execute 'nft'". DEBIAN-ONLY: a minimal Debian guest lacks `nft`; Fedora/openSUSE ship
+                   # it in the base (firewalld's backend). Confirmed on trixie (apt install nftables fixed it).
