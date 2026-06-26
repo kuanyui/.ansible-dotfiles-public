@@ -473,11 +473,12 @@ provision_distro_packages_desktop_lxqt:
 # Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three); the Debian-only `uidmap`
 # split is the one divergence. (No HOST toggle - dict-form bundles are guest-only.)
 provision_distro_packages_podman_rootless:
-  description: "rootless podman in the guest - podman (+ docker CLI compat), pasta, subuid/subgid + linger"
+  description: "rootless podman in the guest - podman (+ docker CLI compat + compose), pasta, subuid/subgid + linger"
   __common__:
     install:
       - podman
       - podman-docker   # docker->podman CLI shim (same name all 3 families)
+      - podman-compose  # `podman compose` provider (compose.yml -> podman; small, same name all 3 families)
       - passt
       - fuse-overlayfs
     post_install: |
