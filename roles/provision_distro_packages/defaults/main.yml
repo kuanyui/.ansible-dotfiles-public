@@ -473,13 +473,16 @@ provision_distro_packages_desktop_lxqt:
 # Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three); the Debian-only `uidmap`
 # split is the one divergence. (No HOST toggle - dict-form bundles are guest-only.)
 provision_distro_packages_podman_rootless:
-  description: "rootless podman in the guest - podman (+ docker CLI compat + compose), pasta, subuid/subgid + linger + docker.io search"
+  description: "rootless podman in the guest - podman (+ docker CLI compat + compose), pasta + nftables, subuid/subgid + linger + docker.io search"
   __common__:
     install:
       - podman
       - podman-docker   # docker->podman CLI shim (same name all 3 families)
       - podman-compose  # `podman compose` provider (compose.yml -> podman; small, same name all 3 families)
       - passt
+      - nftables        # netavark's firewall backend (provides `nft`); `podman compose` builds a custom
+                        # bridge network and netavark defaults to nftables (netavark >=1.10), so without
+                        # `nft` it dies "unable to execute 'nft'". Same package name all 3 families.
       - fuse-overlayfs
     post_install: |
       # rootless podman maps `user` into a userns via /etc/subuid + /etc/subgid;
