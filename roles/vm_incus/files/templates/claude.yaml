@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=../template.schema.json
 template_name: claude
-description: "Claude Code agent box (Debian; mounts cwd + shadows .git/.vscode; claude CLI + emacs)"
+description: "Claude Code agent box (Debian; mounts cwd + shadows .git/.vscode; claude CLI)"
 hw:
   cpu: 4
   memory: 8G
@@ -32,6 +32,7 @@ mounts:
       - .vscode
 distro_package_groups:
   - tools_basic
+  # emacs is NOT a default - run `ivm provision emacs` to add the editor + its ~/.emacs.d on demand
 distro_packages:
   - curl
   - git
@@ -41,4 +42,3 @@ dotfiles:
   - bash
   - tmux
   - zsh
-  - emacs
