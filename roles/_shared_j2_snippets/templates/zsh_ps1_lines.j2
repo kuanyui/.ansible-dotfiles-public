@@ -13,9 +13,14 @@ PS1="%F{gray}[%f%B%F{green}%n%f%b@%B%F{blue}%M%f%b%F{gray}:%f%B%F{red}%~%f%b%F{g
 # `/etc/ansible-managed-guest-type`; prefix the prompt with one box glyph per isolation
 # level (full VM = 3, shared-kernel container = 1). The host runs these SAME dotfiles but
 # has no marker, so its prompt is unchanged.
+# The 📦 glyph is East-Asian-Wide (2 display columns; `python3 -c "import unicodedata;
+# unicodedata.east_asian_width('📦')"` == 'W'). Wrap it in `%{...%NG%}` so ZLE counts its TRUE
+# width (3 boxes = %6G, 1 box = %2G). WITHOUT this ZLE miscounts the prompt width and a redraw
+# clobbers a SINGLE-span colored prompt like root's `%B%F{red}...%f%b` (the per-segment user
+# prompt happened to self-heal) - the "root's red vanished with the boxes" bug.
 if [ -r /etc/ansible-managed-guest-type ]; then
   case "$(cat /etc/ansible-managed-guest-type)" in
-    ivm|qvm) PS1="📦📦📦 ${PS1}" ;;
-    pvm) PS1="📦 ${PS1}" ;;
+    ivm|qvm) PS1="%{📦📦📦%6G%} ${PS1}" ;;
+    pvm) PS1="%{📦%2G%} ${PS1}" ;;
   esac
 fi
