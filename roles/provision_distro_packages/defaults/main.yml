@@ -232,7 +232,7 @@ provision_distro_packages_incus_guest_baseline:
 
 # Qt6 development: the basics for building a Qt6 C++/QML app with CMake. Modules
 # requested: Core / Gui / Widgets / Concurrent + Multimedia + Declarative (QML) +
-# Linguist (translation tooling). `cmake` + `make` (the default CMake generator on
+# Svg + Linguist (translation tooling). `cmake` + `make` (the default CMake generator on
 # Linux) + the C++ compiler ride in so `provision dev_qt` is self-sufficient to build.
 # Names diverge per family (Debian ships ONE dev meta `qt6-base-dev` covering
 # Core/Gui/Widgets/Concurrent/Network/...; openSUSE splits every module into its own
@@ -248,6 +248,7 @@ provision_distro_packages_dev_qt:
     - qt6-base-dev          # Core, Gui, Widgets, Concurrent, Network, Sql, Test, ... (one meta)
     - qt6-declarative-dev   # QML / Qt Quick
     - qt6-multimedia-dev
+    - qt6-svg-dev           # SVG rendering (Qt6::Svg)
     - qt6-l10n-tools        # lrelease / lupdate (Linguist CLI; CMake LinguistTools)
     - linguist-qt6          # Qt Linguist GUI
     - g++
@@ -258,12 +259,14 @@ provision_distro_packages_dev_qt:
     - qt6-concurrent-devel
     - qt6-multimedia-devel
     - qt6-declarative-devel   # QML / Qt Quick
+    - qt6-svg-devel           # SVG rendering (Qt6::Svg)
     - qt6-linguist-devel      # Linguist tools (lrelease/lupdate + CMake module)
     - gcc-c++
   RedHat:
     - qt6-qtbase-devel        # Core, Gui, Widgets, Concurrent, ...
     - qt6-qtdeclarative-devel # QML / Qt Quick
     - qt6-qtmultimedia-devel
+    - qt6-qtsvg-devel         # SVG rendering (Qt6::Svg)
     - qt6-linguist            # Qt6 Linguist tools
     - gcc-c++
 
