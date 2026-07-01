@@ -1,5 +1,19 @@
 # TODO
 
+## VS Code Remote-SSH vs `~/.ssh` lockdown - PENDING DECISION 2026-07-01
+
+Current design blocks VS Code Remote-SSH: `local_mixin_deny_keyrings` denies `~/.ssh/{,**}`, and
+ssh inherits the vscode profile via `/usr/bin/{,*} rix`, so ssh cannot read `~/.ssh/config` /
+`known_hosts` / private keys. Deliberate security tradeoff (protect keys from a compromised editor)
+vs Remote-SSH's need to read keys. Chosen direction: give ssh its own child profile; real sealing
+of the key needs ssh-agent + refusing the key-file grant. Full analysis, the "ssh is not a sealed
+box" caveat (`ProxyCommand` etc.), and residual risks are in
+`roles/apparmor/docs/PENDING_DECISION_vscode_remote_ssh.md`.
+
+- [ ] Decide: agent-only (no `~/.ssh/id_*` file grant) vs keep key-file fallback
+- [ ] Decide: ssh child-profile subprocess handling - `ix` inherit vs `px` narrow (affects `ProxyJump`)
+- [ ] Then implement the child profile + `make sandbox-apparmor` (syntax only; real Remote-SSH needs on-host test)
+
 ## Telegram: bwrap wrapper dropped - 2026-06-21
 
 Removed the bwrap launcher (`~/.local/bin/Telegram` wrapper + `ansible_bwrap_telegram.desktop`).
