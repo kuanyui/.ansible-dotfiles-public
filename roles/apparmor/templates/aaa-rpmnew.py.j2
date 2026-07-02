@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY (src: roles/apparmor/templates/aaa-rpmnew.py.j2)
+"""aaa-rpmnew - reconcile /etc/apparmor.d/ after a distro package update.
+
+After a package upgrade, some distro AppArmor profiles arrive as `<name>.rpmnew` (the
+packaged update, parked because the on-disk file differed) and are never loaded, because
+`apparmor_parser`'s directory scan skips the `.rpmnew` suffix. A stale profile keeps being
+enforced and can break the app. This tool classifies each pending item and acts:
+
+  ADOPT       <name>.rpmnew -> <name>      distro profile we do NOT manage: take the update.
+  NEUTRALIZE  <name> / <name>.rpmnew       distro profile a local_* profile SHADOWS: adopting
+              (both removed, backed up)     it would resurrect the conflict the role removes,
+                                            so back it up + remove + unload from the kernel.
+
+then reloads AppArmor once. `local_*` files are never touched (RPM does not own them, so they
+never get a `.rpmnew`). The shadow list is baked in at deploy time from the single-source var
+`apparmor_shadowed_system_profiles` (roles/apparmor/defaults/main.yml).
+
+See roles/apparmor/docs/RPMNEW_STALE_DISTRO_PROFILES.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+APPARMOR_DIR = Path("/etc/apparmor.d")
+BACKUP_DIR = APPARMOR_DIR / "_backup_of_default_profiles_from_package_manager"
+
+# Distro profile names shadowed by a local_* profile, baked in from
+# apparmor_shadowed_system_profiles. Adopting their .rpmnew would resurrect a conflict the
+# role deliberately removes, so they are neutralized instead of adopted.
+SHADOWED_SYSTEM_PROFILES: frozenset[str] = frozenset(
+    {{ apparmor_shadowed_system_profiles.values() | flatten | unique | sort | to_json }}
+)
+
+RPMNEW_SUFFIX = ".rpmnew"
+
+
+def base_name(rpmnew_path: Path) -> str:
+    """`/etc/apparmor.d/foo.rpmnew` -> `foo`."""
+    return rpmnew_path.name[: -len(RPMNEW_SUFFIX)]
+
+
+def run_privileged(argv: list[str], *, check: bool = True) -> int:
+    """Print the exact command (copyable), then run it. Every privileged action is
+    printed before it runs - no hidden behavior. Fails loud on non-zero unless check=False."""
+    print(f"  $ {shlex.join(argv)}")
+    returncode = subprocess.run(argv).returncode
+    if returncode != 0 and check:
+        sys.exit(f"aaa-rpmnew: command failed (exit {returncode}): {shlex.join(argv)}")
+    return returncode
+
+
+def reexec_with_sudo() -> None:
+    """Re-run self under sudo when not root. Printed first (sudo may prompt), never hidden."""
+    argv = ["sudo", sys.executable, os.path.abspath(__file__), *sys.argv[1:]]
+    print("aaa-rpmnew needs root to modify /etc/apparmor.d/ and reload AppArmor.")
+    print("Re-executing under sudo (may prompt for your password):")
+    print(f"  $ {shlex.join(argv)}")
+    os.execvp("sudo", argv)
+
+
+def compute_plan() -> tuple[list[Path], list[str]]:
+    """Scan the top level of /etc/apparmor.d/. Returns (adopt_rpmnews, neutralize_names).
+
+    adopt_rpmnews:    `<name>.rpmnew` whose `<name>` is NOT shadowed  -> adopt the update.
+    neutralize_names: shadowed `<name>` present as a `.rpmnew` and/or a bare file
+                      (RPM re-creates a %config file the role had deleted) -> neutralize.
+    """
+    adopt: list[Path] = []
+    neutralize: set[str] = set()
+    for rpmnew_path in sorted(APPARMOR_DIR.glob("*" + RPMNEW_SUFFIX)):
+        name = base_name(rpmnew_path)
+        if name in SHADOWED_SYSTEM_PROFILES:
+            neutralize.add(name)
+        else:
+            adopt.append(rpmnew_path)
+    for name in SHADOWED_SYSTEM_PROFILES:
+        if (APPARMOR_DIR / name).is_file():
+            neutralize.add(name)
+    return adopt, sorted(neutralize)
+
+
+def print_diff(current: Path | None, incoming: Path) -> None:
+    """Unified diff of the current on-disk profile vs the incoming packaged version."""
+    current_lines = current.read_text().splitlines() if current and current.is_file() else []
+    incoming_lines = incoming.read_text().splitlines()
+    diff = list(
+        difflib.unified_diff(
+            current_lines,
+            incoming_lines,
+            fromfile=str(current) if current else "(absent)",
+            tofile=str(incoming),
+            lineterm="",
+        )
+    )
+    if not diff:
+        print("    (no content difference)")
+        return
+    for line in diff:
+        print(f"    {line}")
+
+
+def do_adopt(rpmnew_path: Path) -> None:
+    """Replace the stale profile with the packaged update."""
+    target = APPARMOR_DIR / base_name(rpmnew_path)
+    run_privileged(["mv", "--force", str(rpmnew_path), str(target)])
+
+
+def do_neutralize(name: str) -> None:
+    """Back up the newest packaged copy, remove the profile from /etc/apparmor.d/, and
+    unload it from the kernel - so the shadowing local_* profile stays the sole one."""
+    bare = APPARMOR_DIR / name
+    rpmnew = APPARMOR_DIR / (name + RPMNEW_SUFFIX)
+    backup = BACKUP_DIR / name
+    run_privileged(["mkdir", "--parents", str(BACKUP_DIR)])
+    newest = rpmnew if rpmnew.is_file() else (bare if bare.is_file() else None)
+    if newest is not None:
+        run_privileged(["cp", "--force", "--preserve=mode,ownership", str(newest), str(backup)])
+    for path in (bare, rpmnew):
+        if path.is_file():
+            run_privileged(["rm", "--force", str(path)])
+    # `--remove` reads the profile name from the file and unloads that name from the kernel.
+    # Best-effort: it may not be loaded (check=False), matching the role's `failed_when: false`.
+    if backup.is_file():
+        run_privileged(["apparmor_parser", "--remove", str(backup)], check=False)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="aaa-rpmnew",
+        description=(
+            "Reconcile /etc/apparmor.d/ after a distro update: adopt vendor .rpmnew for "
+            "profiles we do not manage, re-neutralize distro profiles a local_* profile "
+            "shadows, then reload AppArmor once."
+        ),
+    )
+    parser.add_argument("-y", "--yes", action="store_true", help="do not prompt for confirmation")
+    parser.add_argument("-n", "--dry-run", action="store_true", help="show the plan; change nothing")
+    parser.add_argument("-d", "--diff", action="store_true", help="show a unified diff for each adopted profile")
+    args = parser.parse_args()
+
+    # Read-only work (dry-run) is fine unprivileged; anything that writes needs root.
+    if os.geteuid() != 0 and not args.dry_run:
+        reexec_with_sudo()  # never returns
+
+    adopt, neutralize = compute_plan()
+
+    if not adopt and not neutralize:
+        print("Nothing to do: no .rpmnew to adopt, no shadowed distro profile resurrected.")
+        return 0
+
+    print("Plan:")
+    for rpmnew_path in adopt:
+        print(f"  ADOPT       {base_name(rpmnew_path)}  (take packaged update {rpmnew_path.name})")
+    for name in neutralize:
+        print(f"  NEUTRALIZE  {name}  (shadowed by your local_ profile; back up + remove + unload)")
+    print()
+
+    if args.diff:
+        for rpmnew_path in adopt:
+            target = APPARMOR_DIR / base_name(rpmnew_path)
+            print(f"--- diff: {target.name} ---")
+            print_diff(target if target.exists() else None, rpmnew_path)
+            print()
+
+    if args.dry_run:
+        print("Dry run: nothing changed.")
+        return 0
+
+    if not args.yes:
+        if input("Apply and reload AppArmor? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("Aborted.")
+            return 1
+
+    for rpmnew_path in adopt:
+        do_adopt(rpmnew_path)
+    for name in neutralize:
+        do_neutralize(name)
+
+    print("Reloading AppArmor:")
+    run_privileged(["systemctl", "reload", "apparmor"])
+    print(f"Done: adopted {len(adopt)}, neutralized {len(neutralize)}, reloaded AppArmor.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -24,6 +24,31 @@ apparmor_non_interactive: false
 # logs the new denials without breaking apps). Switch back to `enforce` once clean.
 apparmor_profile_mode: enforce
 
+# =============================================================================
+# Distro system profiles that a local_* profile SHADOWS (single source of truth)
+# =============================================================================
+# Each key is the app (matching `tasks/<app>.yml`); each value lists the distro-shipped
+# AppArmor profile name(s) under /etc/apparmor.d/ that auto-attach to the SAME binary as our
+# `local_pathbased_<app>` profile and therefore conflict. The per-app neutralize tasks back
+# these up to `_backup_of_default_profiles_from_package_manager/`, remove them from
+# /etc/apparmor.d/, and unload them from the kernel.
+#
+# This ONE list drives BOTH:
+#   1. the neutralize tasks (`tasks/<app>.yml` - their stat + `apparmor_parser -R` loops read
+#      their own key), and
+#   2. the `aaa-rpmnew` helper (`tasks/rpmnew_helper.yml` bakes the flattened set into the
+#      deployed /usr/local/sbin/aaa-rpmnew, so it re-neutralizes these on a distro update
+#      instead of adopting their `.rpmnew` - see docs/RPMNEW_STALE_DISTRO_PROFILES.md).
+# Add the distro profile name(s) here when a new `local_*` profile shadows a packaged one.
+apparmor_shadowed_system_profiles:
+  chromium: [chrome, chromium]
+  anydesk: [anydesk, usr.bin.anydesk, usr.local.bin.anydesk]
+  gwenview: [gwenview]
+  mcomix: [mcomix]
+  mscore: [mscore]
+  mscore3: [mscore3]
+  mpv: [mpv]
+
 # Static AppArmor profiles managed by this role.
 # src: filename under roles/apparmor/files/profiles/
 # dest: filename deployed to /etc/apparmor.d/ (no extension)

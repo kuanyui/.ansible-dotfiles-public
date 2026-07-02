@@ -31,8 +31,7 @@
 - name: Stat system MuseScore profiles in /etc/apparmor.d/
   ansible.builtin.stat:
     path: /etc/apparmor.d/{{ item }}
-  loop:
-    - mscore
+  loop: "{{ apparmor_shadowed_system_profiles['mscore'] }}"
   register: apparmor__sys_mscore_stat
   tags: mscore
 
@@ -66,8 +65,7 @@
 - name: Remove system MuseScore profiles from kernel using backup files
   ansible.builtin.command:
     cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item }}
-  loop:
-    - mscore
+  loop: "{{ apparmor_shadowed_system_profiles['mscore'] }}"
   become: true
   failed_when: false
   changed_when: false

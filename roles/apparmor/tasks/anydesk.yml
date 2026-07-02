@@ -31,10 +31,7 @@
 - name: Stat system AnyDesk profiles in /etc/apparmor.d/
   ansible.builtin.stat:
     path: /etc/apparmor.d/{{ item }}
-  loop:
-    - anydesk
-    - usr.bin.anydesk
-    - usr.local.bin.anydesk
+  loop: "{{ apparmor_shadowed_system_profiles['anydesk'] }}"
   register: apparmor__sys_anydesk_stat
   tags: anydesk
 
@@ -68,10 +65,7 @@
 - name: Remove system AnyDesk profiles from kernel using backup files
   ansible.builtin.command:
     cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item }}
-  loop:
-    - anydesk
-    - usr.bin.anydesk
-    - usr.local.bin.anydesk
+  loop: "{{ apparmor_shadowed_system_profiles['anydesk'] }}"
   become: true
   failed_when: false
   changed_when: false

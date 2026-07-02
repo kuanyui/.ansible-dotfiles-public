@@ -36,9 +36,7 @@
 - name: Stat system Chromium profiles in /etc/apparmor.d/
   ansible.builtin.stat:
     path: /etc/apparmor.d/{{ item }}
-  loop:
-    - chrome
-    - chromium
+  loop: "{{ apparmor_shadowed_system_profiles['chromium'] }}"
   register: apparmor__sys_chromium_stat
   tags: chromium
 
@@ -72,9 +70,7 @@
 - name: Remove system Chromium profiles from kernel using backup files
   ansible.builtin.command:
     cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item }}
-  loop:
-    - chrome
-    - chromium
+  loop: "{{ apparmor_shadowed_system_profiles['chromium'] }}"
   become: true
   failed_when: false
   changed_when: false

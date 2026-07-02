@@ -56,29 +56,32 @@
   become: true
   tags: mpv
 
-- name: Stat system mpv profile in /etc/apparmor.d/
+- name: Stat system mpv profiles in /etc/apparmor.d/
   ansible.builtin.stat:
-    path: /etc/apparmor.d/mpv
+    path: /etc/apparmor.d/{{ item }}
+  loop: "{{ apparmor_shadowed_system_profiles['mpv'] }}"
   register: apparmor__sys_mpv_stat
   tags: mpv
 
-- name: Back up system mpv profile to _backup_of_default_profiles_from_package_manager/
+- name: Back up system mpv profiles to _backup_of_default_profiles_from_package_manager/
   ansible.builtin.copy:
     remote_src: true
-    src: /etc/apparmor.d/mpv
-    dest: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/mpv
+    src: /etc/apparmor.d/{{ item.item }}
+    dest: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item.item }}
     owner: root
     group: root
     mode: '0644'
-  when: apparmor__sys_mpv_stat.stat.exists
+  loop: "{{ apparmor__sys_mpv_stat.results }}"
+  when: item.stat.exists
   become: true
   tags: mpv
 
-- name: Remove system mpv profile from /etc/apparmor.d/
+- name: Remove system mpv profiles from /etc/apparmor.d/
   ansible.builtin.file:
-    path: /etc/apparmor.d/mpv
+    path: /etc/apparmor.d/{{ item.item }}
     state: absent
-  when: apparmor__sys_mpv_stat.stat.exists
+  loop: "{{ apparmor__sys_mpv_stat.results }}"
+  when: item.stat.exists
   become: true
   notify: Reload apparmor
   tags: mpv
@@ -87,9 +90,10 @@
   ansible.builtin.meta: flush_handlers
   tags: mpv
 
-- name: Remove system mpv profile from kernel using backup file
+- name: Remove system mpv profiles from kernel using backup files
   ansible.builtin.command:
-    cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/mpv
+    cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item }}
+  loop: "{{ apparmor_shadowed_system_profiles['mpv'] }}"
   become: true
   failed_when: false
   changed_when: false

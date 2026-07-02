@@ -16,6 +16,7 @@
 - ansible.builtin.import_tasks: mscore.yml
 - ansible.builtin.import_tasks: anydesk.yml
 - ansible.builtin.import_tasks: seccomp.yml
+- ansible.builtin.import_tasks: rpmnew_helper.yml
 
 # =============================================
 # Idempotent stale file cleanup

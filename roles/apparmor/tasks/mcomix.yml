@@ -31,8 +31,7 @@
 - name: Stat system MComix profiles in /etc/apparmor.d/
   ansible.builtin.stat:
     path: /etc/apparmor.d/{{ item }}
-  loop:
-    - mcomix
+  loop: "{{ apparmor_shadowed_system_profiles['mcomix'] }}"
   register: apparmor__sys_mcomix_stat
   tags: mcomix
 
@@ -66,8 +65,7 @@
 - name: Remove system MComix profiles from kernel using backup files
   ansible.builtin.command:
     cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item }}
-  loop:
-    - mcomix
+  loop: "{{ apparmor_shadowed_system_profiles['mcomix'] }}"
   become: true
   failed_when: false
   changed_when: false

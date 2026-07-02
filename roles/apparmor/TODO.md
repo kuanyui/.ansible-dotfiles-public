@@ -1,5 +1,25 @@
 # TODO
 
+## `aaa-rpmnew` post-update AppArmor reconciler - done 2026-07-02
+
+New `/usr/local/sbin/aaa-rpmnew` (deployed by `tasks/rpmnew_helper.yml` from
+`templates/aaa-rpmnew.py.j2`). After a distro update it ADOPTs the vendor `.rpmnew` for profiles
+we do not manage, and re-NEUTRALIZEs distro profiles a `local_*` profile shadows, then reloads
+AppArmor once (`sudo aaa-rpmnew`; `-y` / `--dry-run` / `--diff`; auto-sudo re-exec; prints every
+privileged command before running it). Named `aaa-` (three a's) to sort clear of the built-in
+`aa-*` tools and not be mistaken for one.
+
+Single source of truth: new var `apparmor_shadowed_system_profiles` (`defaults/main.yml`). It
+drives BOTH the per-app neutralize loops in
+`tasks/{chromium,anydesk,gwenview,mcomix,mscore,mscore3,mpv}.yml` (refactored from literal
+`loop:` name lists to read `apparmor_shadowed_system_profiles['<app>']`) AND the helper (the
+flattened set is baked into the deployed script). Add a distro profile name to that var when a new
+`local_*` profile shadows a packaged one - both consumers pick it up.
+
+Sandbox: `_post_check_aaa_rpmnew` in `scripts/sandbox/configs/apparmor.py` plants a normal
+`.rpmnew` + a resurrected shadowed profile and asserts ADOPT / NEUTRALIZE. Background + manual
+runbook: `docs/RPMNEW_STALE_DISTRO_PROFILES.md`.
+
 ## VS Code Remote-SSH vs `~/.ssh` lockdown - PENDING DECISION 2026-07-01
 
 Current design blocks VS Code Remote-SSH: `local_mixin_deny_keyrings` denies `~/.ssh/{,**}`, and

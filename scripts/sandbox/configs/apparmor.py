@@ -81,10 +81,50 @@ def _post_check_seccomp_derive(project_dir: Path, container) -> int:
     return container.exec("bash", "-c", script, user="root", check=False).returncode
 
 
+def _post_check_aaa_rpmnew(project_dir: Path, container) -> int:
+    """Verify the aaa-rpmnew helper deployed and classifies + acts correctly.
+
+    Plants a normal distro update (`faketool.rpmnew`) and a resurrected shadowed profile
+    (`chromium`, in apparmor_shadowed_system_profiles) into /etc/apparmor.d/, runs
+    `aaa-rpmnew --yes`, then asserts: faketool was ADOPTED (.rpmnew -> bare) and chromium was
+    NEUTRALIZED (removed from /etc/apparmor.d/ + backed up). Exercises the real
+    mv / cp / rm / apparmor_parser --remove / systemctl reload path, not just --dry-run.
+    Fixtures are cleaned up after. Without this the riskiest logic (ADOPT-vs-NEUTRALIZE
+    classification from the baked-in shadow list) would ship untested.
+    """
+    tool = "/usr/local/sbin/aaa-rpmnew"
+    backup = "/etc/apparmor.d/_backup_of_default_profiles_from_package_manager"
+    script = f"""
+        set -u
+        fail=0
+        if [ ! -x "{tool}" ]; then echo "  FAIL  {tool} missing or not executable"; exit 1; fi
+        sed -n '2p' "{tool}" | grep -q 'THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY' \
+            || {{ echo "  FAIL  managed marker not on line 2"; fail=1; }}
+        # Simulate post-update state: a normal distro update + a resurrected shadowed profile.
+        printf 'profile faketool /usr/bin/faketool {{\\n}}\\n' > /etc/apparmor.d/faketool.rpmnew
+        printf 'profile chromium /usr/bin/chromium {{\\n}}\\n' > /etc/apparmor.d/chromium
+        if ! "{tool}" --yes >/tmp/aaa_rpmnew.log 2>&1; then
+            echo "  FAIL  aaa-rpmnew --yes exited non-zero"; sed 's/^/        /' /tmp/aaa_rpmnew.log; fail=1
+        fi
+        [ -f /etc/apparmor.d/faketool ]          || {{ echo "  FAIL  faketool not adopted"; fail=1; }}
+        [ ! -e /etc/apparmor.d/faketool.rpmnew ] || {{ echo "  FAIL  faketool.rpmnew not consumed"; fail=1; }}
+        [ ! -e /etc/apparmor.d/chromium ]        || {{ echo "  FAIL  shadowed chromium not removed"; fail=1; }}
+        [ -f {backup}/chromium ]                 || {{ echo "  FAIL  chromium not backed up"; fail=1; }}
+        rm -f /etc/apparmor.d/faketool "{backup}/chromium"
+        if [ "$fail" -eq 0 ]; then echo "  OK    aaa-rpmnew: deploy + marker + ADOPT(faketool) + NEUTRALIZE(chromium)"; fi
+        exit $fail
+    """
+    return container.exec("bash", "-c", script, user="root", check=False).returncode
+
+
 def _post_check_all(project_dir: Path, container) -> int:
-    """AppArmor profile syntax validation + the seccomp-derive check, combined so a
-    single post_check covers both. Returns the sum of return codes (non-zero fails)."""
-    return _post_check_apparmor_syntax(project_dir, container) + _post_check_seccomp_derive(project_dir, container)
+    """AppArmor profile syntax validation + the seccomp-derive check + the aaa-rpmnew check,
+    combined so a single post_check covers all. Returns the sum of return codes (non-zero fails)."""
+    return (
+        _post_check_apparmor_syntax(project_dir, container)
+        + _post_check_seccomp_derive(project_dir, container)
+        + _post_check_aaa_rpmnew(project_dir, container)
+    )
 
 
 CONFIG = SandboxConfig(
