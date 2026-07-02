@@ -1,5 +1,15 @@
 # TODO
 
+## `aaa-logs` recent-denials viewer - done 2026-07-02
+
+New `/usr/local/bin/aaa-logs` (`files/aaa-logs`, deployed by `tasks/aaa_helpers.yml`). Standalone
+twin of `make aa-log-recent LOG_SINCE_SECS=N`: `aaa-logs [SECONDS]` (default 60) prints AppArmor
+denials from the last N seconds - `ausearch -m AVC` when auditd runs, else `journalctl --dmesg`,
+both filtered through `grep --ignore-case apparmor`. Read-only inspector, so it lives in `bin`
+(on a normal user's PATH; internal `sudo` for the privileged read, printed first). Sandbox:
+`_post_check_aaa_logs`. The deploy task `rpmnew_helper.yml` was generalized to `aaa_helpers.yml`
+(now deploys both aaa-rpmnew + aaa-logs).
+
 ## `aaa-rpmnew` post-update AppArmor reconciler - done 2026-07-02
 
 New `/usr/local/sbin/aaa-rpmnew` (deployed by `tasks/rpmnew_helper.yml` from

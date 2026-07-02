@@ -1,0 +1,37 @@
+---
+# =============================================
+# Deploy the aaa-* AppArmor CLI helpers
+# =============================================
+# Standalone, run-anywhere companions to the `make aa-*` / role targets. Named `aaa-` (three
+# a's) so they sort clear of the built-in `aa-*` tools and are never mistaken for one.
+#
+#   aaa-rpmnew  (sbin) - reconcile /etc/apparmor.d/ after a distro update: adopt vendor
+#                        `.rpmnew`, re-neutralize distro profiles a local_* profile shadows,
+#                        reload once. Modifies system state -> sbin. Shadow list baked in from
+#                        `apparmor_shadowed_system_profiles`. See docs/RPMNEW_STALE_DISTRO_PROFILES.md.
+#   aaa-logs    (bin)  - print recent AppArmor denials (twin of `make aa-log-recent`).
+#                        Read-only inspector -> bin (on a normal user's PATH).
+
+- name: Deploy the aaa-rpmnew helper to /usr/local/sbin/aaa-rpmnew
+  ansible.builtin.template:
+    src: aaa-rpmnew.py.j2
+    dest: /usr/local/sbin/aaa-rpmnew
+    owner: root
+    group: root
+    mode: '0755'
+    # Fail loud at deploy time if the rendered Python is syntactically broken.
+    validate: python3 -m py_compile %s
+  become: true
+  tags: [apparmor, rpmnew]
+
+- name: Deploy the aaa-logs helper to /usr/local/bin/aaa-logs
+  ansible.builtin.copy:
+    src: aaa-logs
+    dest: /usr/local/bin/aaa-logs
+    owner: root
+    group: root
+    mode: '0755'
+    # Fail loud at deploy time if the script is syntactically broken.
+    validate: bash -n %s
+  become: true
+  tags: [apparmor, logs]

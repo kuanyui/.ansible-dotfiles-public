@@ -117,13 +117,35 @@ def _post_check_aaa_rpmnew(project_dir: Path, container) -> int:
     return container.exec("bash", "-c", script, user="root", check=False).returncode
 
 
+def _post_check_aaa_logs(project_dir: Path, container) -> int:
+    """Verify the aaa-logs helper deployed and runs. Smoke test: executable, carries the
+    managed marker, `aaa-logs 5` exits 0 (no denials in a fresh sandbox is fine - the read
+    pipe ends in `|| true`), and a non-numeric argument is rejected with usage (exit 2)."""
+    tool = "/usr/local/bin/aaa-logs"
+    script = f"""
+        set -u
+        fail=0
+        if [ ! -x "{tool}" ]; then echo "  FAIL  {tool} missing or not executable"; exit 1; fi
+        sed -n '2p' "{tool}" | grep -q 'THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY' \
+            || {{ echo "  FAIL  managed marker not on line 2"; fail=1; }}
+        if ! "{tool}" 5 >/tmp/aaa_logs.log 2>&1; then
+            echo "  FAIL  aaa-logs 5 exited non-zero"; sed 's/^/        /' /tmp/aaa_logs.log; fail=1
+        fi
+        if "{tool}" notanumber >/dev/null 2>&1; then echo "  FAIL  non-numeric arg not rejected"; fail=1; fi
+        if [ "$fail" -eq 0 ]; then echo "  OK    aaa-logs: deploy + marker + runs + rejects bad arg"; fi
+        exit $fail
+    """
+    return container.exec("bash", "-c", script, user="root", check=False).returncode
+
+
 def _post_check_all(project_dir: Path, container) -> int:
-    """AppArmor profile syntax validation + the seccomp-derive check + the aaa-rpmnew check,
-    combined so a single post_check covers all. Returns the sum of return codes (non-zero fails)."""
+    """AppArmor profile syntax validation + seccomp-derive + aaa-rpmnew + aaa-logs, combined so
+    a single post_check covers all. Returns the sum of return codes (non-zero fails)."""
     return (
         _post_check_apparmor_syntax(project_dir, container)
         + _post_check_seccomp_derive(project_dir, container)
         + _post_check_aaa_rpmnew(project_dir, container)
+        + _post_check_aaa_logs(project_dir, container)
     )
 
 

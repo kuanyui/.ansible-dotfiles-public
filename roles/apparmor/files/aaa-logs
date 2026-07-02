@@ -1,0 +1,38 @@
+#!/bin/bash
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY (src: roles/apparmor/files/aaa-logs)
+# =============================================================================
+# aaa-logs - print recent AppArmor denials from the last N seconds.
+#
+# The standalone, run-anywhere twin of `make aa-log-recent LOG_SINCE_SECS=N` (no repo
+# checkout, no make). Named `aaa-` (three a's) so it sorts clear of the built-in `aa-*`
+# tools (aa-status / aa-logprof / ...) and is never mistaken for one.
+#
+#   aaa-logs [SECONDS]     window to look back over; default 60
+#
+# Prefers auditd's `ausearch` (richer AVC records) when auditd is running, else falls back
+# to the kernel journal. The privileged read goes through `sudo` (printed before it runs).
+# =============================================================================
+set -euo pipefail
+
+secs="${1:-60}"
+
+if ! [[ "$secs" =~ ^[1-9][0-9]*$ ]]; then
+    echo "usage: aaa-logs [SECONDS]   (positive integer; default 60)" >&2
+    echo "  prints AppArmor denials from the last SECONDS seconds" >&2
+    exit 2
+fi
+
+if systemctl is-active --quiet auditd; then
+    # ausearch predates GNU long options: -m = message type, -ts = start time (a DATE then a
+    # TIME argument), -i = interpret numeric ids into names. No --long forms exist.
+    start_date="$(date -d "${secs} seconds ago" '+%m/%d/%Y')"
+    start_time="$(date -d "${secs} seconds ago" '+%H:%M:%S')"
+    read_cmd=(sudo ausearch -m AVC -ts "$start_date" "$start_time" -i)
+else
+    read_cmd=(sudo journalctl --dmesg --since="${secs} seconds ago")
+fi
+
+# Transparency: print the exact privileged pipeline before running it (sudo may prompt).
+printf 'AppArmor denials in the last %ss:\n' "$secs" >&2
+printf '  $ %s | grep --ignore-case apparmor\n' "${read_cmd[*]}" >&2
+"${read_cmd[@]}" | grep --ignore-case apparmor || true
