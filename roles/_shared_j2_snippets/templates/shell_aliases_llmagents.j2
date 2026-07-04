@@ -1,3 +1,6 @@
 # LLM coding-agent CLIs. `claude` defaults to skip-permissions + max effort (claude
-# warns on launch; full path avoids alias recursion). Add codex / others here later.
-alias claude="~/.local/bin/claude --dangerously-skip-permissions --effort max"
+# warns on launch; full path avoids alias recursion). `SHELL=/bin/bash` because Claude Code's
+# Bash tool runs commands under $SHELL: under zsh an unmatched glob aborts the whole command
+# (`no matches found`), which hangs/garbles Claude's output; bash keeps the literal and carries on.
+# Add codex / others here later.
+alias claude="SHELL=/bin/bash ~/.local/bin/claude --dangerously-skip-permissions --effort max"
