@@ -46,6 +46,19 @@ fpath=(${HOME}/.local/share/ansible-managed/*/zsh-completions(N) $fpath)
 
 {{ shared_zsh_compinit_and_zstyles }}
 ### ============================================
+### Shell-init snippets (ansible-managed)
+### ============================================
+# Each managed role may drop shell function / wrapper snippets under its own
+# `~/.local/share/ansible-managed/<role>/shell-init/` subdir (e.g.
+# `vm-incus/shell-init/ivm.sh` defines the `ivm()` wrapper so `ivm cd <vm>` can change
+# THIS interactive shell's directory - a child process cannot). Sourced here so the
+# functions exist in the shell. Same per-role-subdir + glob auto-discovery as the
+# completions above, so a new role needs no edit here. `(N)` is null-glob (no error if none).
+for _ansible_managed_shell_init in ${HOME}/.local/share/ansible-managed/*/shell-init/*(N); do
+  source "$_ansible_managed_shell_init"
+done
+unset _ansible_managed_shell_init
+### ============================================
 ### Trivial options
 ### ============================================
 setopt interactivecomments

@@ -90,7 +90,8 @@ key-aligned.
 |---|---|---|
 | `init` | `[template] [name]` | create a VM from `<template>`, bind it to the cwd. Prompt for the name (default `<template>-<cwd-path>`, editable) unless `name` given or `--yes`; confirm before creating. NO `template` => LIST all templates + descriptions. |
 | `env` | `<template>` | load + validate a template, print its resolved config (incl. the flattened package list). |
-| `list` | `[incus args]` | raw `incus list` passthrough. |
+| `list` | `[incus args]` | NO arg => table of ivm-MANAGED VMs (those tagged `user.ivm_init_at_dir`): State, Name, Working Directory, IPv4. ANY arg => raw `incus list` passthrough of ALL instances (e.g. `ivm list --format csv`). |
+| `cd` | `[<vm>]` | print a VM's working-dir root (`user.ivm_init_at_dir`) to stdout, for the `ivm()` shell wrapper (`files/shell-init/ivm.sh`) to `cd` into - a child process can't change the parent shell's cwd. Resolves the VM by NAME (the INVERSE of cwd resolution; no `--name`). NO arg => list managed VMs + dirs on STDERR (stdout stays empty, so the wrapper cd's nowhere). Completes VM names -> their dirs. |
 | `top` | `[incus args]` | raw `incus top` passthrough (live per-instance CPU/mem/disk). |
 | `adopt` | (`--name` required) | bring an unmanaged VM (hand-made / older-ivm) under ivm management. |
 | `storage-status` | `[--json]` | show the host `default` storage pool status (driver, loop file, mount, fstab, verdict). |

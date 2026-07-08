@@ -106,6 +106,20 @@ for _comp_dir in "${HOME}/.local/share/ansible-managed"/*/bash-completions; do
 done
 unset _comp_dir _comp
 
+# Eager-source ansible-managed shell-init snippets (shell functions / wrappers). Each
+# managed role may drop files under its own
+# `~/.local/share/ansible-managed/<role>/shell-init/` subdir (e.g.
+# `vm-incus/shell-init/ivm.sh` defines the `ivm()` wrapper so `ivm cd <vm>` can change
+# THIS shell's directory - a child process cannot). Same per-role-subdir + glob pattern
+# as the completions loop above; auto-discovers across roles, so a new role needs no edit.
+for _shell_init_dir in "${HOME}/.local/share/ansible-managed"/*/shell-init; do
+    [ -d "$_shell_init_dir" ] || continue
+    for _shell_init in "$_shell_init_dir"/*; do
+        [ -r "$_shell_init" ] && . "$_shell_init"
+    done
+done
+unset _shell_init_dir _shell_init
+
 # completion for Makefile target
 complete -W "\`grep -oE '^[a-zA-Z0-9_.-]+:([^=]|$)' ?akefile | sed 's/[^a-zA-Z0-9_.-]*$//'\`" make
 

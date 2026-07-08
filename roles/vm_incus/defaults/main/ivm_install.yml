@@ -31,3 +31,10 @@ vm_incus_ivm_dir: "{{ vm_incus_root }}/ivm"
 # sourced by .bashrc.j2) - no rc edits, no XDG loader handshake.
 vm_incus_zsh_completion_dir: "{{ vm_incus_root }}/zsh-completions"
 vm_incus_bash_completion_dir: "{{ vm_incus_root }}/bash-completions"
+
+# `ivm` shell-init snippets (the `ivm()` wrapper that lets `ivm cd` change the calling
+# shell's directory - a child process can't). Lives inside `vm_incus_root` so uninstall's
+# `rm -rf` cleans it; auto-sourced into zsh AND bash by the `ansible-managed/*/shell-init/*`
+# rc loops (roles/zsh/.zshrc.j2, roles/bash/.bashrc.j2) - same per-role-subdir + glob
+# pattern as the completions above, so new roles need no rc edit.
+vm_incus_shell_init_dir: "{{ vm_incus_root }}/shell-init"

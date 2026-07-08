@@ -79,7 +79,8 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 | Subcommand | What it does |
 |---|---|
 | `init <template> [name]` | Create a VM from `<template>`, bound to the current dir. Prompts for the name (default `ivm-<template>-<cwd-path>`, editable) unless given; confirms before creating. |
-| `list [incus args]` | `incus list` passthrough (e.g. `ivm list --format csv`). Shows all instances; ivm VMs are `ivm-`prefixed. |
+| `list [incus args]` | No arg: a table of ivm-**managed** VMs (State, Name, Working Directory, IPv4). Any arg: raw `incus list` passthrough of **all** instances (e.g. `ivm list --format csv`). |
+| `cd [<vm>]` | `cd` the shell into a VM's **working-dir root** (the host dir `ivm init` ran in). Tab-completes VM names, showing each VM's dir on the right (zsh). No arg lists the managed VMs + their dirs. Needs the `ivm()` shell wrapper (auto-installed; a child process can't change the parent shell's cwd). |
 | `info` | The target VM's live state, **grouped** for readability: **Basic** (status/image/hw/snapshots/shell-dir/user-sudo), **Network** (the VM's current **IP**, bridge, ssh-server, **forwards** = `expose`d ports), **Mounts**, **Storage** (the pool its disk lives in, incl. the loop `.img` + usage). Target = cwd or `--name`. Read-only; prints every field with a placeholder when empty. |
 | `shell` / `shell-user` (aliases `sh` / `sh-user`) | zsh into the target VM as `user` (starts it if stopped). Starts in the template's `shell_default_dir_after_login` when set + present in the guest (else the home dir); only the start dir, `$HOME` / `cd` unaffected. |
 | `shell-root` (alias `sh-root`) | zsh into it as `root`. |
@@ -110,6 +111,7 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 Run one from a SUBDIR of an init'd project and `ivm` offers the nearest
 ancestor's VM (`open '<vm>' init'd at <parent>? [Y/n]`). The instance name is
 free-form (you edit it at init); resolution is by the tag, not the name.
+`ivm cd <vm>` is the inverse: it jumps the shell to that same tagged dir by VM name.
 
 ## Provisioning model
 

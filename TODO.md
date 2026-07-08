@@ -5,6 +5,21 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## ivm cd + list table (+ reusable shell-init wrapper)
+
+- [x] `ivm cd [<vm>]`: print a VM's working-dir root (`user.ivm_init_at_dir`) to stdout;
+  no-arg lists managed VMs + dirs on stderr. Non-cwd-resolved (like `adopt`).
+- [x] `ivm()` shell wrapper (`files/shell-init/ivm.sh`) so `cd` changes the CALLING shell's
+  dir (child can't); new REUSABLE `shell-init` glob sourced by zsh + bash rc (mirrors the
+  completions glob) - qvm/pvm can reuse it
+- [x] `ivm list` rewrite: table of MANAGED VMs (State/Name/Working Directory/IPv4); any arg
+  => raw `incus list` passthrough. Reusable `print_table` + `managed_vm_rows` helpers
+- [x] completion: `_ivm_managed_vms` (zsh, `name:dir` -> `_describe` left name / right path);
+  bash `cd)` names-only; `cd` added to both subcommand lists
+- [x] docs synced: SPEC.md, README.md, ivm module docstring
+- [x] verified: py_compile; zsh/bash `-n`; fake-incus e2e (list table, cd, comma-dir, no-arg
+  list, die on unknown, passthrough); `vm-incus-sandbox` (install + idempotence + round-trip)
+
 ## ivm expose / unexpose: LAN port forwards (incus proxy device)
 
 Open a host TCP port to a VM so the LAN can reach a service in it - the lightweight

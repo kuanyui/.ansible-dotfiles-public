@@ -20,7 +20,7 @@
         install: [python3-pyyaml, python3-jsonschema]
         probe: 'python3 -c "import yaml, jsonschema"'
 
-- name: Ensure `vm_incus_bin_dir` + `vm_incus_ivm_dir` + completion dirs exist
+- name: Ensure `vm_incus_bin_dir` + `vm_incus_ivm_dir` + completion + shell-init dirs exist
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -30,6 +30,7 @@
     - "{{ vm_incus_ivm_dir }}"
     - "{{ vm_incus_zsh_completion_dir }}"
     - "{{ vm_incus_bash_completion_dir }}"
+    - "{{ vm_incus_shell_init_dir }}"
 
 - name: Install `ivm` to `{{ vm_incus_bin_dir }}/ivm`
   ansible.builtin.copy:
@@ -116,4 +117,12 @@
   ansible.builtin.copy:
     src: completions/ivm.bash
     dest: "{{ vm_incus_bash_completion_dir }}/ivm"
+    mode: "0644"
+
+# ---------- `ivm()` shell wrapper (so `ivm cd` can change the calling shell's dir) ----------
+# Sourced into zsh AND bash by the `ansible-managed/*/shell-init/*` rc loops (no rc edits).
+- name: Install the `ivm()` shell wrapper to `{{ vm_incus_shell_init_dir }}/ivm.sh`
+  ansible.builtin.copy:
+    src: shell-init/ivm.sh
+    dest: "{{ vm_incus_shell_init_dir }}/ivm.sh"
     mode: "0644"

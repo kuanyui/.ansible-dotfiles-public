@@ -32,7 +32,7 @@ _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init shell sh shell-user sh-user shell-root sh-root start reboot stop delete env list info adopt storage-status overwrite-dotfiles update provision set unset snapshot gui resize mount push expose unexpose"
+    local subcommands="init shell sh shell-user sh-user shell-root sh-root start reboot stop delete env list cd info adopt storage-status overwrite-dotfiles update provision set unset snapshot gui resize mount push expose unexpose"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}/templates"
 
     # --name / --root take a value: complete VM names after --name.
@@ -68,6 +68,13 @@ _ivm() {
                 done
             fi
             COMPREPLY=( $(compgen -W "${templates}" -- "$cur") )
+            ;;
+        cd)
+            # ivm-managed VM names only (those with a `user.ivm_init_at_dir` working-dir tag).
+            # bash can't show inline descriptions, so `ivm cd` / `ivm list` show the dirs.
+            local managed_vm_names
+            managed_vm_names="$(incus list --format csv --columns n,config:user.ivm_init_at_dir 2>/dev/null | awk -F, 'NF >= 2 && $2 != "" { print $1 }')"
+            COMPREPLY=( $(compgen -W "${managed_vm_names}" -- "$cur") )
             ;;
         set|unset)
             # Two levels (like mount): the aspect after set/unset, then its args. `i` indexes

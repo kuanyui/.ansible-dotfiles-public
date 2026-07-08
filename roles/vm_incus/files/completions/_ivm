@@ -19,7 +19,8 @@ _ivm_subcommands=(
   'stop:stop the target VM'
   'delete:delete the target VM (confirms)'
   'env:load + print a template'\''s resolved config'
-  'list:incus list passthrough'
+  'list:table of managed VMs - state/name/working dir/IPv4 (extra args -> raw incus list)'
+  'cd:cd the shell into a VM'\''s working-dir root (completes VM -> its dir)'
   'info:target VM info - status, image, hw, network, mounts, storage (cwd or --name)'
   'adopt:bring an unmanaged Incus VM (hand-made or old-ivm) under ivm management (requires --name)'
   'storage-status:show host incus storage pool status (driver/loop/mount/fstab/verdict)'
@@ -99,6 +100,19 @@ _ivm_target_vm() {
   print -r -- "${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
 }
 
+# REUSABLE: every ivm-MANAGED VM (those carrying a `user.ivm_init_at_dir` working dir)
+# as `name:working_dir` pairs, for `_describe` to render `<name>  -- <working dir>`. For
+# any completion that offers an ivm VM by name AND shows where it lives (e.g. `ivm cd`).
+_ivm_managed_vms() {
+  # `--columns n,config:...`: name, then its working dir. `IFS=, read name dir` splits on
+  # the FIRST comma only, so a dir that itself contains commas stays whole in `dir`. Rows
+  # with an empty dir (unmanaged instances) are dropped.
+  incus list --format csv --columns n,config:user.ivm_init_at_dir 2>/dev/null \
+    | while IFS=, read -r _ivm_managed_vm_name _ivm_managed_vm_dir; do
+        [[ -n "$_ivm_managed_vm_dir" ]] && print -r -- "${_ivm_managed_vm_name}:${_ivm_managed_vm_dir}"
+      done
+}
+
 # REUSABLE guest-path completion: complete an existing DIRECTORY inside the target RUNNING
 # guest VM - for any arg that takes a guest path (`mount shadow <guest_path>`,
 # `set shell-dir <path>`, ...). Asks the guest over `incus exec find` (silent + empty if the
@@ -136,6 +150,12 @@ case "$state" in
         local -a _ivm_templates
         _ivm_templates=(${(f)"$(_ivm_template_names)"})
         _describe -t templates 'template' _ivm_templates ;;
+      cd)
+        # An ivm-managed VM by name; the description column is its working dir, so
+        # `_describe` renders `<name>  -- <working dir>` (left name, right path).
+        local -a _ivm_cd_targets
+        _ivm_cd_targets=(${(f)"$(_ivm_managed_vms)"})
+        _describe -t vms 'ivm-managed VM' _ivm_cd_targets ;;
       storage-status) compadd -- --json ;;
       resize) compadd -- --cpu --memory --disk ;;
       mount)

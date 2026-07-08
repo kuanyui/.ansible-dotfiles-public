@@ -10,7 +10,7 @@ Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 `delete`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set`+`unset` (guest
-settings: password/ssh-server/shell-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (incus list passthrough);
+settings: password/ssh-server/shell-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/working dir/IPv4; args -> raw incus list); `cd` (print a VM's working-dir root for the `ivm()` shell wrapper to cd into);
 `adopt` (bring an unmanaged VM - hand-made or older-ivm - under ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import csv
 import getpass
+import io
 import json
 import os
 import re
@@ -2121,10 +2122,78 @@ def cmd_gui(name: str, *, dry_run: bool) -> None:
           f"(detached - close this terminal anytime).", file=sys.stderr)
 
 
+def print_table(headers: list[str], rows: list[tuple[str, ...]], *, stream: TextIO = sys.stdout) -> None:
+    """Print `rows` as a left-aligned, two-space-gutter table under `headers`, each
+    column sized to its widest cell (trailing pad stripped). REUSABLE by any ivm
+    listing (`list`, bare `cd`, ...); every row must have one cell per header."""
+    column_widths: list[int] = [len(header) for header in headers]
+    for row in rows:
+        for column_index, cell in enumerate(row):
+            column_widths[column_index] = max(column_widths[column_index], len(cell))
+    def format_row(cells: tuple[str, ...]) -> str:
+        return "  ".join(cell.ljust(column_widths[i]) for i, cell in enumerate(cells)).rstrip()
+    print(format_row(tuple(headers)), file=stream)
+    for row in rows:
+        print(format_row(row), file=stream)
+
+
+def managed_vm_rows(columns: str) -> list[list[str]]:
+    """`incus list` CSV parsed into rows for ivm-MANAGED VMs only - those whose LAST
+    column is a non-empty `user.ivm_init_at_dir` (the managed-VM marker). `columns` is
+    an incus `--columns` spec that MUST end in `config:user.ivm_init_at_dir`. Parsed via
+    io.StringIO (not splitlines) so a multi-address IPv4 cell, which incus CSV-quotes
+    across newlines, is not mis-split. REUSABLE by `list` / future name+dir listings."""
+    csv_out: str = capture(["incus", "list", "--format", "csv", "--columns", columns])
+    managed_rows: list[list[str]] = []
+    for row in csv.reader(io.StringIO(csv_out)):
+        if row and row[-1]:  # last column is the working dir -> keep only managed VMs
+            managed_rows.append(row)
+    return managed_rows
+
+
 def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
-    """`incus list` passthrough (ivm-friendly alias). Extra args go to incus, e.g.
-    `ivm list --format csv`. Shows all instances; ivm VMs are `ivm-`prefixed."""
-    run(["incus", "list", *list_args], dry_run=dry_run)
+    """List ivm-managed VMs (those tagged with `user.ivm_init_at_dir`) as a table:
+    State, Name, Working Directory (the host dir `ivm init` ran in, that `ivm cd` jumps
+    to), IPv4. ANY extra arg switches to a RAW `incus list` passthrough instead (e.g.
+    `ivm list --format csv`), which then shows ALL incus instances, ivm-managed or not."""
+    if list_args:  # explicit passthrough: honor the caller's incus format/filter verbatim
+        run(["incus", "list", *list_args], dry_run=dry_run)
+        return
+    list_columns: str = "s,n,4,config:user.ivm_init_at_dir"
+    if dry_run:
+        print(f"+ incus list --format csv --columns {list_columns}", file=sys.stderr)
+        return
+    table_rows: list[tuple[str, ...]] = [
+        (state, name, working_dir, ipv4.replace("\n", ", "))
+        for state, name, ipv4, working_dir in managed_vm_rows(list_columns)
+    ]
+    if not table_rows:
+        print("No ivm-managed VMs (none carry `user.ivm_init_at_dir`); "
+              "create one with `ivm init <template>`.", file=sys.stderr)
+        return
+    print_table(["STATE", "NAME", "WORKING DIRECTORY", "IPV4"], table_rows)
+
+
+def cmd_cd(name: str | None) -> None:
+    """Print the host working-directory root (`user.ivm_init_at_dir`) a VM was
+    `ivm init`'d at - one line to STDOUT, for the `ivm()` shell wrapper to `cd` into
+    (a child process cannot change its parent shell's cwd). No name -> list every
+    ivm-managed VM + its dir on STDERR, so the wrapper (which cd's to stdout) does
+    nothing. Completes VM names -> their dirs (see `_ivm_managed_vms` in the completions)."""
+    bindings: list[VmBinding] = list_vm_bindings()
+    if not name:
+        if not bindings:
+            print("No ivm-managed VMs yet; create one with `ivm init <template>`.", file=sys.stderr)
+            return
+        print_table(["NAME", "WORKING DIRECTORY"],
+                    [(binding.name, binding.init_at_dir) for binding in bindings],
+                    stream=sys.stderr)
+        return
+    for binding in bindings:
+        if binding.name == name:
+            print(binding.init_at_dir)
+            return
+    die(f"no ivm-managed VM named '{name}' (run `ivm cd` or `ivm list` to see them)")
 
 
 def cmd_top(top_args: list[str], *, dry_run: bool) -> None:
@@ -2909,6 +2978,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="bring an unmanaged Incus VM (hand-made or old-ivm) under ivm management (requires `--name`)",
                    description=cmd_adopt.__doc__)
 
+    cd_parser: argparse.ArgumentParser = sub.add_parser(
+        "cd", help="cd the shell into a VM's working-dir root (needs the `ivm()` shell wrapper); no arg lists managed VMs + dirs",
+        description=cmd_cd.__doc__)
+    cd_parser.add_argument("name", nargs="?",
+                           help="ivm-managed VM whose working-dir root (`user.ivm_init_at_dir`) to print; omit to list all")
+
     storage_status_parser: argparse.ArgumentParser = sub.add_parser(
         "storage-status",
         help="show the host incus storage pool status (driver, loop file, mount, fstab, verdict)",
@@ -3031,6 +3106,11 @@ def main() -> None:
         if not args.name:
             parser.error("adopt requires `--name <vm>` (it never resolves a VM by cwd)")
         cmd_adopt(args.name, root, dry_run=args.dry_run)
+        return
+    # cd maps a VM NAME -> its working-dir root (the INVERSE of cwd resolution), so like
+    # adopt it never resolves by cwd; it just prints the dir for the `ivm()` shell wrapper.
+    if args.subcommand == "cd":
+        cmd_cd(args.name)
         return
     # storage-status is host-level (the whole `default` pool), not per-VM, so it
     # resolves no VM by cwd - handle it before the cwd binding below.
