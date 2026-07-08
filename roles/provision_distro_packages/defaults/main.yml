@@ -481,6 +481,11 @@ provision_distro_packages_podman_rootless:
       - podman-docker   # docker->podman CLI shim (same name all 3 families)
       - podman-compose  # `podman compose` provider (compose.yml -> podman; small, same name all 3 families)
       - passt
+      - aardvark-dns  # netavark's DNS: lets containers on a custom network resolve each other by name.
+                      # `podman compose` builds such a network, so without it service-name lookups NXDOMAIN.
+                      # `__common__`, not Debian-only like `nftables`: all 3 families only `Recommends` it
+                      # and no base ships it, so a weak-deps-off guest misses it everywhere (`nftables` is
+                      # in Fedora/openSUSE's base, hence there).
       - fuse-overlayfs
     post_install: |
       # rootless podman maps `user` into a userns via /etc/subuid + /etc/subgid;
