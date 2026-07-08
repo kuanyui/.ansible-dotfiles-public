@@ -72,7 +72,7 @@ key-aligned.
 | `update` | - | refresh + upgrade all guest packages (apt/zypper/dnf per family). | no |
 | `provision` | `[unit ...]` | install distro bundle(s) / thirdparty recipe(s) / dotfiles feature(s) onto an existing VM. NO units => LIST all installable units + descriptions (needs no VM). | no |
 | `resize` | `--cpu N` / `--memory NG` / `--disk NG` | change an existing VM's vCPU / RAM / root-disk. cpu+memory apply live; disk GROWS only (MUST refuse shrink) and resizes only the host block device. | no |
-| `mount` | `ls` \| `attach <host> <guest> [--ro] [--shadow SUB ...]` \| `shadow <guest_path>` \| `detach <target>` | inspect / change virtio-fs shares after init (hotplugged). `detach` unbinds only - host data is NEVER deleted. | no |
+| `mount` | `ls` \| `attach <host> <guest> [--ro] [--shadow SUB ...]` \| `shadow <guest_path>` \| `detach <target>` | inspect / change virtio-fs shares after init (hotplugged). `detach` PRINTS what it will unbind (`device: host-source -> guest-path`, incl. dragged shadow masks) + CONFIRMS; unbinds only - host data is NEVER deleted. | `detach` |
 | `push` | `<local> <guest> [--as-root]` | copy a host file/dir into the VM (`incus file push`). Owns as `user` (1000) unless `--as-root`. | no |
 | `snapshot` | `[create\|list\|restore\|delete\|rename\|show] [name]` | `incus snapshot` wrapper, VM filled in. | no |
 | `gui` | - | open a SPICE graphical console, detached from the shell. | no |
@@ -83,6 +83,11 @@ key-aligned.
 
 `info` MUST print EVERY field on EVERY run, with an explicit placeholder
 (`(none)`, `(unset - ...)`) when empty - never omit a row.
+
+`stop` / `reboot` / `delete` MUST, before their confirm prompt, LOUDLY warn when the
+guest has live interactive sessions (each an `ivm shell` / console / SSH login) the
+action would kill - detected best-effort by asking the guest for pty-owning processes
+(`ps -eo tty=`); a stopped / unreachable VM just warns nothing.
 
 ### 2b. Non-VM subcommands (resolve no VM)
 

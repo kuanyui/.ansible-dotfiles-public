@@ -5,6 +5,17 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## ivm detach / lifecycle safety prompts
+
+- [x] `ivm mount detach`: print what it will unbind (`device: host-source -> guest-path`,
+  incl. dragged shadow masks) + confirm (`--yes` skips); threaded `assume_yes` through
+  `cmd_mount` -> `cmd_mount_detach`
+- [x] `stop`/`reboot`/`delete`: loudly warn of live guest interactive sessions
+  (`guest_interactive_sessions` via `ps -eo tty=`, deduped per pty) BEFORE the confirm prompt
+- [x] docs synced: SPEC.md, README.md
+- [x] verified: py_compile; fake-incus detach (listing + `-y` removes mount + its shadow;
+  shadow-by-masked-path); PTY test (stop warning fires, `n` aborts)
+
 ## ivm cd + list table (+ reusable shell-init wrapper)
 
 - [x] `ivm cd [<vm>]`: print a VM's working-dir root (`user.ivm_init_at_dir`) to stdout;

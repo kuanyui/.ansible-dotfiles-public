@@ -1621,14 +1621,54 @@ def cmd_start(name: str, *, dry_run: bool) -> None:
     print(f"==> {colorize_vm_name(name)} running.", file=sys.stderr)
 
 
+def guest_interactive_sessions(name: str, *, dry_run: bool) -> list[str]:
+    """Best-effort list of LIVE interactive terminal sessions in the guest - each an
+    `ivm shell` / console / SSH login the caller is about to interrupt - as
+    `pts/N (user): command` lines, one per pty. Detected by asking the guest for
+    processes whose controlling terminal is a pty (`ps -eo tty=,user=,args=`); the
+    detection `incus exec` runs WITHOUT a tty, so it never counts itself. Advisory
+    only - a stopped / unreachable VM (or one with no pty session) yields []."""
+    if dry_run or not vm_is_running(name):
+        return []
+    # `=` after each column suppresses the header. Only real pty lines (`pts/...`) are
+    # interactive sessions; daemons show `?`. First process seen per pty (usually the
+    # login shell, lowest PID) represents that session.
+    ps_out: str = capture(["incus", "exec", name, "--", "ps", "-eo", "tty=,user=,args="])
+    session_by_pty: dict[str, str] = {}
+    for line in ps_out.splitlines():
+        columns: list[str] = line.split(None, 2)
+        if len(columns) >= 2 and columns[0].startswith("pts/"):
+            pty_device, session_user = columns[0], columns[1]
+            session_command: str = columns[2] if len(columns) >= 3 else "?"
+            session_by_pty.setdefault(pty_device, f"{pty_device} ({session_user}): {session_command}")
+    return list(session_by_pty.values())
+
+
+def warn_live_guest_sessions(name: str, action: str, *, dry_run: bool) -> None:
+    """Print a LOUD warning if the guest has live interactive sessions (see
+    `guest_interactive_sessions`) that `action` (stop / reboot / delete) would kill, so
+    the confirm prompt below is an informed one. Best-effort: no sessions -> nothing."""
+    sessions: list[str] = guest_interactive_sessions(name, dry_run=dry_run)
+    if not sessions:
+        return
+    session_word: str = "session" if len(sessions) == 1 else "sessions"
+    print("", file=sys.stderr)
+    print(f"!! WARNING: {colorize_vm_name(name)} has {len(sessions)} live interactive "
+          f"{session_word} that `{action}` will kill:", file=sys.stderr)
+    for session in sessions:
+        print(f"     {session}", file=sys.stderr)
+    print("", file=sys.stderr)
+
+
 def confirm_action(name: str, action: str, *, assume_yes: bool, dry_run: bool) -> None:
     """y/N gate before a disruptive lifecycle action (stop / reboot) that interrupts a
     running VM. `--yes` / `--dry-run` skip it; non-TTY without `--yes` aborts (same
-    policy as `delete`)."""
+    policy as `delete`). Loudly warns first if someone has a live shell in the guest."""
     if assume_yes or dry_run:
         return
     if not sys.stdin.isatty():
         die(f"refusing to {action} {name} without a TTY; pass --yes")
+    warn_live_guest_sessions(name, action, dry_run=dry_run)
     if input(f"{action.capitalize()} {colorize_vm_name(name)}? [y/N] ").strip().lower() not in ("y", "yes"):
         die("aborted")
 
@@ -1663,6 +1703,7 @@ def confirm_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) ->
         return
     if not sys.stdin.isatty():
         die(f"refusing to delete {name} without a TTY; pass --yes")
+    warn_live_guest_sessions(name, "delete", dry_run=dry_run)
     if input("Delete this VM? [y/N] ").strip().lower() not in ("y", "yes"):
         die("aborted; VM not deleted")
 
@@ -2751,7 +2792,7 @@ def cmd_mount_shadow(name: str, guest_path: str, *, root: Path, dry_run: bool) -
           f"({device_name}). `ivm mount detach {guest_path}` un-masks it.", file=sys.stderr)
 
 
-def cmd_mount_detach(name: str, target: str, *, dry_run: bool) -> None:
+def cmd_mount_detach(name: str, target: str, *, assume_yes: bool, dry_run: bool) -> None:
     """Detach a mount OR a single shadow mask, addressed by device name or by path:
       - a mount (`ivm_mount_1`, or its guest path) -> detached WITH its shadow masks
       - one shadow mask (its `..._shadow_N` name, or the masked subpath like the
@@ -2781,7 +2822,24 @@ def cmd_mount_detach(name: str, target: str, *, dry_run: bool) -> None:
     is_shadow: bool = "_shadow_" in device_name
     shadow_names: list[str] = [] if is_shadow else sorted(
         n for n in disk_devices if n.startswith(f"{device_name}_shadow_"))
-    for device_to_remove in [device_name, *shadow_names]:
+    devices_to_remove: list[str] = [device_name, *shadow_names]
+    # Show exactly what will be unbound (device: host source -> guest path) and confirm -
+    # a detach is easy to aim at the wrong device, and the guest path alone is ambiguous.
+    # `--yes` skips the prompt; the listing still prints. Host data is never touched.
+    print("", file=sys.stderr)
+    print(f"About to detach from {colorize_vm_name(name)} (host data left intact):", file=sys.stderr)
+    for device_to_show in devices_to_remove:
+        device_config: dict[str, Any] = disk_devices[device_to_show]
+        host_source: str = device_config.get("source", "(none)")
+        guest_path: str = device_config.get("path", "(none)")
+        print(f"  {device_to_show}: {host_source} -> {guest_path}", file=sys.stderr)
+    print("", file=sys.stderr)
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            die(f"refusing to detach from {name} without a TTY; pass --yes")
+        if input("Detach? [y/N] ").strip().lower() not in ("y", "yes"):
+            die("aborted; nothing detached")
+    for device_to_remove in devices_to_remove:
         run(["incus", "config", "device", "remove", name, device_to_remove], dry_run=dry_run)
     if is_shadow:
         print(f"==> detached shadow mask {device_name} from {colorize_vm_name(name)} "
@@ -2794,7 +2852,7 @@ def cmd_mount_detach(name: str, target: str, *, dry_run: bool) -> None:
 
 
 def cmd_mount(name: str, action: str, *, host: str | None, guest: str | None, ro: bool,
-              shadow: list[str], target: str | None, root: Path, dry_run: bool) -> None:
+              shadow: list[str], target: str | None, root: Path, assume_yes: bool, dry_run: bool) -> None:
     """`ivm mount`: inspect or change a VM's virtio-fs shares AFTER creation. Template
     `mounts` apply only at `init`, but incus disk devices hotplug for VMs, so this
     works on a live (or stopped) VM. Actions:
@@ -2816,7 +2874,7 @@ def cmd_mount(name: str, action: str, *, host: str | None, guest: str | None, ro
     elif action == "shadow":
         cmd_mount_shadow(name, guest or "", root=root, dry_run=dry_run)
     elif action == "detach":
-        cmd_mount_detach(name, target or "", dry_run=dry_run)
+        cmd_mount_detach(name, target or "", assume_yes=assume_yes, dry_run=dry_run)
     else:
         die(f"unknown `ivm mount` action: {action!r} (want ls / attach / shadow / detach)")
 
@@ -3181,7 +3239,7 @@ def main() -> None:
         cmd_mount(name, args.mount_action,
                   host=getattr(args, "host", None), guest=getattr(args, "guest", None),
                   ro=getattr(args, "ro", False), shadow=getattr(args, "shadow", []),
-                  target=getattr(args, "target", None), root=root, dry_run=args.dry_run)
+                  target=getattr(args, "target", None), root=root, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "push":
         cmd_push(name, args.local, args.guest, as_root=args.as_root, dry_run=args.dry_run)
     elif args.subcommand == "expose":
