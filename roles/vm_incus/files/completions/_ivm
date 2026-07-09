@@ -100,17 +100,28 @@ _ivm_target_vm() {
   print -r -- "${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
 }
 
-# REUSABLE: every ivm-MANAGED VM (those carrying a `user.ivm_init_at_dir` working dir)
-# as `name:working_dir` pairs, for `_describe` to render `<name>  -- <working dir>`. For
-# any completion that offers an ivm VM by name AND shows where it lives (e.g. `ivm cd`).
-_ivm_managed_vms() {
+# REUSABLE: EVERY incus VM as a `_describe` line - `name:working_dir` when it carries a
+# `user.ivm_init_at_dir` tag (managed), else bare `name` (no description). For any VM-name
+# completion that should show where each VM lives: `--name`, and the trailing `<vm>` on the
+# no-positional subcommands (`stop`/`info`/`sh`/...).
+_ivm_vms_with_dir() {
   # `--columns n,config:...`: name, then its working dir. `IFS=, read name dir` splits on
-  # the FIRST comma only, so a dir that itself contains commas stays whole in `dir`. Rows
-  # with an empty dir (unmanaged instances) are dropped.
+  # the FIRST comma only, so a dir that itself contains commas stays whole in `dir`.
   incus list --format csv --columns n,config:user.ivm_init_at_dir 2>/dev/null \
-    | while IFS=, read -r _ivm_managed_vm_name _ivm_managed_vm_dir; do
-        [[ -n "$_ivm_managed_vm_dir" ]] && print -r -- "${_ivm_managed_vm_name}:${_ivm_managed_vm_dir}"
+    | while IFS=, read -r _ivm_vm_name _ivm_vm_dir; do
+        if [[ -n "$_ivm_vm_dir" ]]; then
+          print -r -- "${_ivm_vm_name}:${_ivm_vm_dir}"
+        else
+          print -r -- "$_ivm_vm_name"
+        fi
       done
+}
+
+# REUSABLE: only ivm-MANAGED VMs (those WITH a working dir), as `name:working_dir` pairs -
+# `_ivm_vms_with_dir` filtered to the rows that HAVE a dir (a `:`). For `ivm cd`, where a
+# VM without a working dir has nowhere to cd to.
+_ivm_managed_vms() {
+  _ivm_vms_with_dir | grep ':'
 }
 
 # REUSABLE guest-path completion: complete an existing DIRECTORY inside the target RUNNING
@@ -142,7 +153,11 @@ _arguments -C \
 
 case "$state" in
   subcmd) _describe 'ivm subcommand' _ivm_subcommands ;;
-  vmname) compadd -- ${(f)"$(incus list --format csv --columns n 2>/dev/null)"} ;;
+  vmname)
+    # `--name <vm>`: any incus VM, with its working dir shown on the right for managed ones.
+    local -a _ivm_name_targets
+    _ivm_name_targets=(${(f)"$(_ivm_vms_with_dir)"})
+    _describe -t vms 'VM' _ivm_name_targets ;;
   args)
     case "$words[1]" in
       init|env)
@@ -156,8 +171,14 @@ case "$state" in
         local -a _ivm_cd_targets
         _ivm_cd_targets=(${(f)"$(_ivm_managed_vms)"})
         _describe -t vms 'ivm-managed VM' _ivm_cd_targets ;;
+      # The no-positional subcommands take an optional trailing `<vm>` (shortcut for --name);
+      # complete any incus VM with its working dir shown (managed ones). `resize` adds its flags.
+      shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
+        [[ "$words[1]" == resize ]] && compadd -- --cpu --memory --disk
+        local -a _ivm_vm_targets
+        _ivm_vm_targets=(${(f)"$(_ivm_vms_with_dir)"})
+        _describe -t vms 'VM' _ivm_vm_targets ;;
       storage-status) compadd -- --json ;;
-      resize) compadd -- --cpu --memory --disk ;;
       mount)
         # 1=mount, then the action (ls/attach/shadow/detach); flags may sit between -> skip them.
         local _ivm_mount_action="" _ivm_mount_word_index

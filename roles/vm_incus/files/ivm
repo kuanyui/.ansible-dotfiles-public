@@ -12,7 +12,8 @@ dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 `delete`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set`+`unset` (guest
 settings: password/ssh-server/shell-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/working dir/IPv4; args -> raw incus list); `cd` (print a VM's working-dir root for the `ivm()` shell wrapper to cd into);
 `adopt` (bring an unmanaged VM - hand-made or older-ivm - under ivm management; requires `--name`).
-VM-acting subcommands resolve the target by cwd, or take a global `--name <vm>`.
+VM-acting subcommands resolve the target by cwd, a global `--name <vm>`, or (when the
+subcommand takes no positional of its own) a trailing `<vm>` name (`ivm stop foo`).
 Linux on Debian/Suse/RedHat families (apt/zypper/dnf). init = create stopped ->
 attach devices (mounts + `shadow` masking, `hw.tpm`, macvlan/bridge `net`) ->
 start -> provision (`sys.timezone`/`sys.tmpfs`/`sys.ssh_server`, packages, `thirdparty_software`,
@@ -76,6 +77,12 @@ CWD_RESOLVED: tuple[str, ...] = (
     "overwrite-dotfiles", "update", "provision", "resize", "mount", "push", "snapshot", "gui", "info",
     "expose", "unexpose",
 )
+# CWD_RESOLVED subcommands that ALREADY take a positional of their own (a unit, a path, an
+# action, a port), so a trailing `<vm>` would be ambiguous - they target a VM only by cwd or
+# `--name`. EVERY OTHER cwd-resolved subcommand also accepts an optional trailing `<vm>` name
+# (a shortcut for `--name`; build_parser adds it, main() folds it into the resolved target).
+CWD_RESOLVED_WITH_OWN_POSITIONAL: frozenset[str] = frozenset(
+    {"provision", "mount", "push", "snapshot", "expose", "unexpose"})
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
 # share one useless generic line. Keys MUST match CWD_RESOLVED exactly.
 CWD_RESOLVED_HELP: dict[str, str] = {
@@ -3081,6 +3088,12 @@ def build_parser() -> argparse.ArgumentParser:
         sp: argparse.ArgumentParser = sub.add_parser(
             name, aliases=list(CWD_RESOLVED_ALIASES.get(name, ())),
             help=CWD_RESOLVED_HELP[name], description=CWD_RESOLVED_HANDLER[name].__doc__)
+        # A subcommand with no positional of its own also accepts a trailing `<vm>` (dest
+        # `vm`) as a shortcut for the global `--name`; main() folds it into the target.
+        if name not in CWD_RESOLVED_WITH_OWN_POSITIONAL:
+            sp.add_argument("vm", nargs="?",
+                            help="target this VM by name instead of the cwd binding "
+                                 "(shortcut for `--name`; omit to resolve by the current dir)")
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name == "provision":
@@ -3185,8 +3198,15 @@ def main() -> None:
     if args.subcommand in ("set", "unset") and not getattr(args, "aspect", None):
         cmd_list_set_aspects(args.subcommand)
         return
-    # Everything else acts on a VM: the global --name overrides the cwd binding.
-    name: str = args.name if args.name else resolve_vm_by_cwd(Path.cwd(), dry_run=args.dry_run)
+    # Everything else acts on a VM, resolved in this precedence: an explicit name (the global
+    # `--name`, or the trailing `<vm>` positional on a no-positional subcommand) wins over the
+    # cwd binding. Giving BOTH and disagreeing is a mistake, not a silent pick - so it errors.
+    positional_vm: str | None = getattr(args, "vm", None)
+    if args.name and positional_vm and args.name != positional_vm:
+        parser.error(f"conflicting VM: --name '{args.name}' vs positional '{positional_vm}' "
+                     f"- pass the VM one way, not both")
+    explicit_vm: str | None = args.name or positional_vm
+    name: str = explicit_vm if explicit_vm else resolve_vm_by_cwd(Path.cwd(), dry_run=args.dry_run)
     if args.subcommand in ("shell", "shell-user"):
         cmd_shell(name, root, as_root=False, dry_run=args.dry_run)
     elif args.subcommand == "shell-root":

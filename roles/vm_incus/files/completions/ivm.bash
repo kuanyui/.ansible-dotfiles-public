@@ -76,6 +76,15 @@ _ivm() {
             managed_vm_names="$(incus list --format csv --columns n,config:user.ivm_init_at_dir 2>/dev/null | awk -F, 'NF >= 2 && $2 != "" { print $1 }')"
             COMPREPLY=( $(compgen -W "${managed_vm_names}" -- "$cur") )
             ;;
+        shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
+            # These take an optional trailing <vm> (a shortcut for --name) -> complete any VM
+            # name. bash can't show descriptions, so working dirs show in `ivm list` / `ivm cd`.
+            # `resize` also offers its flags.
+            local vm_names_and_resize_flags
+            vm_names_and_resize_flags="$(incus list --format csv --columns n 2>/dev/null)"
+            [[ "$sub" == resize ]] && vm_names_and_resize_flags="--cpu --memory --disk ${vm_names_and_resize_flags}"
+            COMPREPLY=( $(compgen -W "${vm_names_and_resize_flags}" -- "$cur") )
+            ;;
         set|unset)
             # Two levels (like mount): the aspect after set/unset, then its args. `i` indexes
             # the set/unset word; flags may sit between, so skip them to find the aspect. bash
@@ -97,9 +106,6 @@ _ivm() {
                     # and `(un)set user-sudo` take no further args -> nothing to complete.
                 esac
             fi
-            ;;
-        resize)
-            COMPREPLY=( $(compgen -W "--cpu --memory --disk" -- "$cur") )
             ;;
         mount)
             # After `mount`: the action (ls/attach/shadow/detach), then args. `i` indexes

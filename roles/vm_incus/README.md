@@ -76,6 +76,13 @@ nothing), `-y`/`--yes` (skip prompts), `--root <dir>` (override the data root),
 `--name <vm>` (target that existing VM by name, ignoring the cwd binding; applies
 to every VM-acting subcommand, not `init`/`env`/`list`).
 
+**Targeting a VM by name.** Commands that take no argument of their own - `shell*`,
+`start`/`stop`/`reboot`/`delete`, `update`, `overwrite-dotfiles`, `gui`, `info`,
+`resize` - also accept a trailing VM name: `ivm stop foo`, `ivm info foo`, `ivm sh
+foo` (a shortcut for `--name`, tab-completed with each VM's working dir shown in
+zsh). Omit it to resolve by the current directory. Commands that DO take an argument
+(`provision`, `push`, `mount`, `snapshot`, `expose`, `unexpose`) use `--name` only.
+
 | Subcommand | What it does |
 |---|---|
 | `init <template> [name]` | Create a VM from `<template>`, bound to the current dir. Prompts for the name (default `ivm-<template>-<cwd-path>`, editable) unless given; confirms before creating. |

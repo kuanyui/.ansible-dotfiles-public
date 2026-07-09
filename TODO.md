@@ -5,6 +5,20 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## ivm: trailing `<vm>` name on no-positional subcommands
+
+- [x] no-positional VM-acting subcommands (shell*/start/stop/reboot/delete/update/
+  overwrite-dotfiles/gui/info/resize) accept a trailing `<vm>` as a shortcut for `--name`
+  (`CWD_RESOLVED_WITH_OWN_POSITIONAL` excludes provision/push/mount/snapshot/expose/unexpose)
+- [x] precedence: explicit (`--name` or positional) > cwd; `--name` + positional that
+  disagree => error (no silent pick)
+- [x] completion: reusable `_ivm_vms_with_dir` (ALL VMs, managed show working dir); `--name`
+  and the new positionals use it (zsh shows the dir); `cd` stays managed-only; bash names-only
+- [x] docs: SPEC.md (VM resolution + 2a header + completion note), README.md, ivm docstring
+- [x] verified: py_compile; `--dry-run` parse (positional targets it, cwd fallback, conflict
+  errors, resize positional+flags, provision keeps its unit positional, `sh` alias);
+  zsh/bash `-n`; helper output (all-vs-managed)
+
 ## ivm detach / lifecycle safety prompts
 
 - [x] `ivm mount detach`: print what it will unbind (`device: host-source -> guest-path`,

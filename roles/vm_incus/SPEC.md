@@ -50,12 +50,19 @@ ansible/python (all provisioning is driven from the host via `incus exec`).
 **Exit codes.** `0` success · `1` `ivm` error (any `die()`) · `2` argparse usage
 error (bad/missing args) · `130` Ctrl-C (prints `ivm: aborted`, no traceback).
 
-**VM resolution.** Every VM-acting subcommand targets ONE VM: `--name <vm>` if
-given, else the VM whose `user.ivm_init_at_dir` tag matches the current directory
-(or a parent dir, offered interactively). `adopt` is the one exception - it MUST
-require `--name` (the VM has no binding yet).
+**VM resolution.** Every VM-acting subcommand targets ONE VM, in this precedence:
+an EXPLICIT name wins over the cwd binding. Explicit = the global `--name <vm>`,
+OR - for a subcommand that takes no positional of its own (`shell*` / `start` /
+`stop` / `reboot` / `delete` / `update` / `overwrite-dotfiles` / `gui` / `info` /
+`resize`) - a trailing `<vm>` positional (`ivm stop foo`), a shortcut for `--name`.
+Giving BOTH `--name` and a positional that DISAGREE MUST error (no silent pick).
+With neither, the VM is the one whose `user.ivm_init_at_dir` tag matches the current
+directory (or a parent dir, offered interactively). Subcommands that DO take a
+positional (`provision` / `push` / `mount` / `snapshot` / `expose` / `unexpose`)
+target a VM only by cwd or `--name`. `adopt` is the one exception - it MUST require
+`--name` (the VM has no binding yet).
 
-### 2a. VM-acting subcommands (resolve by cwd or `--name`)
+### 2a. VM-acting subcommands (resolve by cwd, `--name`, or a trailing `<vm>`)
 
 The canonical list is the `CWD_RESOLVED` table in `files/ivm`; one-line help is
 `CWD_RESOLVED_HELP`; handlers are `CWD_RESOLVED_HANDLER`. These three MUST stay
@@ -122,7 +129,10 @@ zsh `files/completions/_ivm` and bash `files/completions/ivm.bash` are
 HAND-MAINTAINED, NOT generated from the tables above. Any change to the
 subcommand set, an aspect, or an arg MUST update both completion files in the
 same change. (Their DATA may read the rendered JSON / templates dynamically, but
-the per-case DISPLAY wiring is manual.)
+the per-case DISPLAY wiring is manual.) VM-name completion (the `--name` value and
+the trailing `<vm>` on no-positional subcommands) SHOULD, in zsh, show each VM's
+working dir (`user.ivm_init_at_dir`) as the `_describe` description; `cd` offers
+only MANAGED VMs (a dir-less VM has nowhere to cd). bash lists names only.
 
 ## 3. Template schema
 
