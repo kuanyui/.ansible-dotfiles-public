@@ -32,7 +32,9 @@ Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
   role README ("ivm guests: baseline"), stage_dotfiles.yml header
 - [ ] one-time migration of EXISTING VMs (fleet mechanism already existed -
   `make vm-incus-push-dotfiles` loops `ivm overwrite-dotfiles` over managed VMs;
-  nothing migration-specific was added to any role):
+  nothing migration-specific was added to any role). RUNNING VMs only - stopped
+  ones are skipped and listed (start each + push individually when you next use
+  it; a fleet-wide boot once OOM'd the host):
 
   ```
   make vm-incus-install

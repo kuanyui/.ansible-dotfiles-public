@@ -111,13 +111,15 @@ _incus_storage_overrides := \
 vm-incus-install:  ## Set up the incus host (daemon, `default` pool, `incusbr0`, `incus` group) + install the `ivm` launcher (`roles/vm_incus`; bypasses `setup_vm_incus` gate). On first-time init the role confirms the storage pool layout before `incus admin init` (skipped once a `default` pool exists). Sudo only for the host steps that actually run.
 	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/vm_incus.yml $(_incus_storage_overrides)
 
-vm-incus-push-dotfiles:  ## Re-push staged dotfiles to all managed Incus guests (run `vm-incus-install` first; pushes only, no re-render). Per-VM: `ivm overwrite-dotfiles`.
+vm-incus-push-dotfiles:  ## Re-push staged dotfiles to all RUNNING managed Incus guests (run `vm-incus-install` first; pushes only, no re-render). Stopped VMs are SKIPPED, never started - booting the whole fleet at once can OOM the host. Per-VM: `ivm overwrite-dotfiles`.
 	@set -e; \
 	STAGED="$$HOME/.local/share/ansible-managed/shared-prebuilt-provision-assets/dotfiles"; \
 	if [ ! -d "$$STAGED" ]; then echo "No staged dotfiles found ($$STAGED) -- run 'make vm-incus-install' first" >&2; exit 1; fi; \
-	VMS=$$(incus list user.ansible_managed=true --format csv --columns nt | awk -F, 'toupper($$2) ~ /VIRTUAL/ {print $$1}'); \
-	if [ -z "$$VMS" ]; then echo "No managed VMs found, nothing to do."; exit 0; fi; \
-	for vm in $$VMS; do \
+	VM_STATE_ROWS=$$(incus list user.ansible_managed=true --format csv --columns nst | awk -F, 'toupper($$3) ~ /VIRTUAL/ {print $$1 "," toupper($$2)}'); \
+	if [ -z "$$VM_STATE_ROWS" ]; then echo "No managed VMs found, nothing to do."; exit 0; fi; \
+	for vm_state_row in $$VM_STATE_ROWS; do \
+	    vm=$${vm_state_row%%,*}; vm_state=$${vm_state_row##*,}; \
+	    if [ "$$vm_state" != "RUNNING" ]; then echo "==> Skipping $$vm (state=$$vm_state; not auto-started - to push, start it then run: ivm --name $$vm overwrite-dotfiles)"; continue; fi; \
 	    os=$$(incus config get "$$vm" user.ivm_guest_os 2>/dev/null || true); \
 	    if [ "$$os" = "windows" ]; then echo "==> Skipping $$vm (guest-os=windows)"; continue; fi; \
 	    echo "==> Re-pushing dotfiles into $$vm (via ivm overwrite-dotfiles)"; \

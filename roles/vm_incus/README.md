@@ -162,7 +162,7 @@ them. Storage layout details: [`docs/incus-host-setup.md`](docs/incus-host-setup
 | What | Command |
 |---|---|
 | Delete one VM (config + disk + snapshots) | `ivm delete` (from its dir), or `incus delete <vm>` |
-| Re-push dotfiles to every managed guest | `make vm-incus-push-dotfiles` |
+| Re-push dotfiles to every RUNNING managed guest (stopped ones are skipped, never auto-started) | `make vm-incus-push-dotfiles` |
 | Remove `ivm` + the role's subdir (leaves VMs intact) | `make vm-incus-uninstall-ivm` |
 | List managed VMs | `incus list user.ansible-managed=true` |
 
