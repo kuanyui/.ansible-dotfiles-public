@@ -20,6 +20,7 @@ _ivm_subcommands=(
   'delete:delete the target VM (confirms)'
   'env:load + print a template'\''s resolved config'
   'list:table of managed VMs - state/name/working dir/IPv4 (extra args -> raw incus list)'
+  'top:live per-instance CPU/memory/disk usage (incus top passthrough)'
   'cd:cd the shell into a VM'\''s working-dir root (completes VM -> its dir)'
   'info:target VM info - status, image, hw, network, mounts, storage (cwd or --name)'
   'adopt:bring an unmanaged Incus VM (hand-made or old-ivm) under ivm management (requires --name)'
