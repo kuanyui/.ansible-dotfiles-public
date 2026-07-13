@@ -64,8 +64,8 @@
     mode: "0644"
     content: |
       {{ {
-        'claude': provision_thirdparty_software_claude,
-        'codex': provision_thirdparty_software_codex,
+        'agent_claude': provision_thirdparty_software_agent_claude,
+        'agent_codex': provision_thirdparty_software_agent_codex,
         'dev_rust': provision_thirdparty_software_dev_rust,
         'dev_android': provision_thirdparty_software_dev_android,
         'dev_gvm': provision_thirdparty_software_dev_gvm,

@@ -17,7 +17,7 @@ distro_packages:
   - npm
   - links2           # text browser to finish the OpenAI auth flow inside the container
 thirdparty_software:
-  - codex    # nodejs + npm i -g @openai/codex; recipe in roles/provision_thirdparty_software/defaults/main.yml
+  - agent_codex    # nodejs + npm i -g @openai/codex; recipe in roles/provision_thirdparty_software/defaults/main.yml
 dotfiles:
   - bash
   - tmux

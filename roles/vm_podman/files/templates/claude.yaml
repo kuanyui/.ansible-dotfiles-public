@@ -15,7 +15,7 @@ distro_packages:
   - zsh              # the unprivileged user's login shell (+ the zsh dotfiles)
   - ca-certificates  # HTTPS trust for the claude curl|bash installer
 thirdparty_software:
-  - claude   # curl|bash installer; recipe in roles/provision_thirdparty_software/defaults/main.yml
+  - agent_claude   # curl|bash installer; recipe in roles/provision_thirdparty_software/defaults/main.yml
 dotfiles:
   - bash
   - tmux

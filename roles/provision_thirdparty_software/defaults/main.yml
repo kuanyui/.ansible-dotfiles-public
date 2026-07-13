@@ -1,7 +1,7 @@
 ---
 # Registry of NON-distro install recipes - the sibling of `roles/provision_distro_packages`
 # for everything that is NOT an apt/zypper/dnf package name: 3rd-party repos
-# (vscode), `curl|bash` installers (claude), npm/pip globals (codex).
+# (vscode), `curl|bash` installers (agent_claude), npm/pip globals (agent_codex).
 #
 # Each `provision_thirdparty_software_<name>` is a per-`ansible_os_family` dict. Resolution
 # is OVERRIDE, not additive (UNLIKE `provision_distro_packages`, which concatenates
@@ -26,7 +26,7 @@
 # explicit pattern as the distro bundles). Launcher completions auto-track it (they
 # read the rendered JSON at runtime) - no completion edit needed.
 
-provision_thirdparty_software_claude:
+provision_thirdparty_software_agent_claude:
   description: "Claude Code CLI (claude.ai install script, user-scoped)"
   __common__:
     already_installed: su - user -c 'command -v claude'
@@ -35,7 +35,7 @@ provision_thirdparty_software_claude:
       # `[[ =~ ]]` - pipe to `bash` (present in the guest), NOT `sh` (dash chokes).
       su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
-provision_thirdparty_software_codex:
+provision_thirdparty_software_agent_codex:
   description: "OpenAI Codex CLI (npm global, user-scoped; needs nodejs + npm)"
   __common__:
     # File test, not `command -v`: codex lands in ~/.local/npm_global/bin, which is
@@ -141,7 +141,7 @@ provision_thirdparty_software_dev_gvm:
 # rc file - shell wiring lives in the TEMPLATED ~/.zshrc + ~/.bashrc (guarded; survives the
 # dotfiles push that overwrites .zshrc/.bashrc after recipes). nvm is incompatible with a
 # preset npm `prefix`; the ivm guest sets none (no conflict) - a guest that ALSO ran the
-# `codex` recipe would have ~/.npmrc prefix set, an edge case.
+# `agent_codex` recipe would have ~/.npmrc prefix set, an edge case.
 provision_thirdparty_software_dev_nvm:
   description: "nvm (Node Version Manager) v0.40.5 + current LTS Node - alongside distro node"
   __common__:

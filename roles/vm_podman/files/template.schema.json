@@ -48,7 +48,7 @@
     "thirdparty_software": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Named non-distro install recipes from `roles/provision_thirdparty_software/defaults/main.yml` (e.g. `claude`, `codex`). Run as part of the build provision step, resolved per ansible_os_family (family entry else `__common__`)."
+      "description": "Named non-distro install recipes from `roles/provision_thirdparty_software/defaults/main.yml` (e.g. `agent_claude`, `agent_codex`). Run as part of the build provision step, resolved per ansible_os_family (family entry else `__common__`)."
     },
     "dotfiles": {
       "type": "array",

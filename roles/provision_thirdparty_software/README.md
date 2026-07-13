@@ -2,7 +2,7 @@
 
 Registry of **non-distro install recipes** - the sibling of `roles/provision_distro_packages`
 for everything that is NOT an `apt`/`zypper`/`dnf` package name: 3rd-party repos
-(vscode), `curl|bash` installers (claude), npm/pip globals (codex).
+(vscode), `curl|bash` installers (agent_claude), npm/pip globals (agent_codex).
 
 Data-only role (ships no tasks). `roles/vm_incus` materializes this registry to
 `thirdparty-software.json` at apply time; `ivm` reads it and runs the recipes in a
@@ -22,7 +22,7 @@ by family - so use the family's entry if defined, else `common`.
 | `already_installed` | no | probe run as root; rc 0 = skip (idempotency). Omit = always run. Prefer a check that only succeeds when truly installed (a file test beats `command -v` when the bin dir is off the login PATH) |
 
 ```yaml
-provision_thirdparty_software_claude:          # curl|bash installer, same on every distro
+provision_thirdparty_software_agent_claude:    # curl|bash installer, same on every distro
   common:
     already_installed: su - user -c 'command -v claude'
     install_script: |
