@@ -44,6 +44,17 @@ make apply-centralize-lang-pkgs-dir
 including it is the opt-out. The rc source line is guarded, so an
 unapplied host is a no-op.)
 
+## ivm guests: baseline, not opt-in
+
+`roles/_shared_prebuilt_provision_assets` stages this role's output as the
+`centralize-lang-pkgs-dir` dotfiles feature, and `ivm` pushes it into EVERY
+guest as part of the baseline (`init` / `overwrite-dotfiles`). Thirdparty
+recipes that install via npm / pip / pipx / cargo / go source the env file
+at install time, so guest installs land in the same tree interactive guest
+shells have on PATH. Exception: where nvm is installed, the templated rc
+`unset`s `NPM_CONFIG_PREFIX` before loading it - nvm refuses to activate
+with a foreign prefix (`nvm_die_on_prefix` in nvm.sh) and owns npm there.
+
 ## What this role configures
 
 | Tool  | Env var(s)                          | Effect                                                       |

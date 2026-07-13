@@ -458,11 +458,19 @@ CREATE_USER_SCRIPT: str = (
 DOTFILE_BUCKET_SIDES: tuple[tuple[str, str], ...] = (("home/user", "/home/user/"), ("root", "/root/"))
 
 # Baked into the committed image's ENV so `podman exec` (which sources NO rc files)
-# finds user-scoped binaries - claude in ~/.local/bin, codex in ~/.local/npm_global/bin.
-# The shared dotfiles add these for interactive/login shells; this covers `pvm agent`/
-# `exec`. Mirrors the old container Dockerfile's `ENV PATH=/home/user/.local/bin:...`.
-IMAGE_ENV_PATH: str = ("/home/user/.local/bin:/home/user/.local/npm_global/bin:"
-                       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+# finds user-scoped binaries - claude in ~/.local/bin, codex in
+# ~/.centralized-lang-pkgs/npm/bin. The `.centralized-lang-pkgs` entries mirror the
+# PATH prepends of `centralized-lang-pkgs.env.sh` (the npm/pip/pipx/cargo/go
+# install-redirect tree recipes install into; same head order). The shared dotfiles
+# add these for interactive/login shells; this covers `pvm agent`/`exec`.
+IMAGE_ENV_PATH: str = (
+    "/home/user/.local/bin:"
+    "/home/user/.centralized-lang-pkgs/go/bin:"
+    "/home/user/.centralized-lang-pkgs/cargo/bin:"
+    "/home/user/.centralized-lang-pkgs/pipx/bin:"
+    "/home/user/.centralized-lang-pkgs/pip/bin:"
+    "/home/user/.centralized-lang-pkgs/npm/bin:"
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 
 
 def resolve_packages(template: dict[str, Any], registry: dict[str, Any], family: str) -> list[str]:
@@ -494,10 +502,40 @@ def guest_type_marker_script() -> str:
     )
 
 
+def centralized_lang_pkgs_env_provision(shared_root: Path) -> str:
+    """Shell (run as root in the build container) writing the STAGED
+    `centralized-lang-pkgs.env.sh` into `/home/user/.centralized-lang-pkgs/` - inlined
+    into the build script right after `user` exists, because thirdparty recipes source
+    that file (npm/pip/pipx/cargo/go install redirect) and the dotfiles copy happens only
+    after the script ran. Content is read from the staged `centralize-lang-pkgs-dir`
+    feature at build time, so `roles/centralize_lang_pkgs_dir/files/` stays the single
+    source; a template listing the feature in `dotfiles` re-copies the same file (plus
+    `pip.conf`)."""
+    staged_env_file: Path = (shared_root / "dotfiles" / "centralize-lang-pkgs-dir" / "__common__"
+                             / "home" / "user" / ".centralized-lang-pkgs" / "centralized-lang-pkgs.env.sh")
+    if not staged_env_file.is_file():
+        die(f"staged env file missing: {staged_env_file}\n"
+            f"re-stage the shared provision assets first:\n\n"
+            f"make vm-podman-install\n")
+    heredoc_delimiter: str = "PVM_CENTRALIZED_LANG_PKGS_ENV_EOF"
+    staged_env_file_content: str = staged_env_file.read_text()
+    if heredoc_delimiter in staged_env_file_content:  # would truncate the heredoc mid-file
+        die(f"'{heredoc_delimiter}' may not appear inside {staged_env_file}")
+    return (
+        "echo '==> ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh (install redirect for npm/pip/pipx/cargo/go; sourced by recipes + rc files)' >&2\n"
+        "install --owner user --group user --directory /home/user/.centralized-lang-pkgs\n"
+        f"cat > /home/user/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh <<'{heredoc_delimiter}'\n"
+        f"{staged_env_file_content}"
+        f"{heredoc_delimiter}\n"
+        "chown user:user /home/user/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh\n"
+    )
+
+
 def build_provision_script(template: dict[str, Any], distro_registry: dict[str, Any],
-                           tp_registry: dict[str, Any], family: str) -> str:
+                           tp_registry: dict[str, Any], family: str, shared_root: Path) -> str:
     """The shell run as ROOT in the build container: packages -> create user ->
-    bundle post_installs -> thirdparty recipes -> the template's post_install_script."""
+    the `~/.centralized-lang-pkgs` env file (recipes source it) -> bundle post_installs
+    -> thirdparty recipes -> the template's post_install_script."""
     packages: list[str] = resolve_packages(template, distro_registry, family)
     parts: list[str] = ["set -e"]
     # Bake the managed-guest marker into the image so every container off it badges the
@@ -506,6 +544,7 @@ def build_provision_script(template: dict[str, Any], distro_registry: dict[str, 
     if packages:
         parts.append(install_packages_script(family, packages))
     parts.append(CREATE_USER_SCRIPT)
+    parts.append(centralized_lang_pkgs_env_provision(shared_root))
     parts.append(groups_post_install_script(template.get("distro_package_groups", []), distro_registry, family))
     parts.append(thirdparty_install_script(
         resolve_thirdparty_software(template.get("thirdparty_software", []), tp_registry, family)))
@@ -586,7 +625,7 @@ def build_image(template: dict[str, Any], *, shared_root: Path, network: str | N
             f"distro family (Debian/Suse/RedHat) - cannot provision it")
     distro_registry: dict[str, Any] = load_package_groups(shared_root)
     tp_registry: dict[str, Any] = load_thirdparty_software(shared_root)
-    provision_script: str = build_provision_script(template, distro_registry, tp_registry, family)
+    provision_script: str = build_provision_script(template, distro_registry, tp_registry, family, shared_root)
     image_ref: str = image_ref_for(template_name, content_hash(template, family, shared_root, provision_script))
 
     if not rebuild and not dry_run and image_exists(image_ref):

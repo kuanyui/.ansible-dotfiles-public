@@ -13,6 +13,8 @@
 #   - tmux  (`.tmux.conf`, static, no is_root)     - family-INDEPENDENT  -> __common__, user + root (same file)
 #   - emacs (`.emacs.d`, distro-independent)       - family-INDEPENDENT  -> __common__, user ONLY
 #   - zsh   (`.zshrc`, template, override_os_family) - family-SPECIFIC    -> <family>, user + root
+#   - centralize-lang-pkgs-dir (`~/.centralized-lang-pkgs` env file + pip.conf, static)
+#                                                  - family-INDEPENDENT  -> __common__, user ONLY
 # `user` and `root` are different identities, so each gets its own is_root render
 # (root: trimmed `.bashrc`, red prompt, no redundant sudo).
 
@@ -82,6 +84,26 @@
     target_user: "{{ ansible_facts['user_id'] }}"
     target_group: "{{ ansible_facts['user_id'] }}"
     is_root: false
+
+# ---------- centralize-lang-pkgs-dir: __common__, user ONLY (family-independent) ----------
+# `~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh` + `~/.config/pip/pip.conf`, staged
+# via the SAME role that deploys them on the host (one source of truth). Every guest's
+# `.bashrc`/`.zshrc` (staged above) already carries the guarded source line, so pushing this
+# feature makes npm/pip/pipx/cargo/go guest installs land in `~/.centralized-lang-pkgs/`
+# exactly like on the host; recipes source the env file explicitly at install time.
+- name: Ensure `dotfiles/centralize-lang-pkgs-dir/__common__/home/user` dir exists
+  ansible.builtin.file:
+    path: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/centralize-lang-pkgs-dir/__common__/home/user"
+    state: directory
+    mode: "0755"
+
+- name: "Stage `user` `~/.centralized-lang-pkgs` + `~/.config/pip/pip.conf` into `dotfiles/centralize-lang-pkgs-dir/__common__/home/user` (via roles/centralize_lang_pkgs_dir)"
+  ansible.builtin.include_role:
+    name: centralize_lang_pkgs_dir
+  vars:
+    target_home: "{{ _shared_prebuilt_provision_assets_dir }}/dotfiles/centralize-lang-pkgs-dir/__common__/home/user"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
 
 # ---------- zsh: per ansible_os_family (family-specific .zshrc) ----------
 - name: "Stage `.zshrc` per ansible_os_family (tasks/_stage_zsh_family.yml)"

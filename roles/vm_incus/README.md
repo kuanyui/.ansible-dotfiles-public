@@ -130,8 +130,11 @@ free-form (you edit it at init); resolution is by the tag, not the name.
 ansible/python. `init` does: `incus create` (stopped) -> attach devices (mounts +
 `shadow` masks, `hw.tpm`, macvlan/bridge nic) -> `incus start` -> provision
 (install baseline+groups+packages for the distro, set timezone + tmpfs, create
-`user`, set both shells to zsh, configure sshd, run `post_install_script` as root
-- it drops to `user` via `su - user -c '...'` for user-scoped bits) -> push the
+`user`, set both shells to zsh, write `~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh`
+(redirects npm/pip/pipx/cargo/go global installs, same tree as the host's
+`roles/centralize_lang_pkgs_dir`; thirdparty recipes source it), configure sshd,
+run thirdparty recipes + `post_install_script` as root
+- they drop to `user` via `su - user -c '...'` for user-scoped bits) -> push the
 staged user/root dotfiles. Linux on Debian / openSUSE / Fedora.
 
 ## Where files live

@@ -192,6 +192,15 @@ These MUST hold for every VM `ivm` creates or touches.
 - **`ansible_os_family` is derived, never specified.** It comes from `os.distro`
   via `DISTRO_TO_ANSIBLE_OS_FAMILY` and keys both the dotfiles staging and the
   package-group overlays.
+- **The `~/.centralized-lang-pkgs` env file precedes recipes.** Every guest gets
+  `centralized-lang-pkgs.env.sh` as a BASELINE dotfiles feature
+  (`centralize-lang-pkgs-dir`, staged from `roles/centralize_lang_pkgs_dir` - the
+  npm/pip/pipx/cargo/go global-install redirect, same tree as the host). Thirdparty
+  recipes source it at install time, so it MUST be in the guest before any recipe
+  runs: `init` inlines the staged file into the provision script right after `user`
+  exists (the baseline dotfiles push happens only AFTER recipes, on purpose);
+  `provision` re-pushes the feature before running recipes; `overwrite-dotfiles`
+  re-pushes it with the rest of the baseline.
 
 ## 5. Host prerequisites
 

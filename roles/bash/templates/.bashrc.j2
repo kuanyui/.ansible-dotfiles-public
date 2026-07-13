@@ -11,7 +11,7 @@
 ### ========================================
 ### Env vars for ~/.centralized-lang-pkgs/ (npm / pip / pipx / cargo / go)
 ### ========================================
-# Deployed by `roles/centralize_lang_pkgs_dir/` (opt-in). Harmless no-op when the
+# Deployed by `roles/centralize_lang_pkgs_dir/` (host: opt-in; ivm guests: baseline). Harmless no-op when the
 # file is absent.
 [ -f "${HOME}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh" ] && . "${HOME}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh"
 
@@ -21,7 +21,10 @@
 # Harmless no-op when the tool is absent (the `[ -s ... ]` guard); survives `ivm`'s dotfiles
 # push because this template IS the pushed file.
 export NVM_DIR="${HOME}/.nvm"
-[ -s "${NVM_DIR}/nvm.sh" ] && . "${NVM_DIR}/nvm.sh"
+# nvm refuses to activate while NPM_CONFIG_PREFIX points outside ~/.nvm (`nvm_die_on_prefix`
+# in nvm.sh) - and centralized-lang-pkgs.env.sh, sourced above, sets exactly that. Where nvm
+# is installed it OWNS npm (globals live per node version under ~/.nvm), so drop the redirect.
+if [ -s "${NVM_DIR}/nvm.sh" ]; then unset NPM_CONFIG_PREFIX; . "${NVM_DIR}/nvm.sh"; fi
 [ -s "${NVM_DIR}/bash_completion" ] && . "${NVM_DIR}/bash_completion"
 [ -s "${HOME}/.gvm/scripts/gvm" ] && . "${HOME}/.gvm/scripts/gvm"
 

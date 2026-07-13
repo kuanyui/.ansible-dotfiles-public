@@ -5,6 +5,47 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## guests follow centralize_lang_pkgs_dir (one install-redirect everywhere)
+
+- [x] rename executed first (see the "rename `local_pkgs` -> `centralize_lang_pkgs_dir`"
+  section below) so this extension never references a name scheduled to die
+- [x] stage the role's output as dotfiles feature `centralize-lang-pkgs-dir`
+  (`stage_dotfiles.yml` include_role, `__common__`/user only) + add it to `ivm`'s
+  `BASELINE_DOTFILE_FEATURES` - every guest rc already had the guarded source line
+- [x] `init`: inline the STAGED env file into the provision script right after `user`
+  exists (`centralized_lang_pkgs_env_provision`; the baseline dotfiles push runs only
+  AFTER recipes, on purpose); `provision`: re-push the feature before thirdparty recipes
+- [x] recipes source the env file (convention: every npm/pip/pipx/cargo/go recipe does):
+  `agent_codex` -> `~/.centralized-lang-pkgs/npm/bin/codex` (fixes: old
+  `~/.local/npm_global/bin` was on NO PATH in the guest, `codex` unfindable; no more
+  `~/.npmrc` prefix write), `dev_rust` -> `~/.centralized-lang-pkgs/cargo/bin/cargo`
+- [x] nvm clash resolved as policy, not workaround: templated rc `unset`s
+  `NPM_CONFIG_PREFIX` right before loading nvm.sh (`nvm_die_on_prefix` refuses foreign
+  prefixes; where nvm is installed it OWNS npm). `dev_nvm` comment updated
+- [x] pvm too (same recipes, same ordering problem): build script writes the staged
+  env file right after `user` exists (before recipes); `IMAGE_ENV_PATH` (baked ENV for
+  rc-less `podman exec`) swaps `~/.local/npm_global/bin` for the
+  `~/.centralized-lang-pkgs/{go,cargo,pipx,pip,npm}/bin` prepends; feature added to the
+  template schema enum/default + both templates' `dotfiles` lists (pip.conf parity).
+  Image content hash covers the script, so existing images auto-rebuild on next use
+- [x] docs: vm_incus SPEC.md (env-file-precedes-recipes contract) + README.md,
+  role README ("ivm guests: baseline"), stage_dotfiles.yml header
+- [ ] one-time migration of EXISTING VMs (fleet mechanism already existed -
+  `make vm-incus-push-dotfiles` loops `ivm overwrite-dotfiles` over managed VMs;
+  nothing migration-specific was added to any role):
+
+  ```
+  make vm-incus-install
+  make vm-incus-push-dotfiles
+  ```
+
+  then per VM that had codex (reinstall into the new tree, drop the old one):
+
+  ```
+  ivm --name <vm> provision agent_codex
+  incus exec <vm> -- su - user -c 'rm -rf ~/.local/npm_global'
+  ```
+
 ## ivm: trailing `<vm>` name on no-positional subcommands
 
 - [x] no-positional VM-acting subcommands (shell*/start/stop/reboot/delete/update/

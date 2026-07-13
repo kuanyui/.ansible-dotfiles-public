@@ -36,16 +36,19 @@ provision_thirdparty_software_agent_claude:
       su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
 provision_thirdparty_software_agent_codex:
-  description: "OpenAI Codex CLI (npm global, user-scoped; needs nodejs + npm)"
+  description: "OpenAI Codex CLI (npm global into ~/.centralized-lang-pkgs; needs nodejs + npm)"
   __common__:
-    # File test, not `command -v`: codex lands in ~/.local/npm_global/bin, which is
-    # not necessarily on the login PATH, so a PATH probe could wrongly re-install.
-    already_installed: su - user -c 'test -x ~/.local/npm_global/bin/codex'
+    # File test, not `command -v`: the probe runs in a non-interactive shell where the
+    # env file's PATH prepend is not in effect, so a PATH probe could wrongly re-install.
+    already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/codex'
     install_script: |
-      # Needs nodejs + npm from the template's `provision_distro_packages`. npm prefix kept at
-      # ~/.local/npm_global for now; switch to the centralize_lang_pkgs_dir tree when
-      # that role rename lands (see TODO.md).
-      su - user -c 'mkdir -p ~/.local/npm_global && npm config set prefix ~/.local/npm_global && npm install -g @openai/codex'
+      # Needs nodejs + npm from the template's `provision_distro_packages`. Sourcing the
+      # env file (roles/centralize_lang_pkgs_dir; the launcher guarantees it is in the
+      # guest BEFORE recipes run) sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm,
+      # the same redirect interactive guest shells and the host get from their rc files -
+      # so `codex` is on PATH in the guest's zsh/bash. Env var only: nothing is persisted
+      # to ~/.npmrc (a prefix there would trip a later `dev_nvm`).
+      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && npm install -g @openai/codex'
 
 # Rust via rustup - the official, recommended install (rust-lang.org/tools/install).
 # It downloads PREBUILT toolchain binaries (NOT source) into ~/.rustup + ~/.cargo as the
@@ -54,14 +57,18 @@ provision_thirdparty_software_agent_codex:
 # rustc/cargo are intentionally NOT used: they lag Rust's 6-week stable cadence and can't
 # manage toolchains/targets/components the way Rust development expects.
 provision_thirdparty_software_dev_rust:
-  description: "Rust toolchain via rustup - stable + rust-analyzer (user-scoped)"
+  description: "Rust toolchain via rustup - stable + rust-analyzer (user-scoped, cargo under ~/.centralized-lang-pkgs)"
   __common__:
-    already_installed: su - user -c 'test -x ~/.cargo/bin/cargo'
+    already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/cargo/bin/cargo'
     install_script: |
       # `-y` is rustup-init's only non-interactive flag (no long-form alias exists);
       # --proto / --tlsv1.2 are the curl flags rust-lang.org documents for the installer.
-      su - user -c 'curl --proto "=https" --tlsv1.2 --fail --silent --show-error --location https://sh.rustup.rs | sh -s -- -y'
-      su - user -c '~/.cargo/bin/rustup component add rust-analyzer'
+      # Sourcing the env file sets `CARGO_HOME` -> ~/.centralized-lang-pkgs/cargo (rustup
+      # honors it: shims + `cargo install` binaries land there, on the PATH interactive
+      # guest shells get from the same file). `RUSTUP_HOME` (the toolchain store) keeps
+      # its ~/.rustup default - the env file does not manage it.
+      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && curl --proto "=https" --tlsv1.2 --fail --silent --show-error --location https://sh.rustup.rs | sh -s -- -y'
+      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && "${CARGO_HOME}/bin/rustup" component add rust-analyzer'
 
 # Android SDK (command-line tools), user-scoped under ~/Android/Sdk - the headless half of
 # `dev_android`. Pairs with the `dev_android` DISTRO group (JDK + unzip), which cmd_provision
@@ -139,9 +146,13 @@ provision_thirdparty_software_dev_gvm:
 #
 # The installer needs bash (NOT sh). Run with PROFILE=/dev/null so it does NOT self-wire any
 # rc file - shell wiring lives in the TEMPLATED ~/.zshrc + ~/.bashrc (guarded; survives the
-# dotfiles push that overwrites .zshrc/.bashrc after recipes). nvm is incompatible with a
-# preset npm `prefix`; the ivm guest sets none (no conflict) - a guest that ALSO ran the
-# `agent_codex` recipe would have ~/.npmrc prefix set, an edge case.
+# dotfiles push that overwrites .zshrc/.bashrc after recipes). nvm refuses to activate while
+# `NPM_CONFIG_PREFIX` points outside ~/.nvm (`nvm_die_on_prefix` in nvm.sh) - and every guest
+# gets that var from the baseline `centralized-lang-pkgs.env.sh`. Resolved in the templated
+# rc: it `unset`s `NPM_CONFIG_PREFIX` right before loading nvm.sh, because where nvm is
+# installed it OWNS npm (globals live per node version under ~/.nvm). This recipe itself is
+# safe: it runs non-interactively (no rc, no env file), and `agent_codex` sets the prefix by
+# env var only - nothing persisted to ~/.npmrc that would trip nvm.
 provision_thirdparty_software_dev_nvm:
   description: "nvm (Node Version Manager) v0.40.5 + current LTS Node - alongside distro node"
   __common__:

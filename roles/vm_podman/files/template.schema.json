@@ -52,9 +52,9 @@
     },
     "dotfiles": {
       "type": "array",
-      "items": { "type": "string", "enum": ["bash", "tmux", "zsh", "emacs"] },
-      "default": ["bash", "tmux", "zsh"],
-      "description": "Dotfile sets staged host-side from the shared cache and COPYd into the image. Config only; the program itself (e.g. emacs) must be in distro_package_groups / distro_packages."
+      "items": { "type": "string", "enum": ["bash", "tmux", "zsh", "emacs", "centralize-lang-pkgs-dir"] },
+      "default": ["bash", "tmux", "zsh", "centralize-lang-pkgs-dir"],
+      "description": "Dotfile sets staged host-side from the shared cache and COPYd into the image. Config only; the program itself (e.g. emacs) must be in distro_package_groups / distro_packages. centralize-lang-pkgs-dir = the ~/.centralized-lang-pkgs npm/pip/pipx/cargo/go install-redirect (env file + pip.conf; the build script also writes the env file itself before recipes run)."
     },
     "hide_dirs": {
       "type": "array",
