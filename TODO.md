@@ -5,6 +5,17 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## push-dotfiles fleet safety + template default shell dir
+
+- [x] `make vm-incus-push-dotfiles` pushes to RUNNING VMs only - it used to
+  `ensure_up` (boot) every stopped managed VM, which once OOM'd the host (forced
+  reboot). Skipped VMs are listed with the exact per-VM command (no silent omission)
+- [x] `shell_default_dir_after_login` is now `sh_expand`ed at init like a mount's
+  `guest` value, so templates can default it to the mounted project; `codex.yaml` +
+  `claude.yaml` (the two `$(pwd)`-mounting templates) set
+  `/workspaces/$(basename "$(pwd)")` - `ivm sh` lands in the project without a manual
+  `ivm set shell-dir`
+
 ## guests follow centralize_lang_pkgs_dir (one install-redirect everywhere)
 
 - [x] rename executed first (see the "rename `local_pkgs` -> `centralize_lang_pkgs_dir`"

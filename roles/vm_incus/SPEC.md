@@ -149,7 +149,7 @@ is the summary.
 | `sys` | `gui`, `input_method`, `timezone`, `tmpfs[]`, `ssh_server.{enabled,port,root_login,password_login,authorized_keys}`. |
 | `net` | `mode` (`nat`/`macvlan`/`bridge`), `parent`. |
 | `mounts[]` | `host`, `guest`, `ro`, `shadow[]` (subpaths to mask). Applied ONLY at init. |
-| `shell_default_dir_after_login` | initial cwd for `ivm shell`. |
+| `shell_default_dir_after_login` | initial cwd for `ivm shell`; host-expanded at init like a mount `guest` (`/workspaces/$(basename "$(pwd)")` OK), stored as `user.ivm_shell_default_dir_after_login` (`ivm set shell-dir` changes it later). |
 | linux provisioning | `distro_package_groups[]`, `distro_packages[]`, `thirdparty_software[]`, `dotfiles[]`, `post_install_script`. |
 | `windows` | `unattend`, `post_install_powershell`. |
 

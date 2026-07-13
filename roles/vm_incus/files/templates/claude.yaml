@@ -30,6 +30,7 @@ mounts:
     shadow:
       - .git
       - .vscode
+shell_default_dir_after_login: /workspaces/$(basename "$(pwd)")   # `ivm sh` starts in the mounted project (matches the mount's guest path)
 distro_package_groups:
   - tools_basic
   # emacs is NOT a default - run `ivm provision emacs` to add the editor + its ~/.emacs.d on demand

@@ -601,10 +601,12 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
     # Optional: the template's preferred initial cwd for `ivm shell`, stored as a
     # user.* tag and read at runtime (passed as `incus exec --cwd`). It ONLY sets
     # where the shell starts - `$HOME` and a bare `cd` are unaffected. Omitted when
-    # unset -> incus's default cwd.
+    # unset -> incus's default cwd. `sh_expand`ed on the HOST exactly like a mount's
+    # `guest` value, so `/workspaces/$(basename "$(pwd)")` resolves to the same dir
+    # as the mount it points into.
     template_shell_login_dir: str = doc.get("shell_default_dir_after_login", "")
     if template_shell_login_dir:
-        cmd += ["--config", f"user.ivm_shell_default_dir_after_login={template_shell_login_dir}"]
+        cmd += ["--config", f"user.ivm_shell_default_dir_after_login={sh_expand(template_shell_login_dir, cwd)}"]
     if "disk" in hw:
         cmd += ["--device", f"root,size={g_to_gib(hw['disk'])}"]
     return cmd
