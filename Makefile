@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-kde-touchscreen-desktop-entries apply-local-lang-pkg-managers vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-incus-strip-tmpfs vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm vm-podman-install vm-podman-check vm-podman-uninstall-pvm vm-podman-sandbox check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv check-kde-touchscreen-desktop-entries aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-kde-touchscreen-desktop-entries apply-centralize-lang-pkgs-dir vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-incus-strip-tmpfs vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm vm-podman-install vm-podman-check vm-podman-uninstall-pvm vm-podman-sandbox check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv check-kde-touchscreen-desktop-entries aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -72,8 +72,8 @@ apply-mpv:  ## Deploy mpv config (mpv.conf with `vo=wlshm` + input.conf + Lua sc
 apply-kde-touchscreen-desktop-entries:  ## Deploy KDE touchscreen .desktop entries (screen rotation + screenshots + display settings) to ~/.local/share/applications/ + the rotate_screen helper to ~/.local/bin/. Refuses to overwrite legacy stow symlinks. No sudo.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/kde_touchscreen_desktop_entries.yml
 
-apply-local-lang-pkg-managers:  ## Redirect npm/pip/pipx/cargo/go global installs into ~/.local-lang-pkg-managers/ (deploys the env file sourced by .bashrc/.zshrc + pip.conf). Opt-in; rewrites PATH + pip behaviour. No sudo.
-	$(PLAYBOOK) --diff $(PLAYBOOKS)/local_lang_pkg_managers.yml
+apply-centralize-lang-pkgs-dir:  ## Redirect npm/pip/pipx/cargo/go global installs into ~/.centralized-lang-pkgs/ (deploys the env file sourced by .bashrc/.zshrc + pip.conf). Opt-in; rewrites PATH + pip behaviour. No sudo.
+	$(PLAYBOOK) --diff $(PLAYBOOKS)/centralize_lang_pkgs_dir.yml
 
 ### -------------------------------------------------------------------------
 ### Incus (host daemon + the `ivm` VM launcher)

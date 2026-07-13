@@ -1,7 +1,7 @@
-# roles/local_lang_pkg_managers
+# roles/centralize_lang_pkgs_dir
 
 Redirects npm / pip / pipx / cargo / go global installs out of `~/.local/`
-into a dedicated `~/.local-lang-pkg-managers/<tool>/` tree.
+into a dedicated `~/.centralized-lang-pkgs/<tool>/` tree.
 
 ## Why
 
@@ -20,48 +20,50 @@ causes three problems:
 3. **AppArmor granularity.** A profile that grants
    `@{HOME}/.local/share/** r` opens user app state alongside third-party
    package-manager state. Splitting them lets a profile say "read
-   third-party binaries (`~/.local-lang-pkg-managers/**`), but not user app state".
+   third-party binaries (`~/.centralized-lang-pkgs/**`), but not user app state".
 
 With this role enabled, `~/.local/` stays reserved for XDG and
-ansible-managed dotfiles, and `~/.local-lang-pkg-managers/` is the dump for everything
+ansible-managed dotfiles, and `~/.centralized-lang-pkgs/` is the dump for everything
 installed by language-level package managers. To wipe all such installs
 cleanly:
 
 ```
-rm -rf ~/.local-lang-pkg-managers/
+rm -rf ~/.centralized-lang-pkgs/
 ```
 
 ## Opt in
 
-Off by default. Set in `group_vars/all.yml`, a `host_vars/<host>.yml`, or
-inline:
+Not part of `apply-essentials-*`. Apply it explicitly via its dedicated
+playbook:
 
-```yaml
-setup_local_lang_pkg_managers: true
+```
+make apply-centralize-lang-pkgs-dir
 ```
 
-Then run `make apply-essentials-user` (or `apply-essentials-all-users`).
+(No `setup_*` toggle - the role runs unconditionally when included; not
+including it is the opt-out. The rc source line is guarded, so an
+unapplied host is a no-op.)
 
 ## What this role configures
 
 | Tool  | Env var(s)                          | Effect                                                       |
 |-------|-------------------------------------|--------------------------------------------------------------|
-| npm   | `NPM_CONFIG_PREFIX`                 | `npm install -g foo` writes to `~/.local-lang-pkg-managers/npm/{bin,lib}/` |
-| pip   | `PYTHONUSERBASE` + `pip.conf`       | `pip install foo` defaults to `--user`, writes to `~/.local-lang-pkg-managers/pip/{bin,lib/...}/` |
-| pipx  | `PIPX_HOME` + `PIPX_BIN_DIR`        | Isolated CLI tool venvs land in `~/.local-lang-pkg-managers/pipx/{venvs,bin}/` |
-| cargo | `CARGO_HOME`                        | Cargo state + `cargo install foo` write to `~/.local-lang-pkg-managers/cargo/{bin,registry,...}/` |
-| go    | `GOPATH`                            | `go install pkg/cmd@latest` writes to `~/.local-lang-pkg-managers/go/bin/` |
+| npm   | `NPM_CONFIG_PREFIX`                 | `npm install -g foo` writes to `~/.centralized-lang-pkgs/npm/{bin,lib}/` |
+| pip   | `PYTHONUSERBASE` + `pip.conf`       | `pip install foo` defaults to `--user`, writes to `~/.centralized-lang-pkgs/pip/{bin,lib/...}/` |
+| pipx  | `PIPX_HOME` + `PIPX_BIN_DIR`        | Isolated CLI tool venvs land in `~/.centralized-lang-pkgs/pipx/{venvs,bin}/` |
+| cargo | `CARGO_HOME`                        | Cargo state + `cargo install foo` write to `~/.centralized-lang-pkgs/cargo/{bin,registry,...}/` |
+| go    | `GOPATH`                            | `go install pkg/cmd@latest` writes to `~/.centralized-lang-pkgs/go/bin/` |
 
 The role:
 
-- Creates `~/.local-lang-pkg-managers/{npm,pip,pipx,cargo,go}/bin/` up front
-- Deploys `~/.local-lang-pkg-managers/local-lang-pkg-managers.env.sh` with the env-var exports and
+- Creates `~/.centralized-lang-pkgs/{npm,pip,pipx,cargo,go}/bin/` up front
+- Deploys `~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh` with the env-var exports and
   PATH prepend
 - Deploys `~/.config/pip/pip.conf` with `[install] user = true` so plain
   `pip install foo` redirects without remembering the `--user` flag (pip
   inside a venv ignores `user=` and writes to the venv as normal)
 - The env file is sourced from `~/.zshrc` and `~/.bashrc` (the source line
-  is always emitted by the `zsh` and `dotfiles` roles, guarded by
+  is always emitted by the `zsh` and `bash` roles, guarded by
   `[ -f ... ]`, so an opt-out is a no-op)
 
 ## Implementation notes
@@ -71,8 +73,8 @@ The role:
 The env file prepends each tool's bin dir to `PATH`. Final order is:
 
 ```
-~/.local-lang-pkg-managers/go/bin : ~/.local-lang-pkg-managers/cargo/bin : ~/.local-lang-pkg-managers/pipx/bin
- : ~/.local-lang-pkg-managers/pip/bin : ~/.local-lang-pkg-managers/npm/bin : <original PATH>
+~/.centralized-lang-pkgs/go/bin : ~/.centralized-lang-pkgs/cargo/bin : ~/.centralized-lang-pkgs/pipx/bin
+ : ~/.centralized-lang-pkgs/pip/bin : ~/.centralized-lang-pkgs/npm/bin : <original PATH>
  : ~/.local/bin
 ```
 
@@ -82,7 +84,7 @@ tail as a legacy fallback for pre-existing manual installs.
 
 ### Idempotency
 
-The env file uses a `LOCAL_LANG_PKG_MANAGERS_ENV_LOADED` guard so re-sourcing (manual
+The env file uses a `CENTRALIZED_LANG_PKGS_ENV_LOADED` guard so re-sourcing (manual
 `source ~/.zshrc`, nested shells) does not duplicate PATH entries.
 
 ### Scope limits
@@ -111,7 +113,7 @@ env var in that tool's own invocation environment.
 ## Adding a new tool
 
 1. Append the export(s) and PATH prepend to
-   `files/local-lang-pkg-managers.env.sh`
+   `files/centralized-lang-pkgs.env.sh`
 2. Add the new tool to the dir-creation loop in `tasks/main.yml`
 3. If the tool needs a config file equivalent to `pip.conf`, drop it in
    `files/` and add a copy task

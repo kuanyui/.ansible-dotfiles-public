@@ -922,7 +922,7 @@ an imperative `ivm provision`. Phased.
   materialized to JSON. `provision` reuses those registries; nothing runs ansible
   in the guest.
 
-## rename `local_pkgs` -> `centralize_lang_pkgs_dir` (planned)
+## rename `local_pkgs` -> `centralize_lang_pkgs_dir` (DONE)
 
 The name is unclear (the author forgot what it did a week after writing it). The
 role does NOT install/manage language packages - it REDIRECTS where npm / pip /
@@ -931,25 +931,39 @@ into a dedicated tree. So `lang_pkg_managers` would be MISLEADING (implies it
 manages packages). Decided: role -> `centralize_lang_pkgs_dir`, dir
 `~/.local-pkgs` -> `~/.centralized-lang-pkgs`. Clean sweep, no debt left.
 
-- [ ] **Rename role + dir + toggle + env file + vars** - full blast radius
-  (verified: NO apparmor rule, NO Makefile, NO CLAUDE.md refs - the apparmor
-  mention in the role README is future-rationale only, not a live rule):
+- [x] **Rename role + dir + env file + vars** - DONE. The original table here
+  predated the interim `local_pkgs` -> `local_lang_pkg_managers` rename, so its
+  `group_vars` toggle / `roles/dotfiles/` rows were stale (neither existed);
+  actual blast radius as executed:
 
   | # | File | Change |
   |---|------|--------|
-  | 1 | `roles/local_pkgs/` | `git mv` -> `roles/centralize_lang_pkgs_dir/` |
-  | 2 | `group_vars/all.yml` | `setup_local_pkgs` -> `setup_centralize_lang_pkgs_dir` + comment |
-  | 3 | `playbooks/user.yml` | role ref + comment |
-  | 4 | `roles/dotfiles/templates/.bashrc.j2` | source-line path + comment |
-  | 5 | `roles/zsh/templates/.zshrc.j2` | source-line path + comment |
-  | 6 | top-level `README.md` | role-table row |
-  | 7 | role `README.md` | full (paths/name/dir) |
-  | 8 | role `defaults/main.yml` | toggle name |
-  | 9 | role `files/{local-pkgs.env.sh,pip.conf}` + `tasks/main.yml` | dir `~/.centralized-lang-pkgs`, env file -> `centralized-lang-pkgs.env.sh`, vars `_LOCAL_PKGS`/`LOCAL_PKGS_ENV_LOADED` -> matching |
+  | 1 | `roles/local_lang_pkg_managers/` | `git mv` -> `roles/centralize_lang_pkgs_dir/` |
+  | 2 | `playbooks/local_lang_pkg_managers.yml` | `git mv` -> `playbooks/centralize_lang_pkgs_dir.yml`, play name + role ref |
+  | 3 | `playbooks/user.yml` | comment mention |
+  | 4 | `Makefile` | target `apply-local-lang-pkg-managers` -> `apply-centralize-lang-pkgs-dir` (+ `.PHONY`, help text) |
+  | 5 | `roles/bash/templates/.bashrc.j2` | source-line path + comment |
+  | 6 | `roles/zsh/templates/.zshrc.j2` | source-line path + comment |
+  | 7 | top-level `README.md` | playbook-tree line + role-table row |
+  | 8 | role `README.md` | full (paths/name/dir; also fixed the stale `setup_*`-toggle opt-in section - no toggle exists, opt-in is the dedicated playbook) |
+  | 9 | role `files/{centralized-lang-pkgs.env.sh,pip.conf}` + `tasks/main.yml` | dir `~/.centralized-lang-pkgs`, env file `local-lang-pkg-managers.env.sh` -> `centralized-lang-pkgs.env.sh`, guard vars `_CENTRALIZED_LANG_PKGS` / `CENTRALIZED_LANG_PKGS_ENV_LOADED` |
 
-  Independent of the `ivm provision` work; can land anytime. Existing installs
-  under the old `~/.local-pkgs/` are left for the user to `rm -rf` (or a one-time
-  note in the role README).
+  (`REFACTOR.md` mentions the old names as history of the earlier rename - left
+  as-is on purpose.)
+
+- [ ] One-time migration on each host that had the role applied (the layout
+  inside the tree is unchanged, so a rename IS the whole migration):
+
+  ```
+  mv ~/.local-lang-pkg-managers ~/.centralized-lang-pkgs
+  rm ~/.centralized-lang-pkgs/local-lang-pkg-managers.env.sh
+  make apply-centralize-lang-pkgs-dir
+  make apply-essentials-user
+  ```
+
+  (`rm`: the old-name env file rode along in the `mv`; the new one is deployed
+  by the make target. `apply-essentials-user`: re-renders `~/.zshrc`/`~/.bashrc`
+  so their guarded source line points at the new path.)
 
 ## profile_tasks callback: boot-style run/skip log
 

@@ -32,7 +32,7 @@ playbooks/                # entry playbooks
   ├─ apparmor.yml         # ├─ dedicated entry: deploy AppArmor profiles for desktop GUI apps
   ├─ trusted_pubkeys.yml  # ├─ dedicated entry: pin GitHub/GitLab SSH host keys + Debian CD signing keys
   ├─ firefox_tunes.yml    # ├─ dedicated entry: write per-profile user.js (session-store + cache off the SSD)
-  ├─ local_lang_pkg_managers.yml  # ├─ dedicated entry: redirect npm/pip/pipx/cargo/go globals into ~/.local-lang-pkg-managers/
+  ├─ centralize_lang_pkgs_dir.yml  # ├─ dedicated entry: redirect npm/pip/pipx/cargo/go globals into ~/.centralized-lang-pkgs/
   └─ mpv.yml              # └─ dedicated entry: deploy mpv config (`vo=wlshm` + keybindings + Lua scripts)
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
@@ -56,7 +56,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`zsh/`](roles/zsh/) | Install zsh + plugins, deploy `.zshrc`, run `chsh`. |
 | [`emacs/`](roles/emacs/) | Install Emacs + elisp packages. |
 | [`provision_distro_packages/`](roles/provision_distro_packages/) | Frequently-used distro package bundles (basic / net / sys / Wayland tools); delegates installs to `_install_distro_packages`. |
-| [`local_lang_pkg_managers/`](roles/local_lang_pkg_managers/) | Redirect npm / pip / pipx / cargo / go global installs from `~/.local/` into `~/.local-lang-pkg-managers/<tool>/`, so XDG + ansible-managed dotfiles stay separable from language-level package state. Opt-in via `make apply-local-lang-pkg-managers`. |
+| [`centralize_lang_pkgs_dir/`](roles/centralize_lang_pkgs_dir/) | Redirect npm / pip / pipx / cargo / go global installs from `~/.local/` into `~/.centralized-lang-pkgs/<tool>/`, so XDG + ansible-managed dotfiles stay separable from language-level package state. Opt-in via `make apply-centralize-lang-pkgs-dir`. |
 | [`podman_oci_runtimes/`](roles/podman_oci_runtimes/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`vm_podman/`](roles/vm_podman/) | Install `pvm`: define a podman container in a YAML template, then `pvm init <template>` - builds a per-template image via `podman exec` + `podman commit` (no Dockerfile), runs one container per project dir (cwd-bound). Consumes the same provision cache as `ivm`/`qvm`; `pvm shell` / `pvm agent`. Default `crun` shares the host kernel (warns + gates; use `ivm` for a real VM); `libkrun` microVM planned. |
 | [`vm_incus/`](roles/vm_incus/) | Install `ivm`: define an Incus VM (OS/distro, hardware, mounts, packages, dotfiles) in a YAML template, then `ivm init <template>` / `ivm shell`. One VM per project dir; GUI via SPICE, snapshots, multi-distro (Debian/openSUSE/Fedora). |

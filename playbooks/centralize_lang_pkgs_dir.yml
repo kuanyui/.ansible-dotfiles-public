@@ -1,5 +1,5 @@
 ---
-- name: Redirect language package managers' global installs into ~/.local-lang-pkg-managers/
+- name: Redirect language package managers' global installs into ~/.centralized-lang-pkgs/
   hosts: localhost
   connection: local
   gather_facts: true
@@ -8,4 +8,4 @@
     target_user: "{{ ansible_facts['user_id'] }}"
     target_group: "{{ ansible_facts['user_id'] }}"
   roles:
-    - local_lang_pkg_managers
+    - centralize_lang_pkgs_dir

@@ -1,13 +1,13 @@
 ---
 # Redirect npm / pip / pipx / cargo / go GLOBAL installs out of `~/.local/{bin,share}`
-# into a dedicated `~/.local-lang-pkg-managers/<tool>/` tree, so `~/.local/` stays
+# into a dedicated `~/.centralized-lang-pkgs/<tool>/` tree, so `~/.local/` stays
 # reserved for XDG + ansible-managed dotfiles. Opt-in: run only via its dedicated
-# playbook / `make apply-local-lang-pkg-managers` (no `setup_*` gate - the role runs
+# playbook / `make apply-centralize-lang-pkgs-dir` (no `setup_*` gate - the role runs
 # unconditionally when included). See README.md for the rationale.
 
-- name: Create `{{ target_home }}/.local-lang-pkg-managers/<tool>/bin/` for each of npm / pip / pipx / cargo / go
+- name: Create `{{ target_home }}/.centralized-lang-pkgs/<tool>/bin/` for each of npm / pip / pipx / cargo / go
   ansible.builtin.file:
-    path: "{{ target_home }}/.local-lang-pkg-managers/{{ item }}/bin"
+    path: "{{ target_home }}/.centralized-lang-pkgs/{{ item }}/bin"
     state: directory
     owner: "{{ target_user }}"
     group: "{{ target_group }}"
@@ -21,10 +21,10 @@
 
 # The env file is sourced by `.zshrc` / `.bashrc` behind an `[ -f ... ]` guard, so
 # when this role was never applied the file is absent and the source line no-ops.
-- name: Deploy `{{ target_home }}/.local-lang-pkg-managers/local-lang-pkg-managers.env.sh`
+- name: Deploy `{{ target_home }}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh`
   ansible.builtin.copy:
-    src: local-lang-pkg-managers.env.sh
-    dest: "{{ target_home }}/.local-lang-pkg-managers/local-lang-pkg-managers.env.sh"
+    src: centralized-lang-pkgs.env.sh
+    dest: "{{ target_home }}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh"
     owner: "{{ target_user }}"
     group: "{{ target_group }}"
     mode: "0644"

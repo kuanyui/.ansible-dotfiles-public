@@ -5,11 +5,11 @@
 [ -z "$PS1" ] && return
 
 ### ============================================
-### Env vars for ~/.local-lang-pkg-managers/ (npm / pip / pipx / cargo / go)
+### Env vars for ~/.centralized-lang-pkgs/ (npm / pip / pipx / cargo / go)
 ### ============================================
-# Deployed by `roles/local_lang_pkg_managers/` (opt-in). Harmless no-op when the
+# Deployed by `roles/centralize_lang_pkgs_dir/` (opt-in). Harmless no-op when the
 # file is absent.
-[ -f "${HOME}/.local-lang-pkg-managers/local-lang-pkg-managers.env.sh" ] && . "${HOME}/.local-lang-pkg-managers/local-lang-pkg-managers.env.sh"
+[ -f "${HOME}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh" ] && . "${HOME}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh"
 
 ### ============================================
 ### Version managers: nvm / gvm (opt-in via `ivm provision dev_nvm` / `dev_gvm`)
