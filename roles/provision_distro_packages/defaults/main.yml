@@ -319,6 +319,25 @@ provision_distro_packages_dev_node:
     - nodejs
     - npm
 
+# The nodejs + npm that `agent_codex` HARD-REQUIRES (its recipe runs `npm install -g
+# @openai/codex`). PAIRS with the `agent_codex` THIRDPARTY recipe - `ivm provision agent_codex`
+# applies BOTH, distro FIRST (cmd_provision order), so `npm` exists when the recipe runs.
+# Same two packages as `dev_node`, re-listed rather than referenced: a bundle resolves to
+# `__common__` + its family overlay and nothing else - there is no bundle-includes-bundle (the
+# same reason `dev_gvm` below re-lists its own deps instead of pulling in `dev_go`).
+# Does NOT cover the TEMPLATE path: `ivm init` resolves `distro_package_groups` +
+# `distro_packages` ONLY - never a `thirdparty_software` name - so a template wanting the CLI
+# still lists nodejs + npm itself (`roles/vm_incus/files/templates/codex.yaml` does). The
+# pairing is what makes `ivm provision agent_codex` work on a VM built from ANY template.
+# `description` is the one users SEE: for a name in two registries the completion shows the
+# distro entry's (first occurrence wins - see `_ivm_unit_names`), so it describes the whole
+# unit, not just these two packages.
+provision_distro_packages_agent_codex:
+  description: "OpenAI Codex CLI, npm global into ~/.centralized-lang-pkgs (+ its nodejs/npm deps)"
+  __common__:
+    - nodejs
+    - npm
+
 # gvm (Go Version Manager) + the deps it HARD-REQUIRES. PAIRS with the `dev_gvm` THIRDPARTY
 # recipe - `ivm provision dev_gvm` applies BOTH, distro FIRST (cmd_provision order), so the
 # deps are present when gvm loads. VERIFIED LIVE (debian 13, 2026-06): gvm checks for

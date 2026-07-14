@@ -1,9 +1,7 @@
 # yaml-language-server: $schema=../template.schema.json
-# Codex agent VM: the `codex` CLI as a standalone prebuilt binary - no nodejs/npm, and no
-# `distro_packages` at all (its installer needs only curl + ca-certificates, from the always-on
-# `incus_guest_baseline`, plus Essential-in-Debian tar/coreutils). See the agent_codex recipe.
+# Codex agent VM: Node.js + npm `@openai/codex`.
 template_name: codex
-description: "Codex agent box (Debian + @openai/codex CLI)"
+description: "Codex agent box (Debian + Node.js + @openai/codex CLI)"
 hw:
   cpu: 4
   memory: 4G
@@ -24,5 +22,8 @@ mounts:
     shadow:
       - .git
 shell_default_dir_after_login: /workspaces/$(basename "$(pwd)")   # `ivm sh` starts in the mounted project (matches the mount's guest path)
+distro_packages:
+  - nodejs
+  - npm
 thirdparty_software:
-  - agent_codex   # chatgpt.com/codex/install.sh -> ~/.local/bin/codex; recipe in roles/provision_thirdparty_software/defaults/main.yml
+  - agent_codex   # npm install -g @openai/codex; recipe in roles/provision_thirdparty_software/defaults/main.yml

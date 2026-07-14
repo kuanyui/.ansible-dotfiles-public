@@ -1,7 +1,7 @@
 ---
 # Registry of NON-distro install recipes - the sibling of `roles/provision_distro_packages`
 # for everything that is NOT an apt/zypper/dnf package name: 3rd-party repos
-# (vscode), vendor install scripts (agent_claude, agent_codex), npm/pip globals.
+# (vscode), `curl|bash` installers (agent_claude), npm/pip globals (agent_codex).
 #
 # Each `provision_thirdparty_software_<name>` is a per-`ansible_os_family` dict. Resolution
 # is OVERRIDE, not additive (UNLIKE `provision_distro_packages`, which concatenates
@@ -36,34 +36,22 @@ provision_thirdparty_software_agent_claude:
       su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
 provision_thirdparty_software_agent_codex:
-  description: "OpenAI Codex CLI (chatgpt.com install script, standalone binary into ~/.local/bin)"
+  description: "OpenAI Codex CLI (npm global into ~/.centralized-lang-pkgs; needs nodejs + npm)"
   __common__:
-    # File test, not `command -v`: the probe runs in a non-interactive login shell, which does
-    # NOT read `.zshrc` - and `.zshrc` is where `~/.local/bin` joins the PATH
-    # (`roles/zsh/templates/.zshrc.j2`) - so a PATH probe would wrongly re-install every run.
-    already_installed: su - user -c 'test -x ~/.local/bin/codex'
+    # File test, not `command -v`: the probe runs in a non-interactive shell where the
+    # env file's PATH prepend is not in effect, so a PATH probe could wrongly re-install.
+    already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/codex'
     install_script: |
-      # The official installer (first method listed in openai/codex's README): it resolves the
-      # arch, fetches the prebuilt Rust binary from the GitHub release, and verifies its SHA256
-      # against the digest in the release metadata. NO nodejs/npm - `@openai/codex` on npm is an
-      # 11 KB shim whose `optionalDependencies` fetch that SAME prebuilt binary, so the npm route
-      # cost ~60 distro packages (Debian's `npm` HARD-depends on 54 `node-*`; `--no-install-
-      # recommends` cannot touch a Depends) and then still needed node at runtime to exec it.
-      # Trust: TLS to chatgpt.com + the GitHub release digest. No signature - but strictly more
-      # than `agent_claude`'s installer above, which verifies nothing.
-      # Both env vars are REQUIRED (verified against the 2026-07 script):
-      #   CODEX_NON_INTERACTIVE=true  `ivm`'s run() inherits the terminal, so `incus exec` hands
-      #     the guest a /dev/tty and the installer WOULD prompt ("Start Codex now?"; and, when it
-      #     finds an npm-managed codex, "Uninstall the existing ...?") - hanging an unattended
-      #     provision. true -> its prompt_yes_no answers "no" to every prompt.
-      #   PATH  its add_to_path() appends a `# >>> Codex installer >>>` PATH block to ~/.zshrc
-      #     UNLESS the install dir is ALREADY on PATH. ~/.zshrc is ansible-managed (the next
-      #     dotfiles push would wipe the block anyway), so pre-seed PATH and it writes nothing -
-      #     the same installer-self-wiring dodge as `dev_nvm`'s `PROFILE=/dev/null` below.
-      # Unpinned: `CODEX_RELEASE` defaults to `latest`, matching agent_claude's installer.
-      # Lands at ~/.local/bin/codex (`CODEX_INSTALL_DIR`'s default) - already on the interactive
-      # PATH via .zshrc.j2, and where `agent_claude` puts `claude` too.
-      su - user -c 'CODEX_NON_INTERACTIVE=true PATH="$HOME/.local/bin:$PATH" sh -c "curl -fsSL https://chatgpt.com/codex/install.sh | sh"'
+      # Needs nodejs + npm. `ivm provision agent_codex` gets them from the SAME-NAMED distro
+      # bundle (`provision_distro_packages_agent_codex`), which cmd_provision installs FIRST;
+      # a TEMPLATE must still list them itself (`ivm init` never resolves a thirdparty name
+      # against the bundle registry) - see templates/codex.yaml. Sourcing the
+      # env file (roles/centralize_lang_pkgs_dir; the launcher guarantees it is in the
+      # guest BEFORE recipes run) sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm,
+      # the same redirect interactive guest shells and the host get from their rc files -
+      # so `codex` is on PATH in the guest's zsh/bash. Env var only: nothing is persisted
+      # to ~/.npmrc (a prefix there would trip a later `dev_nvm`).
+      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && npm install -g @openai/codex'
 
 # Rust via rustup - the official, recommended install (rust-lang.org/tools/install).
 # It downloads PREBUILT toolchain binaries (NOT source) into ~/.rustup + ~/.cargo as the

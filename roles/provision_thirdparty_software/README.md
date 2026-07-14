@@ -2,7 +2,7 @@
 
 Registry of **non-distro install recipes** - the sibling of `roles/provision_distro_packages`
 for everything that is NOT an `apt`/`zypper`/`dnf` package name: 3rd-party repos
-(vscode), vendor install scripts (agent_claude, agent_codex), npm/pip globals.
+(vscode), `curl|bash` installers (agent_claude), npm/pip globals (agent_codex).
 
 Data-only role (ships no tasks). `roles/vm_incus` materializes this registry to
 `thirdparty-software.json` at apply time; `ivm` reads it and runs the recipes in a
@@ -41,27 +41,6 @@ provision_thirdparty_software_vscode:          # 3rd-party repo, per-family (ill
 
 Write a repo recipe to ADD THE REPO (not fetch a one-off package file), so `ivm
 update` (apt/zypper upgrade) keeps it current.
-
-## Migrating an old VM off the npm-installed `codex`
-
-`agent_codex` used to be `npm install -g @openai/codex`; it is now the official standalone
-installer (no nodejs/npm). A VM provisioned by the OLD recipe keeps its npm copy, and that
-copy **wins on PATH** - so the new one looks installed but never runs:
-
-| copy | path | how it reaches PATH |
-|------|------|---------------------|
-| old (npm) | `~/.centralized-lang-pkgs/npm/bin/codex` | env file, **prepended** |
-| new (standalone) | `~/.local/bin/codex` | `.zshrc`, **appended** |
-
-Remove the old one in the guest, then re-provision:
-
-```
-npm uninstall -g @openai/codex
-```
-
-Not automated on purpose - the recipe never removes software it did not install this run.
-`which codex` should then print `~/.local/bin/codex`. (A VM built fresh from the `codex`
-template is unaffected - it has no npm at all.)
 
 ## Adding a recipe
 

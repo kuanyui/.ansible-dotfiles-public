@@ -46,6 +46,7 @@
         'dev_android': provision_distro_packages_dev_android,
         'dev_go': provision_distro_packages_dev_go,
         'dev_node': provision_distro_packages_dev_node,
+        'agent_codex': provision_distro_packages_agent_codex,
         'dev_gvm': provision_distro_packages_dev_gvm,
         'desktop_icewm': provision_distro_packages_desktop_icewm,
         'desktop_lxqt': provision_distro_packages_desktop_lxqt,
