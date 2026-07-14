@@ -51,13 +51,14 @@ provision_distro_packages_tools_basic:
     - stow
 
 provision_distro_packages_tools_sys:
-  description: "system monitors - htop, iotop, sysstat, nvtop, cpuid"
+  description: "system monitors - htop, iotop, sysstat, nvtop, cpuid, fatrace"
   __common__:
     - htop
     - iotop
     - sysstat
     - nvtop
     - cpuid
+    - fatrace
   Debian:
     - cpu-x  # not in default Fedora/RHEL repos
   Suse: []   # `__common__` names carry over to openSUSE; no Suse-only extra needed
