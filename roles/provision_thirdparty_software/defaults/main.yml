@@ -42,7 +42,10 @@ provision_thirdparty_software_agent_codex:
     # env file's PATH prepend is not in effect, so a PATH probe could wrongly re-install.
     already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/codex'
     install_script: |
-      # Needs nodejs + npm from the template's `provision_distro_packages`. Sourcing the
+      # Needs nodejs + npm. `ivm provision agent_codex` gets them from the SAME-NAMED distro
+      # bundle (`provision_distro_packages_agent_codex`), which cmd_provision installs FIRST;
+      # a TEMPLATE must still list them itself (`ivm init` never resolves a thirdparty name
+      # against the bundle registry) - see templates/codex.yaml. Sourcing the
       # env file (roles/centralize_lang_pkgs_dir; the launcher guarantees it is in the
       # guest BEFORE recipes run) sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm,
       # the same redirect interactive guest shells and the host get from their rc files -
