@@ -10,7 +10,7 @@ Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 `delete`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set`+`unset` (guest
-settings: password/ssh-server/shell-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/working dir/IPv4; args -> raw incus list); `cd` (print a VM's working-dir root for the `ivm()` shell wrapper to cd into);
+settings: password/ssh-server/shell-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/MEM guest+host/disk/working dir/IPv4; args -> raw incus list); `cd` (print a VM's working-dir root for the `ivm()` shell wrapper to cd into);
 `adopt` (bring an unmanaged VM - hand-made or older-ivm - under ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, a global `--name <vm>`, or (when the
 subcommand takes no positional of its own) a trailing `<vm>` name (`ivm stop foo`).
@@ -2250,27 +2250,99 @@ def managed_vm_rows(columns: str) -> list[list[str]]:
     return managed_rows
 
 
+def qemu_host_rss(qemu_pid: str) -> str | None:
+    """TRUE host RAM of a VM's qemu process: `VmRSS` from `/proc/<pid>/status`, formatted
+    like the guest figure (`human_iec_bytes`). This is the real cost the guest-agent number
+    (`incus list -c m`) UNDER-reports - incus VMs have no memory-balloon free-page-reporting,
+    so freed guest RAM is not returned to the host until stop (see `cmd_top`). `qemu_pid` is
+    incus's `state.pid` for the VM (the `p` column; it is the qemu PID, from the driver's
+    `/run/incus/<name>/qemu.pid` pidfile). Returns None - so the caller prints a placeholder,
+    never a wrong 0 - when the pid is empty/non-numeric, the process is gone, or `/proc` is
+    unreadable (e.g. a `hidepid` mount). No sudo: the pid comes from incus, and the `VmRSS`
+    line of `/proc/<pid>/status` is world-readable even for a root-owned qemu."""
+    if not qemu_pid.strip().isdigit():
+        return None
+    try:
+        proc_status: str = Path(f"/proc/{qemu_pid.strip()}/status").read_text()
+    except OSError:
+        return None
+    rss_match: re.Match[str] | None = re.search(r"^VmRSS:\s+(\d+)\s+kB$", proc_status, re.MULTILINE)
+    return human_iec_bytes(int(rss_match.group(1)) * 1024) if rss_match else None
+
+
+def guest_disk_used(name: str) -> str | None:
+    """USED bytes of the VM's root filesystem, read LIVE from inside the guest via
+    `incus exec <name> -- df -Pk /` (POSIX `df`, 1-KiB blocks; `-P` keeps each entry on one
+    line). This is a DIRECT exec - reliable, unlike incus's periodic guest-agent disk metric
+    (`incus list -c D`), which for VMs is famously sporadic (lxc/incus#259). Needs NO host
+    root: `incus exec` already runs as root inside the guest (the same path as `ivm sh-root`).
+    NOTE: this is the GUEST filesystem's used space, which can sit below the host's real
+    `root.img` btrfs footprint until the guest `fstrim`s freed blocks back. A 5s timeout keeps
+    one wedged VM from hanging the whole listing. Returns a `human_iec_bytes` string, or None
+    (caller prints a placeholder) when the VM is unreachable or `df` output is unparseable."""
+    try:
+        result: subprocess.CompletedProcess[str] = subprocess.run(
+            ["incus", "exec", name, "--", "df", "-Pk", "/"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    df_lines: list[str] = result.stdout.splitlines()
+    if len(df_lines) < 2:  # header + one data line expected
+        return None
+    df_fields: list[str] = df_lines[-1].split()  # Filesystem 1K-blocks Used Avail Cap Mount
+    if len(df_fields) < 3 or not df_fields[2].isdigit():
+        return None
+    return human_iec_bytes(int(df_fields[2]) * 1024)
+
+
 def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
     """List ivm-managed VMs (those tagged with `user.ivm_init_at_dir`) as a table:
-    State, Name, Working Directory (the host dir `ivm init` ran in, that `ivm cd` jumps
-    to), IPv4. ANY extra arg switches to a RAW `incus list` passthrough instead (e.g.
+    State, Name, MEM(guest), MEM(host), DISK, Working Directory (the host dir `ivm init`
+    ran in, that `ivm cd` jumps to), IPv4. MEM(guest) is incus's guest-agent memory figure;
+    MEM(host) is the qemu process's real host RSS (`qemu_host_rss`), which the guest figure
+    under-reports. DISK is the guest root filesystem's USED space, read live per running VM
+    via `incus exec ... df` (`guest_disk_used`) - reliable, unlike incus's sporadic guest-agent
+    disk metric (`-c D`, lxc/incus#259). A non-running VM shows `(<state>)` (e.g. `(stopped)`);
+    a value that can't be read shows `-`; a FROZEN VM still has a qemu process, so its MEM(host)
+    stays populated. ANY extra arg switches to a RAW `incus list` passthrough instead (e.g.
     `ivm list --format csv`), which then shows ALL incus instances, ivm-managed or not."""
     if list_args:  # explicit passthrough: honor the caller's incus format/filter verbatim
         run(["incus", "list", *list_args], dry_run=dry_run)
         return
-    list_columns: str = "s,n,4,config:user.ivm_init_at_dir"
+    # `p` (qemu pid) rides along so MEM(host) needs no extra per-VM `incus info` call.
+    list_columns: str = "s,n,4,m,p,config:user.ivm_init_at_dir"
     if dry_run:
         print(f"+ incus list --format csv --columns {list_columns}", file=sys.stderr)
+        print("  + per running VM: read /proc/<qemu-pid>/status VmRSS (MEM host) + "
+              "`incus exec <vm> -- df -Pk /` (DISK)", file=sys.stderr)
         return
-    table_rows: list[tuple[str, ...]] = [
-        (state, name, working_dir, ipv4.replace("\n", ", "))
-        for state, name, ipv4, working_dir in managed_vm_rows(list_columns)
-    ]
+    table_rows: list[tuple[str, ...]] = []
+    for state, name, ipv4, guest_mem, qemu_pid, working_dir in managed_vm_rows(list_columns):
+        # Non-running VMs show `(<state>)`; a running VM whose figure can't be read shows `-`.
+        # MEM(host) reads the host qemu process (qemu_host_rss), so it stays populated even when
+        # the agent is silent and even for a FROZEN VM whose process lives on. DISK execs `df`
+        # inside each running guest - the reliable path, since incus's agent disk metric (`-c D`)
+        # is sporadic for VMs (lxc/incus#259); skipped when not running (nothing to exec into).
+        is_running: bool = state.upper() == "RUNNING"
+        running_gap: str = "-" if is_running else f"({state.lower()})"
+        mem_host: str = qemu_host_rss(qemu_pid) or running_gap
+        disk: str = (guest_disk_used(name) or running_gap) if is_running else running_gap
+        table_rows.append((
+            state, name,
+            guest_mem or running_gap,
+            mem_host,
+            disk,
+            working_dir,
+            ipv4.replace("\n", ", "),
+        ))
     if not table_rows:
         print("No ivm-managed VMs (none carry `user.ivm_init_at_dir`); "
               "create one with `ivm init <template>`.", file=sys.stderr)
         return
-    print_table(["STATE", "NAME", "WORKING DIRECTORY", "IPV4"], table_rows)
+    print_table(["STATE", "NAME", "MEM(guest)", "MEM(host)", "DISK", "WORKING DIRECTORY", "IPV4"], table_rows)
 
 
 def cmd_cd(name: str | None) -> None:
