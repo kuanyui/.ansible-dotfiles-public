@@ -67,6 +67,15 @@ post_install_script: |
   port: 8000
   whitelistMode: true
   whitelist: ["::1", "127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  # Put API keys (secrets.json) INTO ST's OWN backup ("User Settings -> Account ->
+  # Download Backup", which zips the data root ~/SillyTavern/data/<user>/). With the
+  # default `false`, ST's createBackupArchive() (src/users.js) adds secrets.json to the
+  # zip's ignore list, so the backup SILENTLY omits every saved API key; `true` keeps
+  # them in - a self-contained backup that restores keys too.
+  # Trade-off: `true` ALSO lets the web UI read saved keys back as plaintext (the
+  # /api/secrets/view endpoint). Fine for THIS box - it is NAT-only (reachable from the
+  # host alone, single user) and ST stores secrets.json in plaintext on disk regardless.
+  allowKeysExposure: true
   EOF
   # Run ST as a PER-USER systemd service (~/.config/systemd/user), so `user` - who has no
   # sudo - fully controls it: the st-backup helper stops/starts it for a consistent snapshot
