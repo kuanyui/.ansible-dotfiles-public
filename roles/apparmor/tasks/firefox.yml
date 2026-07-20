@@ -89,7 +89,41 @@
 
 
 # =============================================
-# Deploy .desktop launchers
+# Deploy the touch-friendly profile launcher
+# =============================================
+# One launcher replaces the former one-.desktop-per-Firefox-profile layout: with ~10 profiles
+# those entries flooded both the application menu and KRunner, and a right-click Desktop Action
+# submenu is a long-press on a touchscreen. See templates/firefox/aa-firefox-launcher.j2.
+
+- name: Resolve home-relative launcher paths for {{ apparmor_target_user }}
+  ansible.builtin.set_fact:
+    _aa_firefox_launcher_dir: "/home/{{ apparmor_target_user }}/.local/bin"
+    _aa_firefox_launcher: "/home/{{ apparmor_target_user }}/.local/bin/aa-firefox-launcher"
+  tags: firefox
+
+- name: Create directory {{ _aa_firefox_launcher_dir }}
+  ansible.builtin.file:
+    path: "{{ _aa_firefox_launcher_dir }}"
+    state: directory
+    owner: "{{ apparmor_target_user }}"
+    mode: '0755'
+  become: true
+  tags: firefox
+
+- name: Write the Firefox profile launcher to {{ _aa_firefox_launcher }}
+  ansible.builtin.template:
+    src: firefox/aa-firefox-launcher.j2
+    dest: "{{ _aa_firefox_launcher }}"
+    owner: "{{ apparmor_target_user }}"
+    mode: '0755'
+    # Fail loud at deploy time if the rendered Python is syntactically broken.
+    validate: python3 -m py_compile %s
+  become: true
+  tags: firefox
+
+
+# =============================================
+# Deploy .desktop launcher
 # =============================================
 
 - name: Create directory ~/.local/share/applications for {{ apparmor_target_user }}
@@ -117,41 +151,32 @@
   loop: "{{ apparmor__stale_desktops.files }}"
   tags: firefox
 
-- name: Write ansible_aa_firefox_isolated_*.desktop launcher for each Firefox profile
+- name: Write the single ansible_aa_firefox.desktop entry (its `Exec` runs {{ _aa_firefox_launcher }})
   ansible.builtin.template:
-    src: firefox/ansible_aa_firefox_isolated_profile.desktop.j2
-    dest: "/home/{{ apparmor_target_user }}/.local/share/applications/ansible_aa_firefox_isolated_{{ ff_profile.label_name | lower | replace(' ', '_') }}.desktop"
-    owner: "{{ apparmor_target_user }}"
-    mode: '0644'
-  become: true
-  loop: "{{ apparmor_firefox_profiles }}"
-  loop_control:
-    loop_var: ff_profile
-  tags: firefox
-
-- name: Write ansible_aa_firefox_all_profiles.desktop launcher
-  ansible.builtin.template:
-    src: firefox/ansible_aa_firefox_all_profiles.desktop.j2
-    dest: "/home/{{ apparmor_target_user }}/.local/share/applications/ansible_aa_firefox_all_profiles.desktop"
+    src: firefox/ansible_aa_firefox.desktop.j2
+    dest: "/home/{{ apparmor_target_user }}/.local/share/applications/ansible_aa_firefox.desktop"
     owner: "{{ apparmor_target_user }}"
     mode: '0644'
   become: true
   tags: firefox
 
-- name: Enumerate installed ansible_aa_firefox_*.desktop launchers for stale-file cleanup
+# The per-profile launchers an earlier version of this role deployed
+# (ansible_aa_firefox_isolated_<label>.desktop + ansible_aa_firefox_all_profiles.desktop) are
+# all superseded by the single ansible_aa_firefox.desktop above. Everything the glob matches is
+# deprecated, so no allowlist is needed - the trailing `_` in the pattern is what keeps the
+# surviving `ansible_aa_firefox.desktop` (no underscore) out of the match.
+
+- name: "[IDEMPOTENCE] Enumerate deprecated per-profile ansible_aa_firefox_*.desktop launchers"
   ansible.builtin.find:
     paths: "/home/{{ apparmor_target_user }}/.local/share/applications"
     patterns: "ansible_aa_firefox_*.desktop"
   register: apparmor__existing_desktops
   tags: firefox
 
-- name: Delete ansible_aa_firefox_*.desktop launchers with no matching Firefox profile
+- name: "[IDEMPOTENCE] Remove deprecated file ~/.local/share/applications/ansible_aa_firefox_*.desktop"
   ansible.builtin.file:
     path: "{{ item.path }}"
     state: absent
   become: true
   loop: "{{ apparmor__existing_desktops.files }}"
-  vars:
-    _expected: "{{ (apparmor_firefox_profiles | map(attribute='label_name') | map('lower') | map('replace', ' ', '_') | map('regex_replace', '^(.*)$', 'ansible_aa_firefox_isolated_\\1.desktop') | list) + ['ansible_aa_firefox_all_profiles.desktop'] }}"
-  when: item.path | basename not in _expected
   tags: firefox

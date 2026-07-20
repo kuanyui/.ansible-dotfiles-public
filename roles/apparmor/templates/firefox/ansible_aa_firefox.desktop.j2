@@ -1,0 +1,21 @@
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
+
+# The ONLY visible Firefox entry - one menu/KRunner item instead of one per Firefox profile.
+# Both a normal launch and an external link (via the MimeType associations below) land in the
+# same launcher, which then execs the confined Firefox. See templates/firefox/aa-firefox-launcher.j2.
+#
+# No Desktop Actions on purpose: they surface as a right-click submenu, which is a long-press
+# on the touchscreen this entry is shaped for.
+
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=AA-Firefox
+GenericName=Web Browser
+Comment=Choose an AppArmor-confined Firefox profile
+Exec={{ _aa_firefox_launcher }} %u
+Icon=firefox
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/vnd.mozilla.xul+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=false
