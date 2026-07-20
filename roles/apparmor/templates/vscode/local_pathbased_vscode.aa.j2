@@ -48,6 +48,7 @@ profile local_pathbased_vscode /usr/share/code/code {
     /usr/share/code/resources/app/node_modules/@vscode/ripgrep/bin/rg ix,  # bundled ripgrep for workspace search
     /usr/share/code/resources/app/node_modules/@vscode/ripgrep-universal/bin/linux-x64/rg ix,  # newer bundled ripgrep (per-arch path) for workspace search
     /usr/share/code/resources/app/node_modules/@vscode/vsce-sign/bin/vsce-sign ix,  # bundled VSIX signature verifier (extension marketplace installs)
+    /usr/share/code/resources/app/node_modules.asar.unpacked/@vscode/ripgrep-universal/bin/linux-x64/rg ix,  # bundled ripgrep, asar-unpacked layout
 
     deny /usr/share/code/resources/app/extensions/ w,  # VS Code probes this; root-owned so mkdir fails anyway
 
