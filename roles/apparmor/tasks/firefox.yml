@@ -31,34 +31,70 @@
 # ansible.builtin.ini raises an error for missing sections, so we must not query sections
 # blindly -- only those grep confirmed. Sections without Name or Path are skipped by when.
 # configparser lowercases option names, so 'Name=' is read as 'name', 'Path=' as 'path'.
+#
+# Final order (drives the launcher's list order): the profiles designated by an
+# [Install<HASH>] section first, then everything else, each group by its [ProfileN] number.
+# [Install<HASH>] is Firefox's profile-per-install marker - HASH is a hex hash of the
+# installation directory, NOT a number - and the section carries no Name/Path of its own,
+# only `Default=<profile path>` naming which profile that installation launches by default.
+# So "install first" means: the profile its `Default=` points at leads the list.
 
-- name: Initialize apparmor_firefox_profiles to empty list
+- name: Initialize apparmor_firefox_profiles and apparmor_firefox_install_default_dirs to empty lists
   ansible.builtin.set_fact:
     apparmor_firefox_profiles: []
+    apparmor_firefox_install_default_dirs: []
+  tags: firefox
+
+- name: Find all [Install<HASH>] section headers in profiles.ini
+  ansible.builtin.command:
+    cmd: grep -E '^\[Install[0-9A-Fa-f]+\]' {{ apparmor_firefox_base_path }}/profiles.ini
+  register: apparmor__raw_install_sections
+  changed_when: false
+  check_mode: false
+  # grep exits 1 when nothing matches. Unlike [ProfileN], having no [Install<HASH>] section is
+  # normal (older profiles.ini predating profile-per-install), so an empty result is not an error.
+  failed_when: false
+  tags: firefox
+
+- name: Collect the `Default=` profile path of each [Install<HASH>] section
+  ansible.builtin.set_fact:
+    apparmor_firefox_install_default_dirs: "{{ apparmor_firefox_install_default_dirs + [_install_default_dir] }}"
+  vars:
+    _section: "{{ item | regex_replace('^\\[(.+)\\]$', '\\1') }}"
+    _install_default_dir: "{{ lookup('ansible.builtin.ini', 'default', section=_section, file=apparmor_firefox_base_path ~ '/profiles.ini', default='') }}"
+  loop: "{{ apparmor__raw_install_sections.stdout_lines }}"
+  when: _install_default_dir != ''
   tags: firefox
 
 - name: Find all [ProfileN] section headers in profiles.ini
   ansible.builtin.command:
     cmd: grep -E '^\[Profile[0-9]+\]' {{ apparmor_firefox_base_path }}/profiles.ini
-  register: apparmor__raw_sections
+  register: apparmor__raw_profile_sections
   changed_when: false
   check_mode: false
   tags: firefox
 
 - name: Build apparmor_firefox_profiles list from profiles.ini
   ansible.builtin.set_fact:
-    apparmor_firefox_profiles: "{{ apparmor_firefox_profiles | default([]) + [{'label_name': _label, 'dir_name': _dir}] }}"
+    apparmor_firefox_profiles: "{{ apparmor_firefox_profiles | default([]) + [{'label_name': _label, 'dir_name': _dir, 'section_sort_key': _section_sort_key}] }}"
   vars:
     _section: "{{ item | regex_replace('^\\[(.+)\\]$', '\\1') }}"
     _label: "{{ lookup('ansible.builtin.ini', 'name', section=_section, file=apparmor_firefox_base_path ~ '/profiles.ini', default='') }}"
     _dir: "{{ lookup('ansible.builtin.ini', 'path', section=_section, file=apparmor_firefox_base_path ~ '/profiles.ini', default='') }}"
-  loop: "{{ apparmor__raw_sections.stdout_lines }}"
+    # Zero-padded on purpose. Jinja's `sort` is lexicographic and a templated dict value is a
+    # string, so a bare "10" would sort before "2". Padding makes lexicographic == numeric.
+    _section_sort_key: "{{ '%04d' | format(item | regex_replace('^\\[Profile([0-9]+)\\]$', '\\1') | int) }}"
+  loop: "{{ apparmor__raw_profile_sections.stdout_lines }}"
   when: _label != '' and _dir != ''
   tags: firefox
 
-- name: Sort apparmor_firefox_profiles by dir_name for stable template output
+- name: Sort apparmor_firefox_profiles - [Install<HASH>] defaults first, then by [ProfileN] number
   ansible.builtin.set_fact:
-    apparmor_firefox_profiles: "{{ apparmor_firefox_profiles | sort(attribute='dir_name') | list }}"
+    apparmor_firefox_profiles: "{{ (_install_default_profiles | sort(attribute='section_sort_key'))
+                                   + (_remaining_profiles | sort(attribute='section_sort_key')) }}"
+  vars:
+    _install_default_profiles: "{{ apparmor_firefox_profiles | selectattr('dir_name', 'in', apparmor_firefox_install_default_dirs) | list }}"
+    _remaining_profiles: "{{ apparmor_firefox_profiles | rejectattr('dir_name', 'in', apparmor_firefox_install_default_dirs) | list }}"
   tags: firefox
 
 # =============================================
