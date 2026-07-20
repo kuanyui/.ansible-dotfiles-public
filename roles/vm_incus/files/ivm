@@ -911,9 +911,14 @@ def resolve_thirdparty_software(
     names: list[str], registry: dict[str, Any], ansible_os_family: str
 ) -> list[dict[str, Any]]:
     """Resolve `thirdparty_software` recipe names against the registry into
-    `{name, already_installed?, install_script}` recipes for THIS VM's family.
-    OVERRIDE (not additive like distro groups): the family's entry if defined, else
-    `__common__`. Shared by `init` (the template's list) and `provision` (CLI args)."""
+    `{name, already_installed?, install_script, distro_packages}` recipes for THIS VM's
+    family. The recipe BODY is OVERRIDE (not additive like distro groups): the family's
+    entry if defined, else `__common__`. `distro_packages` - the distro packages the
+    recipe hard-requires, declared at the entry's TOP level - resolves ADDITIVELY like a
+    bundle (`__common__` + family overlay); callers merge it into the package install
+    that precedes the recipe scripts, so a recipe's deps need no paired distro bundle
+    and no extra listing in templates. Shared by `init` (the template's list) and
+    `provision` (CLI args)."""
     recipes: list[dict[str, Any]] = []
     for name in names:
         entry: Any = registry.get(name)
@@ -927,10 +932,16 @@ def resolve_thirdparty_software(
         install_script: str = family_recipe.get("install_script", "")
         if not install_script:
             die(f"thirdparty_software '{name}' ({ansible_os_family}) has no install_script")
+        deps_block: Any = entry.get("distro_packages") or {}
+        if not isinstance(deps_block, dict):
+            die(f"thirdparty_software '{name}': `distro_packages` must be a mapping of "
+                f"`__common__`/family overlays to package lists, got {type(deps_block).__name__}")
         recipes.append({
             "name": name,
             "already_installed": family_recipe.get("already_installed"),
             "install_script": install_script,
+            "distro_packages": (overlay_install_packages(deps_block.get("__common__"))
+                                + overlay_install_packages(deps_block.get(ansible_os_family))),
         })
     return recipes
 
@@ -1011,12 +1022,23 @@ def centralized_lang_pkgs_env_provision(shared_prebuilt_provision_assets_root: P
 def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: Path,
                      shared_prebuilt_provision_assets_root: Path) -> str:
     """First-provision shell, run as root via `incus exec`: install packages
-    (baseline + groups + flat), set timezone + tmpfs, create `user`, set both
-    shells to zsh, configure sshd, then run the template's `post_install_script`
-    (also as root - it drops to `user` with `su - user -c '...'` for user bits)."""
+    (baseline + groups + flat + the thirdparty recipes' `distro_packages` deps), set
+    timezone + tmpfs, create `user`, set both shells to zsh, configure sshd, then run
+    the template's `post_install_script` (also as root - it drops to `user` with
+    `su - user -c '...'` for user bits)."""
     ansible_os_family: str = ansible_os_family_of(doc)
     is_gui: bool = bool(doc.get("sys", {}).get("gui"))
     packages: list[str] = resolve_packages(doc, registry, ansible_os_family)
+    # The template's thirdparty recipes, resolved EARLY (registry loaded only when used):
+    # their `distro_packages` deps join the one package install below, so the recipe
+    # scripts further down can rely on them without the template re-listing anything.
+    thirdparty_names: list[str] = doc.get("thirdparty_software", [])
+    thirdparty_recipes: list[dict[str, Any]] = resolve_thirdparty_software(
+        thirdparty_names, load_thirdparty_software(shared_prebuilt_provision_assets_root), ansible_os_family
+    ) if thirdparty_names else []
+    for thirdparty_recipe in thirdparty_recipes:
+        packages += thirdparty_recipe["distro_packages"]
+    packages = list(dict.fromkeys(packages))
     if is_gui:
         # GUI VMs: the incus-SPICE glue. `spice-vdagent` = clipboard + dynamic
         # resolution with `ivm gui`'s SPICE console. `xdg-user-dirs` = the GTK file
@@ -1056,13 +1078,11 @@ def provision_script(doc: Template, registry: dict[str, Any], cwd: Path, root: P
     # the author's `post_install_script` so that can build on it.
     script += groups_post_install_script(doc.get("distro_package_groups", []), registry, ansible_os_family)
     # Non-distro installs (3rd-party repos / curl|bash / npm-pip) declared in the
-    # template's `thirdparty_software`, run as root before the author's custom
-    # `post_install_script` so that can rely on them. Registry loaded only when used.
-    thirdparty_names: list[str] = doc.get("thirdparty_software", [])
-    if thirdparty_names:
-        script += thirdparty_install_script(
-            resolve_thirdparty_software(thirdparty_names, load_thirdparty_software(shared_prebuilt_provision_assets_root), ansible_os_family)
-        )
+    # template's `thirdparty_software` (resolved above; their `distro_packages` deps are
+    # already in), run as root before the author's custom `post_install_script` so that
+    # can rely on them.
+    if thirdparty_recipes:
+        script += thirdparty_install_script(thirdparty_recipes)
     post_install_script: str = doc.get("post_install_script", "")
     if post_install_script:
         script += post_install_script if post_install_script.endswith("\n") else post_install_script + "\n"
@@ -2115,9 +2135,11 @@ def cmd_provision(name: str, unit_names: list[str], shared_prebuilt_provision_as
     path. A name can be a `distro_package_groups` bundle, a `thirdparty_software`
     recipe, AND/OR a dotfiles feature - all that match are applied (e.g. `emacs` is
     BOTH the `emacs` package bundle AND the `dotfiles/emacs` config, so both happen).
-    Distro bundles install via the VM's package manager, thirdparty recipes run their
-    (probe-guarded) script as root, dotfiles features are pushed into /home/user (+ /root).
-    Idempotent. Target is the cwd-bound VM or `--name`, like the other VM subcommands."""
+    Distro bundles install via the VM's package manager; thirdparty recipes run their
+    (probe-guarded) script as root, AFTER their declared `distro_packages` deps are
+    installed in the same package transaction as the bundles; dotfiles features are
+    pushed into /home/user (+ /root). Idempotent. Target is the cwd-bound VM or
+    `--name`, like the other VM subcommands."""
     ensure_up(name, dry_run=dry_run)
     distro_registry: dict[str, Any] = load_package_groups(shared_prebuilt_provision_assets_root)
     thirdparty_registry: dict[str, Any] = load_thirdparty_software(shared_prebuilt_provision_assets_root)
@@ -2157,20 +2179,25 @@ def cmd_provision(name: str, unit_names: list[str], shared_prebuilt_provision_as
                                                        name, shared_prebuilt_provision_assets_root):
             run(push_cmd, dry_run=dry_run)
     script: str = ""
+    thirdparty_recipes: list[dict[str, Any]] = resolve_thirdparty_software(
+        thirdparty_names, thirdparty_registry, ansible_os_family
+    ) if thirdparty_names else []
+    # ONE package-manager transaction for the bundles' packages AND the recipes'
+    # `distro_packages` deps - so deps are in place before any recipe script runs.
+    packages: list[str] = []
+    for bundle in distro_bundles:
+        packages += resolve_group(distro_registry, bundle, ansible_os_family)
+    for thirdparty_recipe in thirdparty_recipes:
+        packages += thirdparty_recipe["distro_packages"]
+    packages = list(dict.fromkeys(packages))
+    if packages:
+        script += install_packages_script(ansible_os_family, packages)
     if distro_bundles:
-        packages: list[str] = []
-        for bundle in distro_bundles:
-            packages += resolve_group(distro_registry, bundle, ansible_os_family)
-        packages = list(dict.fromkeys(packages))
-        if packages:
-            script += install_packages_script(ansible_os_family, packages)
         # `user` already exists on a provisioned VM, so a bundle's post_install can
         # `su - user -c` straight away (unlike init, no ordering concern).
         script += groups_post_install_script(distro_bundles, distro_registry, ansible_os_family)
-    if thirdparty_names:
-        script += thirdparty_install_script(
-            resolve_thirdparty_software(thirdparty_names, thirdparty_registry, ansible_os_family)
-        )
+    if thirdparty_recipes:
+        script += thirdparty_install_script(thirdparty_recipes)
     if script:
         run(["incus", "exec", name, "--", "bash", "-ec", script], dry_run=dry_run)
     for feature in dotfiles_features:

@@ -7,7 +7,7 @@
 # is OVERRIDE, not additive (UNLIKE `provision_distro_packages`, which concatenates
 # `__common__` + the family overlay): a piece of software has ONE install method,
 # possibly varying by family - so use the host/guest family's entry if defined,
-# else `__common__`. Each entry:
+# else `__common__`. Each family overlay:
 #   install_script    REQUIRED  shell run as ROOT in the guest; `su - user -c '...'`
 #                               for user-scoped installs (root switches to anyone,
 #                               no password).
@@ -17,6 +17,16 @@
 #                               only succeed when truly installed (a file test is
 #                               more robust than `command -v` when the bin dir is
 #                               not on the login PATH).
+# And each entry MAY carry, at TOP level (sibling of the family overlays, NOT inside one):
+#   distro_packages   OPTIONAL  distro packages the recipe hard-requires. The launcher
+#                               installs them via the family's package manager BEFORE any
+#                               recipe runs, on BOTH paths: `ivm init` merges them into the
+#                               template's package install, `ivm provision <name>` into its
+#                               batch - so templates never re-list a recipe's deps. Shape +
+#                               resolution mirror a distro BUNDLE: `__common__` + family
+#                               overlay, ADDITIVE - the ONE additive field in this registry
+#                               (the recipe body above is override; package lists genuinely
+#                               split into shared + per-family extras, install methods don't).
 #
 # `roles/_shared_prebuilt_provision_assets` materializes this to the shared
 # `thirdparty-software.json` at apply time; `ivm` (later qvm/pvm) reads it and runs
@@ -36,16 +46,20 @@ provision_thirdparty_software_agent_claude:
       su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
 provision_thirdparty_software_agent_codex:
-  description: "OpenAI Codex CLI (npm global into ~/.centralized-lang-pkgs; needs nodejs + npm)"
+  description: "OpenAI Codex CLI (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps)"
+  # Same two packages as the `dev_node` bundle, re-listed rather than referenced: a recipe's
+  # deps are its own implementation detail, and there is no bundle-includes-bundle anyway.
+  distro_packages:
+    __common__:
+      - nodejs
+      - npm
   __common__:
     # File test, not `command -v`: the probe runs in a non-interactive shell where the
     # env file's PATH prepend is not in effect, so a PATH probe could wrongly re-install.
     already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/codex'
     install_script: |
-      # Needs nodejs + npm. `ivm provision agent_codex` gets them from the SAME-NAMED distro
-      # bundle (`provision_distro_packages_agent_codex`), which cmd_provision installs FIRST;
-      # a TEMPLATE must still list them itself (`ivm init` never resolves a thirdparty name
-      # against the bundle registry) - see templates/codex.yaml. Sourcing the
+      # nodejs + npm come from this recipe's own `distro_packages`, installed FIRST on both
+      # the `ivm init` and `ivm provision` paths (a template lists only the recipe). Sourcing the
       # env file (roles/centralize_lang_pkgs_dir; the launcher guarantees it is in the
       # guest BEFORE recipes run) sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm,
       # the same redirect interactive guest shells and the host get from their rc files -
@@ -74,14 +88,27 @@ provision_thirdparty_software_dev_rust:
       su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && "${CARGO_HOME}/bin/rustup" component add rust-analyzer'
 
 # Android SDK (command-line tools), user-scoped under ~/Android/Sdk - the headless half of
-# `dev_android`. Pairs with the `dev_android` DISTRO group (JDK + unzip), which cmd_provision
-# installs FIRST in the same run, so the JDK sdkmanager needs and the unzip step both have
-# their deps ready. Installs platform-tools (adb), a build-tools, and a platform = enough to
-# `./gradlew assembleDebug`. NOT the emulator (heavy/GUI/needs host nested virt; add via
-# `sdkmanager emulator`). Set ANDROID_HOME=~/Android/Sdk (or a project local.properties) to
-# point Gradle/AGP at it.
+# `dev_android`. Its `distro_packages` (JDK + unzip) install FIRST, so the JDK sdkmanager
+# needs and the unzip step both have their deps ready. JDK is JDK 21 (current LTS; Debian
+# `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+. Gradle deliberately NOT a dep:
+# not in the openSUSE / Fedora default repos, and Android pins its version via each
+# project's `./gradlew` wrapper anyway. Installs platform-tools (adb), a build-tools, and a
+# platform = enough to `./gradlew assembleDebug`. NOT the emulator (heavy/GUI/needs host
+# nested virt; add via `sdkmanager emulator`). Set ANDROID_HOME=~/Android/Sdk (or a project
+# local.properties) to point Gradle/AGP at it. (The HOST-side `dev_android` distro bundle
+# still exists for the `provision_distro_packages_install_dev_android` toggle - same JDK +
+# unzip for the host itself, unrelated to this guest recipe.)
 provision_thirdparty_software_dev_android:
-  description: "Android SDK - cmdline-tools, platform-tools, build-tools (user-scoped; pairs with dev_android distro)"
+  description: "Android SDK - cmdline-tools, platform-tools, build-tools (user-scoped; brings its JDK + unzip deps)"
+  distro_packages:
+    __common__:
+      - unzip   # extract the Android command-line tools zip (the install_script below)
+    Debian:
+      - default-jdk           # JDK 21 on trixie
+    Suse:
+      - java-21-openjdk-devel
+    RedHat:
+      - java-21-openjdk-devel
   __common__:
     already_installed: su - user -c 'test -x ~/Android/Sdk/platform-tools/adb'
     install_script: |
@@ -102,16 +129,16 @@ provision_thirdparty_software_dev_android:
       '
 
 # Go Version Manager (gvm, moovweb/gvm) - user-scoped, for installing SPECIFIC/old Go
-# versions (e.g. go1.9). PAIRS with the `dev_gvm` DISTRO bundle (bison/make/binutils),
-# applied first. You typically use EITHER the distro go (`dev_go`) OR gvm-managed versions;
-# `gvm use <ver> --default` makes that version your default go (shadowing distro go - that
-# is the normal way to drive go through gvm, and fine).
+# versions (e.g. go1.9). You typically use EITHER the distro go (`dev_go`) OR gvm-managed
+# versions; `gvm use <ver> --default` makes that version your default go (shadowing distro
+# go - that is the normal way to drive go through gvm, and fine).
 #
 # Pinned to commit dd652539 (moovweb/gvm master HEAD, 2023-08-14): gvm has NO usable release
 # tag (newest 1.0.22 is from 2014), so a commit SHA is the only pin. Installs are BINARY via
 # `gvm install <ver> -B` - downloads the PREBUILT toolchain from go.dev/dl (no source bootstrap).
-# gvm STILL hard-requires bison/gcc/binutils/hexdump present (it checks them even for `-B`,
-# verified live) - those come from the paired `dev_gvm` distro bundle, applied first.
+# gvm STILL hard-requires bison/gcc/binutils/hexdump present (it checks them even for `-B` -
+# VERIFIED LIVE, debian 13, 2026-06: even the binary path refuses without them, so `gcc` IS
+# required) - those come from this recipe's `distro_packages`, installed first.
 #
 # SUPPLY-CHAIN NOTE (verified against gvm scripts/install, 2026-06): gvm's `-B` path downloads
 # over HTTPS from go.dev/dl but does NOT verify the tarball SHA256 (unlike goenv / g / the
@@ -122,7 +149,17 @@ provision_thirdparty_software_dev_android:
 # AFTER recipes run). The recipe strips gvm-installer's own self-added source lines so the
 # template stays the single source.
 provision_thirdparty_software_dev_gvm:
-  description: "gvm (Go Version Manager) for pinned/old Go e.g. go1.9 - binary installs (-B), alongside distro go"
+  description: "gvm (Go Version Manager) for pinned/old Go e.g. go1.9 - binary installs (-B); brings its bison/gcc/binutils/hexdump deps"
+  # bison/gcc/make/binutils are identically named across the three families' default repos.
+  distro_packages:
+    __common__:
+      - bison
+      - gcc
+      - make
+      - binutils
+    Debian:
+      - bsdextrautils   # `hexdump` - gvm needs it to even load; Debian split it out of util-linux (not default-installed)
+    # Suse / RedHat: no extras - hexdump rides in base util-linux there.
   __common__:
     already_installed: su - user -c 'test -s ~/.gvm/scripts/gvm'
     install_script: |

@@ -139,7 +139,7 @@
     "thirdparty_software": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Named non-distro install recipes defined in `roles/provision_thirdparty_software/defaults/main.yml` (variable `provision_thirdparty_software_<name>`), referenced by the short `<name>`. Each runs a shell snippet as ROOT in the guest (with an optional `already_installed` probe that skips it if present): 3rd-party repos (vscode), `curl|bash` installers (agent_claude), npm/pip globals (agent_codex). Resolved per ansible_os_family - the family's entry if defined, else `__common__` (OVERRIDE, not additive). (Linux only.)"
+      "description": "Named non-distro install recipes defined in `roles/provision_thirdparty_software/defaults/main.yml` (variable `provision_thirdparty_software_<name>`), referenced by the short `<name>`. Each runs a shell snippet as ROOT in the guest (with an optional `already_installed` probe that skips it if present): 3rd-party repos (vscode), `curl|bash` installers (agent_claude), npm/pip globals (agent_codex). Resolved per ansible_os_family - the family's entry if defined, else `__common__` (OVERRIDE, not additive). A recipe's registry-declared `distro_packages` deps install via the package manager before any recipe runs - do NOT re-list them under this template's `distro_packages`. (Linux only.)"
     },
     "dotfiles": {
       "type": "array",

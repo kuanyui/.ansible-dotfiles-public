@@ -271,12 +271,12 @@ provision_distro_packages_dev_qt:
     - qt6-linguist            # Qt6 Linguist tools
     - gcc-c++
 
-# Android development: the headless build chain (JDK + Android SDK), enough to
-# `./gradlew assembleDebug` an APK from the command line. This DISTRO group is only the
-# JDK (Gradle/AGP run on the JVM) + `unzip` (the SDK thirdparty step below needs it);
-# the SDK itself (sdkmanager, platform-tools, build-tools, a platform) comes from the
-# `dev_android` THIRDPARTY recipe (roles/thirdparty_software) - `ivm provision dev_android`
-# applies BOTH, distro first (cmd_provision order), so the JDK is present when sdkmanager runs.
+# Android development, HOST side: the JDK (Gradle/AGP run on the JVM) + `unzip`, toggled by
+# `provision_distro_packages_install_dev_android` (tasks/main.yml loop). HOST-ONLY on purpose:
+# not in the guest render dict (`roles/_shared_prebuilt_provision_assets`) - the GUEST gets the
+# same JDK + unzip from the `dev_android` THIRDPARTY recipe's own `distro_packages`, so guest
+# `dev_android` resolves to that recipe alone. The SDK itself (sdkmanager, platform-tools,
+# build-tools, a platform) is that recipe's job; install it on the host by hand if wanted.
 # Deliberately NOT here:
 #   - Gradle: not in the openSUSE / Fedora default repos at all (only Debian + Snap), and
 #     Android pins its version via each project's `./gradlew` wrapper anyway - so use the wrapper.
@@ -284,9 +284,9 @@ provision_distro_packages_dev_qt:
 #     yourself with `sdkmanager emulator` when wanted.
 # JDK is JDK 21 (current LTS; Debian `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+.
 provision_distro_packages_dev_android:
-  description: "headless Android build chain - JDK + unzip (pairs with the dev_android thirdparty SDK)"
+  description: "Android build-chain host deps - JDK + unzip (host toggle only; guest deps ride in the dev_android recipe)"
   __common__:
-    - unzip   # extract the Android command-line tools zip (the dev_android thirdparty step)
+    - unzip   # extract the Android command-line tools zip when driving sdkmanager by hand
   Debian:
     - default-jdk
   Suse:
@@ -318,45 +318,6 @@ provision_distro_packages_dev_node:
   __common__:
     - nodejs
     - npm
-
-# The nodejs + npm that `agent_codex` HARD-REQUIRES (its recipe runs `npm install -g
-# @openai/codex`). PAIRS with the `agent_codex` THIRDPARTY recipe - `ivm provision agent_codex`
-# applies BOTH, distro FIRST (cmd_provision order), so `npm` exists when the recipe runs.
-# Same two packages as `dev_node`, re-listed rather than referenced: a bundle resolves to
-# `__common__` + its family overlay and nothing else - there is no bundle-includes-bundle (the
-# same reason `dev_gvm` below re-lists its own deps instead of pulling in `dev_go`).
-# Does NOT cover the TEMPLATE path: `ivm init` resolves `distro_package_groups` +
-# `distro_packages` ONLY - never a `thirdparty_software` name - so a template wanting the CLI
-# still lists nodejs + npm itself (`roles/vm_incus/files/templates/codex.yaml` does). The
-# pairing is what makes `ivm provision agent_codex` work on a VM built from ANY template.
-# `description` is the one users SEE: for a name in two registries the completion shows the
-# distro entry's (first occurrence wins - see `_ivm_unit_names`), so it describes the whole
-# unit, not just these two packages.
-provision_distro_packages_agent_codex:
-  description: "OpenAI Codex CLI, npm global into ~/.centralized-lang-pkgs (+ its nodejs/npm deps)"
-  __common__:
-    - nodejs
-    - npm
-
-# gvm (Go Version Manager) + the deps it HARD-REQUIRES. PAIRS with the `dev_gvm` THIRDPARTY
-# recipe - `ivm provision dev_gvm` applies BOTH, distro FIRST (cmd_provision order), so the
-# deps are present when gvm loads. VERIFIED LIVE (debian 13, 2026-06): gvm checks for
-# `bison` + `gcc` + `binutils` + `hexdump` UNCONDITIONALLY - even `gvm install <ver> -B`
-# (binary, no compile) refuses without them, so `gcc` IS required (not optional, as first
-# assumed). On Debian `hexdump` is split into `bsdextrautils` (NOT installed by default); on
-# openSUSE/Fedora it rides in base `util-linux`. bison/gcc/make/binutils are identically named
-# across the three families' default repos.
-provision_distro_packages_dev_gvm:
-  description: "gvm (Go Version Manager) for pinned/old Go e.g. go1.9 (+ its bison/gcc/binutils/hexdump deps)"
-  __common__:
-    - bison
-    - gcc
-    - make
-    - binutils
-  Debian:
-    - bsdextrautils   # `hexdump` - gvm needs it to even load; Debian split it out of util-linux (not default-installed)
-  Suse: []            # hexdump rides in base util-linux; compiler deps come from __common__
-  RedHat: []          # hexdump rides in base util-linux; compiler deps come from __common__
 
 # A complete, autologin icewm desktop - the WM/DE + display-manager layer that `gui_x11`
 # (the X server stack) deliberately leaves out. RIDES ON gui_x11: provision them together,

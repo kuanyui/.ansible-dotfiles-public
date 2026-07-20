@@ -22,6 +22,10 @@
     mode: "0755"
 
 # ---------- Serialize the provision_distro_packages registry ----------
+# The `dev_android` BUNDLE is deliberately absent from the render dict below: it is host-only
+# (the `provision_distro_packages_install_dev_android` toggle); the guest gets the same JDK +
+# unzip from the `dev_android` RECIPE's `distro_packages` (thirdparty registry), so listing the
+# bundle here would only shadow that recipe's completion description.
 - name: Load the `provision_distro_packages` bundle registry (sibling role's defaults)
   ansible.builtin.include_vars:
     file: "{{ role_path }}/../provision_distro_packages/defaults/main.yml"
@@ -43,11 +47,8 @@
         'incus_guest_baseline': provision_distro_packages_incus_guest_baseline,
         'emacs': provision_distro_packages_emacs,
         'dev_qt': provision_distro_packages_dev_qt,
-        'dev_android': provision_distro_packages_dev_android,
         'dev_go': provision_distro_packages_dev_go,
         'dev_node': provision_distro_packages_dev_node,
-        'agent_codex': provision_distro_packages_agent_codex,
-        'dev_gvm': provision_distro_packages_dev_gvm,
         'desktop_icewm': provision_distro_packages_desktop_icewm,
         'desktop_lxqt': provision_distro_packages_desktop_lxqt,
         'guest_spice': provision_distro_packages_guest_spice,
