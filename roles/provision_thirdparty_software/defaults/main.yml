@@ -207,3 +207,27 @@ provision_thirdparty_software_dev_nvm:
       # Install the current LTS Node + make it the default for new shells. (One-shot source of
       # nvm.sh here only to drive the install; persistent load is via the template.)
       su - user -c 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm install --lts; nvm alias default "lts/*"'
+
+# Mozilla web-ext (mozilla/web-ext) - the WebExtensions CLI: build, run, lint, and sign
+# browser extensions from the command line. npm global as `user` into
+# ~/.centralized-lang-pkgs/npm (same `NPM_CONFIG_PREFIX` redirect as `agent_codex` - no
+# root-owned writes anywhere). web-ext 10.x needs node >= 20 (package.json `engines`,
+# verified 2026-07-20 against mozilla/web-ext master) - met by all three families' distro
+# node (Debian 13 ships 20.x). NOTE: `web-ext run` LAUNCHES a Firefox binary, which this
+# recipe deliberately does NOT install - use a template that ships one (e.g. `webbrowser`'s
+# MozillaFirefox) or add your distro's Firefox package; the CLI alone still builds/lints.
+provision_thirdparty_software_dev_webext:
+  description: "Mozilla web-ext CLI - build/run/lint/sign WebExtensions (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps)"
+  distro_packages:
+    __common__:
+      - nodejs
+      - npm
+  __common__:
+    # File test, not `command -v` - same reasoning as agent_codex: the probe's
+    # non-interactive shell lacks the env file's PATH prepend.
+    already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/web-ext'
+    install_script: |
+      # Sourcing the env file sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm (the
+      # shared install redirect), so the global lands user-owned and on the PATH interactive
+      # guest shells get from their rc files. Env var only - nothing persisted to ~/.npmrc.
+      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && npm install --global web-ext'

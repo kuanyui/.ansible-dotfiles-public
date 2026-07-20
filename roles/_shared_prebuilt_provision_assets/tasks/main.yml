@@ -72,6 +72,7 @@
         'dev_android': provision_thirdparty_software_dev_android,
         'dev_gvm': provision_thirdparty_software_dev_gvm,
         'dev_nvm': provision_thirdparty_software_dev_nvm,
+        'dev_webext': provision_thirdparty_software_dev_webext,
       } | to_nice_json }}
 
 # ---------- Stage the feature-first dotfiles tree ----------
