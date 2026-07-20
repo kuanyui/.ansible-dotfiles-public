@@ -422,8 +422,11 @@ provision_distro_packages_desktop_icewm:
 # backend) + `lxqt-policykit` (polkit agent for mount/admin auth), `lxqt-globalkeys` (the
 # global-shortcut DAEMON - without it NO shortcut fires; it also ships the default
 # /etc/xdg/lxqt/globalkeyshortcuts.conf that already binds Ctrl+Alt+T -> qterminal),
-# `lxqt-runner` (the Alt+F2 launcher), `lxqt-qtplugin` (the "lxqt" Qt platform theme - what
-# makes Qt apps USE the icon theme; without it pcmanfm-qt + file pickers show no icons), and
+# `lxqt-runner` (the Alt+F2 launcher), `lxqt-config` (the Settings center - notably
+# `lxqt-config-monitor`, the GUI to pin a display resolution; `spice-vdagent` only
+# auto-matches the SPICE viewer window - one pkg name on all 3 families), `lxqt-qtplugin`
+# (the "lxqt" Qt platform theme - what makes Qt apps USE the icon theme; without it
+# pcmanfm-qt + file pickers show no icons), and
 # `papirus-icon-theme` for the icons themselves - the flat/modern theme the LXQt flagship
 # (Lubuntu) ships, replacing LXQt's dated technical default "oxygen"; one pkg name on all 3
 # families, so it sits in __common__. Per-family `install` carries the name divergences (all
@@ -437,7 +440,7 @@ provision_distro_packages_desktop_icewm:
 # SELinux-Enforcing caveat as desktop_icewm (a verified fix lands as a
 # `RedHat: {post_install: ...}` here). See TODO.md.
 provision_distro_packages_desktop_lxqt:
-  description: "autologin LXQt desktop - panel/pcmanfm-qt/qterminal + shortcuts/gvfs/Papirus (rides on gui_x11)"
+  description: "autologin LXQt desktop - panel/pcmanfm-qt/qterminal + settings/shortcuts/gvfs/Papirus (rides on gui_x11)"
   __common__:
     install:
       - lxqt-session
@@ -451,6 +454,7 @@ provision_distro_packages_desktop_lxqt:
       - udisks2          # drive enumeration + mount backend behind "Computer"
       - lxqt-globalkeys  # global-shortcut DAEMON: without it NO shortcut fires; ships the default Ctrl+Alt+T -> qterminal
       - lxqt-runner      # the Alt+F2 application launcher (autostarts, registers Alt+F2 via the daemon)
+      - lxqt-config      # the Settings center: lxqt-config-monitor = pin a display resolution (spice-vdagent only auto-matches the viewer window) + appearance/input/locale modules
       - lxqt-qtplugin    # the "lxqt" Qt platform theme: makes Qt apps (pcmanfm-qt + file pickers) USE the icon theme (else no icons)
       - lxqt-policykit   # polkit agent: authenticate mounting drives / admin actions
       - papirus-icon-theme  # icons: the LXQt-flagship (Lubuntu) default - flat/modern, full Qt+GTK coverage; replaces LXQt's dated technical default "oxygen". SAME pkg name on all 3 families -> __common__
