@@ -65,7 +65,14 @@ provision_thirdparty_software_agent_codex:
       # the same redirect interactive guest shells and the host get from their rc files -
       # so `codex` is on PATH in the guest's zsh/bash. Env var only: nothing is persisted
       # to ~/.npmrc (a prefix there would trip a later `dev_nvm`).
-      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && npm install -g @openai/codex'
+      # Self-heal a wedged partial install before (re)installing: an earlier run interrupted
+      # mid-download leaves `.../@openai/codex` present but `bin/codex` absent, so the probe
+      # above re-runs this and `npm install -g` then dies on `ENOTEMPTY: ... rename` - npm
+      # cannot atomically move the stale scoped dir aside (npm/cli#4096, #5825; a long-standing
+      # npm bug on scoped globals - `--force` does NOT fix it, deleting the target does). Clear
+      # the package dir AND any `.codex-<rand>` temp dir npm orphaned; both are no-ops (`rm -f`)
+      # on a clean guest where they are absent.
+      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/codex" "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/".codex-* && npm install -g @openai/codex'
 
 # Rust via rustup - the official, recommended install (rust-lang.org/tools/install).
 # It downloads PREBUILT toolchain binaries (NOT source) into ~/.rustup + ~/.cargo as the
@@ -230,4 +237,7 @@ provision_thirdparty_software_dev_webext:
       # Sourcing the env file sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm (the
       # shared install redirect), so the global lands user-owned and on the PATH interactive
       # guest shells get from their rc files. Env var only - nothing persisted to ~/.npmrc.
-      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && npm install --global web-ext'
+      # Same `ENOTEMPTY: ... rename` self-heal as `agent_codex` (npm/cli#4096): drop a stale
+      # web-ext install + any `.web-ext-<rand>` temp dir npm orphaned before reinstalling, so a
+      # re-run after an interrupted install converges instead of wedging. No-op on a clean guest.
+      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/web-ext" "$NPM_CONFIG_PREFIX/lib/node_modules/".web-ext-* && npm install --global web-ext'
