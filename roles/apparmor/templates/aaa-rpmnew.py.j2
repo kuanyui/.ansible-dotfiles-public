@@ -7,14 +7,21 @@ packaged update, parked because the on-disk file differed) and are never loaded,
 `apparmor_parser`'s directory scan skips the `.rpmnew` suffix. A stale profile keeps being
 enforced and can break the app. This tool classifies each pending item and acts:
 
-  ADOPT       <name>.rpmnew -> <name>      distro profile we do NOT manage: take the update.
-  NEUTRALIZE  <name> / <name>.rpmnew       distro profile a local_* profile SHADOWS: adopting
-              (both removed, backed up)     it would resurrect the conflict the role removes,
-                                            so back it up + remove + unload from the kernel.
+  ADOPT       distro profile we do NOT manage: overwrite `<name>` with `<name>.rpmnew`.
+              The old on-disk file is discarded, NOT backed up.
+  NEUTRALIZE  distro profile a local_* profile SHADOWS: adopting it would resurrect the
+              conflict the role removes, so back `<name>` up, remove it (and any
+              `<name>.rpmnew`), and unload it from the kernel.
 
 then reloads AppArmor once. `local_*` files are never touched (RPM does not own them, so they
 never get a `.rpmnew`). The shadow list is baked in at deploy time from the single-source var
 `apparmor_shadowed_system_profiles` (roles/apparmor/defaults/main.yml).
+
+ADOPT / NEUTRALIZE are this role's INTERNAL vocabulary (`tasks/chromium.yml` and
+`defaults/main.yml` use "neutralize" too - keep them in sync). The PRINTED plan deliberately
+uses neither: an operator reading it after a `zypper dup` should not have to learn this tool's
+jargon to find out which file it is about to delete. Keep printed output in plain sentences
+that name the full path and say what happens to the existing file.
 
 See roles/apparmor/docs/RPMNEW_STALE_DISTRO_PROFILES.md.
 """
@@ -40,6 +47,17 @@ SHADOWED_SYSTEM_PROFILES: frozenset[str] = frozenset(
 )
 
 RPMNEW_SUFFIX = ".rpmnew"
+
+# Printed once above the plan, only when something will actually be replaced. Answers the
+# question every operator asks first ("I never touched that profile - where did this come
+# from?") before they are asked to approve a deletion.
+RPMNEW_EXPLAINER = """\
+Why a `.rpmnew` exists: a system upgrade shipped a new version of an AppArmor profile whose
+on-disk copy no longer matched what the package had installed, so RPM refused to overwrite
+yours. It parked the new version alongside as `<name>.rpmnew` and left the old file in place.
+AppArmor never loads a `.rpmnew` file, so the old profile stays in force - stale, and often
+broken against the libraries the upgrade brought in.
+"""
 
 
 def base_name(rpmnew_path: Path) -> str:
@@ -136,14 +154,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         prog="aaa-rpmnew",
         description=(
-            "Reconcile /etc/apparmor.d/ after a distro update: adopt vendor .rpmnew for "
-            "profiles we do not manage, re-neutralize distro profiles a local_* profile "
-            "shadows, then reload AppArmor once."
+            "Finish what a package update left half-done in /etc/apparmor.d/. A system upgrade "
+            "parks a new profile it is not allowed to overwrite as `<name>.rpmnew`, and AppArmor "
+            "never loads those - so the old, stale profile keeps being enforced. This replaces "
+            "each stale profile with the newer version, deletes any distro profile that one of "
+            "your own local_* profiles already covers (backing it up first), and reloads "
+            "AppArmor once."
         ),
     )
     parser.add_argument("-y", "--yes", action="store_true", help="do not prompt for confirmation")
     parser.add_argument("-n", "--dry-run", action="store_true", help="show the plan; change nothing")
-    parser.add_argument("-d", "--diff", action="store_true", help="show a unified diff for each adopted profile")
+    parser.add_argument("-d", "--diff", action="store_true", help="show what changes in each profile that gets replaced")
     args = parser.parse_args()
 
     # Read-only work (dry-run) is fine unprivileged; anything that writes needs root.
@@ -153,20 +174,38 @@ def main() -> int:
     adopt, neutralize = compute_plan()
 
     if not adopt and not neutralize:
-        print("Nothing to do: no .rpmnew to adopt, no shadowed distro profile resurrected.")
+        print(f"Nothing to do: no `.rpmnew` is waiting in {APPARMOR_DIR}, and no distro profile")
+        print("has reappeared there to conflict with one of your local_* profiles.")
         return 0
 
+    print(f"{len(adopt) + len(neutralize)} profile(s) in {APPARMOR_DIR} need attention "
+          "after a package update.")
+    print()
+    if adopt:
+        print(RPMNEW_EXPLAINER)
     print("Plan:")
+    print()
     for rpmnew_path in adopt:
-        print(f"  ADOPT       {base_name(rpmnew_path)}  (take packaged update {rpmnew_path.name})")
+        print(f"  REPLACE  {APPARMOR_DIR / base_name(rpmnew_path)}")
+        print(f"           Overwritten by {rpmnew_path.name}, the newer version RPM installed")
+        print("           alongside it during a system upgrade. The file currently there is")
+        print("           discarded and is NOT backed up.")
+        print()
     for name in neutralize:
-        print(f"  NEUTRALIZE  {name}  (shadowed by your local_ profile; back up + remove + unload)")
+        print(f"  DELETE   {APPARMOR_DIR / name}")
+        print("           Your own local_* profile already covers this app, so leaving the")
+        print("           distro copy in place would have two profiles claiming the same")
+        print("           binary. It is copied to")
+        print(f"             {BACKUP_DIR / name}")
+        print("           first, then unloaded from the running kernel.")
+        print()
+    print("Then AppArmor is reloaded once, so the result takes effect immediately.")
     print()
 
     if args.diff:
         for rpmnew_path in adopt:
             target = APPARMOR_DIR / base_name(rpmnew_path)
-            print(f"--- diff: {target.name} ---")
+            print(f"--- what changes in {target} (`-` current, `+` incoming) ---")
             print_diff(target if target.exists() else None, rpmnew_path)
             print()
 
@@ -175,7 +214,7 @@ def main() -> int:
         return 0
 
     if not args.yes:
-        if input("Apply and reload AppArmor? [y/N] ").strip().lower() not in ("y", "yes"):
+        if input("Apply the plan above and reload AppArmor? [y/N] ").strip().lower() not in ("y", "yes"):
             print("Aborted.")
             return 1
 
@@ -186,7 +225,8 @@ def main() -> int:
 
     print("Reloading AppArmor:")
     run_privileged(["systemctl", "reload", "apparmor"])
-    print(f"Done: adopted {len(adopt)}, neutralized {len(neutralize)}, reloaded AppArmor.")
+    print(f"Done: {len(adopt)} profile(s) replaced with the packaged version, "
+          f"{len(neutralize)} removed, AppArmor reloaded.")
     return 0
 
 
