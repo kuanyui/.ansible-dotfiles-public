@@ -125,12 +125,24 @@ def main() -> int:
         # Width 0 = keep the view's own width; only the row height is being set here.
         row.setSizeHint(QSize(0, LIST_ROW_HEIGHT_PX))
 
-    def handle_row_clicked(clicked_row: QListWidgetItem) -> None:
-        launch_choice_at_row(launcher_window.row(clicked_row), url_args)
+    # Focus the first row (the install-default profile, from the sort) so a keyboard user can
+    # press Enter immediately without arrow-keying first. Emits only currentRow/selection
+    # signals, never itemActivated/itemClicked, so it does not launch anything on open.
+    launcher_window.setCurrentRow(0)
 
-    # itemClicked, not itemActivated: a single tap launches, matching how the rest of the
-    # application menu behaves on this touchscreen.
-    launcher_window.itemClicked.connect(handle_row_clicked)
+    def handle_row_chosen(chosen_row: QListWidgetItem) -> None:
+        launch_choice_at_row(launcher_window.row(chosen_row), url_args)
+
+    # Two signals for two input methods:
+    #   itemClicked   - a single tap/click always fires this, on any activation style, so touch
+    #                   works regardless of the KDE single-vs-double-click setting.
+    #   itemActivated - fires on the Return/Enter key (and style-appropriate click); itemClicked
+    #                   is mouse-only and never fires for the keyboard.
+    # On single-click-activation styles a tap fires both, but launch() execs immediately and
+    # never returns, so the second emission's slot never runs - and either way both point at the
+    # same row, so a double-fire could only launch that one row once.
+    launcher_window.itemClicked.connect(handle_row_chosen)
+    launcher_window.itemActivated.connect(handle_row_chosen)
 
     # Finger drag / flick scrolling. Must be grabbed on the viewport - QListWidget scrolls its
     # content through an internal viewport widget, so grabbing the QListWidget itself does nothing.
