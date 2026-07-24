@@ -117,6 +117,30 @@ def _post_check_aaa_rpmnew(project_dir: Path, container) -> int:
     return container.exec("bash", "-c", script, user="root", check=False).returncode
 
 
+def _post_check_orphan_cleanup(project_dir: Path, container) -> int:
+    """Verify _install.yml's idempotent cleanup removed the orphaned local_* profile planted
+    in post_setup_commands (`local_orphan_probe_delete_me` - not in any managed list).
+
+    Asserts the file is gone from /etc/apparmor.d/. This guards the cleanup's allowlist logic
+    (the set_fact basename allowlist + the `not in` conditions): a bug there either fails to
+    delete the orphan or, worse, deletes a managed profile. The companion `--remove` unload step
+    that now runs first cannot be asserted here - this container has no kernel AppArmor - so this
+    check covers only the disk-level outcome. A second assertion confirms a MANAGED profile
+    (`local_pathbased_chromium`, deployed by the same run) still exists, proving the allowlist
+    did not over-delete.
+    """
+    orphan = "/etc/apparmor.d/local_orphan_probe_delete_me"
+    managed = "/etc/apparmor.d/local_pathbased_chromium"
+    script = f"""
+        fail=0
+        [ ! -e "{orphan}" ] || {{ echo "  FAIL  orphan {orphan} not deleted by cleanup"; fail=1; }}
+        [ -f "{managed}" ]  || {{ echo "  FAIL  managed {managed} missing (allowlist over-deleted?)"; fail=1; }}
+        if [ "$fail" -eq 0 ]; then echo "  OK    orphan cleanup: local_orphan_probe_delete_me removed, local_pathbased_chromium kept"; fi
+        exit $fail
+    """
+    return container.exec("bash", "-c", script, user="root", check=False).returncode
+
+
 def _post_check_aaa_logs(project_dir: Path, container) -> int:
     """Verify the aaa-logs helper deployed and runs. Smoke test: executable, carries the
     managed marker, `aaa-logs 5` exits 0 (no denials in a fresh sandbox is fine - the read
@@ -139,13 +163,15 @@ def _post_check_aaa_logs(project_dir: Path, container) -> int:
 
 
 def _post_check_all(project_dir: Path, container) -> int:
-    """AppArmor profile syntax validation + seccomp-derive + aaa-rpmnew + aaa-logs, combined so
-    a single post_check covers all. Returns the sum of return codes (non-zero fails)."""
+    """AppArmor profile syntax validation + seccomp-derive + aaa-rpmnew + aaa-logs + orphan
+    cleanup, combined so a single post_check covers all. Returns the sum of return codes
+    (non-zero fails)."""
     return (
         _post_check_apparmor_syntax(project_dir, container)
         + _post_check_seccomp_derive(project_dir, container)
         + _post_check_aaa_rpmnew(project_dir, container)
         + _post_check_aaa_logs(project_dir, container)
+        + _post_check_orphan_cleanup(project_dir, container)
     )
 
 
@@ -260,6 +286,20 @@ CONFIG = SandboxConfig(
          "[Desktop Action quit]\n"
          "Name=Quit Telegram\n"
          "Exec=Telegram -quit\n"
+         "EOF"],
+        # Plant an ORPHANED role profile: a syntactically valid local_* file that is NOT in any
+        # of the role's managed lists (defaults/main.yml). It stands in for a profile the role
+        # deployed under a name it later dropped/renamed. The _install.yml cleanup must unload it
+        # from the kernel AND delete the file; _post_check_orphan_cleanup asserts the deletion.
+        # (The kernel unload itself is not observable here - this container has no kernel AppArmor,
+        # which is why the syntax check uses --skip-kernel-load and apparmor.service is a stub.)
+        ["bash", "-c",
+         "cat > /etc/apparmor.d/local_orphan_probe_delete_me <<'EOF'\n"
+         "# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY (sandbox orphan-cleanup fixture)\n"
+         "abi <abi/3.0>,\n"
+         "#include <tunables/global>\n"
+         "profile local_orphan_probe_delete_me {\n"
+         "}\n"
          "EOF"],
     ],
     pre_flight=_pre_flight,

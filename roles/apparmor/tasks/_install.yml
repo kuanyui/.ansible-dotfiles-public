@@ -36,19 +36,56 @@
   become: true
   tags: apparmor
 
-- name: Remove local_* files not managed by this role
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ apparmor__deployed_local.files }}"
-  vars:
-    _managed: >-
+- name: Build the basename allowlist of `local_*` files this role currently manages
+  ansible.builtin.set_fact:
+    apparmor__managed_local_basenames: >-
       {{ (apparmor_static_profiles | map(attribute='dest') | map('basename') | list)
        + apparmor_template_profile_names
        + (apparmor_static_abstractions | map(attribute='dest') | map('basename') | list)
        + apparmor_template_abstraction_names
        }}
-  when: item.path | basename not in _managed
+  tags: apparmor
+
+# Unload BEFORE the file is deleted - `apparmor_parser --remove` reads the profile name out of
+# the file, so once the file is gone there is nothing left to name the profile with.
+#
+# Why this task has to exist at all: the `Reload apparmor` handler runs `systemctl reload
+# apparmor`, which is a DIRECTORY SCAN - it only ever adds or replaces what it finds on disk,
+# and never removes. Deleting an orphaned profile's file alone therefore leaves that profile
+# resident in the kernel, still attached to its executable, still enforcing rules that no
+# longer exist anywhere on disk. Only a reboot clears it. (Contrast a plain rule edit, where
+# the profile NAME is unchanged: that is a `--replace`, which swaps the policy under running
+# processes with no unload step and no restart. That asymmetry is why this gap stays invisible
+# until a `local_*` profile is renamed or dropped from defaults/main.yml.)
+#
+# Same `apparmor_parser --remove` step the per-app neutralize tasks already use
+# (tasks/chromium.yml). Deliberately NOT `aa-remove-unknown`: that unloads every loaded profile
+# absent from /etc/apparmor.d/, which would rip out the Incus per-instance profiles under
+# /var/lib/incus/security/apparmor/profiles/ (openSUSE Security Guide warns about exactly this -
+# removal leaves a running instance unconfined, and Incus does not reload it until restart).
+#
+# Restricted to the top level of /etc/apparmor.d/: entries under abstractions/ declare no
+# profile, so there is nothing to unload and `--remove` would just error on them.
+- name: Unload orphaned `local_*` profiles from the kernel before deleting their files
+  ansible.builtin.command:
+    cmd: apparmor_parser --remove {{ item.path }}
+  loop: "{{ apparmor__deployed_local.files }}"
+  when:
+    - item.path | basename not in apparmor__managed_local_basenames
+    - item.path | dirname == '/etc/apparmor.d'
+  become: true
+  # Best-effort: the orphan may already be unloaded, or be too stale to parse. Matches the
+  # `failed_when: false` on the per-app neutralize unload tasks.
+  failed_when: false
+  changed_when: false
+  tags: apparmor
+
+- name: Remove local_* files not managed by this role
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ apparmor__deployed_local.files }}"
+  when: item.path | basename not in apparmor__managed_local_basenames
   become: true
   notify: Reload apparmor
   tags: apparmor
