@@ -144,16 +144,20 @@ def _post_check_orphan_cleanup(project_dir: Path, container) -> int:
 def _post_check_qtwebengine(project_dir: Path, container) -> int:
     """Verify the QtWebEngineProcess hardening deployed correctly.
 
-    Two things the task must get right:
+    Three things the task must get right:
     1. The distro `QtWebEngineProcess` (planted flags=(unconfined) in post_setup_commands) is
        neutralized: removed from /etc/apparmor.d/ and backed up (it would otherwise collide with
        our glob-attached profile on the same renderer binary).
-    2. Our `local_pathbased_qtwebengineprocess` deployed AND still carries `flags=(default_allow)`.
-       This is the load-bearing assertion: the mode step in _install.yml runs aa-enforce over the
-       managed profile list, and if this profile were (wrongly) included there, aa-enforce would
-       rewrite its header and strip default_allow, turning it default-deny and breaking every Qt
-       webview. The profile is registered in apparmor_template_profile_names_default_allow
-       precisely to be EXCLUDED from that step; this check fails loudly if that exclusion regresses.
+    2. Our `local_pathbased_qtwebengineprocess` deployed AND still carries `flags=(complain)`.
+       This is the load-bearing assertion: it ships as a default-deny (enforce) DRAFT in complain
+       mode so it can be tuned on a real machine without breaking apps. The mode step in
+       _install.yml runs aa-enforce over the managed profile list; if this profile were (wrongly)
+       included there, aa-enforce would rewrite its header and strip `flags=(complain)`, silently
+       promoting an untuned profile to enforce and breaking every Qt webview. It is registered in
+       apparmor_template_profile_names_own_flags_mode precisely to be EXCLUDED from that step; this
+       check fails loudly if that exclusion regresses.
+    3. It includes local_mixin_kernel_surface_browser (chromium's `userns create,` + sandbox
+       capabilities live there - without it the renderer's content-process sandbox cannot start).
     """
     ours = "/etc/apparmor.d/local_pathbased_qtwebengineprocess"
     vendor = "/etc/apparmor.d/QtWebEngineProcess"
@@ -165,11 +169,11 @@ def _post_check_qtwebengine(project_dir: Path, container) -> int:
         [ -f "{ours}" ]     || {{ echo "  FAIL  {ours} not deployed"; exit 1; }}
         head -4 "{ours}" | grep -q 'THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY' \
             || {{ echo "  FAIL  managed marker missing"; fail=1; }}
-        grep -q 'flags=(default_allow)' "{ours}" \
-            || {{ echo "  FAIL  flags=(default_allow) missing - mode step clobbered it to enforce?"; fail=1; }}
-        grep -q '^  userns,' "{ours}" \
-            || {{ echo "  FAIL  userns rule missing - renderer sandbox would break"; fail=1; }}
-        if [ "$fail" -eq 0 ]; then echo "  OK    qtwebengine: distro neutralized + local_ deployed with default_allow + userns intact"; fi
+        grep -q 'flags=(complain)' "{ours}" \
+            || {{ echo "  FAIL  flags=(complain) missing - mode step promoted the draft to enforce?"; fail=1; }}
+        grep -q 'local_mixin_kernel_surface_browser' "{ours}" \
+            || {{ echo "  FAIL  kernel_surface_browser include missing - userns/sandbox would break"; fail=1; }}
+        if [ "$fail" -eq 0 ]; then echo "  OK    qtwebengine: distro neutralized + local_ deployed in complain draft + sandbox include intact"; fi
         exit $fail
     """
     return container.exec("bash", "-c", script, user="root", check=False).returncode

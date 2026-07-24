@@ -154,14 +154,21 @@ apparmor_template_profile_names:
   - local_pathbased_mscore
   - local_pathbased_anydesk
 
-# Template profiles deployed with `flags=(default_allow)` (default-allow + honored deny rules)
-# rather than enforce/complain. They are SEPARATE from `apparmor_template_profile_names` on
-# purpose: the mode-setting step in `tasks/_install.yml` runs `aa-enforce`/`aa-complain` over
-# that list, and either would rewrite the profile's `flags=(...)` header and strip
-# `default_allow`, turning it into a default-deny profile that breaks the app. These names must
-# still reach the idempotent `local_*` cleanup allowlist (so the profile is not deleted as an
-# orphan) - `_install.yml` adds this list there, but NOT to the `aa-enforce` path list.
-apparmor_template_profile_names_default_allow:
+# Template profiles whose mode is set by their OWN in-file `flags=(...)` header, NOT by the
+# role's mode step. They are SEPARATE from `apparmor_template_profile_names` on purpose: the
+# mode-setting step in `tasks/_install.yml` runs `aa-enforce`/`aa-complain` over that list, and
+# either REWRITES a profile's `flags=(...)` header - which would strip a deliberate in-file flag.
+# Two reasons a profile lands here:
+#   - it ships `flags=(complain)` as a draft (e.g. a new default-deny profile still being tuned
+#     on the real machine via complain mode), and must stay in complain until hand-promoted; or
+#   - it uses `flags=(default_allow)` (default-allow + honored deny rules), which aa-enforce would
+#     strip into default-deny and break the app.
+# These names still reach the idempotent `local_*` cleanup allowlist (so the profile is not
+# deleted as an orphan) - `_install.yml` adds this list there, but NOT to the `aa-enforce` path.
+# On promoting a complain draft to enforce, MOVE the name to `apparmor_template_profile_names`.
+apparmor_template_profile_names_own_flags_mode:
+  # local_pathbased_qtwebengineprocess ships flags=(complain) - a default-deny profile modeled on
+  # chromium, still being tuned on the real machine. Move it to the list above once promoted.
   - local_pathbased_qtwebengineprocess
 
 apparmor_template_abstraction_names:

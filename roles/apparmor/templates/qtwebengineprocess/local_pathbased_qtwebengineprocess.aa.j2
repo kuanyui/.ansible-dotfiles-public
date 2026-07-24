@@ -5,45 +5,96 @@ abi <abi/5.0>,
 # QtWebEngineProcess AppArmor profile - /etc/apparmor.d/local_pathbased_qtwebengineprocess
 # Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
 #
-# QtWebEngineProcess is the Chromium-based renderer that Qt apps spawn when they embed a
-# webview (syncthingtray, and any other QtWebEngine consumer). It is a SHARED binary: this
-# one profile attaches to every such app's renderer at once. The parent apps themselves are
-# unconfined - this profile hardens only the renderer, the process that actually runs web
-# content and is the most exposed to a compromise.
+# QtWebEngineProcess is the Chromium-based renderer that Qt apps spawn when they embed a webview
+# (syncthingtray, ...). It is a SHARED binary: this one profile attaches to every such app's
+# renderer. The parent apps are unconfined - this profile confines only the renderer, the process
+# that actually runs web content and is the most exposed to compromise.
 #
-# WHY flags=(default_allow), not enforce, and not the vendor's flags=(unconfined):
-#   - A full enforce profile (default-deny, allow each path) is intractable here: Chromium's
-#     surface is huge and this binary is shared across an open set of host apps with different
-#     data dirs. That is why the distro ships it flags=(unconfined) - a name, no confinement.
-#   - flags=(unconfined) IGNORES deny rules (apparmor.d(5): unconfined "does not generally
-#     allow for specifying deny rules ... should only be used for debugging"). So we cannot
-#     just add `deny ~/.ssh` to the vendor profile - it would be a silent no-op.
-#   - flags=(default_allow) is default-allow (everything the renderer needs keeps working with
-#     zero maintenance) BUT honors deny rules (apparmor.d(5): default_allow "allows for allow
-#     and deny rules, specifying audit, and domain transitions"). The deny mixins below are
-#     what actually harden it: a compromised renderer is denied the sensitive paths no web
-#     renderer ever legitimately needs.
+# This is a DEFAULT-DENY (enforce) profile modeled on local_pathbased_chromium - QtWebEngineProcess
+# IS bundled Chromium, so chromium's engine-level allowlist is the right template. Unlike the
+# distro profile (flags=(unconfined) - a name, no confinement) this denies everything not listed.
 #
-# `userns,` is still REQUIRED even under default_allow: unprivileged user-namespace creation is
-# a separate gate under kernel.apparmor_restrict_unprivileged_userns, not auto-granted by the
-# flag. Chromium's own sandbox needs it. (This is why the vendor profile carries both
-# flags=(unconfined) AND userns,.) Dropping it breaks the renderer's sandbox.
+# =============================================
+# DRAFT - ships in flags=(complain), promote to enforce after tuning
+# =============================================
+# complain mode ALLOWS everything and only LOGS what enforce would deny - so it never breaks the
+# app, but gives NO protection yet. It exists to discover, on the real machine, the exact paths
+# each Qt-webengine app needs (the shared-binary unknown: every host app stores its QtWebEngine
+# data in its own dir). Workflow:
+#   1. sudo make apply-apparmor        # loads this in complain (flags=(complain) below)
+#   2. exercise every Qt-webengine app you run (open syncthingtray, click around, ...)
+#   3. sudo aaa-logs                   # list what the renderer touched (ALLOWED-in-complain hits)
+#   4. add the audited paths to the "TUNE" section below, then delete `flags=(complain)`
+#   5. sudo make apply-apparmor        # now enforce - chromium-level default-deny
+# Until step 4, the rules below are a best-effort starting point copied from chromium; complain
+# mode makes their exactness non-critical (everything is allowed + logged regardless).
 #
-# The bare `@{exec_path} mr,` the vendor profile carries is intentionally omitted: under
-# default_allow it is redundant (mmap of its own binary is allowed by default), and
-# @{exec_path} is not a declared tunable on every parser.
+# Registered in `apparmor_template_profile_names_own_flags_mode` (defaults/main.yml) so the role's
+# aa-enforce/aa-complain mode step does NOT rewrite this header and strip `flags=(complain)`.
+# When promoting to enforce (step 4), also move the name to `apparmor_template_profile_names` so
+# the mode step manages it like every other profile.
 
-profile local_pathbased_qtwebengineprocess /usr/lib{,64,exec}/{,@{multiarch}/}qt{,5,6}/{,libexec/}QtWebEngineProcess flags=(default_allow) {
-    userns,
+profile local_pathbased_qtwebengineprocess /usr/lib{,64,exec}/{,@{multiarch}/}qt{,5,6}/{,libexec/}QtWebEngineProcess flags=(complain) {
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+    #include <abstractions/fonts>
+    #include <abstractions/dbus-session-strict>
+    #include <abstractions/local_mixin_kernel_surface_browser>
+    #include <abstractions/local_mixin_network_local_ipc>
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_gpu>
+    #include <abstractions/local_mixin_gpu_chromium_based>
+    #include <abstractions/local_mixin_audio>
+    #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_kde>
+    #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_probably_credentials>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_browser_config>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_customized_extra_dirs__for__web_browser>
+    #include <abstractions/local_mixin_gui_wayland>
+    #include <abstractions/local_mixin_gui_session_manager>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
 
-    # The hardening: subtract the paths a web renderer must never touch. All are `audit deny`
-    # (a denied hit is a tripwire worth logging - no legitimate renderer access exists).
-    #include <abstractions/local_mixin_deny_keyrings>            # ~/.ssh, ~/.gnupg, syncthing secrets
-    #include <abstractions/local_mixin_deny_probably_credentials> # klipper clipboard history, plasma notes
-    #include <abstractions/local_mixin_deny_persistent_attack>   # autostart / shell-rc / boot / kernel persistence
-    #include <abstractions/local_mixin_deny_browser_config>      # other browsers' cookies/passwords/sessions
+    # The renderer binary + its Qt libraries (base covers /usr/lib*/ read+mmap of shared libs).
+    /usr/lib{,64,exec}/{,@{multiarch}/}qt{,5,6}/{,libexec/}QtWebEngineProcess mr,
 
-    # Site-specific additions and overrides, mirroring the vendor profile's hook so a host can
-    # still drop local tweaks without editing this managed file.
+    # Renderer sandbox: user-namespace ID mapping (identical to chromium). `userns create,` and the
+    # content-process sandbox capabilities come from local_mixin_kernel_surface_browser above.
+    /proc/sys/kernel/overflowuid r,
+    /proc/sys/kernel/overflowgid r,
+    owner @{PROC}/@{pid}/uid_map w,      # renderer sandbox: write UID mapping for user namespace
+    owner @{PROC}/@{pid}/gid_map w,      # renderer sandbox: write GID mapping for user namespace
+    owner @{PROC}/@{pid}/setgroups w,    # must be written before gid_map
+    owner @{PROC}/@{pid}/ r,
+    owner @{PROC}/@{pid}/** r,
+
+    # Multi-process renderer: GPU/utility/renderer peers all run under this same profile.
+    ptrace (trace) peer=local_pathbased_qtwebengineprocess,
+
+    # Sensitive self-introspection denied even though most access is allowed (chromium parity).
+    deny @{PROC}/@{pid}/mem rwklx,       # direct process memory access
+    deny @{PROC}/@{pid}/environ r,       # environment variables (may hold secrets)
+    deny @{PROC}/@{pid}/pagemap r,       # virtual-to-physical mapping (exploit aid)
+
+    # =============================================
+    # TUNE (fill from `aaa-logs` in complain mode, then remove flags=(complain) above)
+    # =============================================
+    # Shared memory for renderer/GPU IPC. Chromium uses org.chromium.*; QtWebEngine's prefix is
+    # unconfirmed here - start broad in complain, then narrow to the audited prefix before enforce.
+    owner /dev/shm/* rwk,
+
+    # The host app's QtWebEngine storage. Varies per embedding app (that is the shared-binary
+    # unknown), typically under the app's own dir, e.g.:
+    #   owner @{HOME}/.local/share/<app>/QtWebEngine/{,**} rwk,
+    #   owner @{HOME}/.cache/<app>/QtWebEngine/{,**} rwk,
+    #   owner @{HOME}/.config/<app>/{,**} rwk,
+    # Add the concrete paths `aaa-logs` reports. Site-local overrides can also go in the hook below.
     include if exists <local/QtWebEngineProcess>
 }
