@@ -12,17 +12,19 @@
 [ -f "${HOME}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh" ] && . "${HOME}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh"
 
 ### ============================================
-### Version managers: nvm / gvm (opt-in via `ivm provision dev_nvm` / `dev_gvm`)
+### Version managers: nvm / gvm / mise (opt-in via `ivm provision dev_nvm` / `dev_gvm` / `dev_mise`)
 ### ============================================
 # Sourced HERE (interactive rc), not ~/.zshenv, so they load only for interactive shells -
 # and survive `ivm`'s dotfiles push because this template IS the pushed file. Each line is a
-# harmless no-op when the tool is absent (the `[ -s ... ]` guard).
+# harmless no-op when the tool is absent (the `[ -s ... ]` / `[ -x ... ]` guard).
 export NVM_DIR="${HOME}/.nvm"
 # nvm refuses to activate while NPM_CONFIG_PREFIX points outside ~/.nvm (`nvm_die_on_prefix`
 # in nvm.sh) - and centralized-lang-pkgs.env.sh, sourced above, sets exactly that. Where nvm
 # is installed it OWNS npm (globals live per node version under ~/.nvm), so drop the redirect.
 if [ -s "${NVM_DIR}/nvm.sh" ]; then unset NPM_CONFIG_PREFIX; . "${NVM_DIR}/nvm.sh"; fi
 [ -s "${HOME}/.gvm/scripts/gvm" ] && . "${HOME}/.gvm/scripts/gvm"
+# mise activation (jdx/mise): absolute path - ~/.local/bin may not be on PATH at this point.
+[ -x "${HOME}/.local/bin/mise" ] && eval "$("${HOME}/.local/bin/mise" activate zsh)"
 
 {{ shared_zsh_ps1_lines }}
 ### ============================================

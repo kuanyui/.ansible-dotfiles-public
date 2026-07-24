@@ -16,10 +16,10 @@
 [ -f "${HOME}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh" ] && . "${HOME}/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh"
 
 ### ========================================
-### Version managers: nvm / gvm (opt-in via `ivm provision dev_nvm` / `dev_gvm`)
+### Version managers: nvm / gvm / mise (opt-in via `ivm provision dev_nvm` / `dev_gvm` / `dev_mise`)
 ### ========================================
-# Harmless no-op when the tool is absent (the `[ -s ... ]` guard); survives `ivm`'s dotfiles
-# push because this template IS the pushed file.
+# Harmless no-op when the tool is absent (the `[ -s ... ]` / `[ -x ... ]` guard); survives
+# `ivm`'s dotfiles push because this template IS the pushed file.
 export NVM_DIR="${HOME}/.nvm"
 # nvm refuses to activate while NPM_CONFIG_PREFIX points outside ~/.nvm (`nvm_die_on_prefix`
 # in nvm.sh) - and centralized-lang-pkgs.env.sh, sourced above, sets exactly that. Where nvm
@@ -27,6 +27,8 @@ export NVM_DIR="${HOME}/.nvm"
 if [ -s "${NVM_DIR}/nvm.sh" ]; then unset NPM_CONFIG_PREFIX; . "${NVM_DIR}/nvm.sh"; fi
 [ -s "${NVM_DIR}/bash_completion" ] && . "${NVM_DIR}/bash_completion"
 [ -s "${HOME}/.gvm/scripts/gvm" ] && . "${HOME}/.gvm/scripts/gvm"
+# mise activation (jdx/mise): absolute path - ~/.local/bin may not be on PATH at this point.
+[ -x "${HOME}/.local/bin/mise" ] && eval "$("${HOME}/.local/bin/mise" activate bash)"
 
 ### =========================================
 ### Debian only

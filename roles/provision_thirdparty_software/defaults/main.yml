@@ -241,3 +241,26 @@ provision_thirdparty_software_dev_webext:
       # web-ext install + any `.web-ext-<rand>` temp dir npm orphaned before reinstalling, so a
       # re-run after an interrupted install converges instead of wedging. No-op on a clean guest.
       su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/web-ext" "$NPM_CONFIG_PREFIX/lib/node_modules/".web-ext-* && npm install --global web-ext'
+
+# mise (jdx/mise, formerly rtx) - polyglot runtime VERSION MANAGER (node / python / go /
+# java / ..., asdf-compatible) + task runner. The sibling of `dev_nvm` / `dev_gvm` when ONE
+# tool should cover several runtimes; coexists with the distro toolchains (`dev_node` /
+# `dev_go`) - an activated mise runtime takes PATH precedence, same idea as nvm.
+#
+# Official installer (mise.jdx.dev/installing-mise.html): a STATIC binary into
+# `~/.local/bin/mise` as unprivileged `user` - no root writes, no distro deps (`curl` is in
+# the guest baseline). PINNED via `MISE_VERSION` (v2026.7.12, latest at 2026-07-24; the
+# env var is the docs' documented pin knob and the script verifies checksums itself).
+# The installer does NOT self-wire rc files (the docs' `echo >> rc` lines are manual
+# steps) - so nothing to strip (unlike gvm), and the activation
+# (`eval "$(mise activate zsh|bash)"`) lives in the TEMPLATED ~/.zshrc + ~/.bashrc
+# (file-existence guarded; survives ivm's dotfiles push), same pattern as nvm/gvm.
+provision_thirdparty_software_dev_mise:
+  description: "mise (jdx/mise) v2026.7.12 - polyglot runtime version manager (node/python/go/...), alongside distro toolchains"
+  __common__:
+    already_installed: su - user -c 'test -x ~/.local/bin/mise'
+    install_script: |
+      # Pipe to `sh` (the installer is POSIX sh). Long-form curl flags per repo convention;
+      # `MISE_VERSION` pins the release (see the registry comment above).
+      su - user -c 'curl --fail --silent --show-error --location https://mise.run | MISE_VERSION=v2026.7.12 sh'
+      su - user -c 'echo "==> mise ready. Install a runtime:  mise use --global node@22" >&2'
