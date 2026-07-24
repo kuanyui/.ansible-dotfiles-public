@@ -15,6 +15,7 @@
 - ansible.builtin.import_tasks: mscore3.yml
 - ansible.builtin.import_tasks: mscore.yml
 - ansible.builtin.import_tasks: anydesk.yml
+- ansible.builtin.import_tasks: qtwebengineprocess.yml
 - ansible.builtin.import_tasks: seccomp.yml
 - ansible.builtin.import_tasks: aaa_helpers.yml
 
@@ -41,6 +42,7 @@
     apparmor__managed_local_basenames: >-
       {{ (apparmor_static_profiles | map(attribute='dest') | map('basename') | list)
        + apparmor_template_profile_names
+       + apparmor_template_profile_names_default_allow
        + (apparmor_static_abstractions | map(attribute='dest') | map('basename') | list)
        + apparmor_template_abstraction_names
        }}
@@ -114,6 +116,10 @@
   vars:
     # `aa-complain` for the validation pass after an abi / mediation change, else `aa-enforce`.
     _aa_mode_command: "{{ 'aa-complain' if (apparmor_profile_mode | default('enforce')) == 'complain' else 'aa-enforce' }}"
+    # Deliberately EXCLUDES apparmor_template_profile_names_default_allow: `aa-enforce` /
+    # `aa-complain` rewrite a profile's `flags=(...)` header, which would strip `default_allow`
+    # and turn those profiles into default-deny (breaking the app). They are loaded as-is by the
+    # `Reload apparmor` handler and never mode-switched here. Do NOT add that list to this path.
     _aa_mode_paths: >-
       {{ ((apparmor_static_profiles | map(attribute='dest') | list)
           + apparmor_template_profile_names)

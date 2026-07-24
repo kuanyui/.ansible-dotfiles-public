@@ -1,0 +1,77 @@
+---
+# =============================================
+# Deploy AppArmor profile
+# =============================================
+
+- name: Write QtWebEngineProcess AppArmor profile to /etc/apparmor.d/local_pathbased_qtwebengineprocess
+  ansible.builtin.template:
+    src: qtwebengineprocess/local_pathbased_qtwebengineprocess.aa.j2
+    dest: /etc/apparmor.d/local_pathbased_qtwebengineprocess
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Reload apparmor
+  tags: qtwebengineprocess
+
+# =============================================
+# Neutralize conflicting system QtWebEngineProcess profile
+# =============================================
+# The distro `QtWebEngineProcess` profile auto-attaches to the same renderer binary and would
+# collide with our glob-based attachment (two profiles cannot own one executable). Move it into
+# _backup_of_default_profiles_from_package_manager/ so AppArmor does not scan it, while keeping
+# the latest package version available for reference or restoration:
+#   sudo cp /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/QtWebEngineProcess /etc/apparmor.d/
+
+- name: Ensure /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/ directory exists
+  ansible.builtin.file:
+    path: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  tags: qtwebengineprocess
+
+- name: Stat system QtWebEngineProcess profiles in /etc/apparmor.d/
+  ansible.builtin.stat:
+    path: /etc/apparmor.d/{{ item }}
+  loop: "{{ apparmor_shadowed_system_profiles['qtwebengineprocess'] }}"
+  register: apparmor__sys_qtwebengineprocess_stat
+  tags: qtwebengineprocess
+
+- name: Back up system QtWebEngineProcess profiles to _backup_of_default_profiles_from_package_manager/
+  ansible.builtin.copy:
+    remote_src: true
+    src: /etc/apparmor.d/{{ item.item }}
+    dest: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item.item }}
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ apparmor__sys_qtwebengineprocess_stat.results }}"
+  when: item.stat.exists
+  become: true
+  tags: qtwebengineprocess
+
+- name: Remove system QtWebEngineProcess profiles from /etc/apparmor.d/
+  ansible.builtin.file:
+    path: /etc/apparmor.d/{{ item.item }}
+    state: absent
+  loop: "{{ apparmor__sys_qtwebengineprocess_stat.results }}"
+  when: item.stat.exists
+  become: true
+  notify: Reload apparmor
+  tags: qtwebengineprocess
+
+- name: Flush handlers to trigger AppArmor reload
+  ansible.builtin.meta: flush_handlers
+  tags: qtwebengineprocess
+
+- name: Remove system QtWebEngineProcess profiles from kernel using backup files
+  ansible.builtin.command:
+    cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item }}
+  loop: "{{ apparmor_shadowed_system_profiles['qtwebengineprocess'] }}"
+  become: true
+  failed_when: false
+  changed_when: false
+  tags: qtwebengineprocess

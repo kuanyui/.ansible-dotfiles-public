@@ -1,0 +1,49 @@
+abi <abi/5.0>,
+#include <tunables/global>
+
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
+# QtWebEngineProcess AppArmor profile - /etc/apparmor.d/local_pathbased_qtwebengineprocess
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
+#
+# QtWebEngineProcess is the Chromium-based renderer that Qt apps spawn when they embed a
+# webview (syncthingtray, and any other QtWebEngine consumer). It is a SHARED binary: this
+# one profile attaches to every such app's renderer at once. The parent apps themselves are
+# unconfined - this profile hardens only the renderer, the process that actually runs web
+# content and is the most exposed to a compromise.
+#
+# WHY flags=(default_allow), not enforce, and not the vendor's flags=(unconfined):
+#   - A full enforce profile (default-deny, allow each path) is intractable here: Chromium's
+#     surface is huge and this binary is shared across an open set of host apps with different
+#     data dirs. That is why the distro ships it flags=(unconfined) - a name, no confinement.
+#   - flags=(unconfined) IGNORES deny rules (apparmor.d(5): unconfined "does not generally
+#     allow for specifying deny rules ... should only be used for debugging"). So we cannot
+#     just add `deny ~/.ssh` to the vendor profile - it would be a silent no-op.
+#   - flags=(default_allow) is default-allow (everything the renderer needs keeps working with
+#     zero maintenance) BUT honors deny rules (apparmor.d(5): default_allow "allows for allow
+#     and deny rules, specifying audit, and domain transitions"). The deny mixins below are
+#     what actually harden it: a compromised renderer is denied the sensitive paths no web
+#     renderer ever legitimately needs.
+#
+# `userns,` is still REQUIRED even under default_allow: unprivileged user-namespace creation is
+# a separate gate under kernel.apparmor_restrict_unprivileged_userns, not auto-granted by the
+# flag. Chromium's own sandbox needs it. (This is why the vendor profile carries both
+# flags=(unconfined) AND userns,.) Dropping it breaks the renderer's sandbox.
+#
+# The bare `@{exec_path} mr,` the vendor profile carries is intentionally omitted: under
+# default_allow it is redundant (mmap of its own binary is allowed by default), and
+# @{exec_path} is not a declared tunable on every parser.
+
+profile local_pathbased_qtwebengineprocess /usr/lib{,64,exec}/{,@{multiarch}/}qt{,5,6}/{,libexec/}QtWebEngineProcess flags=(default_allow) {
+    userns,
+
+    # The hardening: subtract the paths a web renderer must never touch. All are `audit deny`
+    # (a denied hit is a tripwire worth logging - no legitimate renderer access exists).
+    #include <abstractions/local_mixin_deny_keyrings>            # ~/.ssh, ~/.gnupg, syncthing secrets
+    #include <abstractions/local_mixin_deny_probably_credentials> # klipper clipboard history, plasma notes
+    #include <abstractions/local_mixin_deny_persistent_attack>   # autostart / shell-rc / boot / kernel persistence
+    #include <abstractions/local_mixin_deny_browser_config>      # other browsers' cookies/passwords/sessions
+
+    # Site-specific additions and overrides, mirroring the vendor profile's hook so a host can
+    # still drop local tweaks without editing this managed file.
+    include if exists <local/QtWebEngineProcess>
+}

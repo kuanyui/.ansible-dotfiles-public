@@ -141,6 +141,40 @@ def _post_check_orphan_cleanup(project_dir: Path, container) -> int:
     return container.exec("bash", "-c", script, user="root", check=False).returncode
 
 
+def _post_check_qtwebengine(project_dir: Path, container) -> int:
+    """Verify the QtWebEngineProcess hardening deployed correctly.
+
+    Two things the task must get right:
+    1. The distro `QtWebEngineProcess` (planted flags=(unconfined) in post_setup_commands) is
+       neutralized: removed from /etc/apparmor.d/ and backed up (it would otherwise collide with
+       our glob-attached profile on the same renderer binary).
+    2. Our `local_pathbased_qtwebengineprocess` deployed AND still carries `flags=(default_allow)`.
+       This is the load-bearing assertion: the mode step in _install.yml runs aa-enforce over the
+       managed profile list, and if this profile were (wrongly) included there, aa-enforce would
+       rewrite its header and strip default_allow, turning it default-deny and breaking every Qt
+       webview. The profile is registered in apparmor_template_profile_names_default_allow
+       precisely to be EXCLUDED from that step; this check fails loudly if that exclusion regresses.
+    """
+    ours = "/etc/apparmor.d/local_pathbased_qtwebengineprocess"
+    vendor = "/etc/apparmor.d/QtWebEngineProcess"
+    backup = "/etc/apparmor.d/_backup_of_default_profiles_from_package_manager/QtWebEngineProcess"
+    script = f"""
+        fail=0
+        [ ! -e "{vendor}" ] || {{ echo "  FAIL  distro {vendor} not neutralized (still present)"; fail=1; }}
+        [ -f "{backup}" ]   || {{ echo "  FAIL  distro QtWebEngineProcess not backed up"; fail=1; }}
+        [ -f "{ours}" ]     || {{ echo "  FAIL  {ours} not deployed"; exit 1; }}
+        head -4 "{ours}" | grep -q 'THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY' \
+            || {{ echo "  FAIL  managed marker missing"; fail=1; }}
+        grep -q 'flags=(default_allow)' "{ours}" \
+            || {{ echo "  FAIL  flags=(default_allow) missing - mode step clobbered it to enforce?"; fail=1; }}
+        grep -q '^  userns,' "{ours}" \
+            || {{ echo "  FAIL  userns rule missing - renderer sandbox would break"; fail=1; }}
+        if [ "$fail" -eq 0 ]; then echo "  OK    qtwebengine: distro neutralized + local_ deployed with default_allow + userns intact"; fi
+        exit $fail
+    """
+    return container.exec("bash", "-c", script, user="root", check=False).returncode
+
+
 def _post_check_aaa_logs(project_dir: Path, container) -> int:
     """Verify the aaa-logs helper deployed and runs. Smoke test: executable, carries the
     managed marker, `aaa-logs 5` exits 0 (no denials in a fresh sandbox is fine - the read
@@ -164,14 +198,15 @@ def _post_check_aaa_logs(project_dir: Path, container) -> int:
 
 def _post_check_all(project_dir: Path, container) -> int:
     """AppArmor profile syntax validation + seccomp-derive + aaa-rpmnew + aaa-logs + orphan
-    cleanup, combined so a single post_check covers all. Returns the sum of return codes
-    (non-zero fails)."""
+    cleanup + qtwebengine hardening, combined so a single post_check covers all. Returns the sum
+    of return codes (non-zero fails)."""
     return (
         _post_check_apparmor_syntax(project_dir, container)
         + _post_check_seccomp_derive(project_dir, container)
         + _post_check_aaa_rpmnew(project_dir, container)
         + _post_check_aaa_logs(project_dir, container)
         + _post_check_orphan_cleanup(project_dir, container)
+        + _post_check_qtwebengine(project_dir, container)
     )
 
 
@@ -299,6 +334,18 @@ CONFIG = SandboxConfig(
          "abi <abi/3.0>,\n"
          "#include <tunables/global>\n"
          "profile local_orphan_probe_delete_me {\n"
+         "}\n"
+         "EOF"],
+        # Plant the distro `QtWebEngineProcess` profile (flags=(unconfined), the real vendor
+        # shape) so tasks/qtwebengineprocess.yml's neutralize step has something to back up +
+        # remove. _post_check_qtwebengine asserts it was neutralized and that our replacement
+        # deployed with flags=(default_allow) intact (not clobbered to enforce by the mode step).
+        ["bash", "-c",
+         "cat > /etc/apparmor.d/QtWebEngineProcess <<'EOF'\n"
+         "abi <abi/3.0>,\n"
+         "#include <tunables/global>\n"
+         "profile QtWebEngineProcess /usr/lib/qt6/libexec/QtWebEngineProcess flags=(unconfined) {\n"
+         "  userns,\n"
          "}\n"
          "EOF"],
     ],

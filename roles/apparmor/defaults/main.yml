@@ -48,6 +48,10 @@ apparmor_shadowed_system_profiles:
   mscore: [mscore]
   mscore3: [mscore3]
   mpv: [mpv]
+  # Distro `QtWebEngineProcess` is flags=(unconfined) (a name, no confinement). Our
+  # local_pathbased_qtwebengineprocess attaches to the same renderer binary, so the distro
+  # one must be neutralized to avoid two profiles owning one executable.
+  qtwebengineprocess: [QtWebEngineProcess]
 
 # Static AppArmor profiles managed by this role.
 # src: filename under roles/apparmor/files/profiles/
@@ -149,6 +153,16 @@ apparmor_template_profile_names:
   - local_pathbased_mscore3
   - local_pathbased_mscore
   - local_pathbased_anydesk
+
+# Template profiles deployed with `flags=(default_allow)` (default-allow + honored deny rules)
+# rather than enforce/complain. They are SEPARATE from `apparmor_template_profile_names` on
+# purpose: the mode-setting step in `tasks/_install.yml` runs `aa-enforce`/`aa-complain` over
+# that list, and either would rewrite the profile's `flags=(...)` header and strip
+# `default_allow`, turning it into a default-deny profile that breaks the app. These names must
+# still reach the idempotent `local_*` cleanup allowlist (so the profile is not deleted as an
+# orphan) - `_install.yml` adds this list there, but NOT to the `aa-enforce` path list.
+apparmor_template_profile_names_default_allow:
+  - local_pathbased_qtwebengineprocess
 
 apparmor_template_abstraction_names:
   - local_base_firefox
