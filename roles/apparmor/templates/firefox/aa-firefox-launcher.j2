@@ -3,14 +3,43 @@
 """aa-firefox-launcher - touch-friendly chooser for AppArmor-confined Firefox profiles.
 
 Backs the single visible Firefox entry (`~/.local/share/applications/ansible_aa_firefox.desktop`),
-which also owns the http/https MIME associations. Shows a scrollable list of Firefox profiles,
-then replaces itself with:
+which also owns the http/https MIME associations. Shows a filter box over a three-column
+profile table, then replaces itself with:
 
     aa-exec --profile <apparmor_profile> -- firefox [-P <firefox_profile>] [url ...]
 
+Table columns (default sort: Modified, newest first; click a header to re-sort):
+
+  - ID       - N of the profile's `[ProfileN]` section in `profiles.ini`.
+  - Name     - the section's `Name=` value (what `firefox -P` receives).
+  - Modified - mtime of the profile directory (the section's `Path=`), e.g.
+    `2026-07-20 Mon 09:15 (4 days ago)`. Relative part: `just now`, `N minutes ago`,
+    `N hours ago` below one day, then calendar days (`yesterday`, `N days ago`).
+    `?` if the directory is missing - the field is labelled when empty, never
+    silently omitted.
+
+The all-profiles choice is deliberately a separate button UNDER the table, not a table
+row: it spans every profile, so it must not be filterable away, sortable, or mistaken
+for one profile among peers. Its label "Common restrictions, no isolation between
+Firefox profiles" spells out the tradeoff: the common base AppArmor confinement
+(`abstractions/local_base_firefox`) still applies; only the isolation BETWEEN profile
+directories is absent.
+
+Interaction:
+
+  - Typing filters rows (case-insensitive substring of Name). After every filter
+    change the first visible row becomes current.
+  - Up/Down move the current row (hidden rows are skipped); Enter launches it;
+    Esc (or the clear button, for touchscreens without an Esc key) empties the filter.
+  - Mouse: double-click launches a row. A single click only selects, so a stray
+    click cannot launch the wrong profile. The all-profiles button is a standard
+    button - one deliberate, labelled click launches it (Tab focuses it, Space
+    presses it).
+  - Touch: a single tap launches (rows and button alike); finger drag / flick scrolls.
+
 One entry instead of one-per-profile: with ~10 Firefox profiles the old per-profile `.desktop`
 files flooded both the application menu and KRunner, and a right-click Desktop Action submenu
-is a long-press on a touchscreen. A single scrollable list keeps the window a fixed size no
+is a long-press on a touchscreen. A single scrollable table keeps the window a fixed size no
 matter how many profiles exist.
 
 Design constraints:
@@ -19,8 +48,9 @@ Design constraints:
     drop confinement is a downgrade surface, not a launcher.
   - The choice list is baked in at deploy time from `apparmor_firefox_profiles` (parsed from
     profiles.ini by roles/apparmor/tasks/firefox.yml), the same source the AppArmor profiles
-    themselves are generated from. Nothing is read from a runtime-editable file, so a row
-    can never name an AppArmor profile that was never loaded.
+    themselves are generated from. Nothing security-relevant is read from a runtime-editable
+    file, so a row can never name an AppArmor profile that was never loaded. The only runtime
+    filesystem read is display metadata: the Modified column's mtime.
   - execvp, not subprocess: the launcher must not linger as Firefox's parent process.
 
 Runtime dependency NOT installed by this role (same posture as the role's other KDE-provided
@@ -32,14 +62,61 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+import time
+from collections.abc import Callable
+from datetime import date, datetime
 from typing import NamedTuple
+
+# Module-scope import (not inside main): the widget subclasses below need the Qt base
+# classes at class-definition time.
+try:
+    from PyQt6.QtCore import QEvent, QSize, Qt
+    from PyQt6.QtGui import QInputDevice, QKeyEvent, QMouseEvent
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QLineEdit,
+        QPushButton,
+        QScroller,
+        QTreeWidget,
+        QTreeWidgetItem,
+        QVBoxLayout,
+        QWidget,
+    )
+except ModuleNotFoundError:
+    sys.exit(
+        "aa-firefox-launcher: the PyQt6 Python bindings are not installed.\n"
+        "Install them from the distro repository (NOT pip / PyPI). Run:\n"
+        "\n"
+        "    sudo zypper install python3-PyQt6\n"
+    )
 
 LIST_ROW_HEIGHT_PX = 36
 
 # A long profile list scrolls inside this fixed window instead of growing one taller than
 # the screen.
-WINDOW_WIDTH_PX = 420
-WINDOW_HEIGHT_PX = 400
+WINDOW_WIDTH_PX = 560
+WINDOW_HEIGHT_PX = 440
+
+# Hardcoded English day names: strftime %a follows LC_TIME, and the launcher's UI strings
+# must not vary with the desktop locale. Index = datetime.weekday() (0 = Monday).
+WEEKDAY_ABBREVIATIONS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+ID_COLUMN = 0
+NAME_COLUMN = 1
+MODIFIED_COLUMN = 2
+
+# Per-column sort key (int ID / lowercased name / mtime float) stored on each row, so
+# sorting is typed instead of the QTreeWidgetItem default display-text comparison
+# (which would order ID "10" before "2").
+SORT_KEY_ROLE = Qt.ItemDataRole.UserRole
+
+# A mouse release at most this long after a TouchBegin on the tree's viewport is treated
+# as part of that touch interaction (see ProfileTreeWidget for the two-signal rationale).
+TOUCH_CLICK_WINDOW_SECONDS = 2.0
+
+# Where profiles.ini lives; `Path=` values are relative to this directory (IsRelative=1,
+# Firefox's default). os.path.join keeps an absolute Path= (IsRelative=0) intact.
+FIREFOX_PROFILES_BASE_PATH = {{ apparmor_firefox_base_path | to_json }}
 
 
 class FirefoxLaunchChoice(NamedTuple):
@@ -49,6 +126,10 @@ class FirefoxLaunchChoice(NamedTuple):
     apparmor_profile_name: str
     # None = pass no -P flag at all (the all-profiles choice spans every profile, so it names none).
     firefox_profile_name: str | None
+    # N of the `[ProfileN]` section in profiles.ini; None only in ALL_PROFILES_LAUNCH_CHOICE.
+    profiles_ini_id: int | None
+    # The section's `Path=` value (the profile directory); None only in ALL_PROFILES_LAUNCH_CHOICE.
+    profile_dir_name: str | None
 
 
 # Baked in at deploy time. The `aa_label` slug here must match the profile names generated by
@@ -60,13 +141,20 @@ FIREFOX_LAUNCH_CHOICES: tuple[FirefoxLaunchChoice, ...] = (
         display_label={{ ff_profile.label_name | to_json }},
         apparmor_profile_name={{ ("local_attachmentless_firefox_isolated_" ~ aa_label) | to_json }},
         firefox_profile_name={{ ff_profile.label_name | to_json }},
+        profiles_ini_id={{ ff_profile.section_sort_key | int }},
+        profile_dir_name={{ ff_profile.dir_name | to_json }},
     ),
 {% endfor %}
-    FirefoxLaunchChoice(
-        display_label="All Profiles (no isolation)",
-        apparmor_profile_name="local_attachmentless_firefox_all_profiles",
-        firefox_profile_name=None,
-    ),
+)
+
+# Deliberately NOT in FIREFOX_LAUNCH_CHOICES: this one is launched by its own button under
+# the table (see module docstring), so it never takes part in filtering or sorting.
+ALL_PROFILES_LAUNCH_CHOICE = FirefoxLaunchChoice(
+    display_label="Common restrictions, no isolation between Firefox profiles",
+    apparmor_profile_name="local_attachmentless_firefox_all_profiles",
+    firefox_profile_name=None,
+    profiles_ini_id=None,
+    profile_dir_name=None,
 )
 
 
@@ -89,67 +177,257 @@ def launch(choice: FirefoxLaunchChoice, url_args: list[str]) -> None:
     os.execvp(launch_argv[0], launch_argv)
 
 
-def launch_choice_at_row(row_index: int, url_args: list[str]) -> None:
-    """Launch the choice shown at `row_index` - rows are added in FIREFOX_LAUNCH_CHOICES order,
-    so the row index is the index into that tuple."""
-    launch(FIREFOX_LAUNCH_CHOICES[row_index], url_args)
+def relative_time_text(modified_at: datetime) -> str:
+    """Elapsed time as text: `just now` / `N minutes ago` / `N hours ago` below one day,
+    calendar days (`yesterday` / `N days ago`) beyond. Calendar days, not 24h buckets, so
+    yesterday 23:00 seen at 01:00 is `yesterday` only once it is a full day away - within
+    a day the hour/minute rungs are the more useful answer."""
+    elapsed_seconds = (datetime.now() - modified_at).total_seconds()
+    if elapsed_seconds < 0:
+        return "in the future"  # future mtime (clock skew / hand-set) - label it
+    if elapsed_seconds < 60:
+        return "just now"
+    elapsed_minutes = int(elapsed_seconds // 60)
+    if elapsed_minutes < 60:
+        return f"{elapsed_minutes} minute{'s' if elapsed_minutes != 1 else ''} ago"
+    elapsed_hours = int(elapsed_seconds // 3600)
+    if elapsed_hours < 24:
+        return f"{elapsed_hours} hour{'s' if elapsed_hours != 1 else ''} ago"
+    calendar_days_ago = (date.today() - modified_at.date()).days
+    if calendar_days_ago == 1:
+        return "yesterday"
+    return f"{calendar_days_ago} days ago"
+
+
+def profile_dir_modified_cell(choice: FirefoxLaunchChoice) -> tuple[str, float]:
+    """(display text, sort key) for the Modified column: mtime of the profile directory,
+    as `YYYY-MM-DD Day HH:MM (relative)`. Table rows only - `profile_dir_name` is set."""
+    profile_dir_path = os.path.join(FIREFOX_PROFILES_BASE_PATH, choice.profile_dir_name)
+    try:
+        profile_dir_mtime = os.stat(profile_dir_path).st_mtime
+    except OSError:
+        # Profile directory vanished since deploy time - label it, never hide the field.
+        return ("?", float("-inf"))
+    modified_at = datetime.fromtimestamp(profile_dir_mtime)
+    return (
+        f"{modified_at.strftime('%Y-%m-%d')} {WEEKDAY_ABBREVIATIONS[modified_at.weekday()]}"
+        f" {modified_at.strftime('%H:%M')} ({relative_time_text(modified_at)})",
+        profile_dir_mtime,
+    )
+
+
+class ProfileTreeItem(QTreeWidgetItem):
+    """One table row; carries its FirefoxLaunchChoice and sorts by SORT_KEY_ROLE."""
+
+    launch_choice: FirefoxLaunchChoice
+
+    def __lt__(self, other_row_item: QTreeWidgetItem) -> bool:
+        sort_column = self.treeWidget().sortColumn()
+        return self.data(sort_column, SORT_KEY_ROLE) < other_row_item.data(
+            sort_column, SORT_KEY_ROLE
+        )
+
+
+class ProfileTreeWidget(QTreeWidget):
+    """Tree that records, for each mouse release, whether it originated from a touchscreen.
+
+    Two independent signals, OR-ed - either one marks the click as touch:
+
+      1. The release event's pointing device is a touchscreen. Qt's touch->mouse synthesis
+         passes the originating touch device into the synthesized event (qtbase 6.8
+         src/gui/kernel/qguiapplication.cpp, processTouchEvent: `device` = `e->device` goes
+         into the synthesized MouseEvent alongside Qt::MouseEventSynthesizedByQt), and the
+         QScroller press-delay replay forwards `me->source(), me->pointingDevice()` verbatim
+         (qtbase 6.8 src/widgets/util/qflickgesture.cpp, PressDelayHandler::sendMouseEvent).
+         The Qt-6.0-deprecated QMouseEvent::source() is NOT wrapped by PyQt6 (AttributeError),
+         so the documented replacement is used
+         (https://doc.qt.io/qt-6/qmouseevent-obsolete.html: "Use pointingDevice() instead").
+      2. A TouchBegin was seen on the viewport within TOUCH_CLICK_WINDOW_SECONDS. Fallback
+         for platforms whose taps arrive as system-emulated mouse events carrying a
+         mouse-typed device: the touchscreen still delivers real QTouchEvents (they are what
+         feed QScroller's flick scrolling), so a tap-click always follows a TouchBegin.
+
+    False positive requires switching from touchscreen to mouse within the window - harmless
+    in a transient chooser. A miss only degrades touch to double-tap.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.last_release_came_from_touch = False
+        self._last_touch_begin_monotonic = float("-inf")
+
+    def viewportEvent(self, viewport_event: QEvent) -> bool:
+        if viewport_event.type() == QEvent.Type.TouchBegin:
+            self._last_touch_begin_monotonic = time.monotonic()
+        return super().viewportEvent(viewport_event)
+
+    def mouseReleaseEvent(self, mouse_event: QMouseEvent) -> None:
+        pointing_device = mouse_event.pointingDevice()
+        release_device_is_touchscreen = (
+            pointing_device is not None
+            and pointing_device.type() == QInputDevice.DeviceType.TouchScreen
+        )
+        release_follows_touch_begin = (
+            time.monotonic() - self._last_touch_begin_monotonic <= TOUCH_CLICK_WINDOW_SECONDS
+        )
+        self.last_release_came_from_touch = (
+            release_device_is_touchscreen or release_follows_touch_begin
+        )
+        # The base handler emits itemClicked synchronously, while the flag above is fresh.
+        super().mouseReleaseEvent(mouse_event)
+
+
+class ProfileFilterInput(QLineEdit):
+    """Filter box that owns keyboard focus for the whole session; navigation and launch keys
+    are forwarded to the tree, every other key edits the filter text."""
+
+    def __init__(
+        self, profile_tree: ProfileTreeWidget, launch_current_row: Callable[[], None]
+    ) -> None:
+        super().__init__()
+        self._profile_tree = profile_tree
+        self._launch_current_row = launch_current_row
+
+    def keyPressEvent(self, key_event: QKeyEvent) -> None:
+        pressed_key = key_event.key()
+        if pressed_key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            # Hand the event to the tree: QTreeView cursor movement skips hidden rows.
+            QApplication.sendEvent(self._profile_tree, key_event)
+            return
+        if pressed_key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._launch_current_row()
+            return
+        if pressed_key == Qt.Key.Key_Escape:
+            self.clear()  # textChanged -> filter reset -> first row becomes current
+            return
+        super().keyPressEvent(key_event)
+
+
+def build_launcher_ui(
+    url_args: list[str],
+) -> tuple[QWidget, ProfileFilterInput, ProfileTreeWidget, QPushButton]:
+    """Assemble the window: filter box over the three-column profile table, with the
+    All Profiles button underneath (outside the filter/sort machinery)."""
+    profile_tree = ProfileTreeWidget()
+    profile_tree.setHeaderLabels(["ID", "Name", "Modified"])
+    profile_tree.setRootIsDecorated(False)  # flat table - no expand arrows / indent
+    profile_tree.setUniformRowHeights(True)
+    # Keyboard focus lives in the filter box for the whole session (typing must always
+    # filter); the tree is mouse/touch-only, navigation keys are forwarded from the box.
+    profile_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    for choice in FIREFOX_LAUNCH_CHOICES:
+        modified_text, modified_sort_key = profile_dir_modified_cell(choice)
+        row_item = ProfileTreeItem(
+            [str(choice.profiles_ini_id), choice.display_label, modified_text]
+        )
+        row_item.launch_choice = choice
+        row_item.setData(ID_COLUMN, SORT_KEY_ROLE, choice.profiles_ini_id)
+        row_item.setData(NAME_COLUMN, SORT_KEY_ROLE, choice.display_label.lower())
+        row_item.setData(MODIFIED_COLUMN, SORT_KEY_ROLE, modified_sort_key)
+        # Width 0 = keep the view's own width; only the row height is being set here.
+        row_item.setSizeHint(ID_COLUMN, QSize(0, LIST_ROW_HEIGHT_PX))
+        profile_tree.addTopLevelItem(row_item)
+
+    profile_tree.setSortingEnabled(True)  # click a column header to re-sort
+    # Newest first: the most recently used profile lands on the focused first row, so it
+    # is one Enter away. Missing-dir rows (`?`, sort key -inf) sink to the bottom.
+    profile_tree.sortByColumn(MODIFIED_COLUMN, Qt.SortOrder.DescendingOrder)
+    for column_index in (ID_COLUMN, NAME_COLUMN):
+        profile_tree.resizeColumnToContents(column_index)
+
+    def launch_row_item(row_item: ProfileTreeItem) -> None:
+        launch(row_item.launch_choice, url_args)
+
+    def launch_current_row() -> None:
+        current_item = profile_tree.currentItem()
+        if current_item is not None and not current_item.isHidden():
+            launch_row_item(current_item)
+
+    filter_input = ProfileFilterInput(profile_tree, launch_current_row)
+    filter_input.setPlaceholderText("Type to filter - Enter launches")
+    filter_input.setClearButtonEnabled(True)  # touchscreens have no Esc key
+
+    def apply_name_filter(filter_text: str) -> None:
+        """Hide rows whose Name does not contain filter_text; focus the first visible row."""
+        needle = filter_text.lower()
+        for row_index in range(profile_tree.topLevelItemCount()):
+            row_item = profile_tree.topLevelItem(row_index)
+            row_item.setHidden(needle not in row_item.text(NAME_COLUMN).lower())
+        # topLevelItem() indexing follows the current sort order (QTreeWidget sorting
+        # physically reorders the item list), so index 0 upward IS display order.
+        for row_index in range(profile_tree.topLevelItemCount()):
+            row_item = profile_tree.topLevelItem(row_index)
+            if not row_item.isHidden():
+                profile_tree.setCurrentItem(row_item)
+                return
+        profile_tree.setCurrentItem(None)  # nothing matches - Enter must not launch
+
+    filter_input.textChanged.connect(apply_name_filter)
+
+    def handle_item_clicked(clicked_item: ProfileTreeItem, _clicked_column: int) -> None:
+        # Touch: a single tap launches. Mouse: a single click only selects (the guard
+        # against stray clicks) - launching needs a double-click or Enter.
+        if profile_tree.last_release_came_from_touch:
+            launch_row_item(clicked_item)
+
+    def handle_item_double_clicked(
+        double_clicked_item: ProfileTreeItem, _double_clicked_column: int
+    ) -> None:
+        launch_row_item(double_clicked_item)
+
+    profile_tree.itemClicked.connect(handle_item_clicked)
+    profile_tree.itemDoubleClicked.connect(handle_item_double_clicked)
+
+    # Finger drag / flick scrolling. Must be grabbed on the viewport - QTreeWidget scrolls its
+    # content through an internal viewport widget, so grabbing the QTreeWidget itself does
+    # nothing.
+    QScroller.grabGesture(
+        profile_tree.viewport(), QScroller.ScrollerGestureType.TouchGesture
+    )
+
+    # A plain button, outside the tree on purpose: the all-profiles choice must never be
+    # filtered away or re-sorted among per-profile rows (see module docstring). Standard
+    # button semantics - one deliberate, labelled click launches (no double-click guard
+    # needed: unlike list rows, a stray click here cannot land on an arbitrary profile).
+    # QPushButton neither wraps nor elides, and the full label is wider than the window
+    # (~710px), so break it onto two lines at its first comma.
+    all_profiles_button = QPushButton(
+        ALL_PROFILES_LAUNCH_CHOICE.display_label.replace(", ", ",\n", 1)
+    )
+    all_profiles_button.setMinimumHeight(LIST_ROW_HEIGHT_PX)  # touch-friendly target
+
+    def handle_all_profiles_clicked(_button_checked: bool) -> None:
+        launch(ALL_PROFILES_LAUNCH_CHOICE, url_args)
+
+    all_profiles_button.clicked.connect(handle_all_profiles_clicked)
+
+    launcher_window = QWidget()
+    launcher_window.setWindowTitle("AA-Firefox - choose a profile")
+    launcher_window.resize(WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX)
+    launcher_layout = QVBoxLayout(launcher_window)
+    launcher_layout.addWidget(filter_input)
+    launcher_layout.addWidget(profile_tree)
+    launcher_layout.addWidget(all_profiles_button)
+
+    # Initial state: no filter, first row (most recently modified profile) current - a
+    # keyboard user can press Enter immediately. setCurrentItem emits only
+    # currentItem/selection signals, never itemActivated/itemClicked, so nothing launches
+    # on open.
+    apply_name_filter("")
+    filter_input.setFocus()
+    return launcher_window, filter_input, profile_tree, all_profiles_button
 
 
 def main() -> int:
-    try:
-        from PyQt6.QtCore import QSize
-        from PyQt6.QtWidgets import (
-            QApplication,
-            QListWidget,
-            QListWidgetItem,
-            QScroller,
-        )
-    except ModuleNotFoundError:
-        sys.exit(
-            "aa-firefox-launcher: the PyQt6 Python bindings are not installed.\n"
-            "Install them from the distro repository (NOT pip / PyPI). Run:\n"
-            "\n"
-            "    sudo zypper install python3-PyQt6\n"
-        )
-
     url_args = sys.argv[1:]
 
     # Not sys.argv - it carries the URL from `%u`, which Qt would try to parse as its own option.
     qt_application = QApplication([sys.argv[0]])
 
-    launcher_window = QListWidget()
-    launcher_window.setWindowTitle("AA-Firefox - choose a profile")
-    launcher_window.resize(WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX)
-    for choice in FIREFOX_LAUNCH_CHOICES:
-        row = QListWidgetItem(choice.display_label, launcher_window)
-        # Width 0 = keep the view's own width; only the row height is being set here.
-        row.setSizeHint(QSize(0, LIST_ROW_HEIGHT_PX))
-
-    # Focus the first row (the install-default profile, from the sort) so a keyboard user can
-    # press Enter immediately without arrow-keying first. Emits only currentRow/selection
-    # signals, never itemActivated/itemClicked, so it does not launch anything on open.
-    launcher_window.setCurrentRow(0)
-
-    def handle_row_chosen(chosen_row: QListWidgetItem) -> None:
-        launch_choice_at_row(launcher_window.row(chosen_row), url_args)
-
-    # Two signals for two input methods:
-    #   itemClicked   - a single tap/click always fires this, on any activation style, so touch
-    #                   works regardless of the KDE single-vs-double-click setting.
-    #   itemActivated - fires on the Return/Enter key (and style-appropriate click); itemClicked
-    #                   is mouse-only and never fires for the keyboard.
-    # On single-click-activation styles a tap fires both, but launch() execs immediately and
-    # never returns, so the second emission's slot never runs - and either way both point at the
-    # same row, so a double-fire could only launch that one row once.
-    launcher_window.itemClicked.connect(handle_row_chosen)
-    launcher_window.itemActivated.connect(handle_row_chosen)
-
-    # Finger drag / flick scrolling. Must be grabbed on the viewport - QListWidget scrolls its
-    # content through an internal viewport widget, so grabbing the QListWidget itself does nothing.
-    QScroller.grabGesture(
-        launcher_window.viewport(), QScroller.ScrollerGestureType.TouchGesture
+    launcher_window, _filter_input, _profile_tree, _all_profiles_button = build_launcher_ui(
+        url_args
     )
-
     launcher_window.show()
     return qt_application.exec()
 
