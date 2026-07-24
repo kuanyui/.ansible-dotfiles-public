@@ -264,3 +264,62 @@ provision_thirdparty_software_dev_mise:
       # `MISE_VERSION` pins the release (see the registry comment above).
       su - user -c 'curl --fail --silent --show-error --location https://mise.run | MISE_VERSION=v2026.7.12 sh'
       su - user -c 'echo "==> mise ready. Install a runtime:  mise use --global node@22" >&2'
+
+# DBeaver Community Edition - database GUI client (SQL editor / admin tool). A GUI app:
+# pair it with a desktop, e.g. `ivm provision gui_x11 desktop_lxqt dbeaver_ce`. Install
+# method SPLITS by family (external facts verified 2026-07-24):
+#   Debian - the vendor's own flat apt repo (`deb ... https://dbeaver.io/debs/dbeaver-ce /`;
+#     the trailing `/` = flat repo, `Packages` at the URL root - InRelease/Packages verified
+#     live, package name `dbeaver-ce`). A REPO, not a one-off .deb, so `ivm update` keeps it
+#     current (README rule). The deb declares NO Depends and bundles a private JRE -> no
+#     Java packages needed; `gpg` (the minimalist /usr/bin/gpg package - enough for
+#     `--dearmor`, packages.debian.org/trixie/gpg) rides in `distro_packages`; curl +
+#     ca-certificates are already guest baseline.
+#   Suse / RedHat (the `__common__` body) - Flathub flatpak `io.dbeaver.DBeaverCommunity`
+#     (flathub.org/apps/io.dbeaver.DBeaverCommunity; a community-maintained package, not by
+#     DBeaver Corp). Upstream ships no zypper/dnf repo (dbeaver.io/download documents only a
+#     one-off `rpm -ivh`), so the flatpak is the non-Debian path that keeps updates flowing
+#     (`flatpak update`). `flatpak` is the package name in all three families' default repos
+#     (repology.org/project/flatpak) and rides in `distro_packages` - but NO distro
+#     preconfigures the Flathub REMOTE on a minimal guest, so the recipe adds it itself
+#     (`remote-add --if-not-exists`, idempotent; the official URL per
+#     docs.flatpak.org/en/latest/using-flatpak.html). Runs as root -> lands in the
+#     system-wide installation, shared by every user in the guest.
+provision_thirdparty_software_dbeaver_ce:
+  description: "DBeaver CE database GUI - Debian via the vendor apt repo; others via Flathub flatpak, system-wide (brings its gpg / flatpak deps + adds the flathub remote)"
+  distro_packages:
+    Debian:
+      - gpg       # minimalist GnuPG binary - `gpg --dearmor` for the vendor key (curl is guest baseline)
+    Suse:
+      - flatpak
+    RedHat:
+      - flatpak
+  Debian:
+    # dpkg STATE probe, not a file test: upstream's /usr/bin launcher NAME is unstable
+    # across packagings (the rpm symlinks `dbeaver`, the deb `dbeaver-ce` - see
+    # dbeaver/dbeaver#17594), while `db:Status-Status == installed` (dpkg-query(1)) is
+    # layout-independent and only true when the package is FULLY installed (a removed
+    # package's `config-files` state stays false, so a re-provision converges).
+    already_installed: test "$(dpkg-query --show --showformat='${db:Status-Status}' dbeaver-ce)" = installed
+    install_script: |
+      # Vendor key + flat repo - upstream's documented setup minus sudo (we ARE root),
+      # curl instead of wget (curl is guest baseline). `--batch --yes`: a re-run after a
+      # mid-script failure must OVERWRITE the already-dearmored key, not die on gpg's
+      # interactive overwrite prompt (there is no tty here).
+      curl --fail --silent --show-error --location https://dbeaver.io/debs/dbeaver.gpg.key \
+        | gpg --batch --yes --dearmor --output /usr/share/keyrings/dbeaver.gpg.key
+      echo "deb [signed-by=/usr/share/keyrings/dbeaver.gpg.key] https://dbeaver.io/debs/dbeaver-ce /" \
+        > /etc/apt/sources.list.d/dbeaver.list
+      apt-get update
+      apt-get install --yes dbeaver-ce
+  __common__:
+    # `flatpak info <app-id>` exits non-zero unless the app is actually installed
+    # (running as root -> checks the system-wide installation this recipe targets).
+    already_installed: flatpak info io.dbeaver.DBeaverCommunity
+    install_script: |
+      # Flathub remote first (no distro preships it on a minimal guest; idempotent via
+      # `--if-not-exists`), then the app. `--system` = the root default made explicit;
+      # `--assumeyes --noninteractive` (flatpak-install(1)) because this runs under
+      # `bash -ec` with no tty. Also pulls the app's flatpak RUNTIME (several hundred MB).
+      flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      flatpak install --system --assumeyes --noninteractive flathub io.dbeaver.DBeaverCommunity

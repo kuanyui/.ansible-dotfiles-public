@@ -74,6 +74,7 @@
         'dev_nvm': provision_thirdparty_software_dev_nvm,
         'dev_webext': provision_thirdparty_software_dev_webext,
         'dev_mise': provision_thirdparty_software_dev_mise,
+        'dbeaver_ce': provision_thirdparty_software_dbeaver_ce,
       } | to_nice_json }}
 
 # ---------- Stage the feature-first dotfiles tree ----------
