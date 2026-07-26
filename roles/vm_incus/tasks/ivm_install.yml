@@ -59,6 +59,14 @@
     dest: "{{ vm_incus_ivm_dir }}/templates/"
     mode: "0644"
 
+# The copy above never purges, so the pre-rename template (sillytavern.yaml ->
+# llm_sillytavern.yaml) would linger on already-provisioned hosts and keep showing up in
+# `ivm init` listings + completions next to the renamed one.
+- name: "[IDEMPOTENCE] Remove deprecated file `{{ vm_incus_ivm_dir }}/templates/sillytavern.yaml`"
+  ansible.builtin.file:
+    path: "{{ vm_incus_ivm_dir }}/templates/sillytavern.yaml"
+    state: absent
+
 # Record the storage pool layout so `ivm info` + the create/delete preview can show
 # the REAL on-disk path - the unprivileged `incus`-group user can't read incus's own
 # pool config (admin-only), so ivm reads this instead. Written only when the role set up

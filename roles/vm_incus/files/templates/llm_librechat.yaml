@@ -1,0 +1,217 @@
+# yaml-language-server: $schema=../template.schema.json
+# LibreChat server VM: a headless box running upstream's docker-compose deployment -
+# trimmed to the minimal api + mongodb pair - via rootless podman-compose, reached from
+# the HOST browser at http://<guest-ip>:3080 (incus NAT lets the host route to the guest;
+# the LAN cannot). No GUI and no /workspaces mount - a single-purpose appliance, not a
+# dev/agent box. First browser visit: register an account (NAT-only, so it is yours);
+# provider API keys are entered in the web UI and stored (encrypted) in mongo.
+#
+# Upstream extras deliberately left out: meilisearch (message full-text search), and
+# vectordb + rag_api (RAG file Q&A, which also needs an embedding API key). To add one
+# later, copy its service block from upstream's docker-compose.yml into the in-guest
+# ~/librechat/docker-compose.yml and restart - no VM rebuild needed.
+#
+# Self-contained on purpose: the whole install lives in post_install_script, NOT in the
+# shared provision_thirdparty_software registry (same appliance doctrine as
+# llm_sillytavern.yaml - keeps `ivm provision` from landing it on unrelated VMs).
+#
+# Backup tiers (same model as llm_sillytavern.yaml / scripts/st-vm-backup): app DATA ->
+# in-guest `llm-backup` (tars ~/librechat into host-shared ~/Downloads/LibreChatBackups/);
+# fast in-place rollback -> `ivm snapshot`; whole-VM archive -> `incus export`.
+template_name: llm_librechat
+description: "LibreChat LLM chat server (Debian, headless; rootless podman-compose api+mongodb; host browser -> guest:3080; backups land in ~/Downloads)"
+hw:
+  cpu: 2
+  memory: 4G
+  disk: 15G
+os:
+  type: linux
+  distro: debian
+  image:
+    source: incus
+    uri: debian/13
+sys:
+  gui: false
+  timezone: host
+net:
+  # NAT (incusbr0) is exactly right for "reached only from the host": the host routes to
+  # the guest's bridge IP, the LAN cannot (full rationale in llm_sillytavern.yaml).
+  mode: nat
+mounts:
+  # Host XDG Download <-> guest ~/Downloads: llm-backup writes its tars here, so backups
+  # land on the host by themselves (virtio-fs).
+  - host: $(xdg-user-dir DOWNLOAD)
+    guest: /home/user/Downloads
+distro_package_groups:
+  # rootless podman + podman-compose + passt + aardvark-dns (container name resolution on
+  # the compose network - api finds `mongodb` through it) + fuse-overlayfs (+ Debian-only
+  # uidmap/nftables); its post_install also adds subuid/subgid ranges for `user`, enables
+  # linger and points unqualified image searches at docker.io.
+  - podman_rootless
+distro_packages:
+  - dbus-user-session   # per-user D-Bus, so `systemctl --user` works for the user service
+  - openssl             # generates the one-time .env secrets (JWT_*, CREDS_*) below
+dotfiles:
+  - bash
+  - zsh
+# Everything below runs as ROOT after packages install (and after podman_rootless's
+# post_install prepared subuids + linger). Heredocs are kept at a FLAT indent on purpose:
+# the `|` block strips the common 2 spaces, so the written files (compose keys, the unit's
+# `[Section]` headers, the script) and the heredoc terminators land at column 0.
+post_install_script: |
+  # Create the data dirs and pull both images NOW so registry/network trouble fails the
+  # init loudly, instead of the systemd service flapping after first boot. Re-running just
+  # refreshes the moving tags (:latest / :8), so a re-init is an upgrade.
+  su - user -c 'set -eu
+    mkdir -p ~/librechat/data-node ~/librechat/images ~/librechat/uploads ~/librechat/logs
+    podman pull ghcr.io/danny-avila/librechat:latest
+    podman pull docker.io/library/mongo:8
+  '
+  # Trimmed 1:1 from upstream LibreChat docker-compose.yml: api + mongodb only (see the
+  # header comment for how to add meilisearch / RAG back). Two deviations, both deliberate:
+  # fully-qualified image names (no short-name resolution surprises), and NO compose
+  # `restart:` policies - lifecycle belongs to the librechat systemd user unit below.
+  su - user -c 'cat > ~/librechat/docker-compose.yml' <<'EOF'
+  services:
+    api:
+      image: ghcr.io/danny-avila/librechat:latest
+      container_name: LibreChat
+      ports:
+        - "3080:3080"
+      depends_on:
+        - mongodb
+      env_file: .env
+      environment:
+        - HOST=0.0.0.0
+        - PORT=3080
+        - MONGO_URI=mongodb://mongodb:27017/LibreChat
+      volumes:
+        - ./images:/app/client/public/images
+        - ./uploads:/app/uploads
+        - ./logs:/app/logs
+    mongodb:
+      image: docker.io/library/mongo:8
+      container_name: chat-mongodb
+      # --noauth mirrors upstream: mongo publishes no ports, so only containers on this
+      # compose network (i.e. api) can reach it.
+      command: mongod --noauth
+      volumes:
+        - ./data-node:/data/db
+  EOF
+  # LibreChat secrets, generated ONCE per VM (the guard means a re-init never rotates
+  # them). CREDS_KEY/CREDS_IV encrypt provider API keys saved through the UI into mongo -
+  # lose them and the keys inside every existing backup become undecryptable, which is why
+  # llm-backup tars ~/librechat WITH .env. JWT_* sign login sessions. Upstream requires
+  # CREDS_KEY = 64 hex chars, CREDS_IV = 32 hex chars (`openssl rand -hex` prints 2 hex
+  # chars per byte).
+  su - user -c 'set -eu
+    if [ ! -f ~/librechat/.env ]; then
+      umask 077
+      {
+        printf "# Generated once at init by the llm_librechat ivm template.\n"
+        printf "# NAT-only VM: only the host can reach :3080; first registered account is yours.\n"
+        printf "ALLOW_REGISTRATION=true\n"
+        printf "# No meilisearch container in the trimmed compose -> keep message search off.\n"
+        printf "SEARCH=false\n"
+        printf "JWT_SECRET=%s\n" "$(openssl rand -hex 32)"
+        printf "JWT_REFRESH_SECRET=%s\n" "$(openssl rand -hex 32)"
+        printf "CREDS_KEY=%s\n" "$(openssl rand -hex 32)"
+        printf "CREDS_IV=%s\n" "$(openssl rand -hex 16)"
+      } > ~/librechat/.env
+    fi
+  '
+  # Run the compose stack as a PER-USER systemd service (~/.config/systemd/user), the same
+  # pattern as llm_sillytavern.yaml: `user` (no sudo) fully controls it, and llm-backup
+  # stops/starts it for consistent tars (a stopped mongo makes the raw data-node tar safe).
+  su - user -c 'mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/librechat.service' <<'EOF'
+  [Unit]
+  Description=LibreChat (rootless podman-compose)
+  [Service]
+  Type=simple
+  WorkingDirectory=%h/librechat
+  ExecStart=/usr/bin/podman-compose up
+  ExecStop=/usr/bin/podman-compose down
+  Restart=on-failure
+  [Install]
+  WantedBy=default.target
+  EOF
+  # enable-linger asks logind to bring up the lingering user manager + its D-Bus
+  # ASYNCHRONOUSLY (podman_rootless's post_install already requested it; repeating is a
+  # no-op); wait for the user bus socket before driving systemctl --user (else "Failed to
+  # connect to bus"). `su` is not a PAM login, so XDG_RUNTIME_DIR and
+  # DBUS_SESSION_BUS_ADDRESS are unset - set BOTH (XDG alone is not always enough).
+  loginctl enable-linger user
+  guest_user_uid="$(id -u user)"
+  for _ in $(seq 1 100); do [ -S "/run/user/$guest_user_uid/bus" ] && break; sleep 0.2; done
+  su - user -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; systemctl --user daemon-reload; systemctl --user enable --now librechat'
+  # Guest-local backup/restore helper at ~/.local/bin/llm-backup (on PATH via the zsh
+  # dotfiles) - same name + interface in every llm_* appliance VM. It writes/reads plain
+  # tars under the host-shared ~/Downloads, so backups land on the host by themselves.
+  su - user -c 'mkdir -p ~/.local/bin && cat > ~/.local/bin/llm-backup && chmod +x ~/.local/bin/llm-backup' <<'LCSCRIPT'
+  #!/usr/bin/env bash
+  # LibreChat backup/restore (guest-local, no sudo). Tars ~/librechat (mongo data-node,
+  # .env with the CREDS_* decryption secrets, uploads, images, logs, compose file) into
+  # ~/Downloads/LibreChatBackups/ (host-shared). Stops the service around the tar so the
+  # raw mongo data dir is consistent, and restarts it after. Restore is destructive.
+  set -euo pipefail
+  # su/cron contexts don't set these, and systemctl --user needs both to reach the user bus.
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
+  APP_DIR="$HOME/librechat"
+  BACKUP_DIR="$HOME/Downloads/LibreChatBackups"
+  die() { printf 'llm-backup: %s\n' "$1" >&2; exit 1; }
+  svc_active() { [ "$(systemctl --user is-active librechat 2>/dev/null || true)" = active ]; }
+  svc_stop()  { systemctl --user stop librechat 2>/dev/null || true; }
+  svc_start() { systemctl --user start librechat 2>/dev/null || true; }
+  usage() {
+    printf '%s\n' \
+      "llm-backup - LibreChat backup/restore (dir: $BACKUP_DIR)" \
+      "  llm-backup [backup]         stop LibreChat, write LCBackup_YYYYMMDD_HHmm.tar, restart" \
+      "  llm-backup list             list existing backups" \
+      "  llm-backup restore <file>   stop LibreChat, restore a backup (destructive), restart" \
+      "  llm-backup restore latest   restore the newest backup" >&2
+  }
+  do_backup() {
+    [ -d "$APP_DIR/data-node" ] || die "no $APP_DIR/data-node - is LibreChat installed?"
+    mkdir -p "$BACKUP_DIR"
+    local out; out="$BACKUP_DIR/LCBackup_$(date +%Y%m%d_%H%M).tar"
+    local was_running=0
+    if svc_active; then was_running=1; fi
+    svc_stop
+    # podman unshare = run inside podman's user namespace: mongo writes data-node as a
+    # non-root container uid, which maps to host subuids that plain `user` cannot read;
+    # inside the namespace they are readable AND ownership survives backup + restore intact.
+    podman unshare tar -C "$HOME" -cf "$out" librechat
+    if [ "$was_running" = 1 ]; then svc_start; fi
+    sync
+    printf 'llm-backup: wrote %s (%s)\n' "$out" "$(du -h "$out" | cut -f1)"
+  }
+  do_list() {
+    ls -lh "$BACKUP_DIR"/LCBackup_*.tar 2>/dev/null || die "no backups in $BACKUP_DIR"
+  }
+  do_restore() {
+    local target="$1" ans
+    [ -n "$target" ] || { usage; exit 1; }
+    if [ "$target" = latest ]; then
+      target="$(ls -1t "$BACKUP_DIR"/LCBackup_*.tar 2>/dev/null | head -n1 || true)"
+      [ -n "$target" ] || die "no backups in $BACKUP_DIR"
+    fi
+    if [ ! -f "$target" ] && [ -f "$BACKUP_DIR/$target" ]; then target="$BACKUP_DIR/$target"; fi
+    [ -f "$target" ] || die "not found: $target"
+    printf 'llm-backup: this OVERWRITES %s from:\n  %s\nContinue? [y/N] ' "$APP_DIR" "$target"
+    read -r ans
+    case "$ans" in [yY]*) ;; *) die "aborted" ;; esac
+    svc_stop
+    podman unshare tar -C "$HOME" -xf "$target"
+    svc_start
+    sync
+    printf 'llm-backup: restored and LibreChat restarted.\n'
+  }
+  case "${1:-}" in
+    ""|backup) do_backup ;;
+    list)      do_list ;;
+    restore)   do_restore "${2:-}" ;;
+    -h|--help) usage ;;
+    *)         usage; exit 1 ;;
+  esac
+  LCSCRIPT

@@ -41,8 +41,10 @@ A template describes a VM once, in YAML, at
 against `ivm/template.schema.json` (the files carry a `# yaml-language-server:
 $schema=...` modeline, so an editor with the YAML LSP shows inline field docs +
 validation). Shipped examples: `base_debian` / `base_opensuse` / `base_fedora`
-(bare distro + `tools_basic`, nothing else), `claude`, `codex`, `webbrowser`,
-`windows11`.
+(bare distro + `tools_basic`, nothing else), `llm_sillytavern` / `llm_openwebui` /
+`llm_librechat` (self-contained LLM chat appliances, each with an in-guest
+`llm-backup` helper that tars app data into the host-shared `~/Downloads`),
+`claude`, `codex`, `webbrowser`, `windows11`.
 
 Field groups (see the schema for the full, authoritative list):
 

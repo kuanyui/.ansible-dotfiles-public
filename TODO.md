@@ -1341,6 +1341,29 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
 - [x] **3.4** retire `container_apps` + `container_templates`; tick REFACTOR.md.
 - [ ] **(deferred) libkrun** - `--runtime krun` + sshd-via-commit (recipe in the plan).
 
+## ivm llm_* templates: sillytavern rename + openwebui/librechat appliances
+
+- [x] rename `sillytavern.yaml` -> `llm_sillytavern.yaml` (template_name + header
+  comment; in-guest helper `st-backup` -> `llm-backup`, tar dir/prefix unchanged so
+  old backups keep listing)
+- [x] `[IDEMPOTENCE]` removal of the stale deployed `templates/sillytavern.yaml` in
+  `tasks/ivm_install.yml` (the templates `copy` never purges)
+- [x] new `llm_openwebui.yaml`: first `podman_rootless` bundle consumer; upstream's
+  official container via a rootless `podman run` per-user unit (host -> guest:8080);
+  in-guest `llm-backup` (tars `~/openwebui` to `~/Downloads/OpenWebUIBackups/`)
+- [x] new `llm_librechat.yaml`: upstream compose trimmed to api+mongodb via a
+  `podman-compose` per-user unit (host -> guest:3080); one-time `.env` secrets
+  (CREDS_* decrypt stored keys -> .env is inside the backup set); in-guest
+  `llm-backup` (tars `~/librechat` to `~/Downloads/LibreChatBackups/`)
+- [x] `roles/vm_incus/README.md` shipped-examples list updated (it already omitted
+  sillytavern; now lists the three `llm_*` appliances)
+- [x] verify (structural): 3 templates pass template.schema.json (draft 2020-12,
+  ajv; `template_name` matches filename), `bash -n` passes on every
+  `post_install_script` + all 3 embedded `llm-backup` scripts, compose heredoc +
+  `tasks/ivm_install.yml` YAML-parse clean
+- [ ] verify (host): `make vm-incus-check` + `make vm-incus-sandbox` - the editing
+  devcontainer has no ansible/podman (and sudo prompts); run on a provisioned host
+
 ## Notes / future
 
 - [x] **container_apps -> one engine + declarative templates** - DONE as
