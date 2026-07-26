@@ -1380,9 +1380,10 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
 - [x] `services` template annotation (`name: port` map, e.g. `webui: 8080` on all
   3 `llm_*`): written to `user.ivm_services` at init, `ivm info` Network gains a
   `services` row printing ready-to-open `name=<ip>:<port>` (placeholders when
-  undeclared / no live ip); init warns when a declared port literal is missing
-  from `post_install_script` (stale-declaration tripwire; annotation, NOT an
-  input - scripts keep hardcoding their ports)
+  undeclared / no live ip); also shown at init (confirm preview with `<guest-ip>`
+  stand-in + ready message with the LIVE ip) and in `ivm env`; init warns when a
+  declared port literal is missing from `post_install_script` (stale-declaration
+  tripwire; annotation, NOT an input - scripts keep hardcoding their ports)
 - [x] verify (structural): 3 templates pass template.schema.json (draft 2020-12,
   ajv; `template_name` matches filename), `bash -n` passes on every
   `post_install_script` + all 3 embedded `llm-backup` scripts, compose heredoc +

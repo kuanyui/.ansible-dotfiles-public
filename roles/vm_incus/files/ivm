@@ -422,6 +422,16 @@ def warn_stale_service_declarations(doc: Template) -> None:
                   file=sys.stderr)
 
 
+def format_service_endpoints(service_name_port_pairs: list[tuple[str, str]], service_host: str) -> str:
+    """`name=<host>:<port>` pairs, comma-joined - the ONE format for every place that
+    prints service endpoints (`ivm info`, the init confirm preview, the init ready
+    message), so they can never drift apart. `service_host` may be "" (no live IP yet -
+    the empty host part mirrors the neighbouring ip row's placeholder) or a
+    `<guest-ip>` style stand-in."""
+    return ", ".join(f"{service_name}={service_host}:{service_port}"
+                     for service_name, service_port in service_name_port_pairs)
+
+
 # ---------- instance name ----------
 
 def sanitize_incus_name(raw: str) -> str:
@@ -1649,6 +1659,14 @@ def confirm_create(doc: Template, name: str, cwd: Path, root: Path, *, assume_ye
     print(f"  template:      {doc['template_name']}  {binding_note}", file=sys.stderr)
     print(f"  image:         {image_ref(doc['os'])}", file=sys.stderr)
     print(f"  hw:            cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
+    # The declared host-reachable endpoints; no IP exists yet, so a `<guest-ip>`
+    # stand-in shows the final shape (the ready message prints the real address).
+    confirm_declared_services: dict[str, Any] = doc.get("services", {}) or {}
+    confirm_services_note: str = (format_service_endpoints(
+        [(service_name, str(service_port))
+         for service_name, service_port in sorted(confirm_declared_services.items())], "<guest-ip>")
+        if confirm_declared_services else "(none declared)")
+    print(f"  services:      {confirm_services_note}", file=sys.stderr)
     # Surface what will run as ROOT in the guest at provision time BEFORE the create
     # is confirmed (esp. `thirdparty_software`, which fetches + runs external
     # installers like claude's `curl|bash`) - transparency before a privileged fetch.
@@ -1755,6 +1773,16 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, shared_preb
             f"Resolve the cause, then `ivm delete` + `ivm init {template_name}` to rebuild.")
     enter_hint: str = shell_hint + (", or `ivm gui` for the desktop" if is_gui else "")
     print(f"==> {colorize_vm_name(name)} ready. Enter with: {enter_hint}", file=sys.stderr)
+    # The moment the address is actually wanted: print each declared service as a
+    # ready-to-open endpoint with the LIVE guest IP (placeholder if the agent has not
+    # reported one yet; `ivm info` re-prints it any time).
+    ready_declared_services: dict[str, Any] = doc.get("services", {}) or {}
+    if ready_declared_services:
+        ready_service_host: str = (vm_primary_ipv4(name) if not dry_run else "") or "<guest-ip>"
+        print("    services: " + format_service_endpoints(
+            [(service_name, str(service_port))
+             for service_name, service_port in sorted(ready_declared_services.items())],
+            ready_service_host), file=sys.stderr)
 
 
 def shell_login_dir(name: str, *, dry_run: bool) -> str:
@@ -2584,6 +2612,11 @@ def cmd_env(template_name: str, root: Path, shared_prebuilt_provision_assets_roo
         print("gui           : SPICE (enter with `ivm gui`)")
     if sys_block.get("tmpfs"):
         print(f"tmpfs         : {', '.join(sys_block['tmpfs'])}")
+    env_declared_services: dict[str, Any] = doc.get("services", {}) or {}
+    if env_declared_services:
+        print("services      : " + ", ".join(
+            f"{service_name}:{service_port}"
+            for service_name, service_port in sorted(env_declared_services.items())))
     ssh: dict[str, Any] = sys_block.get("ssh_server", {})
     if ssh.get("enabled"):
         print(f"ssh_server    : port={ssh.get('port', 22)} "
@@ -2870,12 +2903,11 @@ def cmd_info(name: str, root: Path) -> None:
     if not services_tag_raw:
         services_display: str = "(none declared)"
     else:
-        service_endpoint_parts: list[str] = []
-        for service_pair in services_tag_raw.split(","):
-            service_name, _, service_port = service_pair.partition(":")
-            service_host: str = ipv4 if (status.upper() == "RUNNING" and ipv4) else ""
-            service_endpoint_parts.append(f"{service_name}={service_host}:{service_port}")
-        services_display = ", ".join(service_endpoint_parts)
+        service_host: str = ipv4 if (status.upper() == "RUNNING" and ipv4) else ""
+        services_display = format_service_endpoints(
+            [(pair.partition(":")[0], pair.partition(":")[2])
+             for pair in services_tag_raw.split(",") if pair],
+            service_host)
     field("services", services_display)
     field("bridge", bridge)
     field("ssh-server", ssh_server_value)
