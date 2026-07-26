@@ -1370,6 +1370,23 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   `ivm info` gains host-bound-dir + guest-shell-dir fields; `ivm cd`/`list` show
   labelled placeholders; appliance default name `ivm-<template>` (no path
   suffix); schema + README/SPEC/DESIGN updated
+- [x] llm_librechat usability pass (from first real use): ship
+  `~/librechat/librechat.yaml` (guarded like .env) with OpenRouter as a
+  `user_provided` custom endpoint (key pasted in the web UI -> mongo, encrypted
+  with CREDS_* -> rides llm-backup; docs-verbatim `dropParams: ["stop"]` +
+  `fetch: true`), mounted via compose `./librechat.yaml:/app/librechat.yaml`;
+  pre-create default account `admin@example.com / adminadmin` at init
+  (`npm run create-user` inside the api container, retried until mongo is up,
+  "already exists" = idempotent re-init; password is admin twice because the
+  LOGIN form also enforces `MIN_PASSWORD_LENGTH` >= 8) and flip
+  `ALLOW_REGISTRATION=false` (add accounts via create-user; .env documents it)
+- [x] llm_librechat api `EACCES: permission denied, open /app/logs/...` (hit on the
+  first real init): the api image runs as `node` (container uid 1000, `USER node`)
+  while rootless podman maps the guest user to container uid 0, so the mkdir'd
+  bind mounts were container-root-owned. Init now `podman unshare chown`s
+  logs/uploads/images to the container node uid; `data-node` untouched (mongo's
+  entrypoint self-chowns); `userns_mode: keep-id` was no fix (podman-compose pod
+  vs `--userns` conflict, podman-compose#654)
 - [x] (Regression, caught in review) zsh VM-name completion lost its dir
   descriptions for existing VMs when `_ivm_vms_with_dir` switched to the new
   `user.ivm_host_bound_dir` tag (pre-tag VMs have none -> bare names). Fixed:

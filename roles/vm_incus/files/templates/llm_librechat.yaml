@@ -3,8 +3,11 @@
 # trimmed to the minimal api + mongodb pair - via rootless podman-compose, reached from
 # the HOST browser at http://<guest-ip>:3080 (incus NAT lets the host route to the guest;
 # the LAN cannot). No GUI and no /workspaces mount - a single-purpose appliance, not a
-# dev/agent box. First browser visit: register an account (NAT-only, so it is yours);
-# provider API keys are entered in the web UI and stored (encrypted) in mongo.
+# dev/agent box. Log in as admin@example.com / adminadmin (pre-created at init; login is
+# by EMAIL; registration is off - add accounts with
+# `podman exec LibreChat npm run create-user -- <email> <name> <username>`). OpenRouter
+# ships as a `user_provided` endpoint: paste your key in the web UI; it is stored in
+# mongo encrypted with the .env CREDS_* secrets, so llm-backup carries it.
 #
 # Upstream extras deliberately left out: meilisearch (message full-text search), and
 # vectordb + rag_api (RAG file Q&A, which also needs an embedding API key). To add one
@@ -19,7 +22,7 @@
 # in-guest `llm-backup` (tars ~/librechat into host-shared ~/Downloads/LibreChatBackups/);
 # fast in-place rollback -> `ivm snapshot`; whole-VM archive -> `incus export`.
 template_name: llm_librechat
-description: "LibreChat LLM chat server (Debian, headless; rootless podman-compose api+mongodb; host browser -> guest:3080; backups land in ~/Downloads)"
+description: "LibreChat LLM chat server (Debian, headless; rootless podman-compose api+mongodb; host browser -> guest:3080; backups land in ~/Downloads. ACCOUNT: admin@example.com / adminadmin)"
 # Appliance, not a project box: bound to NO host dir (empty = unbound) - target it by name
 # anywhere (`ivm shell <vm>`); default instance name is `ivm-llm-librechat` (no path suffix).
 host_bound_dir: ""
@@ -69,8 +72,19 @@ post_install_script: |
   # Create the data dirs and pull both images NOW so registry/network trouble fails the
   # init loudly, instead of the systemd service flapping after first boot. Re-running just
   # refreshes the moving tags (:latest / :8), so a re-init is an upgrade.
+  # The api image runs as `node` (container uid 1000 - `USER node` in upstream's
+  # Dockerfile), but rootless podman maps the guest user to container uid 0, so freshly
+  # mkdir'd bind mounts are container-ROOT-owned and node gets `EACCES: permission
+  # denied, open /app/logs/...`. `podman unshare chown` to uid 1000 (the container-side
+  # node uid = a guest subuid) hands node its three dirs; llm-backup already tars inside
+  # `podman unshare`, so the subuid ownership round-trips through backup/restore.
+  # data-node is deliberately NOT chowned - the mongo image entrypoint starts as
+  # container root and fixes its own ownership. (The compose-level fix
+  # `userns_mode: keep-id` is unavailable here: podman-compose runs services in a pod,
+  # and podman rejects --userns together with --pod.)
   su - user -c 'set -eu
     mkdir -p ~/librechat/data-node ~/librechat/images ~/librechat/uploads ~/librechat/logs
+    podman unshare chown --recursive 1000:1000 ~/librechat/images ~/librechat/uploads ~/librechat/logs
     podman pull ghcr.io/danny-avila/librechat:latest
     podman pull docker.io/library/mongo:8
   '
@@ -96,6 +110,7 @@ post_install_script: |
         - ./images:/app/client/public/images
         - ./uploads:/app/uploads
         - ./logs:/app/logs
+        - ./librechat.yaml:/app/librechat.yaml
     mongodb:
       image: docker.io/library/mongo:8
       container_name: chat-mongodb
@@ -104,6 +119,35 @@ post_install_script: |
       command: mongod --noauth
       volumes:
         - ./data-node:/data/db
+  EOF
+  # LibreChat custom-endpoint config (mounted to /app/librechat.yaml by the compose
+  # file). Ships OpenRouter with apiKey `user_provided`: each account pastes its own
+  # key in the web UI (stored in mongo, encrypted with the .env CREDS_* secrets - so
+  # llm-backup carries it). For one shared key instead: change apiKey to
+  # "${OPENROUTER_KEY}" and add OPENROUTER_KEY=... to .env. Guarded like .env, so a
+  # re-init never clobbers later hand edits (add more endpoints freely).
+  su - user -c 'set -eu
+    [ -f ~/librechat/librechat.yaml ] && exit 0
+    cat > ~/librechat/librechat.yaml
+  ' <<'EOF'
+  # Custom endpoints - docs: librechat.ai/docs/configuration/librechat_yaml
+  version: 1.2.1
+  cache: true
+  endpoints:
+    custom:
+      # OpenRouter (docs example, verbatim except apiKey): `dropParams: ["stop"]`
+      # because OpenRouter models use varied stop tokens - dropping it avoids
+      # compatibility errors. `fetch: true` loads the live model list.
+      - name: "OpenRouter"
+        apiKey: "user_provided"
+        baseURL: "https://openrouter.ai/api/v1"
+        models:
+          default: ["openrouter/auto"]
+          fetch: true
+        titleConvo: true
+        titleModel: "openrouter/auto"
+        dropParams: ["stop"]
+        modelDisplayLabel: "OpenRouter"
   EOF
   # LibreChat secrets, generated ONCE per VM (the guard means a re-init never rotates
   # them). CREDS_KEY/CREDS_IV encrypt provider API keys saved through the UI into mongo -
@@ -116,8 +160,12 @@ post_install_script: |
       umask 077
       {
         printf "# Generated once at init by the llm_librechat ivm template.\n"
-        printf "# NAT-only VM: only the host can reach :3080; first registered account is yours.\n"
-        printf "ALLOW_REGISTRATION=true\n"
+        printf "# Default account (pre-created at init): admin@example.com / adminadmin - log in\n"
+        printf "# with the EMAIL. NAT-only VM (only the host reaches :3080), hence the weak\n"
+        printf "# password; the LOGIN form enforces MIN_PASSWORD_LENGTH (default 8) too, which\n"
+        printf "# is why it is admin twice. Add accounts with:\n"
+        printf "#   podman exec LibreChat npm run create-user -- <email> <name> <username>\n"
+        printf "ALLOW_REGISTRATION=false\n"
         printf "# No meilisearch container in the trimmed compose -> keep message search off.\n"
         printf "SEARCH=false\n"
         printf "JWT_SECRET=%s\n" "$(openssl rand -hex 32)"
@@ -151,6 +199,30 @@ post_install_script: |
   guest_user_uid="$(id -u user)"
   for _ in $(seq 1 100); do [ -S "/run/user/$guest_user_uid/bus" ] && break; sleep 0.2; done
   su - user -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; systemctl --user daemon-reload; systemctl --user enable --now librechat'
+  # Pre-create the default account: admin@example.com / adminadmin (login is by EMAIL).
+  # Weak creds are fine on this NAT-only box; the password is admin twice because the
+  # LOGIN form also enforces MIN_PASSWORD_LENGTH (default 8). create-user runs inside
+  # the api container and needs mongo up, so retry until the compose stack is ready;
+  # "already exists" counts as success, which keeps a re-init idempotent.
+  su - user -c 'set -eu
+    admin_account_ready=0
+    create_user_output=""
+    for _ in $(seq 1 60); do
+      if create_user_output="$(podman exec LibreChat npm run create-user -- admin@example.com Admin admin adminadmin 2>&1)"; then
+        admin_account_ready=1
+        break
+      fi
+      case "$create_user_output" in
+        *"already exists"*) admin_account_ready=1; break ;;
+      esac
+      sleep 2
+    done
+    if [ "$admin_account_ready" != 1 ]; then
+      printf "%s\n" "$create_user_output" >&2
+      printf "llm_librechat: default account creation FAILED after 120s - see output above\n" >&2
+      exit 1
+    fi
+  '
   # Guest-local backup/restore helper at ~/.local/bin/llm-backup (on PATH via the zsh
   # dotfiles) - same name + interface in every llm_* appliance VM. It writes/reads plain
   # tars under the host-shared ~/Downloads, so backups land on the host by themselves.
