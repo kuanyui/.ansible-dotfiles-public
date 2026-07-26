@@ -55,7 +55,7 @@ Field groups (see the schema for the full, authoritative list):
 | `sys` | `gui`, `timezone`, `tmpfs[]`, `ssh_server.{enabled,port,root_login,password_login,authorized_keys}` |
 | `net` | `mode` (`nat`/`macvlan`/`bridge`), `parent` |
 | `mounts[]` | `host`, `guest`, `ro`, `shadow[]` (subpaths to mask, e.g. `.git`) |
-| `host_bound_dir` | REQUIRED. Host dir the VM binds to for cwd resolution, host-expanded (`$(pwd)` = the init dir - project boxes); the `__HOST_CWD_IS_NOT_BOUND__` literal = unbound appliance, target it by name (the `llm_*` templates). |
+| `host_bound_dir` | REQUIRED. Host dir the VM binds to for cwd resolution, host-expanded (`$(pwd)` = the init dir - project boxes); `""` = unbound appliance, target it by name (the `llm_*` templates). |
 | (linux provisioning) | `distro_package_groups[]`, `distro_packages[]`, `thirdparty_software[]`, `dotfiles[]`, `post_install_script` |
 | `windows` | `unattend`, `post_install_powershell` |
 
@@ -88,7 +88,7 @@ zsh). Omit it to resolve by the current directory. Commands that DO take an argu
 
 | Subcommand | What it does |
 |---|---|
-| `init <template> [name]` | Create a VM from `<template>`, bound per the template's required `host_bound_dir` (`$(pwd)` = the current dir; `__HOST_CWD_IS_NOT_BOUND__` = unbound - see [VM identity](#vm-identity)). Prompts for the name (default `ivm-<template>-<bound-dir-path>`, editable) unless given; confirms before creating. |
+| `init <template> [name]` | Create a VM from `<template>`, bound per the template's required `host_bound_dir` (`$(pwd)` = the current dir; `""` = unbound - see [VM identity](#vm-identity)). Prompts for the name (default `ivm-<template>-<bound-dir-path>`, editable) unless given; confirms before creating. |
 | `list [incus args]` | No arg: a table of ivm-**managed** VMs (State, Name, MEM(guest), MEM(host), Disk, Working Directory, IPv4). `MEM(guest)` is incus's guest-agent memory figure; `MEM(host)` is the qemu process's real host RSS, which the guest figure under-reports (no balloon reclaim - see `top`); `Disk` is the guest root filesystem's used space, read live per running VM via `incus exec … df` (reliable, unlike incus's sporadic VM disk metric - lxc/incus#259; it is guest-fs used, which can trail the host `root.img` footprint until `fstrim`). Non-running VMs show `(<state>)`. Any arg: raw `incus list` passthrough of **all** instances (e.g. `ivm list --format csv`). |
 | `cd [<vm>]` | `cd` the shell into a VM's **host-bound dir** (`user.ivm_host_bound_dir`). Refuses an unbound/legacy VM. Tab-completes VM names, showing each VM's dir on the right (zsh). No arg lists the managed VMs + their dirs. Needs the `ivm()` shell wrapper (auto-installed; a child process can't change the parent shell's cwd). |
 | `info` | The target VM's live state, **grouped** for readability: **Basic** (status/image/hw/snapshots/host-bound-dir/guest-shell-dir/user-sudo), **Network** (the VM's current **IP**, bridge, ssh-server, **forwards** = `expose`d ports), **Mounts**, **Storage** (the pool its disk lives in, incl. the loop `.img` + usage). Target = cwd or `--name`. Read-only; prints every field with a placeholder when empty. |
@@ -108,7 +108,7 @@ zsh). Omit it to resolve by the current directory. Commands that DO take an argu
 | `set password <username>` / `unset password <username>` | Set (prompted, sent via stdin) / lock a guest account's login password (e.g. `user` for console/TTY login). Password only. |
 | `set ssh-server <username> [--pubkey FILE]` / `unset ssh-server <username> [--pubkey FILE]` | Authorize / revoke key-based SSH login for a guest account (`user`/`root`) - e.g. for VS Code Remote-SSH. `set` appends `--pubkey` (repeatable; default `~/.ssh/id_ed25519.pub`) to that account's `authorized_keys` (idempotent - keeps keys you added by hand) and ensures sshd is up; `root` also gets `PermitRootLogin prohibit-password`. `unset` removes the key(s) (and root's override); leaves sshd running. Key-only, no password auth. Port/password tuning lives in the template's `sys.ssh_server`. |
 | `set guest-shell-dir <path>` / `unset guest-shell-dir` | Set / clear the GUEST directory `ivm sh` starts in, inside the VM (the `user.ivm_shell_default_dir_after_login` tag; also set at `init` from a template's `shell_default_dir_after_login`). Only the interactive shell's start cwd - `$HOME` and a bare `cd` are unchanged. `<path>` is an absolute GUEST path; it need not exist yet (`ivm sh` warns + falls back to the default cwd if missing). `unset` reverts to incus's default cwd. |
-| `set host-bound-dir [<path>]` / `unset host-bound-dir` | Bind / unbind the HOST dir that resolves this VM by cwd (the `user.ivm_host_bound_dir` tag). `set` with no path = the current dir; also the migration path for legacy VMs created before the tag. `unset` stores the `__HOST_CWD_IS_NOT_BOUND__` sentinel - the VM is then targeted by name only. |
+| `set host-bound-dir [<path>]` / `unset host-bound-dir` | Bind / unbind the HOST dir that resolves this VM by cwd (the `user.ivm_host_bound_dir` tag). `set` with no path = the current dir; also the migration path for legacy VMs created before the tag. `unset` removes the tag - the VM is then targeted by name only. |
 | `set user-sudo` / `unset user-sudo` | Opt `user` in / out of in-guest sudo: `user` may sudo, gated by ROOT's password (`Defaults:user rootpw`). Needs `set password root` first. `unset` removes the sudoers drop-in (back to the locked-down default). |
 | `set git-ssh-key <keyfile> [--host HOST]` / `unset git-ssh-key [--host HOST]` | Copy a host **private** ssh key into the VM so in-guest `git` / `go get` reach **private** repos over SSH. Renamed to its type's default name (`id_ed25519`/`id_rsa`/...) so ssh auto-uses it (one key per VM); also trusts `--host` (default github.com) in known_hosts and sets git's `insteadOf` to rewrite `https`->`ssh` (needed for `go get`, which fetches via https). **WARNS + requires typing `yes i know`** (the key lives in the VM - use a low-value, passphrase-less, VM-only key); `--yes` does not skip it. `unset` removes the pushed key + the rewrite. |
 | `snapshot [create\|list\|restore\|delete] [name]` | Thin wrapper over `incus snapshot`, with the VM filled in. |
@@ -121,26 +121,28 @@ asks. Best-effort (asks the guest for pty-owning processes); a stopped VM warns 
 
 ## VM identity
 
-`init` writes two dir tags: `user.ivm_init_at_dir=<cwd>` (pure historical record
-of where init ran; also the managed-VM marker) and `user.ivm_host_bound_dir` -
-the one resolution actually reads. The cwd-resolved commands (`shell`, `start`,
+`init` writes `user.ivm_init_at_dir=<cwd>` (pure historical record of where init
+ran; also the managed-VM marker) and - for a bound template - `user.ivm_host_bound_dir`,
+the tag resolution actually reads, from the template's required `host_bound_dir`
+field (`$(pwd)` for project boxes). The cwd-resolved commands (`shell`, `start`,
 `stop`, ...) find the VM whose `ivm_host_bound_dir` matches the current dir.
 Run one from a SUBDIR of a bound project and `ivm` offers the nearest ancestor's
 VM (`open '<vm>' bound at <parent>? [Y/n]`). The instance name is free-form (you
 edit it at init); resolution is by the tag, not the name. `ivm cd <vm>` is the
 inverse: it jumps the shell to that same bound dir by VM name. Re-bind anytime:
 `ivm set host-bound-dir [<dir>]` (no arg = the current dir); `ivm unset
-host-bound-dir` unbinds.
+host-bound-dir` unbinds (removes the tag).
 
-`host_bound_dir: __HOST_CWD_IS_NOT_BOUND__` templates (the `llm_*` appliances)
-start unbound: `init` stores that sentinel in `ivm_host_bound_dir`, so the
-VM never resolves by cwd - target it by name from anywhere (`ivm sh <vm>`, or
-`--name <vm>` for `snapshot`/`expose`/...; the default name is a stable
-`ivm-<template>`). `ivm list` shows `(unbound - reach by name)`; `ivm cd`
-refuses it. The no-match error lists unbound VMs, but nothing ever auto-falls
-back to one. A VM with NO `ivm_host_bound_dir` tag at all is a legacy VM from
-before the tag existed: bind it once with `ivm --name <vm> set host-bound-dir
-<dir>` (the no-match error prints the exact command).
+`host_bound_dir: ""` templates (the `llm_*` appliances) start unbound: `init`
+writes NO binding tag, so the VM never resolves by cwd - target it by name from
+anywhere (`ivm sh <vm>`, or `--name <vm>` for `snapshot`/`expose`/...; the
+default name is a stable `ivm-<template>`). `ivm list` shows
+`(unbound - reach by name)`; `ivm cd` refuses it. The no-match error lists every
+unbound VM, but nothing ever auto-falls back to one; a legacy VM (created before
+the tag existed) looks exactly the same - the error appends the copyable
+`ivm --name <vm> set host-bound-dir <dir>` one-liner for any unbound VM whose
+recorded init dir matches the current dir, which is how a legacy VM gets bound
+once after upgrading.
 
 ## Provisioning model
 

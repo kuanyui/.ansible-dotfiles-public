@@ -10,9 +10,9 @@
 # registry means `ivm provision llm_sillytavern` can't accidentally land it on other VMs.
 template_name: llm_sillytavern
 description: "SillyTavern LLM chat server (Debian, headless; host browser -> guest:8000; shares ~/Downloads for character cards)"
-# Appliance, not a project box: explicitly bound to NO host dir - target it by name from
+# Appliance, not a project box: bound to NO host dir (empty = unbound) - target it by name
 # anywhere (`ivm shell <vm>`); default instance name is `ivm-llm-sillytavern` (no path suffix).
-host_bound_dir: __HOST_CWD_IS_NOT_BOUND__
+host_bound_dir: ""
 hw:
   cpu: 2
   memory: 4G

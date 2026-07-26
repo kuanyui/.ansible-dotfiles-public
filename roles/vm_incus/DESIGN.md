@@ -85,12 +85,13 @@ you edit the tables in lockstep - this map is the whole architecture:
   (or dies asking for `--name` with no TTY). Resolution is by the tag, not the
   free-form instance name. The binding comes from the template's REQUIRED
   `host_bound_dir` field (host-expanded; `$(pwd)` for project boxes). Appliance
-  templates (e.g. the `llm_*` family) set it to the `__HOST_CWD_IS_NOT_BOUND__`
-  literal: explicitly unbound, never joining cwd/ancestor matching and never
-  auto-picked - name-only targeting, so a stray `ivm stop` in some dir can never
-  hit an appliance. A VM with NO binding tag is a legacy (pre-tag) VM - equally
-  never matched. The no-match error lists both kinds with the copyable next
-  command (name-targeting / the one-liner that binds a legacy VM).
+  templates (e.g. the `llm_*` family) set it to `""`: no binding tag is written
+  (absent and empty read back identically everywhere, so there is no sentinel
+  value), the VM never joins cwd/ancestor matching and is never auto-picked -
+  name-only targeting, so a stray `ivm stop` in some dir can never hit an
+  appliance. A legacy pre-tag VM looks the same (no tag). The no-match error
+  lists every unbound VM by name and appends the copyable bind one-liner for
+  those whose recorded init dir matches the cwd (typically the legacy ones).
 - **Shared prebuilt provision assets** - the package-group / thirdparty install
   data and the dotfiles tree are NOT computed in the guest. The internal producer
   role `roles/_shared_prebuilt_provision_assets` renders, host-side, a REGENERABLE

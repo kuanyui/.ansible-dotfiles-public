@@ -102,10 +102,10 @@ _ivm_target_vm() {
 }
 
 # REUSABLE: EVERY incus VM as a `_describe` line - `name:host_bound_dir` when it carries a
-# `user.ivm_host_bound_dir` tag (the `__HOST_CWD_IS_NOT_BOUND__` sentinel shows verbatim -
-# it self-documents an unbound appliance), else bare `name` (no description; hand-made or
-# legacy pre-tag VM). For any VM-name completion that should show where each VM lives:
-# `--name`, and the trailing `<vm>` on the no-positional subcommands (`stop`/`info`/`sh`/...).
+# `user.ivm_host_bound_dir` tag, else bare `name` (no description; an unbound appliance,
+# a legacy pre-tag VM, or a hand-made instance - the tag is simply absent for all three).
+# For any VM-name completion that should show where each VM lives: `--name`, and the
+# trailing `<vm>` on the no-positional subcommands (`stop`/`info`/`sh`/...).
 _ivm_vms_with_dir() {
   # `--columns n,config:...`: name, then its bound dir. `IFS=, read name dir` splits on
   # the FIRST comma only, so a dir that itself contains commas stays whole in `dir`.
@@ -119,12 +119,12 @@ _ivm_vms_with_dir() {
       done
 }
 
-# REUSABLE: only the VMs `ivm cd` can jump to - those bound to a REAL host dir - as
-# `name:host_bound_dir` pairs. Rows without a dir (legacy/hand-made VMs) fail `grep ':'`;
-# cwd-unbound VMs (the `__HOST_CWD_IS_NOT_BOUND__` sentinel) are filtered explicitly:
-# `ivm cd` refuses both, so offering them would only complete an error.
+# REUSABLE: only the VMs `ivm cd` can jump to - those bound to a host dir - as
+# `name:host_bound_dir` pairs. Rows without a dir (unbound appliances, legacy or
+# hand-made VMs) fail `grep ':'`: `ivm cd` refuses them, so offering them would only
+# complete an error.
 _ivm_managed_vms() {
-  _ivm_vms_with_dir | grep ':' | grep -v ':__HOST_CWD_IS_NOT_BOUND__$'
+  _ivm_vms_with_dir | grep ':'
 }
 
 # REUSABLE guest-path completion: complete an existing DIRECTORY inside the target RUNNING

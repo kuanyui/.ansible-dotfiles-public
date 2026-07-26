@@ -70,12 +70,11 @@ _ivm() {
             COMPREPLY=( $(compgen -W "${templates}" -- "$cur") )
             ;;
         cd)
-            # Only VMs `ivm cd` can jump to: those with a REAL dir in `user.ivm_host_bound_dir`
-            # (legacy VMs have no tag, cwd-unbound ones hold the `__HOST_CWD_IS_NOT_BOUND__`
-            # sentinel - `ivm cd` refuses both). bash can't show inline descriptions, so
-            # `ivm cd` / `ivm list` show the dirs.
+            # Only VMs `ivm cd` can jump to: those with a dir in `user.ivm_host_bound_dir`
+            # (unbound appliances and legacy VMs have no tag - `ivm cd` refuses them).
+            # bash can't show inline descriptions, so `ivm cd` / `ivm list` show the dirs.
             local managed_vm_names
-            managed_vm_names="$(incus list --format csv --columns n,config:user.ivm_host_bound_dir 2>/dev/null | awk -F, 'NF >= 2 && $2 != "" && $2 != "__HOST_CWD_IS_NOT_BOUND__" { print $1 }')"
+            managed_vm_names="$(incus list --format csv --columns n,config:user.ivm_host_bound_dir 2>/dev/null | awk -F, 'NF >= 2 && $2 != "" { print $1 }')"
             COMPREPLY=( $(compgen -W "${managed_vm_names}" -- "$cur") )
             ;;
         shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)

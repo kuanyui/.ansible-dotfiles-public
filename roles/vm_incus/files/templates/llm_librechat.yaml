@@ -20,9 +20,9 @@
 # fast in-place rollback -> `ivm snapshot`; whole-VM archive -> `incus export`.
 template_name: llm_librechat
 description: "LibreChat LLM chat server (Debian, headless; rootless podman-compose api+mongodb; host browser -> guest:3080; backups land in ~/Downloads)"
-# Appliance, not a project box: explicitly bound to NO host dir - target it by name from
+# Appliance, not a project box: bound to NO host dir (empty = unbound) - target it by name
 # anywhere (`ivm shell <vm>`); default instance name is `ivm-llm-librechat` (no path suffix).
-host_bound_dir: __HOST_CWD_IS_NOT_BOUND__
+host_bound_dir: ""
 hw:
   cpu: 2
   memory: 4G
