@@ -55,6 +55,7 @@ Field groups (see the schema for the full, authoritative list):
 | `sys` | `gui`, `timezone`, `tmpfs[]`, `ssh_server.{enabled,port,root_login,password_login,authorized_keys}` |
 | `net` | `mode` (`nat`/`macvlan`/`bridge`), `parent` |
 | `mounts[]` | `host`, `guest`, `ro`, `shadow[]` (subpaths to mask, e.g. `.git`) |
+| `cwd_bound` | `false` = appliance/global VM: no dir binding, target it by name from anywhere (the `llm_*` templates). Default `true`. |
 | (linux provisioning) | `distro_package_groups[]`, `distro_packages[]`, `thirdparty_software[]`, `dotfiles[]`, `post_install_script` |
 | `windows` | `unattend`, `post_install_powershell` |
 
@@ -87,7 +88,7 @@ zsh). Omit it to resolve by the current directory. Commands that DO take an argu
 
 | Subcommand | What it does |
 |---|---|
-| `init <template> [name]` | Create a VM from `<template>`, bound to the current dir. Prompts for the name (default `ivm-<template>-<cwd-path>`, editable) unless given; confirms before creating. |
+| `init <template> [name]` | Create a VM from `<template>`, bound to the current dir (skipped for `cwd_bound: false` templates - see [VM identity](#vm-identity)). Prompts for the name (default `ivm-<template>-<cwd-path>`, editable) unless given; confirms before creating. |
 | `list [incus args]` | No arg: a table of ivm-**managed** VMs (State, Name, MEM(guest), MEM(host), Disk, Working Directory, IPv4). `MEM(guest)` is incus's guest-agent memory figure; `MEM(host)` is the qemu process's real host RSS, which the guest figure under-reports (no balloon reclaim - see `top`); `Disk` is the guest root filesystem's used space, read live per running VM via `incus exec … df` (reliable, unlike incus's sporadic VM disk metric - lxc/incus#259; it is guest-fs used, which can trail the host `root.img` footprint until `fstrim`). Non-running VMs show `(<state>)`. Any arg: raw `incus list` passthrough of **all** instances (e.g. `ivm list --format csv`). |
 | `cd [<vm>]` | `cd` the shell into a VM's **working-dir root** (the host dir `ivm init` ran in). Tab-completes VM names, showing each VM's dir on the right (zsh). No arg lists the managed VMs + their dirs. Needs the `ivm()` shell wrapper (auto-installed; a child process can't change the parent shell's cwd). |
 | `info` | The target VM's live state, **grouped** for readability: **Basic** (status/image/hw/snapshots/shell-dir/user-sudo), **Network** (the VM's current **IP**, bridge, ssh-server, **forwards** = `expose`d ports), **Mounts**, **Storage** (the pool its disk lives in, incl. the loop `.img` + usage). Target = cwd or `--name`. Read-only; prints every field with a placeholder when empty. |
@@ -125,6 +126,15 @@ Run one from a SUBDIR of an init'd project and `ivm` offers the nearest
 ancestor's VM (`open '<vm>' init'd at <parent>? [Y/n]`). The instance name is
 free-form (you edit it at init); resolution is by the tag, not the name.
 `ivm cd <vm>` is the inverse: it jumps the shell to that same tagged dir by VM name.
+
+`cwd_bound: false` templates (the `llm_*` appliances) opt out of the binding:
+`init` stores the `__CWD_UNBOUND__` sentinel instead of a dir, so the VM never
+resolves by cwd - target it by name from anywhere (`ivm sh <vm>`, or `--name <vm>`
+for `snapshot`/`expose`/...; the default name is a stable `ivm-<template>`).
+`ivm list` shows `(global - reach by name)` as its working dir; `ivm cd` refuses
+it. The no-match error lists global VMs, but nothing ever auto-falls back to one.
+Make an EXISTING VM global with:
+`incus config set <vm> user.ivm_init_at_dir __CWD_UNBOUND__`.
 
 ## Provisioning model
 

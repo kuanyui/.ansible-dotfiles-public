@@ -69,6 +69,14 @@ DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
                    str(Path.home() / ".local/share/ansible-managed/shared-prebuilt-provision-assets"))
 )
 
+# Sentinel stored in `user.ivm_init_at_dir` for a `cwd_bound: false` template (appliance
+# VMs like the llm_* family): the tag stays non-empty - it doubles as the managed-VM
+# marker - but the VM never resolves by cwd; target it by name (trailing `<vm>` /
+# `--name`). Deliberately not path-like, so it is unmistakable in `incus config show`,
+# and greppable. To make an EXISTING VM global by hand:
+#   incus config set <vm> user.ivm_init_at_dir __CWD_UNBOUND__
+CWD_UNBOUND_SENTINEL: str = "__CWD_UNBOUND__"
+
 # Subcommands that act on an EXISTING VM, resolved by cwd (`user.ivm_init_at_dir`)
 # or overridden with the global `--name`. (`init`/`env`/`list` are NOT here -
 # they don't resolve a target VM.)
@@ -390,10 +398,15 @@ def sanitize_incus_name(raw: str) -> str:
     return name[:MAX_NAME_LEN]
 
 
-def default_instance_name(template_name: str, cwd: Path) -> str:
+def default_instance_name(template_name: str, cwd: Path, *, cwd_bound: bool) -> str:
     # `ivm-` prefix so ivm-managed VMs are obvious at a glance in `incus list`.
     # Only the auto-generated default carries it; an explicit `--name` is left
     # untouched (the canonical "is this ours" check is the user.ivm_init_at_dir tag).
+    # A cwd-unbound (`cwd_bound: false`) template gets NO path suffix: the name is
+    # typed from anywhere, and the stable `ivm-<template>` default makes a second
+    # init of the same appliance collide loudly instead of silently multiplying.
+    if not cwd_bound:
+        return sanitize_incus_name(f"ivm-{template_name}")
     rel: str = str(cwd)
     home: str = str(Path.home())
     if rel.startswith(home):
@@ -520,7 +533,7 @@ def choose_instance_name(
     """Pick the VM name: explicit arg, or prompt (default = long path-based),
     re-prompting on invalid/duplicate/socket-path-too-long. `--yes`/`--dry-run`
     take the default. `doc` is needed to size each mount's virtiofs socket."""
-    default: str = default_instance_name(template_name, cwd)
+    default: str = default_instance_name(template_name, cwd, cwd_bound=doc.get("cwd_bound", True))
     if given is not None:
         err: str | None = name_error(given, doc, dry_run=dry_run)
         if err:
@@ -589,11 +602,14 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
         cmd += ["--config", f"limits.memory={g_to_gib(hw['memory'])}"]
     if hw.get("secureboot") is False:  # incus VM default is on, so only emit to disable
         cmd += ["--config", "security.secureboot=false"]
+    # `cwd_bound: false` (appliance templates): record the sentinel instead of a dir -
+    # the tag keeps marking the VM as ivm-managed, but cwd resolution skips it.
+    init_at_dir_tag_value: str = str(cwd) if doc.get("cwd_bound", True) else CWD_UNBOUND_SENTINEL
     cmd += [
         "--config", "user.ansible_managed=true",
         "--config", "user.ivm_guest_os=linux",
         "--config", f"user.ivm_template={doc['template_name']}",
-        "--config", f"user.ivm_init_at_dir={cwd}",
+        "--config", f"user.ivm_init_at_dir={init_at_dir_tag_value}",
         # Record the dotfiles ansible_os_family so `overwrite-dotfiles` can pick the
         # right per-family dotfiles bucket (dotfiles/<feature>/<family>/) without re-reading the template.
         "--config", f"user.ivm_ansible_os_family={ansible_os_family_of(doc)}",
@@ -1263,6 +1279,13 @@ def describe_candidate(binding: VmBinding) -> str:
             f"[template={binding.template or '?'}, {binding.status or '?'}]")
 
 
+def display_init_at_dir(raw_init_at_dir: str) -> str:
+    """The WORKING DIRECTORY cell for `ivm list` / bare `ivm cd`: the recorded dir,
+    or a labelled placeholder for a cwd-unbound VM (a labelled value beats leaking
+    the raw sentinel into human-facing tables)."""
+    return "(global - reach by name)" if raw_init_at_dir == CWD_UNBOUND_SENTINEL else raw_init_at_dir
+
+
 def choose_vm_from_candidates(candidates: list[VmBinding], *, intro: str) -> str:
     """TTY numbered picker over >1 candidate VMs (caller guarantees a TTY; the
     non-TTY path dies with the list instead, so scripted use stays predictable)."""
@@ -1289,10 +1312,15 @@ def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
     or different templates) -> TTY: numbered picker; non-TTY: die listing them +
     require `--name` (keeps scripted use predictable). No match at cwd -> walk
     ancestors and offer the nearest dir that has any (DESIGN.md "cwd -> VM
-    resolution"), with the same >1 handling there."""
+    resolution"), with the same >1 handling there. Cwd-unbound VMs (tag ==
+    `CWD_UNBOUND_SENTINEL`) never take part - they are targeted by name only; the
+    final no-match error lists them so the next command is copyable, but NEVER
+    auto-falls back to one (a stray `ivm stop` must not stop an appliance)."""
     if dry_run:
         return "<vm-resolved-from-cwd>"
-    bindings: list[VmBinding] = list_vm_bindings()
+    all_bindings: list[VmBinding] = list_vm_bindings()
+    global_vms: list[VmBinding] = [b for b in all_bindings if b.init_at_dir == CWD_UNBOUND_SENTINEL]
+    bindings: list[VmBinding] = [b for b in all_bindings if b.init_at_dir != CWD_UNBOUND_SENTINEL]
     here: list[VmBinding] = [b for b in bindings if b.init_at_dir == str(cwd)]
     if len(here) == 1:
         return here[0].name
@@ -1320,7 +1348,12 @@ def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
             die("aborted")
         return choose_vm_from_candidates(
             at_ancestor, intro=f"No VM bound to {cwd}; VMs init'd at ancestor {ancestor}:")
-    die(f"no VM is bound to {cwd} or any parent; run `ivm init <template>` here first")
+    global_vm_hint: str = ""
+    if global_vms:
+        global_vm_listing: str = "\n".join(f"  - {describe_candidate(b)}" for b in global_vms)
+        global_vm_hint = ("\ncwd-unbound (global) VMs - target one by name, e.g. "
+                          "`ivm shell <vm>` / `--name <vm>`:\n" + global_vm_listing)
+    die(f"no VM is bound to {cwd} or any parent; run `ivm init <template>` here first{global_vm_hint}")
 
 
 def vm_is_running(name: str) -> bool:
@@ -1537,7 +1570,10 @@ def confirm_create(doc: Template, name: str, cwd: Path, root: Path, *, assume_ye
     print("", file=sys.stderr)
     print("About to CREATE a new Incus VM:", file=sys.stderr)
     print(f"  incus VM name: {colorize_vm_name(name)}  (visible in `incus list`)", file=sys.stderr)
-    print(f"  template:      {doc['template_name']}  (cwd: {cwd})", file=sys.stderr)
+    # A cwd-unbound template records no dir - printing the incidental cwd here would
+    # wrongly suggest a binding, so say what actually happens instead.
+    binding_note: str = f"(cwd: {cwd})" if doc.get("cwd_bound", True) else "(cwd-unbound: target it by name from anywhere)"
+    print(f"  template:      {doc['template_name']}  {binding_note}", file=sys.stderr)
     print(f"  image:         {image_ref(doc['os'])}", file=sys.stderr)
     print(f"  hw:            cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
     # Surface what will run as ROOT in the guest at provision time BEFORE the create
@@ -1581,7 +1617,8 @@ def cmd_list_templates(root: Path) -> None:
 
 def cmd_init(template_name: str, given_name: str | None, root: Path, shared_prebuilt_provision_assets_root: Path, *,
              assume_yes: bool, dry_run: bool) -> None:
-    """Create a VM from `<template>`, bound to the current directory: validate the
+    """Create a VM from `<template>`, bound to the current directory (or cwd-unbound
+    for a `cwd_bound: false` appliance template - see CWD_UNBOUND_SENTINEL): validate the
     template, prompt for + confirm the instance name, then `incus create` (stopped)
     -> attach devices (mounts, shadow masks, tpm, nic) -> start -> provision (packages,
     `user`, dotfiles); a GUI template also reboots into the desktop. A post-create
@@ -1596,6 +1633,11 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, shared_preb
                                      dry_run=dry_run, assume_yes=assume_yes)
     confirm_create(doc, name, cwd, root, assume_yes=assume_yes, dry_run=dry_run)
     is_gui: bool = bool(doc.get("sys", {}).get("gui"))
+    # A cwd-unbound VM never resolves by cwd, so every follow-up command this function
+    # prints must carry the name; a bound VM keeps the shorter cwd-resolved spelling.
+    template_is_cwd_bound: bool = doc.get("cwd_bound", True)
+    shell_hint: str = "ivm shell" if template_is_cwd_bound else f"ivm shell {name}"
+    remove_hint: str = f"ivm delete   (from {cwd})" if template_is_cwd_bound else f"ivm delete {name}"
     # create stopped, attach all devices, THEN start (so non-hotpluggable
     # devices like the TPM are present at first boot).
     run(create_command(doc, name, cwd), dry_run=dry_run)
@@ -1631,9 +1673,9 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, shared_preb
             f"The VM was left in place, NOT deleted (often a transient mirror/network "
             f"blip worth retrying).\n"
             f"  inspect: incus exec {name} -- bash\n"
-            f"  remove:  ivm delete   (from {cwd})   # or: incus delete --force {name}\n"
+            f"  remove:  {remove_hint}   # or: incus delete --force {name}\n"
             f"Resolve the cause, then `ivm delete` + `ivm init {template_name}` to rebuild.")
-    enter_hint: str = "ivm shell" + (", or `ivm gui` for the desktop" if is_gui else "")
+    enter_hint: str = shell_hint + (", or `ivm gui` for the desktop" if is_gui else "")
     print(f"==> {colorize_vm_name(name)} ready. Enter with: {enter_hint}", file=sys.stderr)
 
 
@@ -2362,7 +2404,7 @@ def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
             guest_mem or running_gap,
             mem_host,
             disk,
-            working_dir,
+            display_init_at_dir(working_dir),
             ipv4.replace("\n", ", "),
         ))
     if not table_rows:
@@ -2384,11 +2426,15 @@ def cmd_cd(name: str | None) -> None:
             print("No ivm-managed VMs yet; create one with `ivm init <template>`.", file=sys.stderr)
             return
         print_table(["NAME", "WORKING DIRECTORY"],
-                    [(binding.name, binding.init_at_dir) for binding in bindings],
+                    [(binding.name, display_init_at_dir(binding.init_at_dir)) for binding in bindings],
                     stream=sys.stderr)
         return
     for binding in bindings:
         if binding.name == name:
+            if binding.init_at_dir == CWD_UNBOUND_SENTINEL:
+                # Exit non-zero with NOTHING on stdout, so the ivm() shell wrapper's
+                # `|| return` stops it from cd'ing into a bogus path.
+                die(f"'{name}' is cwd-unbound (global) - it has no working-dir root to cd into")
             print(binding.init_at_dir)
             return
     die(f"no ivm-managed VM named '{name}' (run `ivm cd` or `ivm list` to see them)")
@@ -3087,7 +3133,7 @@ def cmd_adopt(name: str, root: Path, *, dry_run: bool) -> None:
         ("user.ivm_guest_os", "guest OS kind", "linux", ("linux", "windows")),
         ("user.ivm_ansible_os_family", "dotfiles os_family (blank for non-Linux)", "", ("Debian", "Suse", "RedHat")),
         ("user.ivm_template", f"source template{template_hint}", "?", None),
-        ("user.ivm_init_at_dir", "dir that resolves this VM by cwd", str(Path.cwd()), None),
+        ("user.ivm_init_at_dir", f"dir that resolves this VM by cwd ({CWD_UNBOUND_SENTINEL} = global, reach by name)", str(Path.cwd()), None),
     ]
     bound_dir: str = ""
     for tag_key, label, fallback_default, allowed_values in tag_specs:
@@ -3102,8 +3148,11 @@ def cmd_adopt(name: str, root: Path, *, dry_run: bool) -> None:
             break
         if not entered_value:
             continue
-        if tag_key == "user.ivm_init_at_dir":
+        if tag_key == "user.ivm_init_at_dir" and entered_value != CWD_UNBOUND_SENTINEL:
+            # The sentinel must be stored VERBATIM - abspath would mangle it into
+            # `<cwd>/__CWD_UNBOUND__`, a bogus path that silently binds the VM.
             entered_value = os.path.abspath(os.path.expanduser(entered_value))
+        if tag_key == "user.ivm_init_at_dir":
             bound_dir = entered_value
         run(["incus", "config", "set", name, tag_key, entered_value], dry_run=dry_run)
     for legacy_tag in LEGACY_TAGS:
@@ -3111,6 +3160,10 @@ def cmd_adopt(name: str, root: Path, *, dry_run: bool) -> None:
             run(["incus", "config", "unset", name, legacy_tag], dry_run=dry_run)
     print(f"\nAdopted {colorize_vm_name(name)}. Verify with:\n", file=sys.stderr)
     print("ivm info", file=sys.stderr)
+    if bound_dir == CWD_UNBOUND_SENTINEL:
+        print(f"\n(cwd-unbound: run it from anywhere by name - `ivm info {name}` / `--name {name}`)",
+              file=sys.stderr)
+        return
     where: str = f"from {bound_dir}" if bound_dir else "from the dir you bound"
     print(f"\n(run it {where}, or anywhere with `--name {name}`)", file=sys.stderr)
 

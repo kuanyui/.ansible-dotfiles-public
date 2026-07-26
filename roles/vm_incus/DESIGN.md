@@ -80,7 +80,12 @@ you edit the tables in lockstep - this map is the whole architecture:
   VM-acting subcommands look up the VM whose tag matches the current dir; run from
   a SUBDIR and `ivm` offers the nearest ancestor's VM; when several VMs share one
   dir it shows a TTY picker (or dies asking for `--name` with no TTY). Resolution
-  is by the tag, not the free-form instance name.
+  is by the tag, not the free-form instance name. Appliance templates
+  (`cwd_bound: false`, e.g. the `llm_*` family) store the `__CWD_UNBOUND__`
+  sentinel instead: the tag keeps marking the VM as managed, but it never joins
+  cwd/ancestor matching and is never auto-picked - name-only targeting, so a
+  stray `ivm stop` in some dir can never hit an appliance. The no-match error
+  lists these global VMs so the copyable next command is right there.
 - **Shared prebuilt provision assets** - the package-group / thirdparty install
   data and the dotfiles tree are NOT computed in the guest. The internal producer
   role `roles/_shared_prebuilt_provision_assets` renders, host-side, a REGENERABLE

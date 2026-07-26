@@ -15,6 +15,11 @@
       "type": "string",
       "description": "One-line human summary of this template, shown by `ivm init` run with no template arg (the listing). Optional."
     },
+    "cwd_bound": {
+      "type": "boolean",
+      "default": true,
+      "description": "false = appliance/global VM (e.g. the llm_* templates): `ivm init` records the `__CWD_UNBOUND__` sentinel instead of the init dir, the VM never resolves by cwd (target it by name: trailing `<vm>` or `--name <vm>`; `ivm cd` refuses it), and the default instance name is `ivm-<template_name>` with no path suffix. Absent/true = the normal per-directory binding for project boxes (claude/codex)."
+    },
     "hw": {
       "type": "object",
       "description": "Hardware allocation. Optional; `ivm` supplies defaults for anything omitted.",

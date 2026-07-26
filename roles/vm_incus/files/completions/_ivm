@@ -120,9 +120,11 @@ _ivm_vms_with_dir() {
 
 # REUSABLE: only ivm-MANAGED VMs (those WITH a working dir), as `name:working_dir` pairs -
 # `_ivm_vms_with_dir` filtered to the rows that HAVE a dir (a `:`). For `ivm cd`, where a
-# VM without a working dir has nowhere to cd to.
+# VM without a working dir has nowhere to cd to. Cwd-unbound VMs (dir is the
+# `__CWD_UNBOUND__` sentinel; `cwd_bound: false` templates) are excluded too: `ivm cd`
+# refuses them, so offering them would only complete an error.
 _ivm_managed_vms() {
-  _ivm_vms_with_dir | grep ':'
+  _ivm_vms_with_dir | grep ':' | grep -v ':__CWD_UNBOUND__$'
 }
 
 # REUSABLE guest-path completion: complete an existing DIRECTORY inside the target RUNNING

@@ -1357,6 +1357,15 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   `llm-backup` (tars `~/librechat` to `~/Downloads/LibreChatBackups/`)
 - [x] `roles/vm_incus/README.md` shipped-examples list updated (it already omitted
   sillytavern; now lists the three `llm_*` appliances)
+- [x] `cwd_bound: false` template field (appliances resolve by NAME, not cwd):
+  `ivm init` stores the `__CWD_UNBOUND__` sentinel in `user.ivm_init_at_dir`
+  (tag stays the managed marker), resolver skips + never auto-falls back
+  (no-match error lists global VMs), default instance name `ivm-<template>` (no
+  path suffix), `ivm cd` refuses + drops them from cd completion (zsh+bash),
+  `ivm list`/bare `cd` show `(global - reach by name)`, `adopt` accepts the
+  sentinel verbatim; set on all 3 `llm_*` templates; schema + README/SPEC/DESIGN
+  updated. Existing VM converts via
+  `incus config set <vm> user.ivm_init_at_dir __CWD_UNBOUND__`
 - [x] verify (structural): 3 templates pass template.schema.json (draft 2020-12,
   ajv; `template_name` matches filename), `bash -n` passes on every
   `post_install_script` + all 3 embedded `llm-backup` scripts, compose heredoc +
