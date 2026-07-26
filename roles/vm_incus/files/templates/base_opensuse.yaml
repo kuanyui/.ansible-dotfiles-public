@@ -5,6 +5,7 @@
 # openSUSE counterpart of base_debian / base_fedora.
 template_name: base_opensuse
 description: "bare openSUSE Tumbleweed dev box - baseline + tools_basic, no GUI"
+host_bound_dir: $(pwd)
 hw:
   cpu: 2
   memory: 4G

@@ -4,7 +4,7 @@
   "description": "One incus VM, provisioned from the HOST via `incus exec` (no ansible/python inside the guest). Field contract: ../SPEC.md.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["template_name", "os"],
+  "required": ["template_name", "os", "host_bound_dir"],
   "properties": {
     "template_name": {
       "type": "string",
@@ -15,10 +15,10 @@
       "type": "string",
       "description": "One-line human summary of this template, shown by `ivm init` run with no template arg (the listing). Optional."
     },
-    "cwd_bound": {
-      "type": "boolean",
-      "default": true,
-      "description": "false = appliance/global VM (e.g. the llm_* templates): `ivm init` stores the `__HOST_CWD_IS_NOT_BOUND__` sentinel in `user.ivm_host_bound_dir` (while `user.ivm_init_at_dir` still records where init ran, as pure history), so the VM never resolves by cwd - target it by name (trailing `<vm>` or `--name <vm>`; `ivm cd` refuses it), or bind it later with `ivm set host-bound-dir`. The default instance name becomes `ivm-<template_name>` with no path suffix. Absent/true = the normal per-directory binding for project boxes (claude/codex)."
+    "host_bound_dir": {
+      "type": "string",
+      "minLength": 1,
+      "description": "REQUIRED. The HOST dir this VM is bound to for cwd resolution, written to the VM's `user.ivm_host_bound_dir` tag at init (`user.ivm_init_at_dir` separately records where init ran, as pure history). Shell-expanded on the HOST like a mount's `host` value: `$(pwd)` = bind to the dir `ivm init` runs in (the project-box default, e.g. claude/codex); a relative result is made absolute against that dir. The literal `__HOST_CWD_IS_NOT_BOUND__` = deliberately unbound (appliance templates, e.g. llm_*): the VM never resolves by cwd - target it by name (`ivm shell <vm>` / `--name <vm>`; `ivm cd` refuses it) - and the default instance name drops the path suffix (`ivm-<template_name>`). Re-bind/unbind later with `ivm set`/`unset host-bound-dir`."
     },
     "hw": {
       "type": "object",

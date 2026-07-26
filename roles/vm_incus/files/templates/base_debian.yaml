@@ -6,6 +6,7 @@
 # see claude.yaml / codex.yaml; for a desktop see webbrowser.yaml.
 template_name: base_debian
 description: "bare Debian dev box - baseline + tools_basic, no GUI/mounts (minimal; extend per project)"
+host_bound_dir: $(pwd)
 hw:
   cpu: 2
   memory: 4G

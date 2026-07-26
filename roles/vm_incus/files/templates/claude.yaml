@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=../template.schema.json
 template_name: claude
 description: "Claude Code agent box (Debian; mounts cwd + shadows .git/.vscode; claude CLI)"
+host_bound_dir: $(pwd)
 hw:
   cpu: 4
   memory: 8G

@@ -74,7 +74,8 @@ DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
 # binding tag is ALWAYS written at init, so its three states are explicit in
 # `incus config show`:
 #   a real dir                  -> bound: cwd resolution targets this VM there
-#   __HOST_CWD_IS_NOT_BOUND__   -> deliberately unbound (`cwd_bound: false` appliance /
+#   __HOST_CWD_IS_NOT_BOUND__   -> deliberately unbound (a template with
+#                                  `host_bound_dir: __HOST_CWD_IS_NOT_BOUND__`, or
 #                                  `ivm unset host-bound-dir`): target it by name only
 #   tag absent                  -> legacy VM from before this tag; not cwd-resolvable
 #                                  until bound: `ivm --name <vm> set host-bound-dir <dir>`
@@ -394,6 +395,21 @@ def sh_expand(value: str, cwd: Path) -> str:
     return out or value
 
 
+def resolved_host_bound_dir(doc: Template, cwd: Path) -> str:
+    """The template's REQUIRED `host_bound_dir` field resolved for this init. The
+    literal `HOST_CWD_IS_NOT_BOUND_SENTINEL` passes through VERBATIM - checked BEFORE
+    shell expansion, so it can never be mangled into a path. Anything else is
+    host-expanded exactly like a mount `host` value (`$(pwd)` = the init cwd, the
+    project-box default), and a relative result is made absolute against the init cwd."""
+    raw_host_bound_dir: str = doc["host_bound_dir"]
+    if raw_host_bound_dir == HOST_CWD_IS_NOT_BOUND_SENTINEL:
+        return HOST_CWD_IS_NOT_BOUND_SENTINEL
+    expanded: str = sh_expand(raw_host_bound_dir, cwd)
+    if expanded.startswith("/"):
+        return os.path.normpath(expanded)
+    return os.path.normpath(os.path.join(str(cwd), expanded))
+
+
 # ---------- instance name ----------
 
 def sanitize_incus_name(raw: str) -> str:
@@ -404,16 +420,18 @@ def sanitize_incus_name(raw: str) -> str:
     return name[:MAX_NAME_LEN]
 
 
-def default_instance_name(template_name: str, cwd: Path, *, cwd_bound: bool) -> str:
+def default_instance_name(template_name: str, host_bound_dir_resolved: str) -> str:
     # `ivm-` prefix so ivm-managed VMs are obvious at a glance in `incus list`.
     # Only the auto-generated default carries it; an explicit `--name` is left
     # untouched (the canonical "is this ours" check is the user.ivm_init_at_dir tag).
-    # A cwd-unbound (`cwd_bound: false`) template gets NO path suffix: the name is
-    # typed from anywhere, and the stable `ivm-<template>` default makes a second
-    # init of the same appliance collide loudly instead of silently multiplying.
-    if not cwd_bound:
+    # An unbound template (`host_bound_dir: __HOST_CWD_IS_NOT_BOUND__`) gets NO path
+    # suffix: the name is typed from anywhere, and the stable `ivm-<template>` default
+    # makes a second init of the same appliance collide loudly instead of silently
+    # multiplying. A bound template's suffix comes from the RESOLVED bound dir (= the
+    # cwd for the usual `$(pwd)`), so the name reflects where the VM resolves.
+    if host_bound_dir_resolved == HOST_CWD_IS_NOT_BOUND_SENTINEL:
         return sanitize_incus_name(f"ivm-{template_name}")
-    rel: str = str(cwd)
+    rel: str = host_bound_dir_resolved
     home: str = str(Path.home())
     if rel.startswith(home):
         rel = rel[len(home):]
@@ -539,7 +557,7 @@ def choose_instance_name(
     """Pick the VM name: explicit arg, or prompt (default = long path-based),
     re-prompting on invalid/duplicate/socket-path-too-long. `--yes`/`--dry-run`
     take the default. `doc` is needed to size each mount's virtiofs socket."""
-    default: str = default_instance_name(template_name, cwd, cwd_bound=doc.get("cwd_bound", True))
+    default: str = default_instance_name(template_name, resolved_host_bound_dir(doc, cwd))
     if given is not None:
         err: str | None = name_error(given, doc, dry_run=dry_run)
         if err:
@@ -610,8 +628,9 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
         cmd += ["--config", "security.secureboot=false"]
     # `user.ivm_init_at_dir` is a pure HISTORICAL record (where init ran; also the
     # managed-VM marker); resolution reads `user.ivm_host_bound_dir`, written for every
-    # VM: the cwd for a bound template, the explicit sentinel for `cwd_bound: false`.
-    host_bound_dir_tag_value: str = str(cwd) if doc.get("cwd_bound", True) else HOST_CWD_IS_NOT_BOUND_SENTINEL
+    # VM from the template's required `host_bound_dir` field (host-expanded; the
+    # `__HOST_CWD_IS_NOT_BOUND__` literal stays verbatim = unbound appliance).
+    host_bound_dir_tag_value: str = resolved_host_bound_dir(doc, cwd)
     cmd += [
         "--config", "user.ansible_managed=true",
         "--config", "user.ivm_guest_os=linux",
@@ -1606,9 +1625,13 @@ def confirm_create(doc: Template, name: str, cwd: Path, root: Path, *, assume_ye
     print("", file=sys.stderr)
     print("About to CREATE a new Incus VM:", file=sys.stderr)
     print(f"  incus VM name: {colorize_vm_name(name)}  (visible in `incus list`)", file=sys.stderr)
-    # A cwd-unbound template records no dir - printing the incidental cwd here would
-    # wrongly suggest a binding, so say what actually happens instead.
-    binding_note: str = f"(cwd: {cwd})" if doc.get("cwd_bound", True) else "(cwd-unbound: target it by name from anywhere)"
+    # Show the RESOLVED binding (the template field may be `$(pwd)` or a real path);
+    # an unbound template records no dir - printing the incidental cwd would wrongly
+    # suggest a binding, so say what actually happens instead.
+    confirm_bound_dir: str = resolved_host_bound_dir(doc, cwd)
+    binding_note: str = (f"(host-bound dir: {confirm_bound_dir})"
+                         if confirm_bound_dir != HOST_CWD_IS_NOT_BOUND_SENTINEL
+                         else "(cwd-unbound: target it by name from anywhere)")
     print(f"  template:      {doc['template_name']}  {binding_note}", file=sys.stderr)
     print(f"  image:         {image_ref(doc['os'])}", file=sys.stderr)
     print(f"  hw:            cpu={hw.get('cpu')} memory={hw.get('memory')} disk={hw.get('disk')}", file=sys.stderr)
@@ -1653,8 +1676,9 @@ def cmd_list_templates(root: Path) -> None:
 
 def cmd_init(template_name: str, given_name: str | None, root: Path, shared_prebuilt_provision_assets_root: Path, *,
              assume_yes: bool, dry_run: bool) -> None:
-    """Create a VM from `<template>`, bound to the current directory (or cwd-unbound
-    for a `cwd_bound: false` appliance template - see HOST_CWD_IS_NOT_BOUND_SENTINEL): validate the
+    """Create a VM from `<template>`, bound per the template's required `host_bound_dir`
+    (`$(pwd)` = the current directory; the `__HOST_CWD_IS_NOT_BOUND__` literal = an
+    unbound appliance - see HOST_CWD_IS_NOT_BOUND_SENTINEL): validate the
     template, prompt for + confirm the instance name, then `incus create` (stopped)
     -> attach devices (mounts, shadow masks, tpm, nic) -> start -> provision (packages,
     `user`, dotfiles); a GUI template also reboots into the desktop. A post-create
@@ -1670,10 +1694,13 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, shared_preb
     confirm_create(doc, name, cwd, root, assume_yes=assume_yes, dry_run=dry_run)
     is_gui: bool = bool(doc.get("sys", {}).get("gui"))
     # A cwd-unbound VM never resolves by cwd, so every follow-up command this function
-    # prints must carry the name; a bound VM keeps the shorter cwd-resolved spelling.
-    template_is_cwd_bound: bool = doc.get("cwd_bound", True)
+    # prints must carry the name; a bound VM keeps the shorter cwd-resolved spelling,
+    # anchored at its RESOLVED bound dir (= the cwd for the usual `$(pwd)`).
+    host_bound_dir_for_this_vm: str = resolved_host_bound_dir(doc, cwd)
+    template_is_cwd_bound: bool = host_bound_dir_for_this_vm != HOST_CWD_IS_NOT_BOUND_SENTINEL
     shell_hint: str = "ivm shell" if template_is_cwd_bound else f"ivm shell {name}"
-    remove_hint: str = f"ivm delete   (from {cwd})" if template_is_cwd_bound else f"ivm delete {name}"
+    remove_hint: str = (f"ivm delete   (from {host_bound_dir_for_this_vm})" if template_is_cwd_bound
+                        else f"ivm delete {name}")
     # create stopped, attach all devices, THEN start (so non-hotpluggable
     # devices like the TPM are present at first boot).
     run(create_command(doc, name, cwd), dry_run=dry_run)

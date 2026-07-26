@@ -83,9 +83,10 @@ you edit the tables in lockstep - this map is the whole architecture:
   host-bound-dir` re-binds/unbinds it later. Run from a SUBDIR and `ivm` offers
   the nearest ancestor's VM; when several VMs share one dir it shows a TTY picker
   (or dies asking for `--name` with no TTY). Resolution is by the tag, not the
-  free-form instance name. Appliance templates (`cwd_bound: false`, e.g. the
-  `llm_*` family) store the `__HOST_CWD_IS_NOT_BOUND__` sentinel instead of a
-  dir: explicitly unbound, never joining cwd/ancestor matching and never
+  free-form instance name. The binding comes from the template's REQUIRED
+  `host_bound_dir` field (host-expanded; `$(pwd)` for project boxes). Appliance
+  templates (e.g. the `llm_*` family) set it to the `__HOST_CWD_IS_NOT_BOUND__`
+  literal: explicitly unbound, never joining cwd/ancestor matching and never
   auto-picked - name-only targeting, so a stray `ivm stop` in some dir can never
   hit an appliance. A VM with NO binding tag is a legacy (pre-tag) VM - equally
   never matched. The no-match error lists both kinds with the copyable next

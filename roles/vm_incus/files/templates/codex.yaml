@@ -2,6 +2,7 @@
 # Codex agent VM: Node.js + npm `@openai/codex`.
 template_name: codex
 description: "Codex agent box (Debian + Node.js + @openai/codex CLI)"
+host_bound_dir: $(pwd)
 hw:
   cpu: 4
   memory: 4G

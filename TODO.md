@@ -1359,10 +1359,11 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   sillytavern; now lists the three `llm_*` appliances)
 - [x] two-tag VM binding (appliances resolve by NAME, not cwd):
   `user.ivm_init_at_dir` demoted to pure history (+ managed marker); resolution
-  reads the new `user.ivm_host_bound_dir`, always written at init - a real dir
-  (bound), the `__HOST_CWD_IS_NOT_BOUND__` sentinel (`cwd_bound: false`
-  appliances - all 3 `llm_*` templates - or `ivm unset host-bound-dir`), or
-  absent (legacy pre-tag VM). Unbound/legacy never match, never auto-fallback;
+  reads the new `user.ivm_host_bound_dir`, always written at init from the
+  REQUIRED template field `host_bound_dir` (host-expanded; `$(pwd)` = project
+  box) - a real dir (bound), the `__HOST_CWD_IS_NOT_BOUND__` literal (all 3
+  `llm_*` appliance templates, or `ivm unset host-bound-dir`), or absent
+  (legacy pre-tag VM). Unbound/legacy never match, never auto-fallback;
   no-match error lists both with copyable commands. New `ivm set host-bound-dir
   [<dir>]` (no arg = cwd; also the legacy migration) / `unset` (writes sentinel);
   `set shell-dir` renamed `guest-shell-dir` (completions now say HOST vs GUEST);
