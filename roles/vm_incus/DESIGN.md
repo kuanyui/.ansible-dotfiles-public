@@ -76,16 +76,20 @@ you edit the tables in lockstep - this map is the whole architecture:
   disk device at that guest path, masking whatever the real mount exposes there.
   Directories only - a VM disk device cannot mask a single file. `detach` drops
   the masks too; host data is never touched.
-- **cwd -> VM resolution** - `init` tags the VM `user.ivm_init_at_dir=<cwd>`. The
-  VM-acting subcommands look up the VM whose tag matches the current dir; run from
-  a SUBDIR and `ivm` offers the nearest ancestor's VM; when several VMs share one
-  dir it shows a TTY picker (or dies asking for `--name` with no TTY). Resolution
-  is by the tag, not the free-form instance name. Appliance templates
-  (`cwd_bound: false`, e.g. the `llm_*` family) store the `__CWD_UNBOUND__`
-  sentinel instead: the tag keeps marking the VM as managed, but it never joins
-  cwd/ancestor matching and is never auto-picked - name-only targeting, so a
-  stray `ivm stop` in some dir can never hit an appliance. The no-match error
-  lists these global VMs so the copyable next command is right there.
+- **cwd -> VM resolution** - `init` writes two dir tags:
+  `user.ivm_init_at_dir=<cwd>` (pure history of where init ran + the managed-VM
+  marker; resolution never reads it) and `user.ivm_host_bound_dir` - the one the
+  VM-acting subcommands match against the current dir; `ivm set/unset
+  host-bound-dir` re-binds/unbinds it later. Run from a SUBDIR and `ivm` offers
+  the nearest ancestor's VM; when several VMs share one dir it shows a TTY picker
+  (or dies asking for `--name` with no TTY). Resolution is by the tag, not the
+  free-form instance name. Appliance templates (`cwd_bound: false`, e.g. the
+  `llm_*` family) store the `__HOST_CWD_IS_NOT_BOUND__` sentinel instead of a
+  dir: explicitly unbound, never joining cwd/ancestor matching and never
+  auto-picked - name-only targeting, so a stray `ivm stop` in some dir can never
+  hit an appliance. A VM with NO binding tag is a legacy (pre-tag) VM - equally
+  never matched. The no-match error lists both kinds with the copyable next
+  command (name-targeting / the one-liner that binds a legacy VM).
 - **Shared prebuilt provision assets** - the package-group / thirdparty install
   data and the dotfiles tree are NOT computed in the guest. The internal producer
   role `roles/_shared_prebuilt_provision_assets` renders, host-side, a REGENERABLE

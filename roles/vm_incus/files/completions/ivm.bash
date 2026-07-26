@@ -70,16 +70,17 @@ _ivm() {
             COMPREPLY=( $(compgen -W "${templates}" -- "$cur") )
             ;;
         cd)
-            # ivm-managed VM names only (those with a `user.ivm_init_at_dir` working-dir tag).
-            # bash can't show inline descriptions, so `ivm cd` / `ivm list` show the dirs.
-            # Cwd-unbound VMs (`__CWD_UNBOUND__` sentinel) are excluded: `ivm cd` refuses them.
+            # Only VMs `ivm cd` can jump to: those with a REAL dir in `user.ivm_host_bound_dir`
+            # (legacy VMs have no tag, cwd-unbound ones hold the `__HOST_CWD_IS_NOT_BOUND__`
+            # sentinel - `ivm cd` refuses both). bash can't show inline descriptions, so
+            # `ivm cd` / `ivm list` show the dirs.
             local managed_vm_names
-            managed_vm_names="$(incus list --format csv --columns n,config:user.ivm_init_at_dir 2>/dev/null | awk -F, 'NF >= 2 && $2 != "" && $2 != "__CWD_UNBOUND__" { print $1 }')"
+            managed_vm_names="$(incus list --format csv --columns n,config:user.ivm_host_bound_dir 2>/dev/null | awk -F, 'NF >= 2 && $2 != "" && $2 != "__HOST_CWD_IS_NOT_BOUND__" { print $1 }')"
             COMPREPLY=( $(compgen -W "${managed_vm_names}" -- "$cur") )
             ;;
         shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
             # These take an optional trailing <vm> (a shortcut for --name) -> complete any VM
-            # name. bash can't show descriptions, so working dirs show in `ivm list` / `ivm cd`.
+            # name. bash can't show descriptions, so bound dirs show in `ivm list` / `ivm cd`.
             # `resize` also offers its flags.
             local vm_names_and_resize_flags
             vm_names_and_resize_flags="$(incus list --format csv --columns n 2>/dev/null)"
@@ -96,15 +97,17 @@ _ivm() {
                 aspect="${COMP_WORDS[aspect_word_index]}"; break
             done
             if [[ -z "$aspect" ]]; then
-                COMPREPLY=( $(compgen -W "password ssh-server shell-dir user-sudo git-ssh-key" -- "$cur") )
+                COMPREPLY=( $(compgen -W "password ssh-server guest-shell-dir host-bound-dir user-sudo git-ssh-key" -- "$cur") )
             else
                 case "$aspect" in
                     password) COMPREPLY=( $(compgen -W "user root" -- "$cur") ) ;;
                     ssh-server) COMPREPLY=( $(compgen -W "user root --pubkey" -- "$cur") $(compgen -A file -- "$cur") ) ;;
                     # `set git-ssh-key <keyfile>` takes a HOST key file; both verbs take --host.
                     git-ssh-key) COMPREPLY=( $(compgen -W "--host" -- "$cur") $(compgen -A file -- "$cur") ) ;;
-                    # `set shell-dir <path>` is a GUEST path (not host-completable); `unset shell-dir`
-                    # and `(un)set user-sudo` take no further args -> nothing to complete.
+                    # `set host-bound-dir [<path>]` takes a HOST directory.
+                    host-bound-dir) COMPREPLY=( $(compgen -A directory -- "$cur") ) ;;
+                    # `set guest-shell-dir <path>` is a GUEST path (not host-completable);
+                    # `unset` of either dir aspect and `(un)set user-sudo` take no further args.
                 esac
             fi
             ;;
@@ -123,7 +126,7 @@ _ivm() {
                     mount_vm="${COMP_WORDS[name_index+1]}"; break
                 fi
             done
-            [[ -z "$mount_vm" ]] && mount_vm="$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)"
+            [[ -z "$mount_vm" ]] && mount_vm="$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)"
             if [[ -z "$mount_action" ]]; then
                 COMPREPLY=( $(compgen -W "ls attach shadow detach" -- "$cur") )
             elif [[ "$mount_action" == attach ]]; then
@@ -150,7 +153,7 @@ _ivm() {
                     unexpose_vm="${COMP_WORDS[name_index+1]}"; break
                 fi
             done
-            [[ -z "$unexpose_vm" ]] && unexpose_vm="$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)"
+            [[ -z "$unexpose_vm" ]] && unexpose_vm="$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)"
             [[ -n "$unexpose_vm" ]] && COMPREPLY=( $(compgen -W "$(incus config device list "$unexpose_vm" 2>/dev/null | sed -n 's/^expose-tcp-//p')" -- "$cur") )
             ;;
         storage-status)
@@ -183,7 +186,7 @@ _ivm() {
                     restore|delete|rename|show)
                         if (( snapshot_positional == 0 )); then
                             # Target VM: --name wins, else the VM bound to $PWD via the
-                            # user.ivm_init_at_dir tag (exact-cwd match, no ancestor walk).
+                            # user.ivm_host_bound_dir tag (exact-cwd match, no ancestor walk).
                             local snapshot_vm="" name_index
                             for (( name_index = 1; name_index < COMP_CWORD; name_index++ )); do
                                 if [[ "${COMP_WORDS[name_index]}" == "--name" ]]; then
@@ -191,7 +194,7 @@ _ivm() {
                                     break
                                 fi
                             done
-                            [[ -z "$snapshot_vm" ]] && snapshot_vm="$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)"
+                            [[ -z "$snapshot_vm" ]] && snapshot_vm="$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)"
                             [[ -n "$snapshot_vm" ]] && COMPREPLY=( $(compgen -W "$(incus snapshot list "$snapshot_vm" --format csv --columns n 2>/dev/null)" -- "$cur") )
                         fi
                         ;;

@@ -19,17 +19,17 @@ _ivm_subcommands=(
   'stop:stop the target VM'
   'delete:delete the target VM (confirms)'
   'env:load + print a template'\''s resolved config'
-  'list:table of managed VMs - state/name/MEM guest+host/disk/working dir/IPv4 (extra args -> raw incus list)'
+  'list:table of managed VMs - state/name/MEM guest+host/disk/host-bound dir/IPv4 (extra args -> raw incus list)'
   'top:live per-instance CPU/memory/disk usage (incus top passthrough)'
-  'cd:cd the shell into a VM'\''s working-dir root (completes VM -> its dir)'
+  'cd:cd the shell into a VM'\''s host-bound dir (completes VM -> its dir)'
   'info:target VM info - status, image, hw, network, mounts, storage (cwd or --name)'
   'adopt:bring an unmanaged Incus VM (hand-made or old-ivm) under ivm management (requires --name)'
   'storage-status:show host incus storage pool status (driver/loop/mount/fstab/verdict)'
   'overwrite-dotfiles:re-push staged dotfiles into the VM'
   'update:upgrade all packages in the VM'
   'provision:install distro bundle(s) / thirdparty recipe(s) onto the VM'
-  'set:configure a guest setting - password/ssh-server/shell-dir/user-sudo (no aspect lists them)'
-  'unset:clear a guest setting - password/ssh-server/shell-dir/user-sudo'
+  'set:configure a VM setting - password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo (no aspect lists them)'
+  'unset:clear a VM setting - password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo'
   'snapshot:incus snapshot (create/list/restore/delete/rename/show)'
   'gui:open a SPICE graphical console'
   'resize:change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk)'
@@ -96,19 +96,20 @@ PY
 }
 
 # The VM a cwd-resolved subcommand targets, for completion: `--name <vm>` if given, else the
-# VM tagged with the current directory (`user.ivm_init_at_dir`). Empty if neither. REUSABLE.
+# VM bound to the current directory (`user.ivm_host_bound_dir`). Empty if neither. REUSABLE.
 _ivm_target_vm() {
-  print -r -- "${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
+  print -r -- "${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)}"
 }
 
-# REUSABLE: EVERY incus VM as a `_describe` line - `name:working_dir` when it carries a
-# `user.ivm_init_at_dir` tag (managed), else bare `name` (no description). For any VM-name
-# completion that should show where each VM lives: `--name`, and the trailing `<vm>` on the
-# no-positional subcommands (`stop`/`info`/`sh`/...).
+# REUSABLE: EVERY incus VM as a `_describe` line - `name:host_bound_dir` when it carries a
+# `user.ivm_host_bound_dir` tag (the `__HOST_CWD_IS_NOT_BOUND__` sentinel shows verbatim -
+# it self-documents an unbound appliance), else bare `name` (no description; hand-made or
+# legacy pre-tag VM). For any VM-name completion that should show where each VM lives:
+# `--name`, and the trailing `<vm>` on the no-positional subcommands (`stop`/`info`/`sh`/...).
 _ivm_vms_with_dir() {
-  # `--columns n,config:...`: name, then its working dir. `IFS=, read name dir` splits on
+  # `--columns n,config:...`: name, then its bound dir. `IFS=, read name dir` splits on
   # the FIRST comma only, so a dir that itself contains commas stays whole in `dir`.
-  incus list --format csv --columns n,config:user.ivm_init_at_dir 2>/dev/null \
+  incus list --format csv --columns n,config:user.ivm_host_bound_dir 2>/dev/null \
     | while IFS=, read -r _ivm_vm_name _ivm_vm_dir; do
         if [[ -n "$_ivm_vm_dir" ]]; then
           print -r -- "${_ivm_vm_name}:${_ivm_vm_dir}"
@@ -118,18 +119,17 @@ _ivm_vms_with_dir() {
       done
 }
 
-# REUSABLE: only ivm-MANAGED VMs (those WITH a working dir), as `name:working_dir` pairs -
-# `_ivm_vms_with_dir` filtered to the rows that HAVE a dir (a `:`). For `ivm cd`, where a
-# VM without a working dir has nowhere to cd to. Cwd-unbound VMs (dir is the
-# `__CWD_UNBOUND__` sentinel; `cwd_bound: false` templates) are excluded too: `ivm cd`
-# refuses them, so offering them would only complete an error.
+# REUSABLE: only the VMs `ivm cd` can jump to - those bound to a REAL host dir - as
+# `name:host_bound_dir` pairs. Rows without a dir (legacy/hand-made VMs) fail `grep ':'`;
+# cwd-unbound VMs (the `__HOST_CWD_IS_NOT_BOUND__` sentinel) are filtered explicitly:
+# `ivm cd` refuses both, so offering them would only complete an error.
 _ivm_managed_vms() {
-  _ivm_vms_with_dir | grep ':' | grep -v ':__CWD_UNBOUND__$'
+  _ivm_vms_with_dir | grep ':' | grep -v ':__HOST_CWD_IS_NOT_BOUND__$'
 }
 
 # REUSABLE guest-path completion: complete an existing DIRECTORY inside the target RUNNING
 # guest VM - for any arg that takes a guest path (`mount shadow <guest_path>`,
-# `set shell-dir <path>`, ...). Asks the guest over `incus exec find` (silent + empty if the
+# `set guest-shell-dir <path>`, ...). Asks the guest over `incus exec find` (silent + empty if the
 # VM is stopped/absent). Descends one path component per TAB (dirs only; guest paths are
 # absolute, so it starts at /). $1 = VM name; omit to resolve it from --name / cwd.
 _ivm_guest_dirs() {
@@ -190,7 +190,7 @@ case "$state" in
           _ivm_mount_action="$words[_ivm_mount_word_index]"; break
         done
         # The VM this mount command targets (shadow/detach completions need its devices).
-        local _ivm_mount_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
+        local _ivm_mount_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)}"
         if [[ -z "$_ivm_mount_action" ]]; then
           compadd -- ls attach shadow detach
         elif [[ "$_ivm_mount_action" == attach ]]; then
@@ -233,7 +233,7 @@ case "$state" in
       unexpose)
         # Existing forwards on the target VM (--name, else the cwd-bound VM): the
         # `expose-tcp-<port>` proxy device names, stripped to bare host ports.
-        local _ivm_unexpose_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
+        local _ivm_unexpose_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)}"
         [[ -n "$_ivm_unexpose_vm" ]] && compadd -- ${(f)"$(incus config device list ${_ivm_unexpose_vm} 2>/dev/null | sed -n 's/^expose-tcp-//p')"}
         ;;
       provision)
@@ -254,7 +254,8 @@ case "$state" in
           _ivm_aspects=(
             'password:a guest account'\''s login password'
             'ssh-server:key-based SSH login for a guest account'
-            'shell-dir:the dir `ivm sh` starts in'
+            'guest-shell-dir:GUEST dir (inside the VM) that `ivm sh` starts in'
+            'host-bound-dir:HOST dir that resolves this VM by cwd (unset = target it by name)'
             'user-sudo:whether `user` may sudo (root-password gated)'
             'git-ssh-key:copy a host private ssh key in + wire git SSH for private repos'
           )
@@ -263,9 +264,11 @@ case "$state" in
           case "$_ivm_aspect" in
             password) compadd -- user root ;;
             ssh-server) compadd -- user root --pubkey; _files ;;
-            # `set shell-dir <path>` takes an existing GUEST directory -> complete real guest dirs
-            # (`unset shell-dir` and `(un)set user-sudo` take no further args).
-            shell-dir) [[ "$words[1]" == set ]] && _ivm_guest_dirs ;;
+            # `set guest-shell-dir <path>` takes an existing GUEST directory -> complete real
+            # guest dirs; `set host-bound-dir [<path>]` takes a HOST directory -> `_files -/`
+            # (`unset` of either and `(un)set user-sudo` take no further args).
+            guest-shell-dir) [[ "$words[1]" == set ]] && _ivm_guest_dirs ;;
+            host-bound-dir) [[ "$words[1]" == set ]] && _files -/ ;;
             # `set git-ssh-key <keyfile>` takes a HOST key file (-> _files); both verbs take --host.
             git-ssh-key) compadd -- --host; [[ "$words[1]" == set ]] && _files ;;
           esac
@@ -301,8 +304,8 @@ case "$state" in
             restore|delete|rename|show)
               # Target VM: the global `--name` (captured by `_arguments` into
               # `opt_args`) wins, else the VM bound to $PWD via the
-              # `user.ivm_init_at_dir` tag (exact-cwd match only - no ancestor walk).
-              local _ivm_snapshot_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_init_at_dir=$PWD" 2>/dev/null)}"
+              # `user.ivm_host_bound_dir` tag (exact-cwd match only - no ancestor walk).
+              local _ivm_snapshot_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)}"
               [[ -n "$_ivm_snapshot_vm" ]] && compadd -- ${(f)"$(incus snapshot list ${_ivm_snapshot_vm} --format csv --columns n 2>/dev/null)"}
               ;;
           esac

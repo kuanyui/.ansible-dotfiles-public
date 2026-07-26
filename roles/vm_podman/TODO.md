@@ -77,7 +77,7 @@ SKIP = containers genuinely can't, documented · KEEP = pvm already has it.
 | `overwrite-dotfiles` | - | PORT (P2) | re-`podman cp` the dotfiles slice (no reprovision) |
 | `mount ls` | hide_dirs@create | ADAPT (P2) | read-only: list the cwd `--volume` + hidden-dir masks from inspect |
 | `storage-status [--json]` | - | ADAPT (P3, low) | `podman system df` |
-| `set`/`unset shell-dir` | WORKDIR@create | ADAPT (P3, low) | store a label; `cd` there on `shell` |
+| `set`/`unset guest-shell-dir` | WORKDIR@create | ADAPT (P3, low) | store a label; `cd` there on `shell` |
 | `adopt --name` | - | ADAPT (P3, low) | add pvm labels to an unmanaged container |
 | `mount attach/detach/shadow` | - | **SKIP** | podman CANNOT hot-add/remove a volume on a running container (VERIFIED: volumes fixed at create). Would need a container recreate - different semantics. Document |
 | `expose [<port>]` / `unexpose` | publish_ports@template | **SKIP** | podman CANNOT hot-add a published port on a running container (VERIFIED). Ports are template `publish_ports` set at create. Document |
@@ -183,7 +183,7 @@ this env, see STATUS; each subcommand was instead verified end-to-end against re
 
 ### P3 - low / optional (confirm before building)
 - [ ] `storage-status [--json]` - `podman system df`.
-- [ ] `set`/`unset shell-dir <path>` - label + `cd` on `shell` (mirrors ivm shell-dir).
+- [ ] `set`/`unset guest-shell-dir <path>` - label + `cd` on `shell` (mirrors ivm guest-shell-dir; ivm renamed shell-dir -> guest-shell-dir when host-bound-dir landed).
 - [ ] `adopt --name <ctr>` - add pvm labels to an unmanaged container.
 
 ### Documented SKIPs (no work - keep the reasons in the map above)

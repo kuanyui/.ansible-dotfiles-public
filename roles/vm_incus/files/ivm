@@ -10,7 +10,7 @@ Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 `delete`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set`+`unset` (guest
-settings: password/ssh-server/shell-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/MEM guest+host/disk/working dir/IPv4; args -> raw incus list); `cd` (print a VM's working-dir root for the `ivm()` shell wrapper to cd into);
+settings: password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/MEM guest+host/disk/host-bound dir/IPv4; args -> raw incus list); `cd` (print a VM's host-bound dir for the `ivm()` shell wrapper to cd into);
 `adopt` (bring an unmanaged VM - hand-made or older-ivm - under ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, a global `--name <vm>`, or (when the
 subcommand takes no positional of its own) a trailing `<vm>` name (`ivm stop foo`).
@@ -69,15 +69,19 @@ DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
                    str(Path.home() / ".local/share/ansible-managed/shared-prebuilt-provision-assets"))
 )
 
-# Sentinel stored in `user.ivm_init_at_dir` for a `cwd_bound: false` template (appliance
-# VMs like the llm_* family): the tag stays non-empty - it doubles as the managed-VM
-# marker - but the VM never resolves by cwd; target it by name (trailing `<vm>` /
-# `--name`). Deliberately not path-like, so it is unmistakable in `incus config show`,
-# and greppable. To make an EXISTING VM global by hand:
-#   incus config set <vm> user.ivm_init_at_dir __CWD_UNBOUND__
-CWD_UNBOUND_SENTINEL: str = "__CWD_UNBOUND__"
+# Cwd resolution reads `user.ivm_host_bound_dir` (NOT `user.ivm_init_at_dir`, which is a
+# pure historical record of where `ivm init` ran and stays the managed-VM marker). The
+# binding tag is ALWAYS written at init, so its three states are explicit in
+# `incus config show`:
+#   a real dir                  -> bound: cwd resolution targets this VM there
+#   __HOST_CWD_IS_NOT_BOUND__   -> deliberately unbound (`cwd_bound: false` appliance /
+#                                  `ivm unset host-bound-dir`): target it by name only
+#   tag absent                  -> legacy VM from before this tag; not cwd-resolvable
+#                                  until bound: `ivm --name <vm> set host-bound-dir <dir>`
+# The sentinel is deliberately not path-like, so it is unmistakable and greppable.
+HOST_CWD_IS_NOT_BOUND_SENTINEL: str = "__HOST_CWD_IS_NOT_BOUND__"
 
-# Subcommands that act on an EXISTING VM, resolved by cwd (`user.ivm_init_at_dir`)
+# Subcommands that act on an EXISTING VM, resolved by cwd (`user.ivm_host_bound_dir`)
 # or overridden with the global `--name`. (`init`/`env`/`list` are NOT here -
 # they don't resolve a target VM.)
 CWD_RESOLVED: tuple[str, ...] = (
@@ -139,8 +143,10 @@ SET_UNSET_ASPECTS: dict[str, tuple[str, str]] = {
                  "lock a guest account's password"),
     "ssh-server": ("authorize key-based SSH login for a guest account (e.g. VS Code Remote-SSH)",
                    "revoke a guest account's SSH access"),
-    "shell-dir": ("set the dir `ivm sh` starts in (the user.ivm_shell_default_dir_after_login tag)",
-                  "clear the shell start dir (revert to incus's default cwd)"),
+    "guest-shell-dir": ("set the GUEST dir `ivm sh` starts in, inside the VM (the user.ivm_shell_default_dir_after_login tag)",
+                        "clear the guest shell start dir (revert to incus's default cwd)"),
+    "host-bound-dir": ("bind this VM to a HOST dir so cwd resolution targets it there (the user.ivm_host_bound_dir tag; no path = the current dir)",
+                       "unbind: mark the VM cwd-unbound (stores the explicit sentinel; target it by name from anywhere)"),
     "user-sudo": ("let `user` sudo, gated by root's password",
                   "revert: remove the sudoers drop-in so `user` can no longer sudo"),
     "git-ssh-key": ("copy a host PRIVATE ssh key in + wire git/go to SSH for private repos (warns; type 'yes i know')",
@@ -602,14 +608,16 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
         cmd += ["--config", f"limits.memory={g_to_gib(hw['memory'])}"]
     if hw.get("secureboot") is False:  # incus VM default is on, so only emit to disable
         cmd += ["--config", "security.secureboot=false"]
-    # `cwd_bound: false` (appliance templates): record the sentinel instead of a dir -
-    # the tag keeps marking the VM as ivm-managed, but cwd resolution skips it.
-    init_at_dir_tag_value: str = str(cwd) if doc.get("cwd_bound", True) else CWD_UNBOUND_SENTINEL
+    # `user.ivm_init_at_dir` is a pure HISTORICAL record (where init ran; also the
+    # managed-VM marker); resolution reads `user.ivm_host_bound_dir`, written for every
+    # VM: the cwd for a bound template, the explicit sentinel for `cwd_bound: false`.
+    host_bound_dir_tag_value: str = str(cwd) if doc.get("cwd_bound", True) else HOST_CWD_IS_NOT_BOUND_SENTINEL
     cmd += [
         "--config", "user.ansible_managed=true",
         "--config", "user.ivm_guest_os=linux",
         "--config", f"user.ivm_template={doc['template_name']}",
-        "--config", f"user.ivm_init_at_dir={init_at_dir_tag_value}",
+        "--config", f"user.ivm_init_at_dir={cwd}",
+        "--config", f"user.ivm_host_bound_dir={host_bound_dir_tag_value}",
         # Record the dotfiles ansible_os_family so `overwrite-dotfiles` can pick the
         # right per-family dotfiles bucket (dotfiles/<feature>/<family>/) without re-reading the template.
         "--config", f"user.ivm_ansible_os_family={ansible_os_family_of(doc)}",
@@ -1250,25 +1258,30 @@ def wait_ready(name: str, *, dry_run: bool) -> None:
 
 class VmBinding(NamedTuple):
     """One ivm VM as the cwd resolver sees it: its name plus the fields needed to
-    tell several apart when they share an init dir (status + source template)."""
+    tell several apart when they share a bound dir (status + source template).
+    `init_at_dir` = historical record + managed marker; `host_bound_dir` = the dir
+    cwd resolution matches (or the unbound sentinel, or "" on a legacy VM)."""
     name: str
     status: str
     template: str
     init_at_dir: str
+    host_bound_dir: str
 
 
 def list_vm_bindings() -> list[VmBinding]:
-    """Every VM carrying a `user.ivm_init_at_dir` tag, with the columns the
-    resolver needs. A LIST (not a dict keyed by init dir) so multiple VMs sharing
-    one cwd are all kept, not silently collapsed to the last one incus lists."""
+    """Every VM carrying a `user.ivm_init_at_dir` tag (the managed-VM marker), with
+    the columns the resolver needs. A LIST (not a dict keyed by dir) so multiple VMs
+    sharing one dir are all kept, not silently collapsed to the last one incus lists."""
     out: str = capture(["incus", "list", "--format", "csv", "--columns",
-                        "n,s,config:user.ivm_template,config:user.ivm_init_at_dir"])
-    # csv.reader (not str.partition): an init-dir path can contain a comma, which
+                        "n,s,config:user.ivm_template,config:user.ivm_init_at_dir,"
+                        "config:user.ivm_host_bound_dir"])
+    # csv.reader (not str.partition): a dir path can contain a comma, which
     # incus CSV-quotes - splitting on commas by hand would mis-parse it.
     bindings: list[VmBinding] = []
     for row in csv.reader(out.splitlines()):
-        if len(row) >= 4 and row[3]:
-            bindings.append(VmBinding(name=row[0], status=row[1], template=row[2], init_at_dir=row[3]))
+        if len(row) >= 5 and row[3]:
+            bindings.append(VmBinding(name=row[0], status=row[1], template=row[2],
+                                      init_at_dir=row[3], host_bound_dir=row[4]))
     return bindings
 
 
@@ -1279,11 +1292,15 @@ def describe_candidate(binding: VmBinding) -> str:
             f"[template={binding.template or '?'}, {binding.status or '?'}]")
 
 
-def display_init_at_dir(raw_init_at_dir: str) -> str:
-    """The WORKING DIRECTORY cell for `ivm list` / bare `ivm cd`: the recorded dir,
-    or a labelled placeholder for a cwd-unbound VM (a labelled value beats leaking
-    the raw sentinel into human-facing tables)."""
-    return "(global - reach by name)" if raw_init_at_dir == CWD_UNBOUND_SENTINEL else raw_init_at_dir
+def display_host_bound_dir(raw_host_bound_dir: str) -> str:
+    """The HOST-BOUND DIR cell for `ivm list` / bare `ivm cd`: the bound dir, or a
+    labelled placeholder per unbound state (a labelled value beats leaking the raw
+    sentinel / an empty cell into human-facing tables)."""
+    if raw_host_bound_dir == HOST_CWD_IS_NOT_BOUND_SENTINEL:
+        return "(unbound - reach by name)"
+    if not raw_host_bound_dir:
+        return "(unset - legacy; bind: ivm set host-bound-dir)"
+    return raw_host_bound_dir
 
 
 def choose_vm_from_candidates(candidates: list[VmBinding], *, intro: str) -> str:
@@ -1307,21 +1324,24 @@ def die_ambiguous(candidates: list[VmBinding], bound_dir: Path) -> NoReturn:
 
 
 def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
-    """Resolve the VM bound to `cwd` via `user.ivm_init_at_dir`. Exactly one match
+    """Resolve the VM bound to `cwd` via `user.ivm_host_bound_dir`. Exactly one match
     -> use it. Several at the same cwd (made via explicit `ivm init <tpl> <name>`
     or different templates) -> TTY: numbered picker; non-TTY: die listing them +
     require `--name` (keeps scripted use predictable). No match at cwd -> walk
     ancestors and offer the nearest dir that has any (DESIGN.md "cwd -> VM
-    resolution"), with the same >1 handling there. Cwd-unbound VMs (tag ==
-    `CWD_UNBOUND_SENTINEL`) never take part - they are targeted by name only; the
-    final no-match error lists them so the next command is copyable, but NEVER
-    auto-falls back to one (a stray `ivm stop` must not stop an appliance)."""
+    resolution"), with the same >1 handling there. VMs whose tag holds the
+    `HOST_CWD_IS_NOT_BOUND_SENTINEL` (deliberately global) or is absent (legacy,
+    pre-tag) never take part and are NEVER auto-picked (a stray `ivm stop` must not
+    stop an appliance); the final no-match error lists both kinds with a copyable
+    next command. `user.ivm_init_at_dir` is NOT consulted for matching - it only
+    labels the legacy hint."""
     if dry_run:
         return "<vm-resolved-from-cwd>"
     all_bindings: list[VmBinding] = list_vm_bindings()
-    global_vms: list[VmBinding] = [b for b in all_bindings if b.init_at_dir == CWD_UNBOUND_SENTINEL]
-    bindings: list[VmBinding] = [b for b in all_bindings if b.init_at_dir != CWD_UNBOUND_SENTINEL]
-    here: list[VmBinding] = [b for b in bindings if b.init_at_dir == str(cwd)]
+    bound: list[VmBinding] = [
+        b for b in all_bindings
+        if b.host_bound_dir and b.host_bound_dir != HOST_CWD_IS_NOT_BOUND_SENTINEL]
+    here: list[VmBinding] = [b for b in bound if b.host_bound_dir == str(cwd)]
     if len(here) == 1:
         return here[0].name
     if len(here) > 1:
@@ -1331,7 +1351,7 @@ def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
     # No exact match: `cwd.parents` is ordered nearest-ancestor first - offer the
     # nearest ancestor dir that has any binding(s).
     for ancestor in cwd.parents:
-        at_ancestor: list[VmBinding] = [b for b in bindings if b.init_at_dir == str(ancestor)]
+        at_ancestor: list[VmBinding] = [b for b in bound if b.host_bound_dir == str(ancestor)]
         if not at_ancestor:
             continue
         if not sys.stdin.isatty():
@@ -1342,18 +1362,34 @@ def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
         if len(at_ancestor) == 1:
             reply: str = input(f"No VM bound to {cwd}. Open "
                                f"'{colorize_vm_name(at_ancestor[0].name, stream=sys.stdout)}' "
-                               f"init'd at {ancestor}? [Y/n] ")
+                               f"bound at {ancestor}? [Y/n] ")
             if reply.strip().lower() in ("", "y", "yes"):
                 return at_ancestor[0].name
             die("aborted")
         return choose_vm_from_candidates(
-            at_ancestor, intro=f"No VM bound to {cwd}; VMs init'd at ancestor {ancestor}:")
-    global_vm_hint: str = ""
+            at_ancestor, intro=f"No VM bound to {cwd}; VMs bound at ancestor {ancestor}:")
+    # Nothing bound anywhere up the tree: hand the user the next command instead of a
+    # bare failure - global VMs are reachable by name; legacy VMs (no binding tag yet)
+    # whose RECORDED init dir matches this cwd or an ancestor are almost certainly
+    # what the user meant, so print the exact one-liner that binds each.
+    hint_lines: list[str] = []
+    global_vms: list[VmBinding] = [
+        b for b in all_bindings if b.host_bound_dir == HOST_CWD_IS_NOT_BOUND_SENTINEL]
     if global_vms:
-        global_vm_listing: str = "\n".join(f"  - {describe_candidate(b)}" for b in global_vms)
-        global_vm_hint = ("\ncwd-unbound (global) VMs - target one by name, e.g. "
-                          "`ivm shell <vm>` / `--name <vm>`:\n" + global_vm_listing)
-    die(f"no VM is bound to {cwd} or any parent; run `ivm init <template>` here first{global_vm_hint}")
+        hint_lines.append("cwd-unbound (global) VMs - target one by name, e.g. "
+                          "`ivm shell <vm>` / `--name <vm>`:")
+        hint_lines += [f"  - {describe_candidate(b)}" for b in global_vms]
+    cwd_and_ancestor_dirs: set[str] = {str(cwd)} | {str(a) for a in cwd.parents}
+    legacy_vms_init_here: list[VmBinding] = [
+        b for b in all_bindings
+        if not b.host_bound_dir and b.init_at_dir in cwd_and_ancestor_dirs]
+    if legacy_vms_init_here:
+        hint_lines.append("legacy VMs init'd here, from before `user.ivm_host_bound_dir` "
+                          "existed - bind each with:")
+        hint_lines += [f"  ivm --name {b.name} set host-bound-dir {b.init_at_dir}"
+                       for b in legacy_vms_init_here]
+    hint: str = ("\n" + "\n".join(hint_lines)) if hint_lines else ""
+    die(f"no VM is bound to {cwd} or any parent; run `ivm init <template>` here first{hint}")
 
 
 def vm_is_running(name: str) -> bool:
@@ -1618,7 +1654,7 @@ def cmd_list_templates(root: Path) -> None:
 def cmd_init(template_name: str, given_name: str | None, root: Path, shared_prebuilt_provision_assets_root: Path, *,
              assume_yes: bool, dry_run: bool) -> None:
     """Create a VM from `<template>`, bound to the current directory (or cwd-unbound
-    for a `cwd_bound: false` appliance template - see CWD_UNBOUND_SENTINEL): validate the
+    for a `cwd_bound: false` appliance template - see HOST_CWD_IS_NOT_BOUND_SENTINEL): validate the
     template, prompt for + confirm the instance name, then `incus create` (stopped)
     -> attach devices (mounts, shadow masks, tpm, nic) -> start -> provision (packages,
     `user`, dotfiles); a GUI template also reboots into the desktop. A post-create
@@ -1951,30 +1987,59 @@ def cmd_unset_ssh_server(name: str, username: str, *, pubkey_files: list[str] | 
           f"({len(keys)} key(s) removed; sshd left running).", file=sys.stderr)
 
 
-def cmd_set_shell_dir(name: str, guest_dir: str, *, dry_run: bool) -> None:
-    """Set the directory `ivm shell`/`shell-user`/`shell-root` start in, by writing the VM's
-    `user.ivm_shell_default_dir_after_login` tag (the same tag `init` sets from a template's
-    `shell_default_dir_after_login`). Only the interactive shell's START cwd changes - `$HOME`
-    and a bare `cd` are unaffected. The dir need NOT exist yet (e.g. a not-yet-mounted path):
-    `ivm shell` probes it at use time (`shell_login_dir`) and falls back to the default cwd with
-    a warning if it is missing. Just a config tag, so it works on a STOPPED VM (no `incus exec`)."""
+def cmd_set_guest_shell_dir(name: str, guest_dir: str, *, dry_run: bool) -> None:
+    """Set the GUEST directory `ivm shell`/`shell-user`/`shell-root` start in, by writing the
+    VM's `user.ivm_shell_default_dir_after_login` tag (the same tag `init` sets from a
+    template's `shell_default_dir_after_login`). Only the interactive shell's START cwd
+    changes - `$HOME` and a bare `cd` are unaffected. The dir need NOT exist yet (e.g. a
+    not-yet-mounted path): `ivm shell` probes it at use time (`shell_login_dir`) and falls back
+    to the default cwd with a warning if it is missing. Just a config tag, so it works on a
+    STOPPED VM (no `incus exec`)."""
     if not guest_dir.startswith("/"):
-        die(f"shell dir must be an ABSOLUTE guest path (e.g. /workspaces/{name}), got: {guest_dir}")
+        die(f"guest shell dir must be an ABSOLUTE guest path (e.g. /workspaces/{name}), got: {guest_dir}")
     run(["incus", "config", "set", name, "user.ivm_shell_default_dir_after_login", guest_dir],
         dry_run=dry_run)
     print(f"==> `ivm sh` will start in {guest_dir} on {colorize_vm_name(name)}.", file=sys.stderr)
 
 
-def cmd_unset_shell_dir(name: str, *, dry_run: bool) -> None:
-    """Clear the VM's `user.ivm_shell_default_dir_after_login` tag (reverses `set shell-dir`);
-    `ivm shell` reverts to incus's default cwd (the account's home). No-op if already unset."""
+def cmd_unset_guest_shell_dir(name: str, *, dry_run: bool) -> None:
+    """Clear the VM's `user.ivm_shell_default_dir_after_login` tag (reverses
+    `set guest-shell-dir`); `ivm shell` reverts to incus's default cwd (the account's home).
+    No-op if already unset."""
     if not dry_run and not capture(
             ["incus", "config", "get", name, "user.ivm_shell_default_dir_after_login"]).strip():
-        print(f"==> shell start dir already unset on {colorize_vm_name(name)}.", file=sys.stderr)
+        print(f"==> guest shell start dir already unset on {colorize_vm_name(name)}.", file=sys.stderr)
         return
     run(["incus", "config", "unset", name, "user.ivm_shell_default_dir_after_login"], dry_run=dry_run)
-    print(f"==> shell start dir cleared on {colorize_vm_name(name)} (back to incus default cwd).",
+    print(f"==> guest shell start dir cleared on {colorize_vm_name(name)} (back to incus default cwd).",
           file=sys.stderr)
+
+
+def cmd_set_host_bound_dir(name: str, host_dir_arg: str | None, *, dry_run: bool) -> None:
+    """Bind (or re-bind) the VM to a HOST dir by writing `user.ivm_host_bound_dir` - the tag
+    cwd resolution matches and `ivm cd` jumps to. No path arg = the current dir ("bind this
+    VM here"). Also the migration path for legacy VMs created before the tag existed. Just a
+    config tag, so it works on a STOPPED VM."""
+    host_bound_dir: str = os.path.abspath(os.path.expanduser(host_dir_arg or str(Path.cwd())))
+    run(["incus", "config", "set", name, "user.ivm_host_bound_dir", host_bound_dir],
+        dry_run=dry_run)
+    print(f"==> {colorize_vm_name(name)} now resolves by cwd at {host_bound_dir} "
+          f"(`ivm cd {name}` jumps there).", file=sys.stderr)
+
+
+def cmd_unset_host_bound_dir(name: str, *, dry_run: bool) -> None:
+    """Unbind the VM from any host dir: store `HOST_CWD_IS_NOT_BOUND_SENTINEL` in
+    `user.ivm_host_bound_dir` (NOT `incus config unset` - the explicit sentinel records
+    "deliberately unbound", while an ABSENT tag means "legacy VM, never migrated"). The VM
+    then never resolves by cwd; target it by name (`ivm shell <vm>` / `--name <vm>`)."""
+    if not dry_run and capture(
+            ["incus", "config", "get", name, "user.ivm_host_bound_dir"]).strip() == HOST_CWD_IS_NOT_BOUND_SENTINEL:
+        print(f"==> {colorize_vm_name(name)} is already cwd-unbound.", file=sys.stderr)
+        return
+    run(["incus", "config", "set", name, "user.ivm_host_bound_dir", HOST_CWD_IS_NOT_BOUND_SENTINEL],
+        dry_run=dry_run)
+    print(f"==> {colorize_vm_name(name)} is now cwd-unbound - target it by name from anywhere "
+          f"(`ivm shell {name}` / `--name {name}`).", file=sys.stderr)
 
 
 # `set git-ssh-key`: copy a host PRIVATE ssh key into the VM so in-guest git / `go get`
@@ -2369,8 +2434,9 @@ def guest_disk_used(name: str) -> str | None:
 
 def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
     """List ivm-managed VMs (those tagged with `user.ivm_init_at_dir`) as a table:
-    State, Name, MEM(guest), MEM(host), DISK, Working Directory (the host dir `ivm init`
-    ran in, that `ivm cd` jumps to), IPv4. MEM(guest) is incus's guest-agent memory figure;
+    State, Name, MEM(guest), MEM(host), DISK, Host-Bound Dir (`user.ivm_host_bound_dir`,
+    the dir cwd resolution matches + `ivm cd` jumps to; labelled placeholder when
+    unbound/legacy), IPv4. MEM(guest) is incus's guest-agent memory figure;
     MEM(host) is the qemu process's real host RSS (`qemu_host_rss`), which the guest figure
     under-reports. DISK is the guest root filesystem's USED space, read live per running VM
     via `incus exec ... df` (`guest_disk_used`) - reliable, unlike incus's sporadic guest-agent
@@ -2382,14 +2448,16 @@ def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
         run(["incus", "list", *list_args], dry_run=dry_run)
         return
     # `p` (qemu pid) rides along so MEM(host) needs no extra per-VM `incus info` call.
-    list_columns: str = "s,n,4,m,p,config:user.ivm_init_at_dir"
+    # `host_bound_dir` is the DISPLAY column; `init_at_dir` stays LAST as the
+    # managed-VM marker `managed_vm_rows` filters on.
+    list_columns: str = "s,n,4,m,p,config:user.ivm_host_bound_dir,config:user.ivm_init_at_dir"
     if dry_run:
         print(f"+ incus list --format csv --columns {list_columns}", file=sys.stderr)
         print("  + per running VM: read /proc/<qemu-pid>/status VmRSS (MEM host) + "
               "`incus exec <vm> -- df -Pk /` (DISK)", file=sys.stderr)
         return
     table_rows: list[tuple[str, ...]] = []
-    for state, name, ipv4, guest_mem, qemu_pid, working_dir in managed_vm_rows(list_columns):
+    for state, name, ipv4, guest_mem, qemu_pid, host_bound_dir, _init_at_dir in managed_vm_rows(list_columns):
         # Non-running VMs show `(<state>)`; a running VM whose figure can't be read shows `-`.
         # MEM(host) reads the host qemu process (qemu_host_rss), so it stays populated even when
         # the agent is silent and even for a FROZEN VM whose process lives on. DISK execs `df`
@@ -2404,38 +2472,43 @@ def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
             guest_mem or running_gap,
             mem_host,
             disk,
-            display_init_at_dir(working_dir),
+            display_host_bound_dir(host_bound_dir),
             ipv4.replace("\n", ", "),
         ))
     if not table_rows:
         print("No ivm-managed VMs (none carry `user.ivm_init_at_dir`); "
               "create one with `ivm init <template>`.", file=sys.stderr)
         return
-    print_table(["STATE", "NAME", "MEM(guest)", "MEM(host)", "DISK", "WORKING DIRECTORY", "IPV4"], table_rows)
+    print_table(["STATE", "NAME", "MEM(guest)", "MEM(host)", "DISK", "HOST-BOUND DIR", "IPV4"], table_rows)
 
 
 def cmd_cd(name: str | None) -> None:
-    """Print the host working-directory root (`user.ivm_init_at_dir`) a VM was
-    `ivm init`'d at - one line to STDOUT, for the `ivm()` shell wrapper to `cd` into
-    (a child process cannot change its parent shell's cwd). No name -> list every
-    ivm-managed VM + its dir on STDERR, so the wrapper (which cd's to stdout) does
-    nothing. Completes VM names -> their dirs (see `_ivm_managed_vms` in the completions)."""
+    """Print the HOST dir a VM is bound to (`user.ivm_host_bound_dir`) - one line to
+    STDOUT, for the `ivm()` shell wrapper to `cd` into (a child process cannot change
+    its parent shell's cwd). Refuses a cwd-unbound (sentinel) or legacy (tag absent)
+    VM: non-zero exit, empty stdout. No name -> list every ivm-managed VM + its
+    bound dir on STDERR, so the wrapper (which cd's to stdout) does nothing.
+    Completes VM names -> their dirs (see `_ivm_managed_vms` in the completions)."""
     bindings: list[VmBinding] = list_vm_bindings()
     if not name:
         if not bindings:
             print("No ivm-managed VMs yet; create one with `ivm init <template>`.", file=sys.stderr)
             return
-        print_table(["NAME", "WORKING DIRECTORY"],
-                    [(binding.name, display_init_at_dir(binding.init_at_dir)) for binding in bindings],
+        print_table(["NAME", "HOST-BOUND DIR"],
+                    [(binding.name, display_host_bound_dir(binding.host_bound_dir)) for binding in bindings],
                     stream=sys.stderr)
         return
     for binding in bindings:
         if binding.name == name:
-            if binding.init_at_dir == CWD_UNBOUND_SENTINEL:
-                # Exit non-zero with NOTHING on stdout, so the ivm() shell wrapper's
-                # `|| return` stops it from cd'ing into a bogus path.
-                die(f"'{name}' is cwd-unbound (global) - it has no working-dir root to cd into")
-            print(binding.init_at_dir)
+            # Both refusals exit non-zero with NOTHING on stdout, so the ivm() shell
+            # wrapper's `|| return` stops it from cd'ing into a bogus path.
+            if binding.host_bound_dir == HOST_CWD_IS_NOT_BOUND_SENTINEL:
+                die(f"'{name}' is cwd-unbound (global) - it has no host-bound dir to cd into")
+            if not binding.host_bound_dir:
+                die(f"'{name}' has no host-bound dir yet (legacy VM, from before "
+                    f"`user.ivm_host_bound_dir`) - bind one with: "
+                    f"ivm --name {name} set host-bound-dir <dir>")
+            print(binding.host_bound_dir)
             return
     die(f"no ivm-managed VM named '{name}' (run `ivm cd` or `ivm list` to see them)")
 
@@ -2707,7 +2780,7 @@ def _guest_status_values(name: str, status: str) -> tuple[str, str]:
 
 def cmd_info(name: str, root: Path) -> None:
     """`ivm info`: the TARGET VM's live state, GROUPED for readability -
-    Basic (status/image/hw/snapshots/shell-dir/user-sudo), Network (ip/bridge/
+    Basic (status/image/hw/snapshots/host-bound-dir/guest-shell-dir/user-sudo), Network (ip/bridge/
     ssh-server/forwards), Mounts, Storage. Read from `incus config show --expanded`
     + `incus list`; target resolved by cwd or `--name`. Read-only. Prints EVERY
     field every run, with a placeholder when empty (never hides a field)."""
@@ -2744,7 +2817,11 @@ def cmd_info(name: str, root: Path) -> None:
     field("hw", f"cpu={config.get('limits.cpu', '?')} "
                 f"memory={config.get('limits.memory', '?')} disk={root_device.get('size', '?')}")
     field("snapshots", snapshot_count)
-    field("shell dir", shell_dir or "(unset - ivm sh starts in the home dir)")
+    # The two dir settings are easy to conflate - label which side each lives on:
+    # host-bound dir = HOST dir that resolves this VM by cwd; guest shell dir = dir
+    # INSIDE the VM that `ivm sh` starts in.
+    field("host-bound dir", display_host_bound_dir(config.get("user.ivm_host_bound_dir", "") or ""))
+    field("guest shell dir", shell_dir or "(unset - ivm sh starts in the home dir)")
     field("user-sudo", user_sudo_value)
     print("\nNetwork")
     field("ip", ip_display)
@@ -3114,8 +3191,8 @@ def cmd_adopt(name: str, root: Path, *, dry_run: bool) -> None:
     """`ivm --name <vm> adopt`: bring an EXISTING incus VM (an older-ivm VM created
     before the `user.ivm_*` tags, or any hand-made instance) under ivm management
     by interactively setting the canonical `user.*` tags. REQUIRES `--name` and
-    never resolves by cwd - the VM has no `user.ivm_init_at_dir` yet, and supplying
-    one is the whole point. Each prompt pre-fills the tag's current value (or a
+    never resolves by cwd - the VM has no `user.ivm_*` tags yet, and supplying
+    them is the whole point. Each prompt pre-fills the tag's current value (or a
     sane default) as an editable line; an empty answer skips that tag. Every write
     prints its `incus config set` before running (legacy hyphenated tags unset)."""
     if not dry_run and not instance_exists(name):
@@ -3133,7 +3210,8 @@ def cmd_adopt(name: str, root: Path, *, dry_run: bool) -> None:
         ("user.ivm_guest_os", "guest OS kind", "linux", ("linux", "windows")),
         ("user.ivm_ansible_os_family", "dotfiles os_family (blank for non-Linux)", "", ("Debian", "Suse", "RedHat")),
         ("user.ivm_template", f"source template{template_hint}", "?", None),
-        ("user.ivm_init_at_dir", f"dir that resolves this VM by cwd ({CWD_UNBOUND_SENTINEL} = global, reach by name)", str(Path.cwd()), None),
+        ("user.ivm_init_at_dir", "dir `ivm init` originally ran in (historical record + managed marker; resolution ignores it)", str(Path.cwd()), None),
+        ("user.ivm_host_bound_dir", f"HOST dir that resolves this VM by cwd ({HOST_CWD_IS_NOT_BOUND_SENTINEL} = global, reach by name)", str(Path.cwd()), None),
     ]
     bound_dir: str = ""
     for tag_key, label, fallback_default, allowed_values in tag_specs:
@@ -3148,11 +3226,12 @@ def cmd_adopt(name: str, root: Path, *, dry_run: bool) -> None:
             break
         if not entered_value:
             continue
-        if tag_key == "user.ivm_init_at_dir" and entered_value != CWD_UNBOUND_SENTINEL:
+        if (tag_key in ("user.ivm_init_at_dir", "user.ivm_host_bound_dir")
+                and entered_value != HOST_CWD_IS_NOT_BOUND_SENTINEL):
             # The sentinel must be stored VERBATIM - abspath would mangle it into
-            # `<cwd>/__CWD_UNBOUND__`, a bogus path that silently binds the VM.
+            # `<cwd>/__HOST_CWD_IS_NOT_BOUND__`, a bogus path that silently binds the VM.
             entered_value = os.path.abspath(os.path.expanduser(entered_value))
-        if tag_key == "user.ivm_init_at_dir":
+        if tag_key == "user.ivm_host_bound_dir":
             bound_dir = entered_value
         run(["incus", "config", "set", name, tag_key, entered_value], dry_run=dry_run)
     for legacy_tag in LEGACY_TAGS:
@@ -3160,12 +3239,15 @@ def cmd_adopt(name: str, root: Path, *, dry_run: bool) -> None:
             run(["incus", "config", "unset", name, legacy_tag], dry_run=dry_run)
     print(f"\nAdopted {colorize_vm_name(name)}. Verify with:\n", file=sys.stderr)
     print("ivm info", file=sys.stderr)
-    if bound_dir == CWD_UNBOUND_SENTINEL:
+    if bound_dir == HOST_CWD_IS_NOT_BOUND_SENTINEL:
         print(f"\n(cwd-unbound: run it from anywhere by name - `ivm info {name}` / `--name {name}`)",
               file=sys.stderr)
         return
-    where: str = f"from {bound_dir}" if bound_dir else "from the dir you bound"
-    print(f"\n(run it {where}, or anywhere with `--name {name}`)", file=sys.stderr)
+    if not bound_dir:
+        print(f"\n(no host-bound dir set - target it by name, or bind later with "
+              f"`ivm --name {name} set host-bound-dir <dir>`)", file=sys.stderr)
+        return
+    print(f"\n(run it from {bound_dir}, or anywhere with `--name {name}`)", file=sys.stderr)
 
 
 def cmd_storage_status(root: Path, *, as_json: bool, dry_run: bool) -> None:
@@ -3208,7 +3290,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ivm", description="incus VM launcher",
         epilog="Most subcommands act on ONE VM, resolved by the current directory "
-               "(`user.ivm_init_at_dir`) or `--name <vm>`; `init`/`env`/`list` do not.")
+               "(`user.ivm_host_bound_dir`) or `--name <vm>`; `init`/`env`/`list` do not.")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
                         help=f"ivm install root (schema + templates + fcitx5 script). Default: {DEFAULT_ROOT}")
     parser.add_argument("--shared-assets-root", type=Path, default=DEFAULT_SHARED_ASSETS_ROOT,
@@ -3250,7 +3332,7 @@ def build_parser() -> argparse.ArgumentParser:
         "cd", help="cd the shell into a VM's working-dir root (needs the `ivm()` shell wrapper); no arg lists managed VMs + dirs",
         description=cmd_cd.__doc__)
     cd_parser.add_argument("name", nargs="?",
-                           help="ivm-managed VM whose working-dir root (`user.ivm_init_at_dir`) to print; omit to list all")
+                           help="ivm-managed VM whose host-bound dir (`user.ivm_host_bound_dir`) to print; omit to list all")
 
     storage_status_parser: argparse.ArgumentParser = sub.add_parser(
         "storage-status",
@@ -3263,7 +3345,7 @@ def build_parser() -> argparse.ArgumentParser:
     # with `aspect=None` and main() lists the aspects. Every aspect has both verbs (full symmetry).
     for verb in ("set", "unset"):
         verb_parser: argparse.ArgumentParser = sub.add_parser(
-            verb, help=f"{verb} a guest setting: password / ssh-server / shell-dir / user-sudo "
+            verb, help=f"{verb} a VM setting: password / ssh-server / guest-shell-dir / host-bound-dir / user-sudo "
                        f"(no aspect lists them)")
         aspect_sub = verb_parser.add_subparsers(dest="aspect")
         for aspect, (aspect_set_help, aspect_unset_help) in SET_UNSET_ASPECTS.items():
@@ -3276,9 +3358,12 @@ def build_parser() -> argparse.ArgumentParser:
                 ap.add_argument("--pubkey", action="append", metavar="FILE",
                                 help="host public-key file to authorize/remove (repeatable; "
                                      "default ~/.ssh/id_ed25519.pub)")
-            if aspect == "shell-dir" and verb == "set":
+            if aspect == "guest-shell-dir" and verb == "set":
                 ap.add_argument("path",
-                                help="absolute guest dir `ivm sh` starts in (e.g. /workspaces/<name>)")
+                                help="absolute GUEST dir `ivm sh` starts in (e.g. /workspaces/<name>)")
+            if aspect == "host-bound-dir" and verb == "set":
+                ap.add_argument("path", nargs="?",
+                                help="HOST dir that resolves this VM by cwd (omit = the current dir)")
             if aspect == "git-ssh-key" and verb == "set":
                 ap.add_argument("keyfile",
                                 help="host PRIVATE ssh key to copy in (e.g. ~/.ssh/dev_vm); renamed to "
@@ -3429,8 +3514,10 @@ def main() -> None:
             cmd_set_password(name, args.username, dry_run=args.dry_run)
         elif args.aspect == "ssh-server":
             cmd_set_ssh_server(name, args.username, pubkey_files=args.pubkey, dry_run=args.dry_run)
-        elif args.aspect == "shell-dir":
-            cmd_set_shell_dir(name, args.path, dry_run=args.dry_run)
+        elif args.aspect == "guest-shell-dir":
+            cmd_set_guest_shell_dir(name, args.path, dry_run=args.dry_run)
+        elif args.aspect == "host-bound-dir":
+            cmd_set_host_bound_dir(name, args.path, dry_run=args.dry_run)
         elif args.aspect == "user-sudo":
             cmd_enable_user_sudo(name, dry_run=args.dry_run)
         elif args.aspect == "git-ssh-key":
@@ -3440,8 +3527,10 @@ def main() -> None:
             cmd_unset_password(name, args.username, dry_run=args.dry_run)
         elif args.aspect == "ssh-server":
             cmd_unset_ssh_server(name, args.username, pubkey_files=args.pubkey, dry_run=args.dry_run)
-        elif args.aspect == "shell-dir":
-            cmd_unset_shell_dir(name, dry_run=args.dry_run)
+        elif args.aspect == "guest-shell-dir":
+            cmd_unset_guest_shell_dir(name, dry_run=args.dry_run)
+        elif args.aspect == "host-bound-dir":
+            cmd_unset_host_bound_dir(name, dry_run=args.dry_run)
         elif args.aspect == "user-sudo":
             cmd_disable_user_sudo(name, dry_run=args.dry_run)
         elif args.aspect == "git-ssh-key":

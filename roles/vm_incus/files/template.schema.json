@@ -9,7 +9,7 @@
     "template_name": {
       "type": "string",
       "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
-      "description": "Template id - the `<template_name>` you pass to `ivm init <template_name>`. NOT the VM instance name: the instance name is chosen interactively at init (default `<template_name>-<cwd-path>`, editable) and bound to the dir via the VM's `user.ivm_init_at_dir` config."
+      "description": "Template id - the `<template_name>` you pass to `ivm init <template_name>`. NOT the VM instance name: the instance name is chosen interactively at init (default `<template_name>-<cwd-path>`, editable) and bound to the dir via the VM's `user.ivm_host_bound_dir` config (`user.ivm_init_at_dir` just records where init ran)."
     },
     "description": {
       "type": "string",
@@ -18,7 +18,7 @@
     "cwd_bound": {
       "type": "boolean",
       "default": true,
-      "description": "false = appliance/global VM (e.g. the llm_* templates): `ivm init` records the `__CWD_UNBOUND__` sentinel instead of the init dir, the VM never resolves by cwd (target it by name: trailing `<vm>` or `--name <vm>`; `ivm cd` refuses it), and the default instance name is `ivm-<template_name>` with no path suffix. Absent/true = the normal per-directory binding for project boxes (claude/codex)."
+      "description": "false = appliance/global VM (e.g. the llm_* templates): `ivm init` stores the `__HOST_CWD_IS_NOT_BOUND__` sentinel in `user.ivm_host_bound_dir` (while `user.ivm_init_at_dir` still records where init ran, as pure history), so the VM never resolves by cwd - target it by name (trailing `<vm>` or `--name <vm>`; `ivm cd` refuses it), or bind it later with `ivm set host-bound-dir`. The default instance name becomes `ivm-<template_name>` with no path suffix. Absent/true = the normal per-directory binding for project boxes (claude/codex)."
     },
     "hw": {
       "type": "object",
@@ -129,7 +129,7 @@
     },
     "shell_default_dir_after_login": {
       "type": "string",
-      "description": "Initial working directory for `ivm shell` / `shell-user` / `shell-root`, passed as `incus exec --cwd`. ONLY sets where the interactive shell starts: `$HOME` and a bare `cd` are unchanged. Typically a mounted project path; shell-expanded on the HOST at init like a mount's `guest` value, so `/workspaces/$(basename \"$(pwd)\")` resolves to the same dir as the mount it points into. Stored on the VM as `user.ivm_shell_default_dir_after_login` (change later with `ivm set shell-dir`); if the dir is absent in the guest (e.g. a mount failed), `ivm shell` warns and starts in the default cwd. Optional; omit to start in incus's default (the home dir). Linux only."
+      "description": "Initial working directory for `ivm shell` / `shell-user` / `shell-root`, passed as `incus exec --cwd`. ONLY sets where the interactive shell starts: `$HOME` and a bare `cd` are unchanged. Typically a mounted project path; shell-expanded on the HOST at init like a mount's `guest` value, so `/workspaces/$(basename \"$(pwd)\")` resolves to the same dir as the mount it points into. Stored on the VM as `user.ivm_shell_default_dir_after_login` (change later with `ivm set guest-shell-dir`); if the dir is absent in the guest (e.g. a mount failed), `ivm shell` warns and starts in the default cwd. Optional; omit to start in incus's default (the home dir). Linux only."
     },
     "distro_package_groups": {
       "type": "array",

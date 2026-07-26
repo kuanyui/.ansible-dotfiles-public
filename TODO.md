@@ -1357,15 +1357,18 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   `llm-backup` (tars `~/librechat` to `~/Downloads/LibreChatBackups/`)
 - [x] `roles/vm_incus/README.md` shipped-examples list updated (it already omitted
   sillytavern; now lists the three `llm_*` appliances)
-- [x] `cwd_bound: false` template field (appliances resolve by NAME, not cwd):
-  `ivm init` stores the `__CWD_UNBOUND__` sentinel in `user.ivm_init_at_dir`
-  (tag stays the managed marker), resolver skips + never auto-falls back
-  (no-match error lists global VMs), default instance name `ivm-<template>` (no
-  path suffix), `ivm cd` refuses + drops them from cd completion (zsh+bash),
-  `ivm list`/bare `cd` show `(global - reach by name)`, `adopt` accepts the
-  sentinel verbatim; set on all 3 `llm_*` templates; schema + README/SPEC/DESIGN
-  updated. Existing VM converts via
-  `incus config set <vm> user.ivm_init_at_dir __CWD_UNBOUND__`
+- [x] two-tag VM binding (appliances resolve by NAME, not cwd):
+  `user.ivm_init_at_dir` demoted to pure history (+ managed marker); resolution
+  reads the new `user.ivm_host_bound_dir`, always written at init - a real dir
+  (bound), the `__HOST_CWD_IS_NOT_BOUND__` sentinel (`cwd_bound: false`
+  appliances - all 3 `llm_*` templates - or `ivm unset host-bound-dir`), or
+  absent (legacy pre-tag VM). Unbound/legacy never match, never auto-fallback;
+  no-match error lists both with copyable commands. New `ivm set host-bound-dir
+  [<dir>]` (no arg = cwd; also the legacy migration) / `unset` (writes sentinel);
+  `set shell-dir` renamed `guest-shell-dir` (completions now say HOST vs GUEST);
+  `ivm info` gains host-bound-dir + guest-shell-dir fields; `ivm cd`/`list` show
+  labelled placeholders; appliance default name `ivm-<template>` (no path
+  suffix); schema + README/SPEC/DESIGN updated
 - [x] verify (structural): 3 templates pass template.schema.json (draft 2020-12,
   ajv; `template_name` matches filename), `bash -n` passes on every
   `post_install_script` + all 3 embedded `llm-backup` scripts, compose heredoc +
