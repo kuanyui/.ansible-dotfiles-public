@@ -144,9 +144,12 @@ HAND-MAINTAINED, NOT generated from the tables above. Any change to the
 subcommand set, an aspect, or an arg MUST update both completion files in the
 same change. (Their DATA may read the rendered JSON / templates dynamically, but
 the per-case DISPLAY wiring is manual.) VM-name completion (the `--name` value and
-the trailing `<vm>` on no-positional subcommands) SHOULD, in zsh, show each VM's
-bound dir (`user.ivm_host_bound_dir`) as the `_describe` description; `cd` offers
-only MANAGED VMs (a dir-less VM has nowhere to cd). bash lists names only.
+the trailing `<vm>` on no-positional subcommands) MUST, in zsh, show a dir
+description for EVERY managed VM: the bound dir (`user.ivm_host_bound_dir`) when
+bound, else the labelled `(unbound; init dir <user.ivm_init_at_dir>)` fallback -
+a managed VM's dir column must never silently vanish. Only a hand-made instance
+(no ivm tags) completes as a bare name. `cd` offers only VMs with a REAL bound
+dir (`ivm cd` refuses the rest). bash lists names only.
 
 ## 3. Template schema
 

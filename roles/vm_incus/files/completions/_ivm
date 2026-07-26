@@ -101,30 +101,41 @@ _ivm_target_vm() {
   print -r -- "${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)}"
 }
 
-# REUSABLE: EVERY incus VM as a `_describe` line - `name:host_bound_dir` when it carries a
-# `user.ivm_host_bound_dir` tag, else bare `name` (no description; an unbound appliance,
-# a legacy pre-tag VM, or a hand-made instance - the tag is simply absent for all three).
-# For any VM-name completion that should show where each VM lives: `--name`, and the
-# trailing `<vm>` on the no-positional subcommands (`stop`/`info`/`sh`/...).
+# REUSABLE: EVERY incus VM as a `_describe` line, for any VM-name completion that should
+# show where each VM lives (`--name`, and the trailing `<vm>` on the no-positional
+# subcommands `stop`/`info`/`sh`/...). Description precedence: the host-bound dir
+# (`user.ivm_host_bound_dir`); a managed VM WITHOUT one (unbound appliance / legacy
+# pre-tag VM) still gets a description - `(unbound; init dir <user.ivm_init_at_dir>)` -
+# so the dir column never silently vanishes for a managed VM; a hand-made instance (no
+# ivm tags) stays a bare name. python3 (an ivm dependency) parses the CSV because with
+# TWO dir columns the usual split-on-first-comma trick cannot survive a comma in a path.
 _ivm_vms_with_dir() {
-  # `--columns n,config:...`: name, then its bound dir. `IFS=, read name dir` splits on
-  # the FIRST comma only, so a dir that itself contains commas stays whole in `dir`.
-  incus list --format csv --columns n,config:user.ivm_host_bound_dir 2>/dev/null \
-    | while IFS=, read -r _ivm_vm_name _ivm_vm_dir; do
-        if [[ -n "$_ivm_vm_dir" ]]; then
-          print -r -- "${_ivm_vm_name}:${_ivm_vm_dir}"
-        else
-          print -r -- "$_ivm_vm_name"
-        fi
-      done
+  incus list --format csv --columns n,config:user.ivm_host_bound_dir,config:user.ivm_init_at_dir 2>/dev/null \
+    | python3 -c '
+import csv, sys
+for row in csv.reader(sys.stdin):
+    if len(row) < 3:
+        continue
+    vm_name, host_bound_dir, init_at_dir = row[0], row[1], row[2]
+    if host_bound_dir:
+        print(f"{vm_name}:{host_bound_dir}")
+    elif init_at_dir:
+        print(f"{vm_name}:(unbound; init dir {init_at_dir})")
+    else:
+        print(vm_name)
+'
 }
 
-# REUSABLE: only the VMs `ivm cd` can jump to - those bound to a host dir - as
-# `name:host_bound_dir` pairs. Rows without a dir (unbound appliances, legacy or
-# hand-made VMs) fail `grep ':'`: `ivm cd` refuses them, so offering them would only
-# complete an error.
+# REUSABLE: only the VMs `ivm cd` can jump to - those with a REAL `user.ivm_host_bound_dir`
+# - as `name:host_bound_dir` pairs. Deliberately NOT built on `_ivm_vms_with_dir`: its
+# `(unbound; ...)` fallback descriptions would sneak unbound VMs (which `ivm cd` refuses)
+# into the candidates. Single dir column, so `IFS=, read` (split on the FIRST comma only)
+# keeps a comma-containing path whole.
 _ivm_managed_vms() {
-  _ivm_vms_with_dir | grep ':'
+  incus list --format csv --columns n,config:user.ivm_host_bound_dir 2>/dev/null \
+    | while IFS=, read -r _ivm_vm_name _ivm_vm_dir; do
+        [[ -n "$_ivm_vm_dir" ]] && print -r -- "${_ivm_vm_name}:${_ivm_vm_dir}"
+      done
 }
 
 # REUSABLE guest-path completion: complete an existing DIRECTORY inside the target RUNNING

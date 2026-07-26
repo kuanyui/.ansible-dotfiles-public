@@ -1370,6 +1370,13 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   `ivm info` gains host-bound-dir + guest-shell-dir fields; `ivm cd`/`list` show
   labelled placeholders; appliance default name `ivm-<template>` (no path
   suffix); schema + README/SPEC/DESIGN updated
+- [x] (Regression, caught in review) zsh VM-name completion lost its dir
+  descriptions for existing VMs when `_ivm_vms_with_dir` switched to the new
+  `user.ivm_host_bound_dir` tag (pre-tag VMs have none -> bare names). Fixed:
+  description = bound dir when present, else `(unbound; init dir
+  <user.ivm_init_at_dir>)` - every managed VM keeps a dir column; python3-csv
+  parse (two dir columns defeat the split-on-first-comma trick); `cd` candidates
+  decoupled so unbound VMs stay out of them
 - [x] `services` template annotation (`name: port` map, e.g. `webui: 8080` on all
   3 `llm_*`): written to `user.ivm_services` at init, `ivm info` Network gains a
   `services` row printing ready-to-open `name=<ip>:<port>` (placeholders when
