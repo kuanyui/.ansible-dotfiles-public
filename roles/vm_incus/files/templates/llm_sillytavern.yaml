@@ -13,6 +13,9 @@ description: "SillyTavern LLM chat server (Debian, headless; host browser -> gue
 # Appliance, not a project box: bound to NO host dir (empty = unbound) - target it by name
 # anywhere (`ivm shell <vm>`); default instance name is `ivm-llm-sillytavern` (no path suffix).
 host_bound_dir: ""
+# Host-reachable endpoints, queryable later via `ivm info` (annotation of what
+# post_install_script sets up; init warns if the port literal vanishes from the script).
+services: { webui: 8000 }
 hw:
   cpu: 2
   memory: 4G

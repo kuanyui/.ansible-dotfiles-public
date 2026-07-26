@@ -111,7 +111,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "push": "copy a host file/dir into the VM (incus file push; --as-root for root-owned)",
     "snapshot": "`incus snapshot` wrapper (create/list/restore/delete/rename/show)",
     "gui": "open a SPICE graphical console, detached from the shell",
-    "info": "show the VM's live state, grouped: Basic / Network (ip, bridge, ssh-server, forwards) / Mounts / Storage",
+    "info": "show the VM's live state, grouped: Basic / Network (ip, services, bridge, ssh-server, forwards) / Mounts / Storage",
     "expose": "forward a host TCP port to the VM so the LAN can reach a service in it (no arg lists current forwards)",
     "unexpose": "remove a port forward added by `expose` (no arg removes ALL; confirms, --yes skips)",
 }
@@ -407,6 +407,21 @@ def resolved_host_bound_dir(doc: Template, cwd: Path) -> str:
     return os.path.normpath(os.path.join(str(cwd), expanded))
 
 
+def warn_stale_service_declarations(doc: Template) -> None:
+    """`services` is an ANNOTATION of what post_install_script sets up, not an input
+    to it - the script hardcodes its ports. Catch the drift case loudly: a declared
+    port whose literal digits never appear in the script is probably a stale
+    declaration (or the script derives the port dynamically - hence a warning, not
+    an error)."""
+    declared_services: dict[str, Any] = doc.get("services", {}) or {}
+    post_install_script_text: str = doc.get("post_install_script", "") or ""
+    for service_name, service_port in declared_services.items():
+        if str(service_port) not in post_install_script_text:
+            print(f"ivm: warning: services declares {service_name}={service_port} but "
+                  f"'{service_port}' never appears in post_install_script - stale declaration?",
+                  file=sys.stderr)
+
+
 # ---------- instance name ----------
 
 def sanitize_incus_name(raw: str) -> str:
@@ -632,12 +647,21 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
     host_bound_dir_config_args: list[str] = (
         ["--config", f"user.ivm_host_bound_dir={host_bound_dir_tag_value}"]
         if host_bound_dir_tag_value else [])
+    # The `services` annotation (host-reachable `name: port` endpoints) rides along as a
+    # tag so `ivm info` can print ready-to-open addresses later; omitted when undeclared.
+    declared_services: dict[str, Any] = doc.get("services", {}) or {}
+    services_config_args: list[str] = (
+        ["--config", "user.ivm_services=" + ",".join(
+            f"{service_name}:{service_port}"
+            for service_name, service_port in sorted(declared_services.items()))]
+        if declared_services else [])
     cmd += [
         "--config", "user.ansible_managed=true",
         "--config", "user.ivm_guest_os=linux",
         "--config", f"user.ivm_template={doc['template_name']}",
         "--config", f"user.ivm_init_at_dir={cwd}",
         *host_bound_dir_config_args,
+        *services_config_args,
         # Record the dotfiles ansible_os_family so `overwrite-dotfiles` can pick the
         # right per-family dotfiles bucket (dotfiles/<feature>/<family>/) without re-reading the template.
         "--config", f"user.ivm_ansible_os_family={ansible_os_family_of(doc)}",
@@ -1675,6 +1699,7 @@ def cmd_init(template_name: str, given_name: str | None, root: Path, shared_preb
     failure leaves the VM in place (blips are often transient) with recovery hints."""
     cwd: Path = Path.cwd()
     doc: Template = load_and_validate(template_name, root)
+    warn_stale_service_declarations(doc)
     if doc["os"]["type"] != "linux":
         die(f"`init` supports linux only for now; '{template_name}' is os.type={doc['os']['type']}")
     registry: dict[str, Any] = load_package_groups(shared_prebuilt_provision_assets_root)
@@ -2793,8 +2818,8 @@ def _guest_status_values(name: str, status: str) -> tuple[str, str]:
 
 def cmd_info(name: str, root: Path) -> None:
     """`ivm info`: the TARGET VM's live state, GROUPED for readability -
-    Basic (status/image/hw/snapshots/host-bound-dir/guest-shell-dir/user-sudo), Network (ip/bridge/
-    ssh-server/forwards), Mounts, Storage. Read from `incus config show --expanded`
+    Basic (status/image/hw/snapshots/host-bound-dir/guest-shell-dir/user-sudo), Network (ip/services/
+    bridge/ssh-server/forwards), Mounts, Storage. Read from `incus config show --expanded`
     + `incus list`; target resolved by cwd or `--name`. Read-only. Prints EVERY
     field every run, with a placeholder when empty (never hides a field)."""
     import yaml  # lazy, same as load_yaml (ships with ansible-core / python3-yaml)
@@ -2838,6 +2863,20 @@ def cmd_info(name: str, root: Path) -> None:
     field("user-sudo", user_sudo_value)
     print("\nNetwork")
     field("ip", ip_display)
+    # `services` = the template's declared host-reachable endpoints (user.ivm_services,
+    # `name:port` pairs). With a live IP the value is ready to paste into a browser;
+    # without one the host part stays empty - the `ip` row right above explains why.
+    services_tag_raw: str = config.get("user.ivm_services", "") or ""
+    if not services_tag_raw:
+        services_display: str = "(none declared)"
+    else:
+        service_endpoint_parts: list[str] = []
+        for service_pair in services_tag_raw.split(","):
+            service_name, _, service_port = service_pair.partition(":")
+            service_host: str = ipv4 if (status.upper() == "RUNNING" and ipv4) else ""
+            service_endpoint_parts.append(f"{service_name}={service_host}:{service_port}")
+        services_display = ", ".join(service_endpoint_parts)
+    field("services", services_display)
     field("bridge", bridge)
     field("ssh-server", ssh_server_value)
     expose_forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
