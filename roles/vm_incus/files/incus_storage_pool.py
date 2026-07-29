@@ -110,6 +110,33 @@ def live_default_pool() -> dict[str, Any]:
     return {"present": present, "driver": driver, "source": source}
 
 
+def pool_space_resources() -> dict[str, Any]:
+    """The `default` pool's used/total bytes as incus reports them, via
+    `incus query /1.0/storage-pools/default/resources` (JSON, stdlib-parseable).
+    That is the same `GET /1.0/storage-pools/<name>/resources` endpoint
+    `incus storage info` reads (`GetStoragePoolResources` in upstream
+    cmd/incus/storage.go), so - unlike the pool CONFIG - it is readable by an
+    unprivileged `incus`-group member. Upstream `ResourcesStoragePoolSpace.used`
+    is `omitempty` (shared/api/resource.go) -> an absent `used` means 0.
+    Returns `{available, space_used_bytes, space_total_bytes, error}`; never raises."""
+    unavailable: dict[str, Any] = {"available": False, "space_used_bytes": 0, "space_total_bytes": 0}
+    query_rc, query_stdout, query_stderr = run_capture(
+        ["incus", "query", "/1.0/storage-pools/default/resources"])
+    if query_rc != 0:
+        return {**unavailable, "error": query_stderr.strip() or f"`incus query` exit {query_rc}"}
+    try:
+        parsed: Any = json.loads(query_stdout)
+    except ValueError:
+        return {**unavailable, "error": "unparseable `incus query` output"}
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("space"), dict):
+        return {**unavailable, "error": "unexpected `incus query` output shape"}
+    space_fields: dict[str, Any] = parsed["space"]
+    return {"available": True,
+            "space_used_bytes": int(space_fields.get("used") or 0),
+            "space_total_bytes": int(space_fields.get("total") or 0),
+            "error": ""}
+
+
 def loop_backing_file_of(mount_device: str) -> str:
     """For a loop device (`/dev/loopN`) read its backing file from sysfs
     (world-readable, no `losetup`/root), stripping a trailing ` (deleted)`.
@@ -206,23 +233,49 @@ def fstab_line_for(mountpoint: str) -> str:
 
 def loop_file_footprint(loop_file_path: str) -> dict[str, Any]:
     """A sparse `.img`'s real on-disk use (`st_blocks * 512`, what `du` reports)
-    vs its logical/declared size (`st_size`). `{exists, on_disk_bytes,
-    logical_bytes}`; `stat` needs only traverse on the parent dirs, not read."""
+    vs its logical/declared size (`st_size`). `{exists, stat_error, on_disk_bytes,
+    logical_bytes}`; `stat` needs only traverse on the parent dirs, not read.
+    `stat_error` distinguishes a truly absent file from one under a dir the
+    caller may not traverse (e.g. `/var/lib/incus/disks/` unprivileged)."""
     try:
         loop_file_stat: os.stat_result = os.stat(loop_file_path)
+    except PermissionError:
+        return {"exists": False, "stat_error": "permission denied - parent dir not traversable unprivileged",
+                "on_disk_bytes": 0, "logical_bytes": 0}
     except OSError:
-        return {"exists": False, "on_disk_bytes": 0, "logical_bytes": 0}
+        return {"exists": False, "stat_error": "file absent", "on_disk_bytes": 0, "logical_bytes": 0}
     return {
         "exists": True,
+        "stat_error": "",
         "on_disk_bytes": loop_file_stat.st_blocks * 512,
         "logical_bytes": loop_file_stat.st_size,
     }
 
 
+def effective_loop_file(recorded_loop_file: str, mount_at_recorded_mountpoint: dict[str, Any],
+                        mount_at_default_pool_path: dict[str, Any]) -> tuple[str, str]:
+    """The loop `.img` whose footprint `status` reports, and where that path came
+    from: `(loop_file, origin)` with origin `recorded` / `live-mount` / `''`.
+    Prefer the RECORDED one (storage-info.json); without a record, DISCOVER it
+    live from a mount's backing file - first the probed loop mountpoint, then
+    incus's canonical pool path (`/proc/mounts` exposes both even when the pool
+    CONFIG - and thus its `source` - is admin-only). A backing file is accepted
+    only when it resolved to a host PATH outside `/dev/` (i.e. a real file, not
+    an unresolved `/dev/loopN`, a raw block device, or a `tmpfs`-style token)."""
+    if recorded_loop_file:
+        return recorded_loop_file, "recorded"
+    for mount_state in (mount_at_recorded_mountpoint, mount_at_default_pool_path):
+        backing_file: str = mount_state.get("backing_file") or ""
+        if (mount_state.get("mounted") and backing_file.startswith("/")
+                and not backing_file.startswith("/dev/")):
+            return backing_file, "live-mount"
+    return "", ""
+
+
 def gather(root: str) -> dict[str, Any]:
     """Assemble the full storage picture: the REQUESTED layout (`storage-info.json`),
-    the LIVE pool, and the host-side mount / fstab / loop-file facts that decide
-    whether the two agree."""
+    the LIVE pool (presence + its incus-reported used/total space), and the host-side
+    mount / fstab / loop-file facts that decide whether the two agree."""
     recorded: dict[str, Any] | None = read_storage_info(root)
     live: dict[str, Any] = live_default_pool()
     # The loop mount point + the `.img` to inspect come from the recorded config
@@ -239,14 +292,23 @@ def gather(root: str) -> dict[str, Any]:
     is_loop_mount: bool = mount_at_probe["mounted"] and mount_at_probe["device"].startswith("/dev/loop")
     loop_device_mounts: list[dict[str, str]] = (
         mounts_of_backing_file(mount_at_probe["backing_file"]) if is_loop_mount else [])
+    # Without a record (wiped by `make vm-incus-uninstall-ivm`, or a hand-made pool) the
+    # loop `.img` is still discoverable: incus keeps the pool's filesystem mounted at its
+    # canonical pool path, and that /proc/mounts entry names the backing file.
+    mount_at_default_pool_path: dict[str, Any] = mount_state_of(f"{INCUS_VAR_DIR}/storage-pools/default")
+    loop_file_to_report, loop_file_origin = effective_loop_file(
+        recorded_loop_file, mount_at_probe, mount_at_default_pool_path)
     return {
         "recorded": recorded,
         "live_pool": live,
+        "pool_space": pool_space_resources(),
         "mount": mount_at_probe,
         "mountpoint": mountpoint_to_probe,
+        "pool_path_mount": mount_at_default_pool_path,
         "fstab_line": fstab_line_for(mountpoint_to_probe),
-        "loop_file": recorded_loop_file,
-        "loop_footprint": loop_file_footprint(recorded_loop_file) if recorded_loop_file else {"exists": False, "on_disk_bytes": 0, "logical_bytes": 0},
+        "loop_file": loop_file_to_report,
+        "loop_file_origin": loop_file_origin,
+        "loop_footprint": loop_file_footprint(loop_file_to_report),
         "loop_device_mounts": loop_device_mounts,
         "raw_storage_list": run_capture(["incus", "storage", "list"])[1],
     }
@@ -359,6 +421,17 @@ def render_text(data: dict[str, Any]) -> str:
     lines.append(f"  present: {live['present']}")
     lines.append(f"  driver:  {live['driver'] or '(unknown)'}")
     lines.append(f"  source:  {live['source'] or '(empty / admin-only - not readable unprivileged)'}")
+    pool_space: dict[str, Any] = data["pool_space"]
+    if pool_space["available"]:
+        # For a `dir` pool the numbers are a statvfs of its host filesystem, so they
+        # describe that WHOLE filesystem, not this pool alone - say so.
+        dir_pool_note: str = ("  (dir pool - used/total = its whole host filesystem)"
+                              if live["driver"] == "dir" else "")
+        lines.append(f"  space:   {human_iec_bytes(pool_space['space_used_bytes'])} used"
+                     f" / {human_iec_bytes(pool_space['space_total_bytes'])} total"
+                     f"  (incus-reported, inside the pool filesystem){dir_pool_note}")
+    else:
+        lines.append(f"  space:   (unavailable - {pool_space['error'] or '`incus query` failed'})")
     lines.append("")
     lines.append("-- loop mount --")
     lines.append(f"  mountpoint:   {data['mountpoint'] or '(n/a)'}")
@@ -368,9 +441,13 @@ def render_text(data: dict[str, Any]) -> str:
         lines.append(f"  backing file: {mount['backing_file']}")
     lines.append(f"  /etc/fstab:   {data['fstab_line'] or '(no line for this mountpoint)'}")
     if data["loop_file"]:
-        usage: str = (f"{human_iec_bytes(footprint['on_disk_bytes'])} on disk / "
-                      f"{human_iec_bytes(footprint['logical_bytes'])} max") if footprint["exists"] else "(file absent)"
-        lines.append(f"  loop file:    {data['loop_file']}  (sparse: {usage})")
+        usage: str = (f"sparse: {human_iec_bytes(footprint['on_disk_bytes'])} on host disk now / "
+                      f"{human_iec_bytes(footprint['logical_bytes'])} max") if footprint["exists"] else footprint["stat_error"]
+        discovered_note: str = ("  (discovered from the live pool mount - no storage-info.json)"
+                                if data["loop_file_origin"] == "live-mount" else "")
+        lines.append(f"  loop file:    {data['loop_file']}  ({usage}){discovered_note}")
+    else:
+        lines.append("  loop file:    (none visible - no record, and no loop-device mount found for the pool)")
     lines.append("")
     lines.append("-- recorded request (storage-info.json) --")
     if recorded is None:
@@ -911,7 +988,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
     # Read-only.
-    sub.add_parser("status", help="print the full live storage picture (mount / fstab / incus storage list)")
+    sub.add_parser("status", help="print the full live storage picture "
+                                  "(mount / fstab / incus storage list / pool used+total / loop `.img` footprint)")
     verify_parser: argparse.ArgumentParser = sub.add_parser(
         "verify", help="exit non-zero if the live pool does not match the expected layout")
     verify_parser.add_argument("--expect-driver", default="", help="driver the pool should have (e.g. btrfs)")

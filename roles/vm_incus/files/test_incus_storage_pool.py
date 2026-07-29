@@ -6,6 +6,9 @@ Scope (deliberately narrow): the pure / fixture-only guards that decide whether 
 They run with NO root, NO loop devices, NO incus, in milliseconds, so the
 combinatorial guard matrix (pool-exists x record-present x build_loop x img-missing
 x override) is exercised exhaustively HERE instead of by hand-staging a VM per case.
+Plus the `status` capacity-reporting contract (fixture-only too): the `space:` and
+`loop file:` lines must ALWAYS print - explicit placeholder when unknown - so pool
+max/used sizes can never silently vanish from `ivm storage-status` again.
 
 What is intentionally NOT covered (it needs the real kernel / incus, so it belongs in
 `make vm-incus-sandbox` + a real VM, never in mocks): the ACTUAL effect of `truncate` /
@@ -448,6 +451,157 @@ class TestVerdict(unittest.TestCase):
             mount={"mounted": True, "backing_file": "/data/x.img"}))
         self.assertEqual(state, "consistent")
         self.assertEqual(reasons, [])
+
+
+class TestPoolSpaceResources(unittest.TestCase):
+    """`pool_space_resources` feeds the always-printed `space:` line. Contract: a
+    failed / unparseable `incus query` yields `available: False` + a reason (never a
+    fake 0/0), and upstream's `omitempty` on `space.used` (an ABSENT key) means 0."""
+
+    def _with_query_result(self, query_result: tuple[int, str, str]) -> dict[str, Any]:
+        with patch.object(incus_storage_pool, "run_capture", return_value=query_result):
+            return incus_storage_pool.pool_space_resources()
+
+    def test_query_failure_is_unavailable_with_reason(self) -> None:
+        pool_space = self._with_query_result((1, "", "Error: Storage pool not found"))
+        self.assertFalse(pool_space["available"])
+        self.assertIn("not found", pool_space["error"])
+
+    def test_valid_response_yields_used_and_total(self) -> None:
+        pool_space = self._with_query_result(
+            (0, json.dumps({"space": {"used": 16106127360, "total": 107374182400},
+                            "inodes": {"used": 0, "total": 0}}), ""))
+        self.assertTrue(pool_space["available"])
+        self.assertEqual(pool_space["space_used_bytes"], 16106127360)
+        self.assertEqual(pool_space["space_total_bytes"], 107374182400)
+
+    def test_omitted_used_means_zero(self) -> None:
+        # shared/api/resource.go: ResourcesStoragePoolSpace.Used is `omitempty`.
+        pool_space = self._with_query_result((0, json.dumps({"space": {"total": 42}}), ""))
+        self.assertTrue(pool_space["available"])
+        self.assertEqual(pool_space["space_used_bytes"], 0)
+        self.assertEqual(pool_space["space_total_bytes"], 42)
+
+    def test_unparseable_output_is_unavailable(self) -> None:
+        pool_space = self._with_query_result((0, "not json", ""))
+        self.assertFalse(pool_space["available"])
+        self.assertTrue(pool_space["error"])
+
+
+class TestEffectiveLoopFile(unittest.TestCase):
+    """`effective_loop_file` decides which `.img` the footprint reports: the record
+    wins; without one, a live loop-backed mount is accepted ONLY when its backing
+    resolved to a real host path (never an unresolved `/dev/loopN`, a raw block
+    device, or a `tmpfs`-style token)."""
+
+    UNMOUNTED: dict[str, Any] = {"mounted": False, "device": "", "fstype": "", "backing_file": ""}
+
+    def test_recorded_wins_over_live_mounts(self) -> None:
+        live_mount = {"mounted": True, "device": "/dev/loop3", "backing_file": "/data/live.img"}
+        self.assertEqual(
+            incus_storage_pool.effective_loop_file("/data/recorded.img", live_mount, live_mount),
+            ("/data/recorded.img", "recorded"))
+
+    def test_probed_mountpoint_backing_is_discovered(self) -> None:
+        probed_mount = {"mounted": True, "device": "/dev/loop3", "backing_file": "/data/live.img"}
+        self.assertEqual(
+            incus_storage_pool.effective_loop_file("", probed_mount, self.UNMOUNTED),
+            ("/data/live.img", "live-mount"))
+
+    def test_pool_path_mount_is_the_fallback(self) -> None:
+        pool_path_mount = {"mounted": True, "device": "/dev/loop7", "backing_file": "/data/pool.img"}
+        self.assertEqual(
+            incus_storage_pool.effective_loop_file("", self.UNMOUNTED, pool_path_mount),
+            ("/data/pool.img", "live-mount"))
+
+    def test_unresolved_loop_device_is_rejected(self) -> None:
+        # sysfs unreadable -> backing_file stays `/dev/loopN`; stat-ing THAT would
+        # report a block device's meaningless 0-byte size as the footprint.
+        unresolved_mount = {"mounted": True, "device": "/dev/loop7", "backing_file": "/dev/loop7"}
+        self.assertEqual(
+            incus_storage_pool.effective_loop_file("", unresolved_mount, self.UNMOUNTED), ("", ""))
+
+    def test_non_path_backing_is_rejected(self) -> None:
+        tmpfs_mount = {"mounted": True, "device": "tmpfs", "backing_file": "tmpfs"}
+        self.assertEqual(
+            incus_storage_pool.effective_loop_file("", self.UNMOUNTED, tmpfs_mount), ("", ""))
+
+    def test_nothing_visible_is_empty(self) -> None:
+        self.assertEqual(
+            incus_storage_pool.effective_loop_file("", self.UNMOUNTED, self.UNMOUNTED), ("", ""))
+
+
+class TestStatusCapacityAlwaysPrinted(unittest.TestCase):
+    """Regression net for the hidden-sizes report: on a host with NO storage-info.json
+    and an admin-only pool source (the exact `ivm storage-status` state reported),
+    `status` must still print the capacity picture - pool used/total via the
+    resources API, and the loop `.img` footprint discovered from the live pool-path
+    mount - or an explicit placeholder, never a silently absent line."""
+
+    POOL_USED_BYTES: int = 15 * 1024 ** 3    # 15.00GiB
+    POOL_TOTAL_BYTES: int = 100 * 1024 ** 3  # 100.00GiB
+    LOOP_IMG_LOGICAL_BYTES: int = 4 * 1024 ** 3  # 4.00GiB sparse
+
+    def setUp(self) -> None:
+        self._tmp_dir = tempfile.TemporaryDirectory()
+        self.root: str = self._tmp_dir.name  # NO storage-info.json is ever written here
+        self.loop_img_path: str = os.path.join(self.root, "pool.img")
+        with open(self.loop_img_path, "wb"):
+            pass
+        os.truncate(self.loop_img_path, self.LOOP_IMG_LOGICAL_BYTES)
+        self.proc_mounts_fixture_path: str = os.path.join(self.root, "proc-mounts")
+        self._proc_mounts_patcher = patch.object(
+            incus_storage_pool, "PROC_MOUNTS_PATH", self.proc_mounts_fixture_path)
+        self._proc_mounts_patcher.start()
+        self._fstab_patcher = patch.object(
+            incus_storage_pool, "FSTAB_PATH", os.path.join(self.root, "no-such-fstab"))
+        self._fstab_patcher.start()
+
+    def tearDown(self) -> None:
+        self._proc_mounts_patcher.stop()
+        self._fstab_patcher.stop()
+        self._tmp_dir.cleanup()
+
+    def _write_proc_mounts(self, proc_mounts_text: str) -> None:
+        with open(self.proc_mounts_fixture_path, "w") as proc_mounts_file:
+            proc_mounts_file.write(proc_mounts_text)
+
+    def _fake_run_capture(self, *, resources_result: tuple[int, str, str]):
+        def fake_run_capture(argv: list[str]) -> tuple[int, str, str]:
+            if argv[:4] == ["incus", "storage", "list", "--format"]:
+                return 0, "default,btrfs,,9,CREATED\n", ""
+            if argv[:3] == ["incus", "storage", "show"]:
+                return 1, "", "Error: not authorized"  # pool config is admin-only
+            if argv[:2] == ["incus", "query"]:
+                return resources_result
+            if argv[:3] == ["incus", "storage", "list"]:
+                return 0, "| default | btrfs | ... |\n", ""
+            raise AssertionError(f"unexpected run_capture argv: {argv}")
+        return fake_run_capture
+
+    def _status_text(self, *, resources_result: tuple[int, str, str]) -> str:
+        with patch.object(incus_storage_pool, "run_capture",
+                          side_effect=self._fake_run_capture(resources_result=resources_result)):
+            return incus_storage_pool.render_text(incus_storage_pool.gather(self.root))
+
+    def test_no_record_still_shows_pool_space_and_discovered_loop_footprint(self) -> None:
+        # The pool filesystem is mounted at incus's canonical pool path; /proc/mounts
+        # (as libmount can render it) names the backing `.img` itself as the device.
+        self._write_proc_mounts(
+            f"{self.loop_img_path} /var/lib/incus/storage-pools/default btrfs rw 0 0\n")
+        status_text = self._status_text(resources_result=(0, json.dumps(
+            {"space": {"used": self.POOL_USED_BYTES, "total": self.POOL_TOTAL_BYTES}}), ""))
+        self.assertIn("space:   15.00GiB used / 100.00GiB total", status_text)
+        self.assertIn(f"loop file:    {self.loop_img_path}", status_text)
+        self.assertIn("4.00GiB max", status_text)
+        self.assertIn("discovered from the live pool mount", status_text)
+
+    def test_nothing_readable_still_prints_both_lines_as_placeholders(self) -> None:
+        self._write_proc_mounts("")  # no mounts visible at all
+        status_text = self._status_text(
+            resources_result=(1, "", "Error: Storage pool not found"))
+        self.assertIn("space:   (unavailable - ", status_text)
+        self.assertIn("loop file:    (none visible - ", status_text)
 
 
 class TestBuildPreseed(unittest.TestCase):
