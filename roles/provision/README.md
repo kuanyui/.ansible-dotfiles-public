@@ -1,0 +1,88 @@
+# roles/provision/
+
+**The provisioning registry** - what gets installed on hosts and into `ivm` / `qvm` / `pvm`
+guests. One role, two registries under `defaults/main/` (ansible loads every file in that
+directory):
+
+| registry | file | entries |
+|----------|------|---------|
+| distro-package bundles | `defaults/main/distro_packages.yml` | `provision_distro_packages_<bundle>` |
+| non-distro install recipes | `defaults/main/thirdparty_software.yml` | `provision_thirdparty_software_<name>` |
+
+Consumers:
+
+- **Host install** (bundles only): `tasks/main.yml` installs the bundles toggled on by
+  `provision_distro_packages_install_*` (group_vars), via `roles/_install_distro_packages`.
+  Recipes have no host-side executor yet - add one if a host playbook ever needs them.
+- **Guest / container**: `roles/_shared_prebuilt_provision_assets` serializes both
+  registries to `distro-package-groups.json` + `thirdparty-software.json`; `ivm` / `qvm` /
+  `pvm` read them (`ivm provision <name>`, template `packages:` / `thirdparty_software:`
+  lists). Launcher completions auto-track the JSONs - no completion edit needed.
+
+## Distro-package bundles (`defaults/main/distro_packages.yml`)
+
+Named bundles (`tools_basic`, `gui_x11`, `cjk_input`, `desktop_lxqt`, ...), each a
+per-`ansible_os_family` overlay. Resolution is **ADDITIVE**: `__common__` + the family's
+overlay (`Debian` / `Suse` / `RedHat`).
+
+## Non-distro recipes (`defaults/main/thirdparty_software.yml`)
+
+Everything that is NOT an `apt`/`zypper`/`dnf` package name: 3rd-party repos (vscode),
+`curl|bash` installers (agent_claude), npm/pip globals (agent_codex).
+
+Each entry is a per-`ansible_os_family` dict. Resolution is **OVERRIDE, not additive**
+(UNLIKE bundles): a piece of software has one install method, maybe varying by family -
+so use the family's entry if defined, else `__common__`.
+
+Inside each family overlay:
+
+| key | required | meaning |
+|-----|----------|---------|
+| `install_script` | yes | shell run as ROOT in the guest; `su - user -c '...'` for user-scoped installs |
+| `already_installed` | no | probe run as root; rc 0 = skip (idempotency). Omit = always run. Prefer a check that only succeeds when truly installed (a file test beats `command -v` when the bin dir is off the login PATH) |
+
+At the entry's TOP level (sibling of the family overlays):
+
+| key | required | meaning |
+|-----|----------|---------|
+| `distro_packages` | no | distro packages the recipe hard-requires. Installed via the family's package manager BEFORE any recipe runs, on BOTH paths (`ivm init` merges them into the template's package install, `ivm provision <name>` into its batch) - templates never re-list a recipe's deps. Bundle-shaped and ADDITIVE (`__common__` + family overlay) - the one additive field in this registry |
+
+```yaml
+provision_thirdparty_software_agent_claude:    # curl|bash installer, same on every distro
+  __common__:
+    already_installed: su - user -c 'command -v claude'
+    install_script: |
+      su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
+
+provision_thirdparty_software_agent_codex:     # npm global, self-carried distro deps
+  distro_packages:
+    __common__: [nodejs, npm]
+  __common__:
+    already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/codex'
+    install_script: |
+      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && npm install -g @openai/codex'
+
+provision_thirdparty_software_vscode:          # 3rd-party repo, per-family (illustrative)
+  Debian:
+    already_installed: command -v code
+    install_script: |
+      # ... add the vendor signing key + apt repo, then: apt-get install --yes code
+  Suse:
+    already_installed: command -v code
+    install_script: |
+      # ... rpm --import the key + zypper ar the repo, then: zypper --non-interactive install code
+```
+
+Write a repo recipe to ADD THE REPO (not fetch a one-off package file), so `ivm update`
+(apt/zypper upgrade) keeps it current.
+
+## Adding a bundle / recipe
+
+1. Define `provision_distro_packages_<bundle>` / `provision_thirdparty_software_<name>` in
+   the matching `defaults/main/*.yml`. A recipe declares its distro prerequisites in its
+   own `distro_packages` (NO paired same-named distro bundle - that convention is gone).
+2. Add the key to the render dict in `roles/_shared_prebuilt_provision_assets/tasks/main.yml`
+   - the ONE hand-maintained key list.
+3. Bundles on HOSTS additionally need a `provision_distro_packages_install_<bundle>` toggle
+   (group_vars + the toggle loop in `tasks/main.yml`). Recipes are referenced from a
+   template's `thirdparty_software: [<name>]` or run ad-hoc via `ivm provision <name>`.

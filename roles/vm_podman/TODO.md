@@ -115,7 +115,7 @@ libcairo2, libxrender1, libxext6, libxrandr2, libxinerama1, libxi6, libxfixes3,
 libxcomposite1, libice6, libsm6, libgdk-pixbuf).
 
 **Root cause (VERIFIED, packages.debian.org/trixie 2026-06).** `claude.yaml` pulls the
-`emacs` bundle (`roles/provision_distro_packages/defaults/main.yml` L83-86 =
+`emacs` bundle (`roles/provision/defaults/main/distro_packages.yml` L83-86 =
 `__common__: [emacs]`). Debian's `emacs` is a METAPACKAGE depending on
 `emacs-gtk | emacs-pgtk | emacs-lucid | emacs-nox`; apt picks the first = `emacs-gtk`
 (the GUI build), which HARD-Depends the X11/GTK stack. These are Depends not Recommends,

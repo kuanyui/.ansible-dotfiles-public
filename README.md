@@ -19,7 +19,7 @@ Managed with Ansible roles, following is Ansible directory structure conventions
 ```sh
 playbooks/                # entry playbooks
   ├─ user.yml             # ├─ ESSENTIALS for current user: zsh + emacs + bash + tmux (via `make apply-essentials-user`)
-  ├─ root.yml             # ├─ same essentials for root (+ provision_distro_packages)
+  ├─ root.yml             # ├─ same essentials for root (+ provision: distro package bundles)
   ├─ all.yml              # ├─ user.yml + root.yml
   # Everything below is OPTIONAL - run its own target; no `setup_*` gate any more.
   ├─ podman_oci_runtimes.yml  # ├─ dedicated entry: configure podman OCI runtime(s)
@@ -55,7 +55,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`tmux/`](roles/tmux/) | Deploy `~/.tmux.conf` (static; identical for user + root). |
 | [`zsh/`](roles/zsh/) | Install zsh + plugins, deploy `.zshrc`, run `chsh`. |
 | [`emacs/`](roles/emacs/) | Install Emacs + elisp packages. |
-| [`provision_distro_packages/`](roles/provision_distro_packages/) | Frequently-used distro package bundles (basic / net / sys / Wayland tools); delegates installs to `_install_distro_packages`. |
+| [`provision/`](roles/provision/) | Provisioning registry, one source for hosts and `ivm`/`qvm`/`pvm` guests: distro package bundles (`defaults/main/distro_packages.yml`; host installs delegate to `_install_distro_packages`) + non-distro install recipes (`defaults/main/thirdparty_software.yml`, guest-side). |
 | [`centralize_lang_pkgs_dir/`](roles/centralize_lang_pkgs_dir/) | Redirect npm / pip / pipx / cargo / go global installs from `~/.local/` into `~/.centralized-lang-pkgs/<tool>/`, so XDG + ansible-managed dotfiles stay separable from language-level package state. Opt-in via `make apply-centralize-lang-pkgs-dir`. |
 | [`podman_oci_runtimes/`](roles/podman_oci_runtimes/) | Configure podman OCI runtime (e.g. `libkrun` on openSUSE for VM-isolated rootless containers). |
 | [`vm_podman/`](roles/vm_podman/) | Install `pvm`: define a podman container in a YAML template, then `pvm init <template>` - builds a per-template image via `podman exec` + `podman commit` (no Dockerfile), runs one container per project dir (cwd-bound). Consumes the same provision cache as `ivm`/`qvm`; `pvm shell` / `pvm agent`. Default `crun` shares the host kernel (warns + gates; use `ivm` for a real VM); `libkrun` microVM planned. |

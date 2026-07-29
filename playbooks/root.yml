@@ -11,7 +11,7 @@
     target_group: root
     is_root: true
   roles:
-    - provision_distro_packages
+    - provision
     - zsh
     - emacs
     - bash

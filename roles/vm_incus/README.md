@@ -60,12 +60,13 @@ Field groups (see the schema for the full, authoritative list):
 | (linux provisioning) | `distro_package_groups[]`, `distro_packages[]`, `thirdparty_software[]`, `dotfiles[]`, `post_install_script` |
 | `windows` | `unattend`, `post_install_powershell` |
 
-- `distro_package_groups` reference bundles in `roles/provision_distro_packages`
+- `distro_package_groups` reference bundles in
+  `roles/provision/defaults/main/distro_packages.yml`
   (`tools_basic`, `tools_sys`, ...); resolved per the VM's ansible_os_family. A
   fixed baseline (`incus_guest_baseline`: zsh + plugins, sudo, sshd, git, ...) is
   always installed.
 - `thirdparty_software` reference non-distro install recipes in
-  `roles/provision_thirdparty_software` (`agent_claude`, `agent_codex`, ...): a shell snippet run as root
+  `roles/provision/defaults/main/thirdparty_software.yml` (`agent_claude`, `agent_codex`, ...): a shell snippet run as root
   in the guest (3rd-party repo / `curl|bash` / npm-pip) with an optional
   idempotency probe - for software not in the distro repos.
 - `mounts[].host` is shell-expanded on the HOST at init (`$(pwd)`, `$HOME`, `~`,

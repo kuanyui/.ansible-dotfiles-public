@@ -16,5 +16,5 @@ shared_shell_aliases_llmagents: "{{ lookup('template', playbook_dir + '/../roles
 # tmux via `apply-essentials-*`; everything else via its dedicated target).
 # Per-role config moved into each role's `defaults/main.yml` (override here or in
 # host_vars only when a host differs): `has_gui_support` -> roles/emacs,
-# `provision_distro_packages_install_*` -> roles/provision_distro_packages,
+# `provision_distro_packages_install_*` -> roles/provision,
 # `podman_runtime` / `podman_runtime_scope` -> roles/podman_oci_runtimes.

@@ -7,5 +7,5 @@ directly - dodges `ansible.builtin.package` -> `community.general.zypper` on ope
 - **Input** `install_distro_packages`: dict keyed by `ansible_os_family`
   (`Debian`/`Suse`/`RedHat`), each `{ install: [pkgs], probe: <shell, optional> }`
 - **`probe`**: rc 0 -> skip install (idempotency). Omitted -> always install.
-- **Used by**: `provision_distro_packages` + `vm_incus` (its own host deps)
+- **Used by**: `provision` (host bundle installs) + `vm_incus` (its own host deps)
 - Host's `os_family` missing from the dict -> fails loud (caller didn't declare support)
