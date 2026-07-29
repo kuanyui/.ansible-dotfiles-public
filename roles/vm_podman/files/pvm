@@ -296,26 +296,40 @@ def resolve_runtime(template: dict[str, Any], requested_runtime: str) -> str:
 # with roles/vm_incus/files/ivm + roles/vm_quickemu/files/qvm.
 
 
+def available_on_this_launcher(registry_entry: Any) -> bool:
+    """An entry's `available_on` lists the consumers (`host` / `ivm` / `qvm` / `pvm`)
+    it is offered to; ABSENT = every consumer. Applied at load time (the one choke
+    point), so every downstream view - resolution, the no-arg `provision` listing,
+    unknown-name suggestions - sees only this launcher's units. The shell completions
+    apply the same rule in their own JSON readers."""
+    if not isinstance(registry_entry, dict):
+        return True
+    available_on: Any = registry_entry.get("available_on")
+    return available_on is None or GUEST_TYPE in available_on
+
+
 def load_package_groups(shared_root: Path) -> dict[str, Any]:
-    """Load distro-package-groups.json (rendered from the provision_distro_packages registry)."""
+    """Load distro-package-groups.json (rendered from the provision_distro_packages
+    registry), dropping entries whose `available_on` excludes this launcher."""
     path: Path = shared_root / "distro-package-groups.json"
     if not path.is_file():
         die(f"distro-package-groups.json not found: {path}; re-run `make vm-podman-install`")
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
         die(f"distro-package-groups.json is not a mapping: {path}")
-    return loaded
+    return {name: entry for name, entry in loaded.items() if available_on_this_launcher(entry)}
 
 
 def load_thirdparty_software(shared_root: Path) -> dict[str, Any]:
-    """Load thirdparty-software.json (rendered from the provision_thirdparty_software registry)."""
+    """Load thirdparty-software.json (rendered from the provision_thirdparty_software
+    registry), dropping entries whose `available_on` excludes this launcher."""
     path: Path = shared_root / "thirdparty-software.json"
     if not path.is_file():
         die(f"thirdparty-software.json not found: {path}; re-run `make vm-podman-install`")
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
         die(f"thirdparty-software.json is not a mapping: {path}")
-    return loaded
+    return {name: entry for name, entry in loaded.items() if available_on_this_launcher(entry)}
 
 
 def overlay_install_packages(overlay: Any) -> list[str]:

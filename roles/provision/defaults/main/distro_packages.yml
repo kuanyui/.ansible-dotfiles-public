@@ -8,11 +8,11 @@
 # of `ansible.builtin.package`, which would dispatch to
 # `community.general.zypper`).
 #
-# These bundle keys are also serialized to the shared distro-package-groups.json by
-# `roles/_shared_prebuilt_provision_assets` (its render dict is the ONE hand-maintained
-# list of feature keys, read by ivm/qvm/pvm). Adding a bundle = define it here AND add
-# it there. Launcher completions auto-track it (they read the rendered JSON at runtime)
-# - no completion edit needed.
+# The whole `provision_distro_packages` dict below is serialized VERBATIM to the shared
+# distro-package-groups.json by `roles/_shared_prebuilt_provision_assets`, read by
+# ivm/qvm/pvm. Adding a bundle = define it here, nothing else - the JSON and the launcher
+# completions pick it up automatically (both read the rendered registry at runtime).
+# Per-consumer visibility: `available_on` (see the dict comment below).
 #
 # Each family overlay (`__common__` / `Debian` / `Suse` / `RedHat`) is EITHER a bare package
 # list (the usual case), OR - when that family ALSO needs setup - a dict
@@ -29,7 +29,7 @@
 # (so `su - user` works), idempotent (re-runs each `ivm provision <bundle>`). GUEST-ONLY: the
 # host install path runs only the package lists (a snippet assumes the guest `user`), so the
 # host toggle loop holds bare-list bundles only. Most bundles never need the dict form -
-# `provision_distro_packages_desktop_icewm` / `provision_distro_packages_desktop_lxqt` (the desktop bundles) are the ones that do.
+# `desktop_icewm` / `desktop_lxqt` (the desktop bundles) are the ones that do.
 
 # Which bundles to install on the HOST (apply-essentials-root / -user). Override in
 # group_vars / host_vars per host. (Guest installs via `ivm provision <bundle>` ignore
@@ -41,459 +41,466 @@ provision_distro_packages_install_tools_wayland: false
 provision_distro_packages_install_dev_qt: false
 provision_distro_packages_install_dev_android: false
 
-provision_distro_packages_tools_basic:
-  description: "core CLI tools - git, make, ripgrep, tmux, stow"
-  __common__:
-    - git
-    - make
-    - ripgrep
-    - tmux
-    - stow
+# The bundle registry proper: every bundle is a key under this ONE dict (short
+# names - dict keys, unlike top-level vars, cannot collide with other roles'
+# variables). An entry MAY carry `available_on: [host|ivm|qvm|pvm]` (absent =
+# every consumer) - enforced by each launcher's registry loader; see README.md.
+provision_distro_packages:
+  tools_basic:
+    description: "core CLI tools - git, make, ripgrep, tmux, stow"
+    __common__:
+      - git
+      - make
+      - ripgrep
+      - tmux
+      - stow
 
-provision_distro_packages_tools_sys:
-  description: "system monitors - htop, iotop, sysstat, nvtop, cpuid, fatrace"
-  __common__:
-    - htop
-    - iotop
-    - sysstat
-    - nvtop
-    - cpuid
-    - fatrace
-  Debian:
-    - cpu-x  # not in default Fedora/RHEL repos
-  Suse: []   # `__common__` names carry over to openSUSE; no Suse-only extra needed
-  RedHat: []
+  tools_sys:
+    description: "system monitors - htop, iotop, sysstat, nvtop, cpuid, fatrace"
+    __common__:
+      - htop
+      - iotop
+      - sysstat
+      - nvtop
+      - cpuid
+      - fatrace
+    Debian:
+      - cpu-x  # not in default Fedora/RHEL repos
+    Suse: []   # `__common__` names carry over to openSUSE; no Suse-only extra needed
+    RedHat: []
 
-provision_distro_packages_tools_net:
-  description: "network diagnostics - nethogs, traceroute, net-tools, tcpdump"
-  __common__:
-    - nethogs
-    - traceroute
-    - net-tools
-    - tcpdump
+  tools_net:
+    description: "network diagnostics - nethogs, traceroute, net-tools, tcpdump"
+    __common__:
+      - nethogs
+      - traceroute
+      - net-tools
+      - tcpdump
 
-provision_distro_packages_tools_wayland:
-  description: "Wayland clipboard - wl-clipboard"
-  __common__:
-    - wl-clipboard
+  tools_wayland:
+    description: "Wayland clipboard - wl-clipboard"
+    __common__:
+      - wl-clipboard
 
-# The emacs editor, NO-X11 build (terminal-only). Same editor; drops the ~13 X11/GTK libs the
-# GUI build HARD-depends on (libgtk-3, libx11, libcairo, libxrender, ...). WHY: every consumer
-# runs emacs in a TERMINAL - pvm agent containers are headless, ivm guests use it as a terminal
-# editor - so the GUI build's X11 deps are pure bloat. They were silently bulking up
-# `pvm init claude`: Debian `emacs` is a METAPACKAGE defaulting to `emacs-gtk`, whose X11/GTK deps
-# are Depends (not Recommends), so `--no-install-recommends` does NOT strip them (verified
-# packages.debian.org/trixie 2026-06). Its `~/.emacs.d` config is the SEPARATE emacs dotfiles
-# feature (`ivm`/`pvm provision emacs` = this package + that config set).
-# Package name DIVERGES per family (verified packages.debian.org + rpmfind 2026-06):
-#   Debian / openSUSE / RHEL / Alma / Rocky / CentOS-Stream = `emacs-nox`.
-#   CAVEAT: current Fedora RENAMED the no-window build to `emacs-nw` (its `emacs-nox` is gone), so
-#   a Fedora guest needs `emacs-nw` - best-effort, same Fedora caveat as the desktop bundles.
-provision_distro_packages_emacs:
-  description: "Emacs editor, no-X11 build (terminal-only; its ~/.emacs.d is the separate emacs dotfiles feature)"
-  Debian:
-    - emacs-nox
-  Suse:
-    - emacs-nox
-  RedHat:
-    - emacs-nox   # RHEL/Alma/Rocky/CentOS-Stream; current Fedora renamed it `emacs-nw` (see header)
+  # The emacs editor, NO-X11 build (terminal-only). Same editor; drops the ~13 X11/GTK libs the
+  # GUI build HARD-depends on (libgtk-3, libx11, libcairo, libxrender, ...). WHY: every consumer
+  # runs emacs in a TERMINAL - pvm agent containers are headless, ivm guests use it as a terminal
+  # editor - so the GUI build's X11 deps are pure bloat. They were silently bulking up
+  # `pvm init claude`: Debian `emacs` is a METAPACKAGE defaulting to `emacs-gtk`, whose X11/GTK deps
+  # are Depends (not Recommends), so `--no-install-recommends` does NOT strip them (verified
+  # packages.debian.org/trixie 2026-06). Its `~/.emacs.d` config is the SEPARATE emacs dotfiles
+  # feature (`ivm`/`pvm provision emacs` = this package + that config set).
+  # Package name DIVERGES per family (verified packages.debian.org + rpmfind 2026-06):
+  #   Debian / openSUSE / RHEL / Alma / Rocky / CentOS-Stream = `emacs-nox`.
+  #   CAVEAT: current Fedora RENAMED the no-window build to `emacs-nw` (its `emacs-nox` is gone), so
+  #   a Fedora guest needs `emacs-nw` - best-effort, same Fedora caveat as the desktop bundles.
+  emacs:
+    description: "Emacs editor, no-X11 build (terminal-only; its ~/.emacs.d is the separate emacs dotfiles feature)"
+    Debian:
+      - emacs-nox
+    Suse:
+      - emacs-nox
+    RedHat:
+      - emacs-nox   # RHEL/Alma/Rocky/CentOS-Stream; current Fedora renamed it `emacs-nw` (see header)
 
-# Minimal X11 stack any X WM/DE needs: server + startx + xauth + the libinput
-# input driver (without it X gets no mouse/keyboard events). Video needs no
-# package - the server's built-in modesetting drives virtio-gpu/std-VGA. The
-# WM/DE and display-manager stay per-template. Names diverge per family.
-provision_distro_packages_gui_x11:
-  description: "minimal X11 stack (Xorg server, xinit, xauth, libinput) - base for any X WM/DE"
-  Debian:
-    - xserver-xorg-core
-    - xinit
-    - xauth
-    - xserver-xorg-input-libinput
-  Suse:
-    - xorg-x11-server
-    - xinit
-    - xauth
-    - xf86-input-libinput
-  RedHat:
-    - xorg-x11-server-Xorg
-    - xorg-x11-xinit
-    - xorg-x11-xauth
-    - xorg-x11-drv-libinput
+  # Minimal X11 stack any X WM/DE needs: server + startx + xauth + the libinput
+  # input driver (without it X gets no mouse/keyboard events). Video needs no
+  # package - the server's built-in modesetting drives virtio-gpu/std-VGA. The
+  # WM/DE and display-manager stay per-template. Names diverge per family.
+  gui_x11:
+    description: "minimal X11 stack (Xorg server, xinit, xauth, libinput) - base for any X WM/DE"
+    Debian:
+      - xserver-xorg-core
+      - xinit
+      - xauth
+      - xserver-xorg-input-libinput
+    Suse:
+      - xorg-x11-server
+      - xinit
+      - xauth
+      - xf86-input-libinput
+    RedHat:
+      - xorg-x11-server-Xorg
+      - xorg-x11-xinit
+      - xorg-x11-xauth
+      - xorg-x11-drv-libinput
 
-# Xwayland only - the one compositor-agnostic Wayland piece (runs X apps under
-# any Wayland compositor); the compositor itself stays per-template.
-provision_distro_packages_gui_wayland:
-  description: "Xwayland - run X apps under any Wayland compositor"
-  Debian:
-    - xwayland
-  Suse:
-    - xwayland
-  RedHat:
-    - xorg-x11-server-Xwayland
+  # Xwayland only - the one compositor-agnostic Wayland piece (runs X apps under
+  # any Wayland compositor); the compositor itself stays per-template.
+  gui_wayland:
+    description: "Xwayland - run X apps under any Wayland compositor"
+    Debian:
+      - xwayland
+    Suse:
+      - xwayland
+    RedHat:
+      - xorg-x11-server-Xwayland
 
-# SPICE guest integration for VMs launched by qvm/quickemu (NOT incus): shared
-# clipboard (spice-vdagent) + host<->guest folder sharing (spice-webdavd). Both
-# package names are identical across all three families (verified pkgs.org /
-# software.opensuse.org / Fedora / Debian, 2026-06) -> `__common__` only. Dict form
-# (post_install) => GUEST-ONLY (no HOST toggle). Clipboard needs a connected SPICE
-# display (`qvm start --gui`); the shared folder is quickemu's `--public-dir`
-# (default ~/Public) surfaced in the guest over webdav.
-provision_distro_packages_guest_spice:
-  description: "SPICE guest integration for qvm VMs - shared clipboard (spice-vdagent) + folder (spice-webdavd); needs --gui"
-  __common__:
-    install:
-      - spice-vdagent    # clipboard agent; the desktop session autostarts it (needs --gui / SPICE)
-      - spice-webdavd    # proxies quickemu's --public-dir folder over the SPICE webdav channel
-    post_install: |
-      # spice-vdagentd (clipboard) is socket-activated + launched by the desktop
-      # session's spice-vdagent - no explicit enable needed. spice-webdavd is a
-      # system daemon serving the shared folder, so enable it for boot (unit name
-      # verified == spice-webdavd.service via the Debian/phodav package file list).
-      systemctl enable spice-webdavd.service
+  # SPICE guest integration for VMs launched by qvm/quickemu (NOT incus): shared
+  # clipboard (spice-vdagent) + host<->guest folder sharing (spice-webdavd). Both
+  # package names are identical across all three families (verified pkgs.org /
+  # software.opensuse.org / Fedora / Debian, 2026-06) -> `__common__` only. Dict form
+  # (post_install) => GUEST-ONLY (no HOST toggle). Clipboard needs a connected SPICE
+  # display (`qvm start --gui`); the shared folder is quickemu's `--public-dir`
+  # (default ~/Public) surfaced in the guest over webdav.
+  guest_spice:
+    description: "SPICE guest integration for qvm VMs - shared clipboard (spice-vdagent) + folder (spice-webdavd); needs --gui"
+    __common__:
+      install:
+        - spice-vdagent    # clipboard agent; the desktop session autostarts it (needs --gui / SPICE)
+        - spice-webdavd    # proxies quickemu's --public-dir folder over the SPICE webdav channel
+      post_install: |
+        # spice-vdagentd (clipboard) is socket-activated + launched by the desktop
+        # session's spice-vdagent - no explicit enable needed. spice-webdavd is a
+        # system daemon serving the shared folder, so enable it for boot (unit name
+        # verified == spice-webdavd.service via the Debian/phodav package file list).
+        systemctl enable spice-webdavd.service
 
-# Noto Sans CJK: one font covers all CJK; JP/TC/SC differ only in default Han
-# glyphs, not coverage. openSUSE OSS has no combined pkg, so use the JP variant.
-provision_distro_packages_cjk_fonts:
-  description: "Noto Sans CJK fonts (covers JP/TC/SC)"
-  Debian:
-    - fonts-noto-cjk
-  Suse:
-    - google-noto-sans-jp-fonts
-  RedHat:
-    - google-noto-sans-cjk-fonts
+  # Noto Sans CJK: one font covers all CJK; JP/TC/SC differ only in default Han
+  # glyphs, not coverage. openSUSE OSS has no combined pkg, so use the JP variant.
+  cjk_fonts:
+    description: "Noto Sans CJK fonts (covers JP/TC/SC)"
+    Debian:
+      - fonts-noto-cjk
+    Suse:
+      - google-noto-sans-jp-fonts
+    RedHat:
+      - google-noto-sans-cjk-fonts
 
-# fcitx5 + engines (mozc=JP, chewing=TC) + GTK/Qt frontends. Needs the
-# template's `sys.input_method: fcitx5` (env vars) + autostart to take effect.
-# Frontend names diverge per family; config tool: Debian `fcitx5-config-qt` vs
-# openSUSE/Fedora `fcitx5-configtool`.
-provision_distro_packages_cjk_input:
-  description: "fcitx5 + mozc (JP) / chewing (TC) IME (needs template sys.input_method fcitx5)"
-  __common__:
-    - fcitx5
-    - fcitx5-mozc
-    - fcitx5-chewing
-  Debian:
-    - fcitx5-frontend-gtk3
-    - fcitx5-frontend-gtk4
-    - fcitx5-frontend-qt5
-    - fcitx5-frontend-qt6
-    - fcitx5-config-qt
-  Suse:
-    - fcitx5-gtk3
-    - fcitx5-gtk4
-    - fcitx5-qt5
-    - fcitx5-qt6
-    - fcitx5-configtool
-  RedHat:
-    - fcitx5-gtk
-    - fcitx5-qt
-    - fcitx5-configtool
+  # fcitx5 + engines (mozc=JP, chewing=TC) + GTK/Qt frontends. Needs the
+  # template's `sys.input_method: fcitx5` (env vars) + autostart to take effect.
+  # Frontend names diverge per family; config tool: Debian `fcitx5-config-qt` vs
+  # openSUSE/Fedora `fcitx5-configtool`.
+  cjk_input:
+    description: "fcitx5 + mozc (JP) / chewing (TC) IME (needs template sys.input_method fcitx5)"
+    __common__:
+      - fcitx5
+      - fcitx5-mozc
+      - fcitx5-chewing
+    Debian:
+      - fcitx5-frontend-gtk3
+      - fcitx5-frontend-gtk4
+      - fcitx5-frontend-qt5
+      - fcitx5-frontend-qt6
+      - fcitx5-config-qt
+    Suse:
+      - fcitx5-gtk3
+      - fcitx5-gtk4
+      - fcitx5-qt5
+      - fcitx5-qt6
+      - fcitx5-configtool
+    RedHat:
+      - fcitx5-gtk
+      - fcitx5-qt
+      - fcitx5-configtool
 
-# Baseline for an `ivm` guest VM (roles/vm_incus). NOT a host-toggleable bundle
-# like the ones above (no `provision_distro_packages_install_*` switch); it is rendered
-# into `<vm_incus_root>/package-groups.json` and the `ivm` program installs it
-# on EVERY guest at first provision, regardless of the template. It is the
-# floor that makes a VM usable as an ivm guest: zsh (+ plugins) because the
-# pushed dotfiles set zsh as the login shell, `sudo` for the opt-in
-# set-root-password escalation, sshd for ssh, plus the basics.
-#
-# Per-family names are NOT all identical (verified, not assumed):
-#   - `__common__`: core packages, same name + in default repos on all three
-#     (curl/git/ca-certificates/sudo/zsh/tmux). High confidence; not web-checked
-#     individually as they are universally-present base packages.
-#   - sshd: Debian/Fedora ship `openssh-server`; openSUSE ships sshd in the
-#     single `openssh` package (no `openssh-server` in the default OSS repo).
-#   - zsh-syntax-highlighting / zsh-autosuggestions: in Debian + Fedora default
-#     repos (Fedora confirmed via packages.fedoraproject.org). For openSUSE they
-#     were only found in an OBS devel project (shells:zsh-users:*), NOT confirmed
-#     in the default Tumbleweed OSS repo -> deliberately OMITTED from `Suse:`
-#     until verified on a real Tumbleweed box (`zypper search <name>`). Until
-#     then an openSUSE guest's zsh just runs without those two plugins.
-provision_distro_packages_incus_guest_baseline:
-  description: "always-on ivm guest floor - zsh, sudo, sshd, curl/git/ca-certificates/tmux"
-  __common__:
-    - curl
-    - git
-    - ca-certificates
-    - sudo
-    - zsh
-    - tmux
-  Debian:
-    - openssh-server
-    - zsh-syntax-highlighting
-    - zsh-autosuggestions
-  Suse:
-    - openssh   # ships sshd; `openssh-server` is not the default-repo name here
-    # zsh-syntax-highlighting / zsh-autosuggestions: see header note (unverified
-    # in default repo; add here once confirmed on Tumbleweed).
-  RedHat:
-    - openssh-server
-    - zsh-syntax-highlighting
-    - zsh-autosuggestions
+  # Baseline for an `ivm` guest VM (roles/vm_incus). NOT a host-toggleable bundle
+  # like the ones above (no `provision_distro_packages_install_*` switch); it is rendered
+  # into `<vm_incus_root>/package-groups.json` and the `ivm` program installs it
+  # on EVERY guest at first provision, regardless of the template. It is the
+  # floor that makes a VM usable as an ivm guest: zsh (+ plugins) because the
+  # pushed dotfiles set zsh as the login shell, `sudo` for the opt-in
+  # set-root-password escalation, sshd for ssh, plus the basics.
+  #
+  # Per-family names are NOT all identical (verified, not assumed):
+  #   - `__common__`: core packages, same name + in default repos on all three
+  #     (curl/git/ca-certificates/sudo/zsh/tmux). High confidence; not web-checked
+  #     individually as they are universally-present base packages.
+  #   - sshd: Debian/Fedora ship `openssh-server`; openSUSE ships sshd in the
+  #     single `openssh` package (no `openssh-server` in the default OSS repo).
+  #   - zsh-syntax-highlighting / zsh-autosuggestions: in Debian + Fedora default
+  #     repos (Fedora confirmed via packages.fedoraproject.org). For openSUSE they
+  #     were only found in an OBS devel project (shells:zsh-users:*), NOT confirmed
+  #     in the default Tumbleweed OSS repo -> deliberately OMITTED from `Suse:`
+  #     until verified on a real Tumbleweed box (`zypper search <name>`). Until
+  #     then an openSUSE guest's zsh just runs without those two plugins.
+  incus_guest_baseline:
+    description: "always-on ivm guest floor - zsh, sudo, sshd, curl/git/ca-certificates/tmux"
+    __common__:
+      - curl
+      - git
+      - ca-certificates
+      - sudo
+      - zsh
+      - tmux
+    Debian:
+      - openssh-server
+      - zsh-syntax-highlighting
+      - zsh-autosuggestions
+    Suse:
+      - openssh   # ships sshd; `openssh-server` is not the default-repo name here
+      # zsh-syntax-highlighting / zsh-autosuggestions: see header note (unverified
+      # in default repo; add here once confirmed on Tumbleweed).
+    RedHat:
+      - openssh-server
+      - zsh-syntax-highlighting
+      - zsh-autosuggestions
 
-# Qt6 development: the basics for building a Qt6 C++/QML app with CMake. Modules
-# requested: Core / Gui / Widgets / Concurrent + Multimedia + Declarative (QML) +
-# Svg + Linguist (translation tooling). `cmake` + `make` (the default CMake generator on
-# Linux) + the C++ compiler ride in so `provision dev_qt` is self-sufficient to build.
-# Names diverge per family (Debian ships ONE dev meta `qt6-base-dev` covering
-# Core/Gui/Widgets/Concurrent/Network/...; openSUSE splits every module into its own
-# `qt6-<module>-devel`; Fedora prefixes `qt6-qt<module>-devel`). The Linguist package
-# also differs: Debian splits GUI (`linguist-qt6`) from CLI tools (`qt6-l10n-tools`,
-# = lrelease/lupdate); openSUSE `qt6-linguist-devel`; Fedora `qt6-linguist`.
-provision_distro_packages_dev_qt:
-  description: "Qt6 C++/QML build basics - cmake, qt6 dev modules, g++"
-  __common__:
-    - cmake
-    - make
-  Debian:
-    - qt6-base-dev          # Core, Gui, Widgets, Concurrent, Network, Sql, Test, ... (one meta)
-    - qt6-declarative-dev   # QML / Qt Quick
-    - qt6-multimedia-dev
-    - qt6-svg-dev           # SVG rendering (Qt6::Svg)
-    - qt6-l10n-tools        # lrelease / lupdate (Linguist CLI; CMake LinguistTools)
-    - linguist-qt6          # Qt Linguist GUI
-    - g++
-  Suse:
-    - qt6-core-devel
-    - qt6-gui-devel
-    - qt6-widgets-devel
-    - qt6-concurrent-devel
-    - qt6-multimedia-devel
-    - qt6-declarative-devel   # QML / Qt Quick
-    - qt6-svg-devel           # SVG rendering (Qt6::Svg)
-    - qt6-linguist-devel      # Linguist tools (lrelease/lupdate + CMake module)
-    - gcc-c++
-  RedHat:
-    - qt6-qtbase-devel        # Core, Gui, Widgets, Concurrent, ...
-    - qt6-qtdeclarative-devel # QML / Qt Quick
-    - qt6-qtmultimedia-devel
-    - qt6-qtsvg-devel         # SVG rendering (Qt6::Svg)
-    - qt6-linguist            # Qt6 Linguist tools
-    - gcc-c++
+  # Qt6 development: the basics for building a Qt6 C++/QML app with CMake. Modules
+  # requested: Core / Gui / Widgets / Concurrent + Multimedia + Declarative (QML) +
+  # Svg + Linguist (translation tooling). `cmake` + `make` (the default CMake generator on
+  # Linux) + the C++ compiler ride in so `provision dev_qt` is self-sufficient to build.
+  # Names diverge per family (Debian ships ONE dev meta `qt6-base-dev` covering
+  # Core/Gui/Widgets/Concurrent/Network/...; openSUSE splits every module into its own
+  # `qt6-<module>-devel`; Fedora prefixes `qt6-qt<module>-devel`). The Linguist package
+  # also differs: Debian splits GUI (`linguist-qt6`) from CLI tools (`qt6-l10n-tools`,
+  # = lrelease/lupdate); openSUSE `qt6-linguist-devel`; Fedora `qt6-linguist`.
+  dev_qt:
+    description: "Qt6 C++/QML build basics - cmake, qt6 dev modules, g++"
+    __common__:
+      - cmake
+      - make
+    Debian:
+      - qt6-base-dev          # Core, Gui, Widgets, Concurrent, Network, Sql, Test, ... (one meta)
+      - qt6-declarative-dev   # QML / Qt Quick
+      - qt6-multimedia-dev
+      - qt6-svg-dev           # SVG rendering (Qt6::Svg)
+      - qt6-l10n-tools        # lrelease / lupdate (Linguist CLI; CMake LinguistTools)
+      - linguist-qt6          # Qt Linguist GUI
+      - g++
+    Suse:
+      - qt6-core-devel
+      - qt6-gui-devel
+      - qt6-widgets-devel
+      - qt6-concurrent-devel
+      - qt6-multimedia-devel
+      - qt6-declarative-devel   # QML / Qt Quick
+      - qt6-svg-devel           # SVG rendering (Qt6::Svg)
+      - qt6-linguist-devel      # Linguist tools (lrelease/lupdate + CMake module)
+      - gcc-c++
+    RedHat:
+      - qt6-qtbase-devel        # Core, Gui, Widgets, Concurrent, ...
+      - qt6-qtdeclarative-devel # QML / Qt Quick
+      - qt6-qtmultimedia-devel
+      - qt6-qtsvg-devel         # SVG rendering (Qt6::Svg)
+      - qt6-linguist            # Qt6 Linguist tools
+      - gcc-c++
 
-# Android development, HOST side: the JDK (Gradle/AGP run on the JVM) + `unzip`, toggled by
-# `provision_distro_packages_install_dev_android` (tasks/main.yml loop). HOST-ONLY on purpose:
-# not in the guest render dict (`roles/_shared_prebuilt_provision_assets`) - the GUEST gets the
-# same JDK + unzip from the `dev_android` THIRDPARTY recipe's own `distro_packages`, so guest
-# `dev_android` resolves to that recipe alone. The SDK itself (sdkmanager, platform-tools,
-# build-tools, a platform) is that recipe's job; install it on the host by hand if wanted.
-# Deliberately NOT here:
-#   - Gradle: not in the openSUSE / Fedora default repos at all (only Debian + Snap), and
-#     Android pins its version via each project's `./gradlew` wrapper anyway - so use the wrapper.
-#   - The emulator: heavy + GUI + needs host nested virt (`hw.nested_virt: true`); add it
-#     yourself with `sdkmanager emulator` when wanted.
-# JDK is JDK 21 (current LTS; Debian `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+.
-provision_distro_packages_dev_android:
-  description: "Android build-chain host deps - JDK + unzip (host toggle only; guest deps ride in the dev_android recipe)"
-  __common__:
-    - unzip   # extract the Android command-line tools zip when driving sdkmanager by hand
-  Debian:
-    - default-jdk
-  Suse:
-    - java-21-openjdk-devel
-  RedHat:
-    - java-21-openjdk-devel
+  # Android development, HOST side: the JDK (Gradle/AGP run on the JVM) + `unzip`, toggled by
+  # `provision_distro_packages_install_dev_android` (tasks/main.yml loop). `available_on: [host]`
+  # on purpose - hidden from every launcher: the GUEST gets the same JDK + unzip from the
+  # `dev_android` THIRDPARTY recipe's own `distro_packages`, so guest `dev_android` resolves to
+  # that recipe alone (a bundle of the same name would only shadow the recipe's completion
+  # description). The SDK itself (sdkmanager, platform-tools,
+  # build-tools, a platform) is that recipe's job; install it on the host by hand if wanted.
+  # Deliberately NOT here:
+  #   - Gradle: not in the openSUSE / Fedora default repos at all (only Debian + Snap), and
+  #     Android pins its version via each project's `./gradlew` wrapper anyway - so use the wrapper.
+  #   - The emulator: heavy + GUI + needs host nested virt (`hw.nested_virt: true`); add it
+  #     yourself with `sdkmanager emulator` when wanted.
+  # JDK is JDK 21 (current LTS; Debian `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+.
+  dev_android:
+    description: "Android build-chain host deps - JDK + unzip (host toggle only; guest deps ride in the dev_android recipe)"
+    available_on: [host]
+    __common__:
+      - unzip   # extract the Android command-line tools zip when driving sdkmanager by hand
+    Debian:
+      - default-jdk
+    Suse:
+      - java-21-openjdk-devel
+    RedHat:
+      - java-21-openjdk-devel
 
-# Go toolchain from the distro repos - the MAIN `go` for general use (distro-signed,
-# distro-updated). Coexists with `dev_gvm` (the gvm version manager): distro `go` stays
-# `/usr/bin/go`, gvm sits on top for SPECIFIC/old versions (e.g. go1.9 via `gvm install
-# go1.9 -B`). Package name diverges per family (verified against each family's default repo):
-# Debian `golang-go` (the compiler; `golang` is just the meta), openSUSE `go` (meta -> current
-# `go1.x`), Fedora `golang`.
-provision_distro_packages_dev_go:
-  description: "Go toolchain from distro repos (the main `go`; pair `dev_gvm` for pinned/old versions)"
-  Debian:
-    - golang-go
-  Suse:
-    - go
-  RedHat:
-    - golang
+  # Go toolchain from the distro repos - the MAIN `go` for general use (distro-signed,
+  # distro-updated). Coexists with `dev_gvm` (the gvm version manager): distro `go` stays
+  # `/usr/bin/go`, gvm sits on top for SPECIFIC/old versions (e.g. go1.9 via `gvm install
+  # go1.9 -B`). Package name diverges per family (verified against each family's default repo):
+  # Debian `golang-go` (the compiler; `golang` is just the meta), openSUSE `go` (meta -> current
+  # `go1.x`), Fedora `golang`.
+  dev_go:
+    description: "Go toolchain from distro repos (the main `go`; pair `dev_gvm` for pinned/old versions)"
+    Debian:
+      - golang-go
+    Suse:
+      - go
+    RedHat:
+      - golang
 
-# Node.js + npm from the distro repos - the MAIN `node`/`npm` for general use. Coexists
-# with `dev_nvm` (nvm): distro node stays `/usr/bin/node`, nvm sits on top for
-# SPECIFIC/newer versions (`nvm install <ver>`). `nodejs` + `npm` are the package names in
-# all three families' default repos.
-provision_distro_packages_dev_node:
-  description: "Node.js + npm from distro repos (the main `node`; pair `dev_nvm` for pinned/newer versions)"
-  __common__:
-    - nodejs
-    - npm
+  # Node.js + npm from the distro repos - the MAIN `node`/`npm` for general use. Coexists
+  # with `dev_nvm` (nvm): distro node stays `/usr/bin/node`, nvm sits on top for
+  # SPECIFIC/newer versions (`nvm install <ver>`). `nodejs` + `npm` are the package names in
+  # all three families' default repos.
+  dev_node:
+    description: "Node.js + npm from distro repos (the main `node`; pair `dev_nvm` for pinned/newer versions)"
+    __common__:
+      - nodejs
+      - npm
 
-# A complete, autologin icewm desktop - the WM/DE + display-manager layer that `gui_x11`
-# (the X server stack) deliberately leaves out. RIDES ON gui_x11: provision them together,
-# `ivm provision gui_x11 desktop_icewm`. The shared packages + the (identical) setup wiring
-# live in `__common__`; the only per-family difference is the lightdm GREETER's package name
-# (Debian/openSUSE `lightdm-gtk-greeter`, Fedora `lightdm-gtk`) - a per-family `install`, NOT
-# a post_install, since it is a package not a script. The greeter is listed EXPLICITLY because
-# ivm installs with recommends OFF (apt-min/zypper-min/dnf-min) so it is not auto-pulled.
-# `spice-vdagent` (in __common__.install, not relying on `sys.gui`) gives `ivm gui`'s SPICE console
-# clipboard + dynamic resolution; `lxterminal` (__common__.install) is the terminal emulator -
-# icewm bundles none, so without it a fresh desktop can launch nothing. The wiring:
-# graphical.target + lightdm autologin (-> the guest's `user`, into an icewm session, name
-# DETECTED at runtime: Debian `icewm-session` / openSUSE `icewm`) + spice-vdagent autostart +
-# a `~/.config/icewm/keys` line binding Ctrl+Alt+T to lxterminal (icewm has NO default
-# terminal hotkey; icewm-keys(5)'s `key "Alt+Ctrl+t" xterm` is only a doc example).
-# CAVEAT: verified-shaped for Debian (the common
-# ivm target) + openSUSE (mirrors templates/webbrowser.yaml); Fedora is best-effort - SELinux
-# Enforcing has known lightdm-autologin issues; a fix, once verified on a real box, lands as a
-# `RedHat: {post_install: ...}` here (the per-family slot is exactly for that). See TODO.md.
-provision_distro_packages_desktop_icewm:
-  description: "autologin icewm desktop - bare WM + lxterminal + lightdm (rides on gui_x11)"
-  __common__:
-    install:
-      - icewm
-      - lxterminal      # terminal emulator (icewm bundles none); bound to Ctrl+Alt+T in post_install
-      - lightdm
-      - spice-vdagent
-    post_install: |
-      systemctl set-default graphical.target
-      mkdir -p /etc/lightdm/lightdm.conf.d
-      # icewm's xsession .desktop name differs per distro (Debian 'icewm-session',
-      # openSUSE 'icewm') - detect it rather than hardcode.
-      icewm_session_name=$(basename "$(ls /usr/share/xsessions/*icewm*.desktop | head -n1)" .desktop)
-      printf '[Seat:*]\nautologin-user=user\nautologin-session=%s\n' "$icewm_session_name" > /etc/lightdm/lightdm.conf.d/autologin.conf
-      # --force: openSUSE pre-aliases display-manager.service; harmless on Debian/Fedora.
-      systemctl enable --force lightdm
-      # icewm ignores XDG autostart -> start spice-vdagent (host<->guest clipboard /
-      # dynamic resolution) from its own startup.
-      su - user -c 'mkdir -p ~/.config/icewm && printf "#!/bin/sh\nspice-vdagent &\n" > ~/.config/icewm/startup && chmod +x ~/.config/icewm/startup'
-      # icewm ships NO default terminal hotkey (icewm-keys(5): its `key "Alt+Ctrl+t" xterm`
-      # is only a doc example, not a shipped binding) -> bind Ctrl+Alt+T to lxterminal.
-      su - user -c 'mkdir -p ~/.config/icewm && printf "key \"Ctrl+Alt+t\" lxterminal\n" > ~/.config/icewm/keys'
-  Debian:
-    install:
-      - lightdm-gtk-greeter
-  Suse:
-    install:
-      - icewm-theme-branding  # openSUSE-only: the default icewm theme/background
-      - lightdm-gtk-greeter
-  RedHat:
-    install:
-      - lightdm-gtk          # Fedora's greeter package (NOT lightdm-gtk-greeter)
+  # A complete, autologin icewm desktop - the WM/DE + display-manager layer that `gui_x11`
+  # (the X server stack) deliberately leaves out. RIDES ON gui_x11: provision them together,
+  # `ivm provision gui_x11 desktop_icewm`. The shared packages + the (identical) setup wiring
+  # live in `__common__`; the only per-family difference is the lightdm GREETER's package name
+  # (Debian/openSUSE `lightdm-gtk-greeter`, Fedora `lightdm-gtk`) - a per-family `install`, NOT
+  # a post_install, since it is a package not a script. The greeter is listed EXPLICITLY because
+  # ivm installs with recommends OFF (apt-min/zypper-min/dnf-min) so it is not auto-pulled.
+  # `spice-vdagent` (in __common__.install, not relying on `sys.gui`) gives `ivm gui`'s SPICE console
+  # clipboard + dynamic resolution; `lxterminal` (__common__.install) is the terminal emulator -
+  # icewm bundles none, so without it a fresh desktop can launch nothing. The wiring:
+  # graphical.target + lightdm autologin (-> the guest's `user`, into an icewm session, name
+  # DETECTED at runtime: Debian `icewm-session` / openSUSE `icewm`) + spice-vdagent autostart +
+  # a `~/.config/icewm/keys` line binding Ctrl+Alt+T to lxterminal (icewm has NO default
+  # terminal hotkey; icewm-keys(5)'s `key "Alt+Ctrl+t" xterm` is only a doc example).
+  # CAVEAT: verified-shaped for Debian (the common
+  # ivm target) + openSUSE (mirrors templates/webbrowser.yaml); Fedora is best-effort - SELinux
+  # Enforcing has known lightdm-autologin issues; a fix, once verified on a real box, lands as a
+  # `RedHat: {post_install: ...}` here (the per-family slot is exactly for that). See TODO.md.
+  desktop_icewm:
+    description: "autologin icewm desktop - bare WM + lxterminal + lightdm (rides on gui_x11)"
+    __common__:
+      install:
+        - icewm
+        - lxterminal      # terminal emulator (icewm bundles none); bound to Ctrl+Alt+T in post_install
+        - lightdm
+        - spice-vdagent
+      post_install: |
+        systemctl set-default graphical.target
+        mkdir -p /etc/lightdm/lightdm.conf.d
+        # icewm's xsession .desktop name differs per distro (Debian 'icewm-session',
+        # openSUSE 'icewm') - detect it rather than hardcode.
+        icewm_session_name=$(basename "$(ls /usr/share/xsessions/*icewm*.desktop | head -n1)" .desktop)
+        printf '[Seat:*]\nautologin-user=user\nautologin-session=%s\n' "$icewm_session_name" > /etc/lightdm/lightdm.conf.d/autologin.conf
+        # --force: openSUSE pre-aliases display-manager.service; harmless on Debian/Fedora.
+        systemctl enable --force lightdm
+        # icewm ignores XDG autostart -> start spice-vdagent (host<->guest clipboard /
+        # dynamic resolution) from its own startup.
+        su - user -c 'mkdir -p ~/.config/icewm && printf "#!/bin/sh\nspice-vdagent &\n" > ~/.config/icewm/startup && chmod +x ~/.config/icewm/startup'
+        # icewm ships NO default terminal hotkey (icewm-keys(5): its `key "Alt+Ctrl+t" xterm`
+        # is only a doc example, not a shipped binding) -> bind Ctrl+Alt+T to lxterminal.
+        su - user -c 'mkdir -p ~/.config/icewm && printf "key \"Ctrl+Alt+t\" lxterminal\n" > ~/.config/icewm/keys'
+    Debian:
+      install:
+        - lightdm-gtk-greeter
+    Suse:
+      install:
+        - icewm-theme-branding  # openSUSE-only: the default icewm theme/background
+        - lightdm-gtk-greeter
+    RedHat:
+      install:
+        - lightdm-gtk          # Fedora's greeter package (NOT lightdm-gtk-greeter)
 
-# A complete, autologin LXQt desktop - sibling of `provision_distro_packages_desktop_icewm`; pick ONE
-# (both ride on gui_x11: `ivm provision gui_x11 desktop_lxqt`). Difference from desktop_icewm:
-# a full lightweight Qt DE (session + panel + file manager + terminal over the openbox WM)
-# rather than a bare WM, so it ships the file manager + terminal a desktop actually needs.
-# `__common__.install` = the session/panel/WM/file-manager/terminal + the stack that makes
-# it actually USABLE (added after real use surfaced the gaps; ivm installs with recommends
-# OFF, so none of these get auto-pulled): `gvfs` + per-family `gvfs-backends` (pcmanfm-qt's
-# Computer/Network/Trash are GIO virtual filesystems - without them opening "Computer"
-# errors "operation not supported"; dietpi.com/forum .../13591), `udisks2` (drive mount
-# backend) + `lxqt-policykit` (polkit agent for mount/admin auth), `lxqt-globalkeys` (the
-# global-shortcut DAEMON - without it NO shortcut fires; it also ships the default
-# /etc/xdg/lxqt/globalkeyshortcuts.conf that already binds Ctrl+Alt+T -> qterminal),
-# `lxqt-runner` (the Alt+F2 launcher), `lxqt-config` (the Settings center - notably
-# `lxqt-config-monitor`, the GUI to pin a display resolution; `spice-vdagent` only
-# auto-matches the SPICE viewer window - one pkg name on all 3 families), `lxqt-qtplugin`
-# (the "lxqt" Qt platform theme - what makes Qt apps USE the icon theme; without it
-# pcmanfm-qt + file pickers show no icons), and
-# `papirus-icon-theme` for the icons themselves - the flat/modern theme the LXQt flagship
-# (Lubuntu) ships, replacing LXQt's dated technical default "oxygen"; one pkg name on all 3
-# families, so it sits in __common__. Per-family `install` carries the name divergences (all
-# EXPLICIT, recommends OFF): the lightdm GREETER (Debian/openSUSE `lightdm-gtk-greeter`,
-# Fedora `lightdm-gtk`); `gvfs-backends` (Debian/openSUSE one pkg; Fedora splits it); and
-# Fedora-only `lxqt-x11-session` (the X11 session `.desktop`). Unlike icewm, LXQt HONORS XDG
-# autostart, so spice-vdagent + the lxqt daemons (globalkeys/runner/policykit) start themselves.
-# The autologin session name is DETECTED at runtime (`/usr/share/xsessions/*lxqt*.desktop`,
-# normally `lxqt`) rather than hardcoded, same as desktop_icewm. CAVEAT: verified-shaped for
-# Debian + openSUSE (the common ivm targets); Fedora is best-effort - same lightdm-autologin /
-# SELinux-Enforcing caveat as desktop_icewm (a verified fix lands as a
-# `RedHat: {post_install: ...}` here). See TODO.md.
-provision_distro_packages_desktop_lxqt:
-  description: "autologin LXQt desktop - panel/pcmanfm-qt/qterminal + settings/shortcuts/gvfs/Papirus (rides on gui_x11)"
-  __common__:
-    install:
-      - lxqt-session
-      - lxqt-panel
-      - openbox          # LXQt's default X11 window manager; lxqt-session does not pull it (weak-deps off)
-      - pcmanfm-qt       # file manager
-      - qterminal        # terminal emulator
-      - lightdm
-      - spice-vdagent
-      - gvfs             # GIO backend: pcmanfm-qt Computer/Network/Trash (else opening "Computer" = "operation not supported")
-      - udisks2          # drive enumeration + mount backend behind "Computer"
-      - lxqt-globalkeys  # global-shortcut DAEMON: without it NO shortcut fires; ships the default Ctrl+Alt+T -> qterminal
-      - lxqt-runner      # the Alt+F2 application launcher (autostarts, registers Alt+F2 via the daemon)
-      - lxqt-config      # the Settings center: lxqt-config-monitor = pin a display resolution (spice-vdagent only auto-matches the viewer window) + appearance/input/locale modules
-      - lxqt-qtplugin    # the "lxqt" Qt platform theme: makes Qt apps (pcmanfm-qt + file pickers) USE the icon theme (else no icons)
-      - lxqt-policykit   # polkit agent: authenticate mounting drives / admin actions
-      - papirus-icon-theme  # icons: the LXQt-flagship (Lubuntu) default - flat/modern, full Qt+GTK coverage; replaces LXQt's dated technical default "oxygen". SAME pkg name on all 3 families -> __common__
-    post_install: |
-      systemctl set-default graphical.target
-      mkdir -p /etc/lightdm/lightdm.conf.d
-      # LXQt's xsession .desktop is normally 'lxqt'; detect it rather than hardcode
-      # (Fedora ships it via the lxqt-x11-session subpackage - the file name may differ).
-      lxqt_session_name=$(basename "$(ls /usr/share/xsessions/*lxqt*.desktop | head -n1)" .desktop)
-      printf '[Seat:*]\nautologin-user=user\nautologin-session=%s\n' "$lxqt_session_name" > /etc/lightdm/lightdm.conf.d/autologin.conf
-      # --force: openSUSE pre-aliases display-manager.service; harmless on Debian/Fedora.
-      systemctl enable --force lightdm
-      # Icon theme: Papirus (the LXQt-flagship default, installed in __common__; LXQt's
-      # own technical default is the dated "oxygen"). Set it explicitly for `user` so Qt
-      # apps pick it up even if the default lxqt.conf was not deployed (recommends OFF);
-      # lxqt-session merges this on first login.
-      su - user -c 'mkdir -p ~/.config/lxqt && printf "[General]\nicon_theme=Papirus\n" > ~/.config/lxqt/lxqt.conf'
-  Debian:
-    install:
-      - lightdm-gtk-greeter
-      - gvfs-backends      # gvfsd-computer/trash/network + smb/mtp/sftp/... (Debian: single pkg)
-  Suse:
-    install:
-      - lightdm-gtk-greeter
-      - gvfs-backends      # Debian/openSUSE ship gvfs backends as one pkg (Fedora splits them)
-  RedHat:
-    install:
-      - lightdm-gtk         # Fedora's greeter package (NOT lightdm-gtk-greeter)
-      - lxqt-x11-session    # Fedora-only: the X11 session .desktop subpackage (else autologin has no session to enter)
-      # Fedora SPLITS gvfs backends (gvfs-smb / gvfs-mtp / gvfs-archive / ...) - no single
-      # `gvfs-backends`; add the ones you need (best-effort - this bundle targets Debian/TW).
+  # A complete, autologin LXQt desktop - sibling of `desktop_icewm`; pick ONE
+  # (both ride on gui_x11: `ivm provision gui_x11 desktop_lxqt`). Difference from desktop_icewm:
+  # a full lightweight Qt DE (session + panel + file manager + terminal over the openbox WM)
+  # rather than a bare WM, so it ships the file manager + terminal a desktop actually needs.
+  # `__common__.install` = the session/panel/WM/file-manager/terminal + the stack that makes
+  # it actually USABLE (added after real use surfaced the gaps; ivm installs with recommends
+  # OFF, so none of these get auto-pulled): `gvfs` + per-family `gvfs-backends` (pcmanfm-qt's
+  # Computer/Network/Trash are GIO virtual filesystems - without them opening "Computer"
+  # errors "operation not supported"; dietpi.com/forum .../13591), `udisks2` (drive mount
+  # backend) + `lxqt-policykit` (polkit agent for mount/admin auth), `lxqt-globalkeys` (the
+  # global-shortcut DAEMON - without it NO shortcut fires; it also ships the default
+  # /etc/xdg/lxqt/globalkeyshortcuts.conf that already binds Ctrl+Alt+T -> qterminal),
+  # `lxqt-runner` (the Alt+F2 launcher), `lxqt-config` (the Settings center - notably
+  # `lxqt-config-monitor`, the GUI to pin a display resolution; `spice-vdagent` only
+  # auto-matches the SPICE viewer window - one pkg name on all 3 families), `lxqt-qtplugin`
+  # (the "lxqt" Qt platform theme - what makes Qt apps USE the icon theme; without it
+  # pcmanfm-qt + file pickers show no icons), and
+  # `papirus-icon-theme` for the icons themselves - the flat/modern theme the LXQt flagship
+  # (Lubuntu) ships, replacing LXQt's dated technical default "oxygen"; one pkg name on all 3
+  # families, so it sits in __common__. Per-family `install` carries the name divergences (all
+  # EXPLICIT, recommends OFF): the lightdm GREETER (Debian/openSUSE `lightdm-gtk-greeter`,
+  # Fedora `lightdm-gtk`); `gvfs-backends` (Debian/openSUSE one pkg; Fedora splits it); and
+  # Fedora-only `lxqt-x11-session` (the X11 session `.desktop`). Unlike icewm, LXQt HONORS XDG
+  # autostart, so spice-vdagent + the lxqt daemons (globalkeys/runner/policykit) start themselves.
+  # The autologin session name is DETECTED at runtime (`/usr/share/xsessions/*lxqt*.desktop`,
+  # normally `lxqt`) rather than hardcoded, same as desktop_icewm. CAVEAT: verified-shaped for
+  # Debian + openSUSE (the common ivm targets); Fedora is best-effort - same lightdm-autologin /
+  # SELinux-Enforcing caveat as desktop_icewm (a verified fix lands as a
+  # `RedHat: {post_install: ...}` here). See TODO.md.
+  desktop_lxqt:
+    description: "autologin LXQt desktop - panel/pcmanfm-qt/qterminal + settings/shortcuts/gvfs/Papirus (rides on gui_x11)"
+    __common__:
+      install:
+        - lxqt-session
+        - lxqt-panel
+        - openbox          # LXQt's default X11 window manager; lxqt-session does not pull it (weak-deps off)
+        - pcmanfm-qt       # file manager
+        - qterminal        # terminal emulator
+        - lightdm
+        - spice-vdagent
+        - gvfs             # GIO backend: pcmanfm-qt Computer/Network/Trash (else opening "Computer" = "operation not supported")
+        - udisks2          # drive enumeration + mount backend behind "Computer"
+        - lxqt-globalkeys  # global-shortcut DAEMON: without it NO shortcut fires; ships the default Ctrl+Alt+T -> qterminal
+        - lxqt-runner      # the Alt+F2 application launcher (autostarts, registers Alt+F2 via the daemon)
+        - lxqt-config      # the Settings center: lxqt-config-monitor = pin a display resolution (spice-vdagent only auto-matches the viewer window) + appearance/input/locale modules
+        - lxqt-qtplugin    # the "lxqt" Qt platform theme: makes Qt apps (pcmanfm-qt + file pickers) USE the icon theme (else no icons)
+        - lxqt-policykit   # polkit agent: authenticate mounting drives / admin actions
+        - papirus-icon-theme  # icons: the LXQt-flagship (Lubuntu) default - flat/modern, full Qt+GTK coverage; replaces LXQt's dated technical default "oxygen". SAME pkg name on all 3 families -> __common__
+      post_install: |
+        systemctl set-default graphical.target
+        mkdir -p /etc/lightdm/lightdm.conf.d
+        # LXQt's xsession .desktop is normally 'lxqt'; detect it rather than hardcode
+        # (Fedora ships it via the lxqt-x11-session subpackage - the file name may differ).
+        lxqt_session_name=$(basename "$(ls /usr/share/xsessions/*lxqt*.desktop | head -n1)" .desktop)
+        printf '[Seat:*]\nautologin-user=user\nautologin-session=%s\n' "$lxqt_session_name" > /etc/lightdm/lightdm.conf.d/autologin.conf
+        # --force: openSUSE pre-aliases display-manager.service; harmless on Debian/Fedora.
+        systemctl enable --force lightdm
+        # Icon theme: Papirus (the LXQt-flagship default, installed in __common__; LXQt's
+        # own technical default is the dated "oxygen"). Set it explicitly for `user` so Qt
+        # apps pick it up even if the default lxqt.conf was not deployed (recommends OFF);
+        # lxqt-session merges this on first login.
+        su - user -c 'mkdir -p ~/.config/lxqt && printf "[General]\nicon_theme=Papirus\n" > ~/.config/lxqt/lxqt.conf'
+    Debian:
+      install:
+        - lightdm-gtk-greeter
+        - gvfs-backends      # gvfsd-computer/trash/network + smb/mtp/sftp/... (Debian: single pkg)
+    Suse:
+      install:
+        - lightdm-gtk-greeter
+        - gvfs-backends      # Debian/openSUSE ship gvfs backends as one pkg (Fedora splits them)
+    RedHat:
+      install:
+        - lightdm-gtk         # Fedora's greeter package (NOT lightdm-gtk-greeter)
+        - lxqt-x11-session    # Fedora-only: the X11 session .desktop subpackage (else autologin has no session to enter)
+        # Fedora SPLITS gvfs backends (gvfs-smb / gvfs-mtp / gvfs-archive / ...) - no single
+        # `gvfs-backends`; add the ones you need (best-effort - this bundle targets Debian/TW).
 
-# Rootless podman INSIDE a guest (nested containers). The pieces the official rootless
-# tutorial requires (github.com/containers/podman .../tutorials/rootless_tutorial.md):
-# `pasta` (from `passt`) for the unprivileged network namespace; newuidmap/newgidmap
-# (the `uidmap` package on Debian - bundled in shadow-utils/shadow on Fedora/openSUSE);
-# and /etc/subuid + /etc/subgid ranges for `user`. `fuse-overlayfs` covers rootless
-# overlay storage on older kernels (native otherwise). GUEST-ONLY (dict form: `post_install`
-# runs as ROOT in an ivm guest). Package names verified via repology 2026-06 (`passt`
-# Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three). Two Debian-only adds (see the
-# `Debian:` block): the `uidmap` name split, and `nftables` (netavark's `nft`, which Fedora/openSUSE
-# already ship in the base). (No HOST toggle - dict-form bundles are guest-only.)
-provision_distro_packages_podman_rootless:
-  description: "rootless podman in the guest - podman (+ docker CLI compat + compose), pasta, subuid/subgid + linger + docker.io search"
-  __common__:
-    install:
-      - podman
-      - podman-docker   # docker->podman CLI shim (same name all 3 families)
-      - podman-compose  # `podman compose` provider (compose.yml -> podman; small, same name all 3 families)
-      - passt
-      - aardvark-dns  # netavark's DNS: lets containers on a custom network resolve each other by name.
-                      # `podman compose` builds such a network, so without it service-name lookups NXDOMAIN.
-                      # `__common__`, not Debian-only like `nftables`: all 3 families only `Recommends` it
-                      # and no base ships it, so a weak-deps-off guest misses it everywhere (`nftables` is
-                      # in Fedora/openSUSE's base, hence there).
-      - fuse-overlayfs
-    post_install: |
-      # rootless podman maps `user` into a userns via /etc/subuid + /etc/subgid;
-      # `useradd` usually pre-allocates these, so add only if missing (idempotent).
-      grep -q '^user:' /etc/subuid || usermod --add-subuids 100000-165535 user
-      grep -q '^user:' /etc/subgid || usermod --add-subgids 100000-165535 user
-      # cgroup delegation without an interactive login session (headless guest).
-      loginctl enable-linger user
-      # podman defines NO unqualified-search-registries by default (unlike docker), so a
-      # short image name (`postgres`, `dpage/pgadmin4`, ... what compose files pull) fails:
-      # "short-name did not resolve ... no unqualified-search registries are defined". Point
-      # unqualified searches at docker.io via a registries.conf.d drop-in. This is a "simple
-      # knob": a drop-in REPLACES the distro's (empty) value entirely, last file alphabetically
-      # winning - hence the `zz-` prefix, robust against distro drop-ins. ONE registry => no
-      # ambiguity => no interactive short-name prompt, so it works under compose / non-TTY.
-      # (containers-registries.conf.5; add quay.io/ghcr.io to the list here if you need them.)
-      mkdir -p /etc/containers/registries.conf.d
-      printf 'unqualified-search-registries = ["docker.io"]\n' \
-        > /etc/containers/registries.conf.d/zz-unqualified-search-registries.conf
-  Debian:
-    install:
-      - uidmap     # newuidmap/newgidmap; Fedora/openSUSE ship these in shadow-utils/shadow (base)
-      - nftables   # netavark's firewall backend (`nft`): `podman compose` builds a custom bridge network
-                   # and netavark (>=1.10) defaults to nftables, so without `nft` it dies "unable to
-                   # execute 'nft'". DEBIAN-ONLY: a minimal Debian guest lacks `nft`; Fedora/openSUSE ship
-                   # it in the base (firewalld's backend). Confirmed on trixie (apt install nftables fixed it).
+  # Rootless podman INSIDE a guest (nested containers). The pieces the official rootless
+  # tutorial requires (github.com/containers/podman .../tutorials/rootless_tutorial.md):
+  # `pasta` (from `passt`) for the unprivileged network namespace; newuidmap/newgidmap
+  # (the `uidmap` package on Debian - bundled in shadow-utils/shadow on Fedora/openSUSE);
+  # and /etc/subuid + /etc/subgid ranges for `user`. `fuse-overlayfs` covers rootless
+  # overlay storage on older kernels (native otherwise). GUEST-ONLY (dict form: `post_install`
+  # runs as ROOT in an ivm guest). Package names verified via repology 2026-06 (`passt`
+  # Debian trixie+/Fedora/openSUSE, `fuse-overlayfs` all three). Two Debian-only adds (see the
+  # `Debian:` block): the `uidmap` name split, and `nftables` (netavark's `nft`, which Fedora/openSUSE
+  # already ship in the base). (No HOST toggle - dict-form bundles are guest-only.)
+  podman_rootless:
+    description: "rootless podman in the guest - podman (+ docker CLI compat + compose), pasta, subuid/subgid + linger + docker.io search"
+    __common__:
+      install:
+        - podman
+        - podman-docker   # docker->podman CLI shim (same name all 3 families)
+        - podman-compose  # `podman compose` provider (compose.yml -> podman; small, same name all 3 families)
+        - passt
+        - aardvark-dns  # netavark's DNS: lets containers on a custom network resolve each other by name.
+                        # `podman compose` builds such a network, so without it service-name lookups NXDOMAIN.
+                        # `__common__`, not Debian-only like `nftables`: all 3 families only `Recommends` it
+                        # and no base ships it, so a weak-deps-off guest misses it everywhere (`nftables` is
+                        # in Fedora/openSUSE's base, hence there).
+        - fuse-overlayfs
+      post_install: |
+        # rootless podman maps `user` into a userns via /etc/subuid + /etc/subgid;
+        # `useradd` usually pre-allocates these, so add only if missing (idempotent).
+        grep -q '^user:' /etc/subuid || usermod --add-subuids 100000-165535 user
+        grep -q '^user:' /etc/subgid || usermod --add-subgids 100000-165535 user
+        # cgroup delegation without an interactive login session (headless guest).
+        loginctl enable-linger user
+        # podman defines NO unqualified-search-registries by default (unlike docker), so a
+        # short image name (`postgres`, `dpage/pgadmin4`, ... what compose files pull) fails:
+        # "short-name did not resolve ... no unqualified-search registries are defined". Point
+        # unqualified searches at docker.io via a registries.conf.d drop-in. This is a "simple
+        # knob": a drop-in REPLACES the distro's (empty) value entirely, last file alphabetically
+        # winning - hence the `zz-` prefix, robust against distro drop-ins. ONE registry => no
+        # ambiguity => no interactive short-name prompt, so it works under compose / non-TTY.
+        # (containers-registries.conf.5; add quay.io/ghcr.io to the list here if you need them.)
+        mkdir -p /etc/containers/registries.conf.d
+        printf 'unqualified-search-registries = ["docker.io"]\n' \
+          > /etc/containers/registries.conf.d/zz-unqualified-search-registries.conf
+    Debian:
+      install:
+        - uidmap     # newuidmap/newgidmap; Fedora/openSUSE ship these in shadow-utils/shadow (base)
+        - nftables   # netavark's firewall backend (`nft`): `podman compose` builds a custom bridge network
+                     # and netavark (>=1.10) defaults to nftables, so without `nft` it dies "unable to
+                     # execute 'nft'". DEBIAN-ONLY: a minimal Debian guest lacks `nft`; Fedora/openSUSE ship
+                     # it in the base (firewalld's backend). Confirmed on trixie (apt install nftables fixed it).

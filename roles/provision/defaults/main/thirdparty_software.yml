@@ -1,13 +1,13 @@
 ---
-# Registry of NON-distro install recipes - the sibling of `roles/provision_distro_packages`
+# Registry of NON-distro install recipes - the sibling of `distro_packages.yml`
 # for everything that is NOT an apt/zypper/dnf package name: 3rd-party repos
 # (vscode), `curl|bash` installers (agent_claude), npm/pip globals (agent_codex).
 #
-# Each `provision_thirdparty_software_<name>` is a per-`ansible_os_family` dict. Resolution
-# is OVERRIDE, not additive (UNLIKE `provision_distro_packages`, which concatenates
-# `__common__` + the family overlay): a piece of software has ONE install method,
-# possibly varying by family - so use the host/guest family's entry if defined,
-# else `__common__`. Each family overlay:
+# Each recipe (a key under `provision_thirdparty_software` below) is a
+# per-`ansible_os_family` dict. Resolution is OVERRIDE, not additive (UNLIKE
+# `provision_distro_packages`, which concatenates `__common__` + the family overlay): a
+# piece of software has ONE install method, possibly varying by family - so use the
+# host/guest family's entry if defined, else `__common__`. Each family overlay:
 #   install_script    REQUIRED  shell run as ROOT in the guest; `su - user -c '...'`
 #                               for user-scoped installs (root switches to anyone,
 #                               no password).
@@ -28,298 +28,302 @@
 #                               (the recipe body above is override; package lists genuinely
 #                               split into shared + per-family extras, install methods don't).
 #
-# `roles/_shared_prebuilt_provision_assets` materializes this to the shared
-# `thirdparty-software.json` at apply time; `ivm` (later qvm/pvm) reads it and runs
-# the recipes in a guest via `incus exec`. A template opts in with
-# `thirdparty_software: [<name>]`. Adding a recipe = define it here AND add it to the
-# render dict in `roles/_shared_prebuilt_provision_assets/tasks/main.yml` (same
-# explicit pattern as the distro bundles). Launcher completions auto-track it (they
-# read the rendered JSON at runtime) - no completion edit needed.
+# The whole `provision_thirdparty_software` dict below is serialized VERBATIM to the
+# shared `thirdparty-software.json` by `roles/_shared_prebuilt_provision_assets`, read by
+# ivm/qvm/pvm (a template opts in with `thirdparty_software: [<name>]`, or ad-hoc via
+# `ivm provision <name>`). Adding a recipe = define it here, nothing else - the JSON and
+# the launcher completions pick it up automatically (both read the rendered registry at
+# runtime). Per-consumer visibility: `available_on` (see the dict comment below).
 
-provision_thirdparty_software_agent_claude:
-  description: "Claude Code CLI (claude.ai install script, user-scoped)"
-  __common__:
-    already_installed: su - user -c 'command -v claude'
-    install_script: |
-      # claude.ai/install.sh redirects to a `#!/bin/bash` bootstrap that uses
-      # `[[ =~ ]]` - pipe to `bash` (present in the guest), NOT `sh` (dash chokes).
-      su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
-
-provision_thirdparty_software_agent_codex:
-  description: "OpenAI Codex CLI (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps)"
-  # Same two packages as the `dev_node` bundle, re-listed rather than referenced: a recipe's
-  # deps are its own implementation detail, and there is no bundle-includes-bundle anyway.
-  distro_packages:
+# The recipe registry proper: every recipe is a key under this ONE dict (short
+# names - dict keys, unlike top-level vars, cannot collide with other roles'
+# variables). An entry MAY carry `available_on: [host|ivm|qvm|pvm]` (absent =
+# every consumer) - enforced by each launcher's registry loader; see README.md.
+provision_thirdparty_software:
+  agent_claude:
+    description: "Claude Code CLI (claude.ai install script, user-scoped)"
     __common__:
-      - nodejs
-      - npm
-  __common__:
-    # File test, not `command -v`: the probe runs in a non-interactive shell where the
-    # env file's PATH prepend is not in effect, so a PATH probe could wrongly re-install.
-    already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/codex'
-    install_script: |
-      # nodejs + npm come from this recipe's own `distro_packages`, installed FIRST on both
-      # the `ivm init` and `ivm provision` paths (a template lists only the recipe). Sourcing the
-      # env file (roles/centralize_lang_pkgs_dir; the launcher guarantees it is in the
-      # guest BEFORE recipes run) sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm,
-      # the same redirect interactive guest shells and the host get from their rc files -
-      # so `codex` is on PATH in the guest's zsh/bash. Env var only: nothing is persisted
-      # to ~/.npmrc (a prefix there would trip a later `dev_nvm`).
-      # Self-heal a wedged partial install before (re)installing: an earlier run interrupted
-      # mid-download leaves `.../@openai/codex` present but `bin/codex` absent, so the probe
-      # above re-runs this and `npm install -g` then dies on `ENOTEMPTY: ... rename` - npm
-      # cannot atomically move the stale scoped dir aside (npm/cli#4096, #5825; a long-standing
-      # npm bug on scoped globals - `--force` does NOT fix it, deleting the target does). Clear
-      # the package dir AND any `.codex-<rand>` temp dir npm orphaned; both are no-ops (`rm -f`)
-      # on a clean guest where they are absent.
-      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/codex" "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/".codex-* && npm install -g @openai/codex'
+      already_installed: su - user -c 'command -v claude'
+      install_script: |
+        # claude.ai/install.sh redirects to a `#!/bin/bash` bootstrap that uses
+        # `[[ =~ ]]` - pipe to `bash` (present in the guest), NOT `sh` (dash chokes).
+        su - user -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
-# Rust via rustup - the official, recommended install (rust-lang.org/tools/install).
-# It downloads PREBUILT toolchain binaries (NOT source) into ~/.rustup + ~/.cargo as the
-# unprivileged `user`. The stable toolchain already bundles rustc/cargo/clippy/rustfmt;
-# rust-analyzer (editor LSP) is added on top - it is NOT in the default profile. Distro
-# rustc/cargo are intentionally NOT used: they lag Rust's 6-week stable cadence and can't
-# manage toolchains/targets/components the way Rust development expects.
-provision_thirdparty_software_dev_rust:
-  description: "Rust toolchain via rustup - stable + rust-analyzer (user-scoped, cargo under ~/.centralized-lang-pkgs)"
-  __common__:
-    already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/cargo/bin/cargo'
-    install_script: |
-      # `-y` is rustup-init's only non-interactive flag (no long-form alias exists);
-      # --proto / --tlsv1.2 are the curl flags rust-lang.org documents for the installer.
-      # Sourcing the env file sets `CARGO_HOME` -> ~/.centralized-lang-pkgs/cargo (rustup
-      # honors it: shims + `cargo install` binaries land there, on the PATH interactive
-      # guest shells get from the same file). `RUSTUP_HOME` (the toolchain store) keeps
-      # its ~/.rustup default - the env file does not manage it.
-      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && curl --proto "=https" --tlsv1.2 --fail --silent --show-error --location https://sh.rustup.rs | sh -s -- -y'
-      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && "${CARGO_HOME}/bin/rustup" component add rust-analyzer'
-
-# Android SDK (command-line tools), user-scoped under ~/Android/Sdk - the headless half of
-# `dev_android`. Its `distro_packages` (JDK + unzip) install FIRST, so the JDK sdkmanager
-# needs and the unzip step both have their deps ready. JDK is JDK 21 (current LTS; Debian
-# `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+. Gradle deliberately NOT a dep:
-# not in the openSUSE / Fedora default repos, and Android pins its version via each
-# project's `./gradlew` wrapper anyway. Installs platform-tools (adb), a build-tools, and a
-# platform = enough to `./gradlew assembleDebug`. NOT the emulator (heavy/GUI/needs host
-# nested virt; add via `sdkmanager emulator`). Set ANDROID_HOME=~/Android/Sdk (or a project
-# local.properties) to point Gradle/AGP at it. (The HOST-side `dev_android` distro bundle
-# still exists for the `provision_distro_packages_install_dev_android` toggle - same JDK +
-# unzip for the host itself, unrelated to this guest recipe.)
-provision_thirdparty_software_dev_android:
-  description: "Android SDK - cmdline-tools, platform-tools, build-tools (user-scoped; brings its JDK + unzip deps)"
-  distro_packages:
+  agent_codex:
+    description: "OpenAI Codex CLI (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps)"
+    # Same two packages as the `dev_node` bundle, re-listed rather than referenced: a recipe's
+    # deps are its own implementation detail, and there is no bundle-includes-bundle anyway.
+    distro_packages:
+      __common__:
+        - nodejs
+        - npm
     __common__:
-      - unzip   # extract the Android command-line tools zip (the install_script below)
+      # File test, not `command -v`: the probe runs in a non-interactive shell where the
+      # env file's PATH prepend is not in effect, so a PATH probe could wrongly re-install.
+      already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/codex'
+      install_script: |
+        # nodejs + npm come from this recipe's own `distro_packages`, installed FIRST on both
+        # the `ivm init` and `ivm provision` paths (a template lists only the recipe). Sourcing the
+        # env file (roles/centralize_lang_pkgs_dir; the launcher guarantees it is in the
+        # guest BEFORE recipes run) sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm,
+        # the same redirect interactive guest shells and the host get from their rc files -
+        # so `codex` is on PATH in the guest's zsh/bash. Env var only: nothing is persisted
+        # to ~/.npmrc (a prefix there would trip a later `dev_nvm`).
+        # Self-heal a wedged partial install before (re)installing: an earlier run interrupted
+        # mid-download leaves `.../@openai/codex` present but `bin/codex` absent, so the probe
+        # above re-runs this and `npm install -g` then dies on `ENOTEMPTY: ... rename` - npm
+        # cannot atomically move the stale scoped dir aside (npm/cli#4096, #5825; a long-standing
+        # npm bug on scoped globals - `--force` does NOT fix it, deleting the target does). Clear
+        # the package dir AND any `.codex-<rand>` temp dir npm orphaned; both are no-ops (`rm -f`)
+        # on a clean guest where they are absent.
+        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/codex" "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/".codex-* && npm install -g @openai/codex'
+
+  # Rust via rustup - the official, recommended install (rust-lang.org/tools/install).
+  # It downloads PREBUILT toolchain binaries (NOT source) into ~/.rustup + ~/.cargo as the
+  # unprivileged `user`. The stable toolchain already bundles rustc/cargo/clippy/rustfmt;
+  # rust-analyzer (editor LSP) is added on top - it is NOT in the default profile. Distro
+  # rustc/cargo are intentionally NOT used: they lag Rust's 6-week stable cadence and can't
+  # manage toolchains/targets/components the way Rust development expects.
+  dev_rust:
+    description: "Rust toolchain via rustup - stable + rust-analyzer (user-scoped, cargo under ~/.centralized-lang-pkgs)"
+    __common__:
+      already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/cargo/bin/cargo'
+      install_script: |
+        # `-y` is rustup-init's only non-interactive flag (no long-form alias exists);
+        # --proto / --tlsv1.2 are the curl flags rust-lang.org documents for the installer.
+        # Sourcing the env file sets `CARGO_HOME` -> ~/.centralized-lang-pkgs/cargo (rustup
+        # honors it: shims + `cargo install` binaries land there, on the PATH interactive
+        # guest shells get from the same file). `RUSTUP_HOME` (the toolchain store) keeps
+        # its ~/.rustup default - the env file does not manage it.
+        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && curl --proto "=https" --tlsv1.2 --fail --silent --show-error --location https://sh.rustup.rs | sh -s -- -y'
+        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && "${CARGO_HOME}/bin/rustup" component add rust-analyzer'
+
+  # Android SDK (command-line tools), user-scoped under ~/Android/Sdk - the headless half of
+  # `dev_android`. Its `distro_packages` (JDK + unzip) install FIRST, so the JDK sdkmanager
+  # needs and the unzip step both have their deps ready. JDK is JDK 21 (current LTS; Debian
+  # `default-jdk` on trixie is 21 too); AGP 8.x needs JDK 17+. Gradle deliberately NOT a dep:
+  # not in the openSUSE / Fedora default repos, and Android pins its version via each
+  # project's `./gradlew` wrapper anyway. Installs platform-tools (adb), a build-tools, and a
+  # platform = enough to `./gradlew assembleDebug`. NOT the emulator (heavy/GUI/needs host
+  # nested virt; add via `sdkmanager emulator`). Set ANDROID_HOME=~/Android/Sdk (or a project
+  # local.properties) to point Gradle/AGP at it. (The HOST-side `dev_android` distro bundle
+  # still exists for the `provision_distro_packages_install_dev_android` toggle - same JDK +
+  # unzip for the host itself, unrelated to this guest recipe.)
+  dev_android:
+    description: "Android SDK - cmdline-tools, platform-tools, build-tools (user-scoped; brings its JDK + unzip deps)"
+    distro_packages:
+      __common__:
+        - unzip   # extract the Android command-line tools zip (the install_script below)
+      Debian:
+        - default-jdk           # JDK 21 on trixie
+      Suse:
+        - java-21-openjdk-devel
+      RedHat:
+        - java-21-openjdk-devel
+    __common__:
+      already_installed: su - user -c 'test -x ~/Android/Sdk/platform-tools/adb'
+      install_script: |
+        # Google ships cmdline-tools as a build-numbered zip - there is NO stable "latest" URL,
+        # so the build number is PINNED (14742923, verified 2026-06-09 against
+        # developer.android.com/studio); bump it when it ages. platform / build-tools pinned to
+        # API 36 (current stable); `sdkmanager` more as needed. platform-tools is unversioned (latest).
+        su - user -c 'set -eu
+          ANDROID_SDK_ROOT="$HOME/Android/Sdk"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          cd "$ANDROID_SDK_ROOT/cmdline-tools"
+          curl --fail --silent --show-error --location --output cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip
+          unzip -q cmdline-tools.zip
+          rm cmdline-tools.zip
+          rm -rf latest && mv cmdline-tools latest   # the zip extracts to ./cmdline-tools; sdkmanager wants .../latest
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" platform-tools "platforms;android-36" "build-tools;36.0.0"
+        '
+
+  # Go Version Manager (gvm, moovweb/gvm) - user-scoped, for installing SPECIFIC/old Go
+  # versions (e.g. go1.9). You typically use EITHER the distro go (`dev_go`) OR gvm-managed
+  # versions; `gvm use <ver> --default` makes that version your default go (shadowing distro
+  # go - that is the normal way to drive go through gvm, and fine).
+  #
+  # Pinned to commit dd652539 (moovweb/gvm master HEAD, 2023-08-14): gvm has NO usable release
+  # tag (newest 1.0.22 is from 2014), so a commit SHA is the only pin. Installs are BINARY via
+  # `gvm install <ver> -B` - downloads the PREBUILT toolchain from go.dev/dl (no source bootstrap).
+  # gvm STILL hard-requires bison/gcc/binutils/hexdump present (it checks them even for `-B` -
+  # VERIFIED LIVE, debian 13, 2026-06: even the binary path refuses without them, so `gcc` IS
+  # required) - those come from this recipe's `distro_packages`, installed first.
+  #
+  # SUPPLY-CHAIN NOTE (verified against gvm scripts/install, 2026-06): gvm's `-B` path downloads
+  # over HTTPS from go.dev/dl but does NOT verify the tarball SHA256 (unlike goenv / g / the
+  # official golang.org/dl wrapper, which do). Integrity rests on TLS alone. Stated, not hidden.
+  #
+  # Shell wiring lives in the TEMPLATED ~/.zshrc + ~/.bashrc (file-existence guarded; see
+  # roles/zsh, roles/bash), so it survives ivm's dotfiles push (which OVERWRITES .zshrc/.bashrc
+  # AFTER recipes run). The recipe strips gvm-installer's own self-added source lines so the
+  # template stays the single source.
+  dev_gvm:
+    description: "gvm (Go Version Manager) for pinned/old Go e.g. go1.9 - binary installs (-B); brings its bison/gcc/binutils/hexdump deps"
+    # bison/gcc/make/binutils are identically named across the three families' default repos.
+    distro_packages:
+      __common__:
+        - bison
+        - gcc
+        - make
+        - binutils
+      Debian:
+        - bsdextrautils   # `hexdump` - gvm needs it to even load; Debian split it out of util-linux (not default-installed)
+      # Suse / RedHat: no extras - hexdump rides in base util-linux there.
+    __common__:
+      already_installed: su - user -c 'test -s ~/.gvm/scripts/gvm'
+      install_script: |
+        # Pin to a commit SHA (no release tag). gvm-installer takes the git ref as $1; fetch
+        # the installer at that ref too. Piped (not `bash < <()`) so the outer login shell need
+        # not be bash/zsh.
+        su - user -c 'GVM_PIN=dd652539fa4b771840846f8319fad303c7d0a8d2
+          curl -s -S -L "https://raw.githubusercontent.com/moovweb/gvm/${GVM_PIN}/binscripts/gvm-installer" | bash -s -- "${GVM_PIN}"'
+        # gvm-installer self-appends a `source ~/.gvm/scripts/gvm` line to whatever rc files it
+        # detects (not configurable). Strip them so the templated ~/.zshrc/~/.bashrc is the ONE
+        # source (no double-source via a surviving .zprofile/.bash_profile/.zshenv). Use `if/fi`,
+        # NOT `[ -f ] && sed`: the recipe runs under ivm's `bash -ec`, so a trailing `&&` that is
+        # FALSE on the last rc file (e.g. an absent ~/.zshenv) makes the loop exit non-zero and
+        # aborts the whole provision. `if/fi` exits 0 when the file is absent.
+        su - user -c 'for rc in ~/.bashrc ~/.zshrc ~/.bash_profile ~/.zprofile ~/.profile ~/.zshenv; do
+          if [ -f "$rc" ]; then sed -i "/\.gvm\/scripts\/gvm/d" "$rc"; fi
+        done'
+        su - user -c 'echo "==> gvm ready. Install a version:  gvm install go1.9.7 -B   then:  gvm use go1.9.7" >&2'
+
+  # Node Version Manager (nvm, nvm-sh/nvm) - user-scoped, for SPECIFIC/newer Node versions.
+  # Pinned to v0.40.5 (latest, fixes CVE-2026-10796). Installs nvm + the current LTS Node as
+  # the default. Coexists with the distro node (`dev_node`); nvm's node takes PATH precedence
+  # when active.
+  #
+  # The installer needs bash (NOT sh). Run with PROFILE=/dev/null so it does NOT self-wire any
+  # rc file - shell wiring lives in the TEMPLATED ~/.zshrc + ~/.bashrc (guarded; survives the
+  # dotfiles push that overwrites .zshrc/.bashrc after recipes). nvm refuses to activate while
+  # `NPM_CONFIG_PREFIX` points outside ~/.nvm (`nvm_die_on_prefix` in nvm.sh) - and every guest
+  # gets that var from the baseline `centralized-lang-pkgs.env.sh`. Resolved in the templated
+  # rc: it `unset`s `NPM_CONFIG_PREFIX` right before loading nvm.sh, because where nvm is
+  # installed it OWNS npm (globals live per node version under ~/.nvm). This recipe itself is
+  # safe: it runs non-interactively (no rc, no env file), and `agent_codex` sets the prefix by
+  # env var only - nothing persisted to ~/.npmrc that would trip nvm.
+  dev_nvm:
+    description: "nvm (Node Version Manager) v0.40.5 + current LTS Node - alongside distro node"
+    __common__:
+      # Probe the LAST step's artifact (the `default` alias from `nvm alias default`), NOT just
+      # nvm.sh. An install interrupted mid-way (nvm cloned, but `nvm install --lts` not done) then
+      # FAILS this probe and correctly RE-RUNS to completion, instead of nvm.sh's mere presence
+      # marking it "installed" forever.
+      already_installed: su - user -c 'test -f ~/.nvm/alias/default'
+      install_script: |
+        # PROFILE=/dev/null: no rc self-wiring (the template wires it). Pinned tag v0.40.5.
+        su - user -c 'PROFILE=/dev/null bash -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash"'
+        # Install the current LTS Node + make it the default for new shells. (One-shot source of
+        # nvm.sh here only to drive the install; persistent load is via the template.)
+        su - user -c 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm install --lts; nvm alias default "lts/*"'
+
+  # Mozilla web-ext (mozilla/web-ext) - the WebExtensions CLI: build, run, lint, and sign
+  # browser extensions from the command line. npm global as `user` into
+  # ~/.centralized-lang-pkgs/npm (same `NPM_CONFIG_PREFIX` redirect as `agent_codex` - no
+  # root-owned writes anywhere). web-ext 10.x needs node >= 20 (package.json `engines`,
+  # verified 2026-07-20 against mozilla/web-ext master) - met by all three families' distro
+  # node (Debian 13 ships 20.x). NOTE: `web-ext run` LAUNCHES a Firefox binary, which this
+  # recipe deliberately does NOT install - use a template that ships one (e.g. `webbrowser`'s
+  # MozillaFirefox) or add your distro's Firefox package; the CLI alone still builds/lints.
+  dev_webext:
+    description: "Mozilla web-ext CLI - build/run/lint/sign WebExtensions (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps)"
+    distro_packages:
+      __common__:
+        - nodejs
+        - npm
+    __common__:
+      # File test, not `command -v` - same reasoning as agent_codex: the probe's
+      # non-interactive shell lacks the env file's PATH prepend.
+      already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/web-ext'
+      install_script: |
+        # Sourcing the env file sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm (the
+        # shared install redirect), so the global lands user-owned and on the PATH interactive
+        # guest shells get from their rc files. Env var only - nothing persisted to ~/.npmrc.
+        # Same `ENOTEMPTY: ... rename` self-heal as `agent_codex` (npm/cli#4096): drop a stale
+        # web-ext install + any `.web-ext-<rand>` temp dir npm orphaned before reinstalling, so a
+        # re-run after an interrupted install converges instead of wedging. No-op on a clean guest.
+        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/web-ext" "$NPM_CONFIG_PREFIX/lib/node_modules/".web-ext-* && npm install --global web-ext'
+
+  # mise (jdx/mise, formerly rtx) - polyglot runtime VERSION MANAGER (node / python / go /
+  # java / ..., asdf-compatible) + task runner. The sibling of `dev_nvm` / `dev_gvm` when ONE
+  # tool should cover several runtimes; coexists with the distro toolchains (`dev_node` /
+  # `dev_go`) - an activated mise runtime takes PATH precedence, same idea as nvm.
+  #
+  # Official installer (mise.jdx.dev/installing-mise.html): a STATIC binary into
+  # `~/.local/bin/mise` as unprivileged `user` - no root writes, no distro deps (`curl` is in
+  # the guest baseline). PINNED via `MISE_VERSION` (v2026.7.12, latest at 2026-07-24; the
+  # env var is the docs' documented pin knob and the script verifies checksums itself).
+  # The installer does NOT self-wire rc files (the docs' `echo >> rc` lines are manual
+  # steps) - so nothing to strip (unlike gvm), and the activation
+  # (`eval "$(mise activate zsh|bash)"`) lives in the TEMPLATED ~/.zshrc + ~/.bashrc
+  # (file-existence guarded; survives ivm's dotfiles push), same pattern as nvm/gvm.
+  dev_mise:
+    description: "mise (jdx/mise) v2026.7.12 - polyglot runtime version manager (node/python/go/...), alongside distro toolchains"
+    __common__:
+      already_installed: su - user -c 'test -x ~/.local/bin/mise'
+      install_script: |
+        # Pipe to `sh` (the installer is POSIX sh). Long-form curl flags per repo convention;
+        # `MISE_VERSION` pins the release (see the registry comment above).
+        su - user -c 'curl --fail --silent --show-error --location https://mise.run | MISE_VERSION=v2026.7.12 sh'
+        su - user -c 'echo "==> mise ready. Install a runtime:  mise use --global node@22" >&2'
+
+  # DBeaver Community Edition - database GUI client (SQL editor / admin tool). A GUI app:
+  # pair it with a desktop, e.g. `ivm provision gui_x11 desktop_lxqt dbeaver_ce`. Install
+  # method SPLITS by family (external facts verified 2026-07-24):
+  #   Debian - the vendor's own flat apt repo (`deb ... https://dbeaver.io/debs/dbeaver-ce /`;
+  #     the trailing `/` = flat repo, `Packages` at the URL root - InRelease/Packages verified
+  #     live, package name `dbeaver-ce`). A REPO, not a one-off .deb, so `ivm update` keeps it
+  #     current (README rule). The deb declares NO Depends and bundles a private JRE -> no
+  #     Java packages needed; `gpg` (the minimalist /usr/bin/gpg package - enough for
+  #     `--dearmor`, packages.debian.org/trixie/gpg) rides in `distro_packages`; curl +
+  #     ca-certificates are already guest baseline.
+  #   Suse / RedHat (the `__common__` body) - Flathub flatpak `io.dbeaver.DBeaverCommunity`
+  #     (flathub.org/apps/io.dbeaver.DBeaverCommunity; a community-maintained package, not by
+  #     DBeaver Corp). Upstream ships no zypper/dnf repo (dbeaver.io/download documents only a
+  #     one-off `rpm -ivh`), so the flatpak is the non-Debian path that keeps updates flowing
+  #     (`flatpak update`). `flatpak` is the package name in all three families' default repos
+  #     (repology.org/project/flatpak) and rides in `distro_packages` - but NO distro
+  #     preconfigures the Flathub REMOTE on a minimal guest, so the recipe adds it itself
+  #     (`remote-add --if-not-exists`, idempotent; the official URL per
+  #     docs.flatpak.org/en/latest/using-flatpak.html). Runs as root -> lands in the
+  #     system-wide installation, shared by every user in the guest.
+  dbeaver_ce:
+    description: "DBeaver CE database GUI - Debian via the vendor apt repo; others via Flathub flatpak, system-wide (brings its gpg / flatpak deps + adds the flathub remote)"
+    distro_packages:
+      Debian:
+        - gpg       # minimalist GnuPG binary - `gpg --dearmor` for the vendor key (curl is guest baseline)
+      Suse:
+        - flatpak
+      RedHat:
+        - flatpak
     Debian:
-      - default-jdk           # JDK 21 on trixie
-    Suse:
-      - java-21-openjdk-devel
-    RedHat:
-      - java-21-openjdk-devel
-  __common__:
-    already_installed: su - user -c 'test -x ~/Android/Sdk/platform-tools/adb'
-    install_script: |
-      # Google ships cmdline-tools as a build-numbered zip - there is NO stable "latest" URL,
-      # so the build number is PINNED (14742923, verified 2026-06-09 against
-      # developer.android.com/studio); bump it when it ages. platform / build-tools pinned to
-      # API 36 (current stable); `sdkmanager` more as needed. platform-tools is unversioned (latest).
-      su - user -c 'set -eu
-        ANDROID_SDK_ROOT="$HOME/Android/Sdk"
-        mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-        cd "$ANDROID_SDK_ROOT/cmdline-tools"
-        curl --fail --silent --show-error --location --output cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip
-        unzip -q cmdline-tools.zip
-        rm cmdline-tools.zip
-        rm -rf latest && mv cmdline-tools latest   # the zip extracts to ./cmdline-tools; sdkmanager wants .../latest
-        yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null
-        "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" platform-tools "platforms;android-36" "build-tools;36.0.0"
-      '
-
-# Go Version Manager (gvm, moovweb/gvm) - user-scoped, for installing SPECIFIC/old Go
-# versions (e.g. go1.9). You typically use EITHER the distro go (`dev_go`) OR gvm-managed
-# versions; `gvm use <ver> --default` makes that version your default go (shadowing distro
-# go - that is the normal way to drive go through gvm, and fine).
-#
-# Pinned to commit dd652539 (moovweb/gvm master HEAD, 2023-08-14): gvm has NO usable release
-# tag (newest 1.0.22 is from 2014), so a commit SHA is the only pin. Installs are BINARY via
-# `gvm install <ver> -B` - downloads the PREBUILT toolchain from go.dev/dl (no source bootstrap).
-# gvm STILL hard-requires bison/gcc/binutils/hexdump present (it checks them even for `-B` -
-# VERIFIED LIVE, debian 13, 2026-06: even the binary path refuses without them, so `gcc` IS
-# required) - those come from this recipe's `distro_packages`, installed first.
-#
-# SUPPLY-CHAIN NOTE (verified against gvm scripts/install, 2026-06): gvm's `-B` path downloads
-# over HTTPS from go.dev/dl but does NOT verify the tarball SHA256 (unlike goenv / g / the
-# official golang.org/dl wrapper, which do). Integrity rests on TLS alone. Stated, not hidden.
-#
-# Shell wiring lives in the TEMPLATED ~/.zshrc + ~/.bashrc (file-existence guarded; see
-# roles/zsh, roles/bash), so it survives ivm's dotfiles push (which OVERWRITES .zshrc/.bashrc
-# AFTER recipes run). The recipe strips gvm-installer's own self-added source lines so the
-# template stays the single source.
-provision_thirdparty_software_dev_gvm:
-  description: "gvm (Go Version Manager) for pinned/old Go e.g. go1.9 - binary installs (-B); brings its bison/gcc/binutils/hexdump deps"
-  # bison/gcc/make/binutils are identically named across the three families' default repos.
-  distro_packages:
+      # dpkg STATE probe, not a file test: upstream's /usr/bin launcher NAME is unstable
+      # across packagings (the rpm symlinks `dbeaver`, the deb `dbeaver-ce` - see
+      # dbeaver/dbeaver#17594), while `db:Status-Status == installed` (dpkg-query(1)) is
+      # layout-independent and only true when the package is FULLY installed (a removed
+      # package's `config-files` state stays false, so a re-provision converges).
+      already_installed: test "$(dpkg-query --show --showformat='${db:Status-Status}' dbeaver-ce)" = installed
+      install_script: |
+        # Vendor key + flat repo - upstream's documented setup minus sudo (we ARE root),
+        # curl instead of wget (curl is guest baseline). `--batch --yes`: a re-run after a
+        # mid-script failure must OVERWRITE the already-dearmored key, not die on gpg's
+        # interactive overwrite prompt (there is no tty here).
+        curl --fail --silent --show-error --location https://dbeaver.io/debs/dbeaver.gpg.key \
+          | gpg --batch --yes --dearmor --output /usr/share/keyrings/dbeaver.gpg.key
+        echo "deb [signed-by=/usr/share/keyrings/dbeaver.gpg.key] https://dbeaver.io/debs/dbeaver-ce /" \
+          > /etc/apt/sources.list.d/dbeaver.list
+        apt-get update
+        apt-get install --yes dbeaver-ce
     __common__:
-      - bison
-      - gcc
-      - make
-      - binutils
-    Debian:
-      - bsdextrautils   # `hexdump` - gvm needs it to even load; Debian split it out of util-linux (not default-installed)
-    # Suse / RedHat: no extras - hexdump rides in base util-linux there.
-  __common__:
-    already_installed: su - user -c 'test -s ~/.gvm/scripts/gvm'
-    install_script: |
-      # Pin to a commit SHA (no release tag). gvm-installer takes the git ref as $1; fetch
-      # the installer at that ref too. Piped (not `bash < <()`) so the outer login shell need
-      # not be bash/zsh.
-      su - user -c 'GVM_PIN=dd652539fa4b771840846f8319fad303c7d0a8d2
-        curl -s -S -L "https://raw.githubusercontent.com/moovweb/gvm/${GVM_PIN}/binscripts/gvm-installer" | bash -s -- "${GVM_PIN}"'
-      # gvm-installer self-appends a `source ~/.gvm/scripts/gvm` line to whatever rc files it
-      # detects (not configurable). Strip them so the templated ~/.zshrc/~/.bashrc is the ONE
-      # source (no double-source via a surviving .zprofile/.bash_profile/.zshenv). Use `if/fi`,
-      # NOT `[ -f ] && sed`: the recipe runs under ivm's `bash -ec`, so a trailing `&&` that is
-      # FALSE on the last rc file (e.g. an absent ~/.zshenv) makes the loop exit non-zero and
-      # aborts the whole provision. `if/fi` exits 0 when the file is absent.
-      su - user -c 'for rc in ~/.bashrc ~/.zshrc ~/.bash_profile ~/.zprofile ~/.profile ~/.zshenv; do
-        if [ -f "$rc" ]; then sed -i "/\.gvm\/scripts\/gvm/d" "$rc"; fi
-      done'
-      su - user -c 'echo "==> gvm ready. Install a version:  gvm install go1.9.7 -B   then:  gvm use go1.9.7" >&2'
-
-# Node Version Manager (nvm, nvm-sh/nvm) - user-scoped, for SPECIFIC/newer Node versions.
-# Pinned to v0.40.5 (latest, fixes CVE-2026-10796). Installs nvm + the current LTS Node as
-# the default. Coexists with the distro node (`dev_node`); nvm's node takes PATH precedence
-# when active.
-#
-# The installer needs bash (NOT sh). Run with PROFILE=/dev/null so it does NOT self-wire any
-# rc file - shell wiring lives in the TEMPLATED ~/.zshrc + ~/.bashrc (guarded; survives the
-# dotfiles push that overwrites .zshrc/.bashrc after recipes). nvm refuses to activate while
-# `NPM_CONFIG_PREFIX` points outside ~/.nvm (`nvm_die_on_prefix` in nvm.sh) - and every guest
-# gets that var from the baseline `centralized-lang-pkgs.env.sh`. Resolved in the templated
-# rc: it `unset`s `NPM_CONFIG_PREFIX` right before loading nvm.sh, because where nvm is
-# installed it OWNS npm (globals live per node version under ~/.nvm). This recipe itself is
-# safe: it runs non-interactively (no rc, no env file), and `agent_codex` sets the prefix by
-# env var only - nothing persisted to ~/.npmrc that would trip nvm.
-provision_thirdparty_software_dev_nvm:
-  description: "nvm (Node Version Manager) v0.40.5 + current LTS Node - alongside distro node"
-  __common__:
-    # Probe the LAST step's artifact (the `default` alias from `nvm alias default`), NOT just
-    # nvm.sh. An install interrupted mid-way (nvm cloned, but `nvm install --lts` not done) then
-    # FAILS this probe and correctly RE-RUNS to completion, instead of nvm.sh's mere presence
-    # marking it "installed" forever.
-    already_installed: su - user -c 'test -f ~/.nvm/alias/default'
-    install_script: |
-      # PROFILE=/dev/null: no rc self-wiring (the template wires it). Pinned tag v0.40.5.
-      su - user -c 'PROFILE=/dev/null bash -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash"'
-      # Install the current LTS Node + make it the default for new shells. (One-shot source of
-      # nvm.sh here only to drive the install; persistent load is via the template.)
-      su - user -c 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm install --lts; nvm alias default "lts/*"'
-
-# Mozilla web-ext (mozilla/web-ext) - the WebExtensions CLI: build, run, lint, and sign
-# browser extensions from the command line. npm global as `user` into
-# ~/.centralized-lang-pkgs/npm (same `NPM_CONFIG_PREFIX` redirect as `agent_codex` - no
-# root-owned writes anywhere). web-ext 10.x needs node >= 20 (package.json `engines`,
-# verified 2026-07-20 against mozilla/web-ext master) - met by all three families' distro
-# node (Debian 13 ships 20.x). NOTE: `web-ext run` LAUNCHES a Firefox binary, which this
-# recipe deliberately does NOT install - use a template that ships one (e.g. `webbrowser`'s
-# MozillaFirefox) or add your distro's Firefox package; the CLI alone still builds/lints.
-provision_thirdparty_software_dev_webext:
-  description: "Mozilla web-ext CLI - build/run/lint/sign WebExtensions (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps)"
-  distro_packages:
-    __common__:
-      - nodejs
-      - npm
-  __common__:
-    # File test, not `command -v` - same reasoning as agent_codex: the probe's
-    # non-interactive shell lacks the env file's PATH prepend.
-    already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/web-ext'
-    install_script: |
-      # Sourcing the env file sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm (the
-      # shared install redirect), so the global lands user-owned and on the PATH interactive
-      # guest shells get from their rc files. Env var only - nothing persisted to ~/.npmrc.
-      # Same `ENOTEMPTY: ... rename` self-heal as `agent_codex` (npm/cli#4096): drop a stale
-      # web-ext install + any `.web-ext-<rand>` temp dir npm orphaned before reinstalling, so a
-      # re-run after an interrupted install converges instead of wedging. No-op on a clean guest.
-      su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/web-ext" "$NPM_CONFIG_PREFIX/lib/node_modules/".web-ext-* && npm install --global web-ext'
-
-# mise (jdx/mise, formerly rtx) - polyglot runtime VERSION MANAGER (node / python / go /
-# java / ..., asdf-compatible) + task runner. The sibling of `dev_nvm` / `dev_gvm` when ONE
-# tool should cover several runtimes; coexists with the distro toolchains (`dev_node` /
-# `dev_go`) - an activated mise runtime takes PATH precedence, same idea as nvm.
-#
-# Official installer (mise.jdx.dev/installing-mise.html): a STATIC binary into
-# `~/.local/bin/mise` as unprivileged `user` - no root writes, no distro deps (`curl` is in
-# the guest baseline). PINNED via `MISE_VERSION` (v2026.7.12, latest at 2026-07-24; the
-# env var is the docs' documented pin knob and the script verifies checksums itself).
-# The installer does NOT self-wire rc files (the docs' `echo >> rc` lines are manual
-# steps) - so nothing to strip (unlike gvm), and the activation
-# (`eval "$(mise activate zsh|bash)"`) lives in the TEMPLATED ~/.zshrc + ~/.bashrc
-# (file-existence guarded; survives ivm's dotfiles push), same pattern as nvm/gvm.
-provision_thirdparty_software_dev_mise:
-  description: "mise (jdx/mise) v2026.7.12 - polyglot runtime version manager (node/python/go/...), alongside distro toolchains"
-  __common__:
-    already_installed: su - user -c 'test -x ~/.local/bin/mise'
-    install_script: |
-      # Pipe to `sh` (the installer is POSIX sh). Long-form curl flags per repo convention;
-      # `MISE_VERSION` pins the release (see the registry comment above).
-      su - user -c 'curl --fail --silent --show-error --location https://mise.run | MISE_VERSION=v2026.7.12 sh'
-      su - user -c 'echo "==> mise ready. Install a runtime:  mise use --global node@22" >&2'
-
-# DBeaver Community Edition - database GUI client (SQL editor / admin tool). A GUI app:
-# pair it with a desktop, e.g. `ivm provision gui_x11 desktop_lxqt dbeaver_ce`. Install
-# method SPLITS by family (external facts verified 2026-07-24):
-#   Debian - the vendor's own flat apt repo (`deb ... https://dbeaver.io/debs/dbeaver-ce /`;
-#     the trailing `/` = flat repo, `Packages` at the URL root - InRelease/Packages verified
-#     live, package name `dbeaver-ce`). A REPO, not a one-off .deb, so `ivm update` keeps it
-#     current (README rule). The deb declares NO Depends and bundles a private JRE -> no
-#     Java packages needed; `gpg` (the minimalist /usr/bin/gpg package - enough for
-#     `--dearmor`, packages.debian.org/trixie/gpg) rides in `distro_packages`; curl +
-#     ca-certificates are already guest baseline.
-#   Suse / RedHat (the `__common__` body) - Flathub flatpak `io.dbeaver.DBeaverCommunity`
-#     (flathub.org/apps/io.dbeaver.DBeaverCommunity; a community-maintained package, not by
-#     DBeaver Corp). Upstream ships no zypper/dnf repo (dbeaver.io/download documents only a
-#     one-off `rpm -ivh`), so the flatpak is the non-Debian path that keeps updates flowing
-#     (`flatpak update`). `flatpak` is the package name in all three families' default repos
-#     (repology.org/project/flatpak) and rides in `distro_packages` - but NO distro
-#     preconfigures the Flathub REMOTE on a minimal guest, so the recipe adds it itself
-#     (`remote-add --if-not-exists`, idempotent; the official URL per
-#     docs.flatpak.org/en/latest/using-flatpak.html). Runs as root -> lands in the
-#     system-wide installation, shared by every user in the guest.
-provision_thirdparty_software_dbeaver_ce:
-  description: "DBeaver CE database GUI - Debian via the vendor apt repo; others via Flathub flatpak, system-wide (brings its gpg / flatpak deps + adds the flathub remote)"
-  distro_packages:
-    Debian:
-      - gpg       # minimalist GnuPG binary - `gpg --dearmor` for the vendor key (curl is guest baseline)
-    Suse:
-      - flatpak
-    RedHat:
-      - flatpak
-  Debian:
-    # dpkg STATE probe, not a file test: upstream's /usr/bin launcher NAME is unstable
-    # across packagings (the rpm symlinks `dbeaver`, the deb `dbeaver-ce` - see
-    # dbeaver/dbeaver#17594), while `db:Status-Status == installed` (dpkg-query(1)) is
-    # layout-independent and only true when the package is FULLY installed (a removed
-    # package's `config-files` state stays false, so a re-provision converges).
-    already_installed: test "$(dpkg-query --show --showformat='${db:Status-Status}' dbeaver-ce)" = installed
-    install_script: |
-      # Vendor key + flat repo - upstream's documented setup minus sudo (we ARE root),
-      # curl instead of wget (curl is guest baseline). `--batch --yes`: a re-run after a
-      # mid-script failure must OVERWRITE the already-dearmored key, not die on gpg's
-      # interactive overwrite prompt (there is no tty here).
-      curl --fail --silent --show-error --location https://dbeaver.io/debs/dbeaver.gpg.key \
-        | gpg --batch --yes --dearmor --output /usr/share/keyrings/dbeaver.gpg.key
-      echo "deb [signed-by=/usr/share/keyrings/dbeaver.gpg.key] https://dbeaver.io/debs/dbeaver-ce /" \
-        > /etc/apt/sources.list.d/dbeaver.list
-      apt-get update
-      apt-get install --yes dbeaver-ce
-  __common__:
-    # `flatpak info <app-id>` exits non-zero unless the app is actually installed
-    # (running as root -> checks the system-wide installation this recipe targets).
-    already_installed: flatpak info io.dbeaver.DBeaverCommunity
-    install_script: |
-      # Flathub remote first (no distro preships it on a minimal guest; idempotent via
-      # `--if-not-exists`), then the app. `--system` = the root default made explicit;
-      # `--assumeyes --noninteractive` (flatpak-install(1)) because this runs under
-      # `bash -ec` with no tty. Also pulls the app's flatpak RUNTIME (several hundred MB).
-      flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-      flatpak install --system --assumeyes --noninteractive flathub io.dbeaver.DBeaverCommunity
+      # `flatpak info <app-id>` exits non-zero unless the app is actually installed
+      # (running as root -> checks the system-wide installation this recipe targets).
+      already_installed: flatpak info io.dbeaver.DBeaverCommunity
+      install_script: |
+        # Flathub remote first (no distro preships it on a minimal guest; idempotent via
+        # `--if-not-exists`), then the app. `--system` = the root default made explicit;
+        # `--assumeyes --noninteractive` (flatpak-install(1)) because this runs under
+        # `bash -ec` with no tty. Also pulls the app's flatpak RUNTIME (several hundred MB).
+        flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+        flatpak install --system --assumeyes --noninteractive flathub io.dbeaver.DBeaverCommunity

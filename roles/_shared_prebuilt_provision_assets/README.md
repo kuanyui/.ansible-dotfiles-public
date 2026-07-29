@@ -16,6 +16,8 @@ dotfiles/<feature>/{__common__,Debian,Suse,RedHat}/{home/user,root}/
 - **Key scheme**: `__common__` (always) + the `ansible_os_family` value
   (`Debian`/`Suse`/`RedHat`) - the key IS the family, no mapping table
 - **Consumers**: `ivm` now; `qvm`/`pvm` later. (Host reads the registry vars directly, not this.)
-- **Render dict** (`tasks/main.yml`) = the ONE hand-maintained feature-key list
+- **Serialization**: each registry dict (`roles/provision/defaults/main/`) verbatim - no
+  hand-kept key list; per-consumer visibility via each entry's `available_on`
+  (absent = every consumer), enforced by the launchers' loaders + completions
 - **Lifecycle**: regenerable cache; the sanctioned shared top-level subdir (see CLAUDE.md).
   Sole consumer's uninstall removes it; ref-count once qvm/pvm co-produce

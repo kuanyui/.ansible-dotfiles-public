@@ -264,28 +264,42 @@ def load_and_validate(template_name: str, root: Path) -> Template:
 
 # ---------- distro_packages bundle registry ----------
 
+def available_on_this_launcher(registry_entry: Any) -> bool:
+    """An entry's `available_on` lists the consumers (`host` / `ivm` / `qvm` / `pvm`)
+    it is offered to; ABSENT = every consumer. Applied at load time (the one choke
+    point), so every downstream view - resolution, the no-arg `provision` listing,
+    unknown-name suggestions - sees only this launcher's units. The shell completions
+    apply the same rule in their own JSON readers."""
+    if not isinstance(registry_entry, dict):
+        return True
+    available_on: Any = registry_entry.get("available_on")
+    return available_on is None or GUEST_TYPE in available_on
+
+
 def load_package_groups(shared_prebuilt_provision_assets_root: Path) -> dict[str, Any]:
     """Load distro-package-groups.json (rendered at apply time from the
-    provision_distro_packages registry; see roles/_shared_prebuilt_provision_assets)."""
+    provision_distro_packages registry; see roles/_shared_prebuilt_provision_assets),
+    dropping entries whose `available_on` excludes this launcher."""
     path: Path = shared_prebuilt_provision_assets_root / "distro-package-groups.json"
     if not path.is_file():
         die(f"distro-package-groups.json not found: {path}; re-run `make vm-incus-install`")
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
         die(f"distro-package-groups.json is not a mapping: {path}")
-    return loaded
+    return {name: entry for name, entry in loaded.items() if available_on_this_launcher(entry)}
 
 
 def load_thirdparty_software(shared_prebuilt_provision_assets_root: Path) -> dict[str, Any]:
     """Load thirdparty-software.json (rendered at apply time from the
-    provision_thirdparty_software registry; see roles/_shared_prebuilt_provision_assets)."""
+    provision_thirdparty_software registry; see roles/_shared_prebuilt_provision_assets),
+    dropping entries whose `available_on` excludes this launcher."""
     path: Path = shared_prebuilt_provision_assets_root / "thirdparty-software.json"
     if not path.is_file():
         die(f"thirdparty-software.json not found: {path}; re-run `make vm-incus-install`")
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
         die(f"thirdparty-software.json is not a mapping: {path}")
-    return loaded
+    return {name: entry for name, entry in loaded.items() if available_on_this_launcher(entry)}
 
 
 def overlay_install_packages(overlay: Any) -> list[str]:

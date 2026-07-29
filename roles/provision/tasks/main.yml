@@ -1,8 +1,8 @@
 ---
-# Install the enabled `provision_distro_packages_*` bundles (defaults/main.yml), toggled
-# by the `provision_distro_packages_install_*` booleans (group_vars/all.yml). The actual
-# install is delegated to `roles/_install_distro_packages` so there is ONE
-# multi-distro install path (ansible-core-only; shells `zypper` on openSUSE
+# Install the enabled bundles of the `provision_distro_packages` registry
+# (defaults/main/distro_packages.yml), toggled by the `provision_distro_packages_install_*`
+# booleans. The actual install is delegated to `roles/_install_distro_packages` so there
+# is ONE multi-distro install path (ansible-core-only; shells `zypper` on openSUSE
 # rather than `ansible.builtin.package` -> `community.general.zypper`). This
 # role only decides WHICH bundles; `_install_distro_packages` decides HOW.
 
@@ -14,15 +14,25 @@
   ansible.builtin.set_fact:
     _provision_distro_packages_enabled_bundles: "{{ _provision_distro_packages_enabled_bundles + [item.bundle] }}"
   loop:
-    - { toggle: provision_distro_packages_install_tools_basic,   enabled: "{{ provision_distro_packages_install_tools_basic }}",   bundle: "{{ provision_distro_packages_tools_basic }}" }
-    - { toggle: provision_distro_packages_install_tools_sys,     enabled: "{{ provision_distro_packages_install_tools_sys }}",     bundle: "{{ provision_distro_packages_tools_sys }}" }
-    - { toggle: provision_distro_packages_install_tools_net,     enabled: "{{ provision_distro_packages_install_tools_net }}",     bundle: "{{ provision_distro_packages_tools_net }}" }
-    - { toggle: provision_distro_packages_install_tools_wayland, enabled: "{{ provision_distro_packages_install_tools_wayland }}", bundle: "{{ provision_distro_packages_tools_wayland }}" }
-    - { toggle: provision_distro_packages_install_dev_qt,        enabled: "{{ provision_distro_packages_install_dev_qt }}",        bundle: "{{ provision_distro_packages_dev_qt }}" }
-    - { toggle: provision_distro_packages_install_dev_android,   enabled: "{{ provision_distro_packages_install_dev_android }}",   bundle: "{{ provision_distro_packages_dev_android }}" }
+    - { toggle: provision_distro_packages_install_tools_basic,   enabled: "{{ provision_distro_packages_install_tools_basic }}",   bundle: "{{ provision_distro_packages.tools_basic }}" }
+    - { toggle: provision_distro_packages_install_tools_sys,     enabled: "{{ provision_distro_packages_install_tools_sys }}",     bundle: "{{ provision_distro_packages.tools_sys }}" }
+    - { toggle: provision_distro_packages_install_tools_net,     enabled: "{{ provision_distro_packages_install_tools_net }}",     bundle: "{{ provision_distro_packages.tools_net }}" }
+    - { toggle: provision_distro_packages_install_tools_wayland, enabled: "{{ provision_distro_packages_install_tools_wayland }}", bundle: "{{ provision_distro_packages.tools_wayland }}" }
+    - { toggle: provision_distro_packages_install_dev_qt,        enabled: "{{ provision_distro_packages_install_dev_qt }}",        bundle: "{{ provision_distro_packages.dev_qt }}" }
+    - { toggle: provision_distro_packages_install_dev_android,   enabled: "{{ provision_distro_packages_install_dev_android }}",   bundle: "{{ provision_distro_packages.dev_android }}" }
   when: item.enabled | bool
   loop_control:
     label: "{{ item.toggle }}={{ item.enabled }}"
+
+# Keep `available_on` honest on the HOST side too: a bundle that declares it without
+# `host` must not be installable here (the launchers enforce their own side the same way).
+- name: Assert every enabled bundle is available on `host` (`available_on` absent or lists `host`)
+  ansible.builtin.assert:
+    that: "'host' in (item.available_on | default(['host']))"
+    fail_msg: "bundle '{{ item.description | default('?') }}' declares available_on={{ item.available_on }} without `host` but has a host install toggle"
+  loop: "{{ _provision_distro_packages_enabled_bundles }}"
+  loop_control:
+    label: "{{ item.description | default('bundle') }}"
 
 # One include for all enabled bundles: build the per-`os_family` install list
 # as `__common__ (all bundles) + that family's overlay (only bundles that define
@@ -30,7 +40,7 @@
 # installs via the right package manager. Skipped entirely when every toggle
 # is off (empty list would trip the sub-role's non-empty assert).
 # NOTE: this host path assumes every overlay is a BARE package list. The
-# `{install, post_install}` dict overlay form (see defaults/main.yml) is GUEST-ONLY -
+# `{install, post_install}` dict overlay form (see defaults/main/distro_packages.yml) is GUEST-ONLY -
 # `post_install` runs only in an `ivm` guest - so dict-form bundles (e.g. desktop_icewm)
 # are NOT wired into the `provision_distro_packages_install_*` toggle loop above. Keep it that way:
 # only add bare-list bundles to that loop.

@@ -12,8 +12,11 @@
 #   dotfiles/<feature>/{__common__,Debian,Suse,RedHat}/{home/user,root}/  feature-first
 #
 # Single source of truth stays the registry files in `roles/provision/defaults/main/`;
-# the JSON is ONLY a serialization. THIS render dict is the single place that lists the
-# feature keys - adding a bundle means adding it here AND in the owning registry file.
+# each JSON is that file's registry dict serialized VERBATIM - every entry ships,
+# including its `available_on` (if any). Per-consumer visibility is enforced by the
+# CONSUMERS: each launcher's registry loader (and its shell completions) drops entries
+# whose `available_on` excludes it. No hand-maintained key list here - adding a bundle /
+# recipe to the registry file is the whole job.
 
 - name: Ensure the shared asset dir `{{ _shared_prebuilt_provision_assets_dir }}` exists
   ansible.builtin.file:
@@ -22,60 +25,26 @@
     mode: "0755"
 
 # ---------- Serialize the provision_distro_packages registry ----------
-# The `dev_android` BUNDLE is deliberately absent from the render dict below: it is host-only
-# (the `provision_distro_packages_install_dev_android` toggle); the guest gets the same JDK +
-# unzip from the `dev_android` RECIPE's `distro_packages` (thirdparty registry), so listing the
-# bundle here would only shadow that recipe's completion description.
-- name: Load the `provision_distro_packages_*` bundle registry (sibling `roles/provision` defaults)
+- name: Load the `provision_distro_packages` bundle registry (sibling `roles/provision` defaults)
   ansible.builtin.include_vars:
     file: "{{ role_path }}/../provision/defaults/main/distro_packages.yml"
 
-- name: Render the bundle registry to `{{ _shared_prebuilt_provision_assets_dir }}/distro-package-groups.json`
+- name: Render `provision_distro_packages` to `{{ _shared_prebuilt_provision_assets_dir }}/distro-package-groups.json`
   ansible.builtin.copy:
     dest: "{{ _shared_prebuilt_provision_assets_dir }}/distro-package-groups.json"
     mode: "0644"
-    content: |
-      {{ {
-        'tools_basic': provision_distro_packages_tools_basic,
-        'tools_sys': provision_distro_packages_tools_sys,
-        'tools_net': provision_distro_packages_tools_net,
-        'tools_wayland': provision_distro_packages_tools_wayland,
-        'gui_x11': provision_distro_packages_gui_x11,
-        'gui_wayland': provision_distro_packages_gui_wayland,
-        'cjk_fonts': provision_distro_packages_cjk_fonts,
-        'cjk_input': provision_distro_packages_cjk_input,
-        'incus_guest_baseline': provision_distro_packages_incus_guest_baseline,
-        'emacs': provision_distro_packages_emacs,
-        'dev_qt': provision_distro_packages_dev_qt,
-        'dev_go': provision_distro_packages_dev_go,
-        'dev_node': provision_distro_packages_dev_node,
-        'desktop_icewm': provision_distro_packages_desktop_icewm,
-        'desktop_lxqt': provision_distro_packages_desktop_lxqt,
-        'guest_spice': provision_distro_packages_guest_spice,
-        'podman_rootless': provision_distro_packages_podman_rootless,
-      } | to_nice_json }}
+    content: "{{ provision_distro_packages | to_nice_json }}"
 
 # ---------- Serialize the provision_thirdparty_software registry ----------
-- name: Load the `provision_thirdparty_software_*` recipe registry (sibling `roles/provision` defaults)
+- name: Load the `provision_thirdparty_software` recipe registry (sibling `roles/provision` defaults)
   ansible.builtin.include_vars:
     file: "{{ role_path }}/../provision/defaults/main/thirdparty_software.yml"
 
-- name: Render the recipe registry to `{{ _shared_prebuilt_provision_assets_dir }}/thirdparty-software.json`
+- name: Render `provision_thirdparty_software` to `{{ _shared_prebuilt_provision_assets_dir }}/thirdparty-software.json`
   ansible.builtin.copy:
     dest: "{{ _shared_prebuilt_provision_assets_dir }}/thirdparty-software.json"
     mode: "0644"
-    content: |
-      {{ {
-        'agent_claude': provision_thirdparty_software_agent_claude,
-        'agent_codex': provision_thirdparty_software_agent_codex,
-        'dev_rust': provision_thirdparty_software_dev_rust,
-        'dev_android': provision_thirdparty_software_dev_android,
-        'dev_gvm': provision_thirdparty_software_dev_gvm,
-        'dev_nvm': provision_thirdparty_software_dev_nvm,
-        'dev_webext': provision_thirdparty_software_dev_webext,
-        'dev_mise': provision_thirdparty_software_dev_mise,
-        'dbeaver_ce': provision_thirdparty_software_dbeaver_ce,
-      } | to_nice_json }}
+    content: "{{ provision_thirdparty_software | to_nice_json }}"
 
 # ---------- Stage the feature-first dotfiles tree ----------
 - name: Stage the feature-first dotfiles tree (tasks/stage_dotfiles.yml)

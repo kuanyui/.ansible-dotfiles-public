@@ -22,6 +22,14 @@ _qvm_unit_names() {
     python3 - "$qvm_shared_assets_root" 2>/dev/null <<'PY'
 import json, os, sys
 shared_root = sys.argv[1]
+LAUNCHER = "qvm"
+def offered(entry):
+    # Same `available_on` rule as the launcher's registry loader: the entry's list of
+    # consumers; absent = every consumer.
+    if not isinstance(entry, dict):
+        return True
+    available_on = entry.get("available_on")
+    return available_on is None or LAUNCHER in available_on
 seen = []
 def add(name):
     if name not in seen:
@@ -30,8 +38,9 @@ for f in ("distro-package-groups.json", "thirdparty-software.json"):
     p = os.path.join(shared_root, f)
     if os.path.exists(p):
         try:
-            for key in json.load(open(p)):
-                add(key)
+            for key, val in json.load(open(p)).items():
+                if offered(val):
+                    add(key)
         except Exception:
             pass
 dotfiles = os.path.join(shared_root, "dotfiles")

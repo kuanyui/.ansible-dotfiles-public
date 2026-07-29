@@ -98,9 +98,10 @@ you edit the tables in lockstep - this map is the whole architecture:
   cache: `distro-package-groups.json` + `thirdparty-software.json` + a
   feature-first `dotfiles/<feature>/{__common__,<family>}/...` tree, under
   `~/.local/share/ansible-managed/shared-prebuilt-provision-assets/`. `ivm` reads
-  it; `qvm`/`pvm` will read the SAME cache (hence the `ivm`-free name). Adding a
-  bundle/recipe requires its key in that role's render dict - the one hand-kept
-  feature list.
+  it; `qvm`/`pvm` will read the SAME cache (hence the `ivm`-free name). The JSONs
+  are the `roles/provision` registry dicts serialized verbatim - adding a
+  bundle/recipe there is the whole job; an entry's `available_on` (absent = every
+  consumer) tells each launcher whether to offer it.
 - **Storage-pool inspector** - `files/incus_storage_pool.py` builds the host's
   `incus admin init` preseed AND reports pool status (driver, loop file, mount,
   fstab, verdict). `ivm storage-status` runs the SAME inspector the host-install
