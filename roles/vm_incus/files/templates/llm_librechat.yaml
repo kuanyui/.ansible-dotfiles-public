@@ -6,8 +6,10 @@
 # dev/agent box. Log in as admin@example.com / adminadmin (pre-created at init; login is
 # by EMAIL; registration is off - add accounts with
 # `podman exec LibreChat npm run create-user -- <email> <name> <username>`). OpenRouter
-# ships as a `user_provided` endpoint: paste your key in the web UI; it is stored in
-# mongo encrypted with the .env CREDS_* secrets, so llm-backup carries it.
+# is pre-wired; set your API key with ONE in-guest command: `llm-key <key>` (writes
+# OPENROUTER_KEY into ~/librechat/.env - which llm-backup carries - and restarts the
+# api). NOT `user_provided`: that mode never fetches the live model list (upstream
+# LibreChat#4500/#1028), leaving only the fallback model in the dropdown.
 #
 # Upstream extras deliberately left out: meilisearch (message full-text search), and
 # vectordb + rag_api (RAG file Q&A, which also needs an embedding API key). To add one
@@ -22,7 +24,7 @@
 # in-guest `llm-backup` (tars ~/librechat into host-shared ~/Downloads/LibreChatBackups/);
 # fast in-place rollback -> `ivm snapshot`; whole-VM archive -> `incus export`.
 template_name: llm_librechat
-description: "LibreChat LLM chat server (Debian, headless; rootless podman-compose api+mongodb; host browser -> guest:3080; backups land in ~/Downloads. ACCOUNT: admin@example.com / adminadmin)"
+description: "LibreChat LLM chat server (Debian, headless; rootless podman-compose api+mongodb; OpenRouter pre-wired - set key with `llm-key <key>` in the VM; host browser -> guest:3080; backups land in ~/Downloads. ACCOUNT: admin@example.com / adminadmin)"
 # Appliance, not a project box: bound to NO host dir (empty = unbound) - target it by name
 # anywhere (`ivm shell <vm>`); default instance name is `ivm-llm-librechat` (no path suffix).
 host_bound_dir: ""
@@ -89,14 +91,19 @@ post_install_script: |
     podman pull docker.io/library/mongo:8
   '
   # Trimmed 1:1 from upstream LibreChat docker-compose.yml: api + mongodb only (see the
-  # header comment for how to add meilisearch / RAG back). Two deviations, both deliberate:
-  # fully-qualified image names (no short-name resolution surprises), and NO compose
-  # `restart:` policies - lifecycle belongs to the librechat systemd user unit below.
+  # header comment for how to add meilisearch / RAG back). One deviation: fully-qualified
+  # image names (no short-name resolution surprises). `restart: unless-stopped` is KEPT
+  # from upstream on purpose: the systemd unit below supervises only the podman-compose
+  # process, NOT the member containers - when a member crashes, podman-compose stays
+  # attached to the survivors and the unit stays "active", so podman's own restart
+  # policy is the only member-level supervisor there is (learned the hard way: an api
+  # crash left the stack half-dead with no one restarting it).
   su - user -c 'cat > ~/librechat/docker-compose.yml' <<'EOF'
   services:
     api:
       image: ghcr.io/danny-avila/librechat:latest
       container_name: LibreChat
+      restart: unless-stopped
       ports:
         - "3080:3080"
       depends_on:
@@ -114,6 +121,7 @@ post_install_script: |
     mongodb:
       image: docker.io/library/mongo:8
       container_name: chat-mongodb
+      restart: unless-stopped
       # --noauth mirrors upstream: mongo publishes no ports, so only containers on this
       # compose network (i.e. api) can reach it.
       command: mongod --noauth
@@ -121,11 +129,11 @@ post_install_script: |
         - ./data-node:/data/db
   EOF
   # LibreChat custom-endpoint config (mounted to /app/librechat.yaml by the compose
-  # file). Ships OpenRouter with apiKey `user_provided`: each account pastes its own
-  # key in the web UI (stored in mongo, encrypted with the .env CREDS_* secrets - so
-  # llm-backup carries it). For one shared key instead: change apiKey to
-  # "${OPENROUTER_KEY}" and add OPENROUTER_KEY=... to .env. Guarded like .env, so a
-  # re-init never clobbers later hand edits (add more endpoints freely).
+  # file). OpenRouter's key comes from .env (`OPENROUTER_KEY`) - NOT `user_provided`:
+  # with user_provided the live model fetch is broken upstream (LibreChat#4500/#1028,
+  # open since 2023), leaving only the `default` fallback in the dropdown. The .env
+  # route makes the server fetch the full list; .env is in llm-backup's tar anyway.
+  # Guarded like .env, so a re-init never clobbers later hand edits (add endpoints freely).
   su - user -c 'set -eu
     [ -f ~/librechat/librechat.yaml ] && exit 0
     cat > ~/librechat/librechat.yaml
@@ -138,8 +146,10 @@ post_install_script: |
       # OpenRouter (docs example, verbatim except apiKey): `dropParams: ["stop"]`
       # because OpenRouter models use varied stop tokens - dropping it avoids
       # compatibility errors. `fetch: true` loads the live model list.
+      # `default` is ONLY the fallback shown if the live fetch fails - model switching
+      # (and picking the routed provider, e.g. Novita) happens in the UI dropdown.
       - name: "OpenRouter"
-        apiKey: "user_provided"
+        apiKey: "${OPENROUTER_KEY}"
         baseURL: "https://openrouter.ai/api/v1"
         models:
           default: ["openrouter/auto"]
@@ -172,6 +182,8 @@ post_install_script: |
         printf "JWT_REFRESH_SECRET=%s\n" "$(openssl rand -hex 32)"
         printf "CREDS_KEY=%s\n" "$(openssl rand -hex 32)"
         printf "CREDS_IV=%s\n" "$(openssl rand -hex 16)"
+        printf "# OpenRouter API key - set it with: llm-key <key>  (do not edit by hand)\n"
+        printf "OPENROUTER_KEY=\n"
       } > ~/librechat/.env
     fi
   '
@@ -199,30 +211,25 @@ post_install_script: |
   guest_user_uid="$(id -u user)"
   for _ in $(seq 1 100); do [ -S "/run/user/$guest_user_uid/bus" ] && break; sleep 0.2; done
   su - user -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; systemctl --user daemon-reload; systemctl --user enable --now librechat'
-  # Pre-create the default account: admin@example.com / adminadmin (login is by EMAIL).
-  # Weak creds are fine on this NAT-only box; the password is admin twice because the
-  # LOGIN form also enforces MIN_PASSWORD_LENGTH (default 8). create-user runs inside
-  # the api container and needs mongo up, so retry until the compose stack is ready;
-  # "already exists" counts as success, which keeps a re-init idempotent.
-  su - user -c 'set -eu
-    admin_account_ready=0
-    create_user_output=""
-    for _ in $(seq 1 60); do
-      if create_user_output="$(podman exec LibreChat npm run create-user -- admin@example.com Admin admin adminadmin 2>&1)"; then
-        admin_account_ready=1
-        break
-      fi
-      case "$create_user_output" in
-        *"already exists"*) admin_account_ready=1; break ;;
-      esac
-      sleep 2
-    done
-    if [ "$admin_account_ready" != 1 ]; then
-      printf "%s\n" "$create_user_output" >&2
-      printf "llm_librechat: default account creation FAILED after 120s - see output above\n" >&2
-      exit 1
-    fi
-  '
+  # One-command API-key setter at ~/.local/bin/llm-key: writes OPENROUTER_KEY into
+  # ~/librechat/.env and restarts the api container. Exists so setting the key never
+  # means hand-editing a file.
+  su - user -c 'mkdir -p ~/.local/bin && cat > ~/.local/bin/llm-key && chmod +x ~/.local/bin/llm-key' <<'LLMKEY'
+  #!/usr/bin/env bash
+  # Set the OpenRouter API key for LibreChat: updates OPENROUTER_KEY in ~/librechat/.env
+  # and restarts the api container so the full model list loads. Usage: llm-key <key>
+  set -euo pipefail
+  [ "$#" = 1 ] || { printf 'usage: llm-key <openrouter-api-key>\n' >&2; exit 1; }
+  librechat_env_file="$HOME/librechat/.env"
+  [ -f "$librechat_env_file" ] || { printf 'llm-key: %s not found\n' "$librechat_env_file" >&2; exit 1; }
+  if grep -q '^OPENROUTER_KEY=' "$librechat_env_file"; then
+    sed --in-place "s|^OPENROUTER_KEY=.*|OPENROUTER_KEY=$1|" "$librechat_env_file"
+  else
+    printf 'OPENROUTER_KEY=%s\n' "$1" >> "$librechat_env_file"
+  fi
+  podman restart LibreChat >/dev/null
+  printf 'llm-key: OpenRouter key set and LibreChat restarted - refresh the browser.\n'
+  LLMKEY
   # Guest-local backup/restore helper at ~/.local/bin/llm-backup (on PATH via the zsh
   # dotfiles) - same name + interface in every llm_* appliance VM. It writes/reads plain
   # tars under the host-shared ~/Downloads, so backups land on the host by themselves.
@@ -294,3 +301,38 @@ post_install_script: |
     *)         usage; exit 1 ;;
   esac
   LCSCRIPT
+  # LAST step on purpose (interrupting it loses nothing else): pre-create the default
+  # account admin@example.com / adminadmin (login is by EMAIL; weak creds are fine on
+  # this NAT-only box; admin twice because the LOGIN form enforces MIN_PASSWORD_LENGTH,
+  # default 8). create-user runs inside the api container and needs mongo up, so retry
+  # until the compose stack is ready - LOUDLY: progress every attempt (a silent wait
+  # reads as a hang), each attempt capped by `timeout 20` (a not-yet-up mongo can make
+  # the script sit on a ~30s connect timeout), stdin from /dev/null (any unexpected
+  # interactive prompt fails fast instead of hanging forever). `--email-verified=true`
+  # is REQUIRED, not optional: without the flag create-user (v0.8.7) interactively asks
+  # "Email verified? (Y/n)" even when every positional arg is given - with no stdin that
+  # question hangs forever (the original init-hang root cause, found the hard way).
+  # "already exists" counts as success, which keeps a re-init idempotent.
+  su - user -c 'set -eu
+    printf "llm_librechat: pre-creating default account admin@example.com (waits for the stack to come up)...\n"
+    admin_account_ready=0
+    create_user_output=""
+    for attempt in $(seq 1 30); do
+      if create_user_output="$(timeout 20 podman exec LibreChat npm run create-user -- admin@example.com Admin admin adminadmin --email-verified=true < /dev/null 2>&1)"; then
+        admin_account_ready=1
+        break
+      fi
+      case "$create_user_output" in
+        *"already exists"*) admin_account_ready=1; break ;;
+      esac
+      printf "llm_librechat: stack not ready yet (attempt %s/30): %s\n" "$attempt" "$(printf %s "$create_user_output" | head -n 1)"
+      sleep 2
+    done
+    if [ "$admin_account_ready" != 1 ]; then
+      printf "%s\n" "$create_user_output" >&2
+      printf "llm_librechat: default account creation FAILED after 30 attempts - see output above\n" >&2
+      exit 1
+    fi
+    printf "llm_librechat: default account ready (admin@example.com / adminadmin - log in with the EMAIL).\n"
+    printf "llm_librechat: NEXT: set your OpenRouter key - enter the VM and run: llm-key <your-key>\n"
+  '

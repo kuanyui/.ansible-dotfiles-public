@@ -1370,6 +1370,37 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   `ivm info` gains host-bound-dir + guest-shell-dir fields; `ivm cd`/`list` show
   labelled placeholders; appliance default name `ivm-<template>` (no path
   suffix); schema + README/SPEC/DESIGN updated
+- [x] llm_librechat: `user_provided` apiKey never fetches the live model list
+  (upstream LibreChat#4500/#1028, open since 2023) - dropdown showed only the
+  `default` fallback. Switched the shipped config to `${OPENROUTER_KEY}` from
+  .env (server-side fetch works; .env is already in the backup set) + new
+  in-guest one-command setter `llm-key <key>` (writes .env, restarts api; init
+  ready message + description point at it) - setting a key never means editing
+  a file
+- [x] (Regression, hit on real init) llm_librechat init-hang TRUE root cause:
+  `npm run create-user` (v0.8.7) interactively asks "Email verified? (Y/n)" even
+  with all four positional args - `podman exec` without stdin sits on that prompt
+  forever (main-branch source suggested args suffice; version drift). Fixed by
+  passing `--email-verified=true` explicitly; confirmed from the user's own
+  interactive run output
+- [x] (Regression, hit on real init) llm_librechat: removing upstream's compose
+  `restart:` policies was WRONG - the systemd unit supervises only the
+  podman-compose process, not member containers; when the api crashed (exit 1
+  after ~7 min, root cause TBD from its log tail) podman-compose stayed attached
+  to mongo, the unit stayed active, and nothing restarted the api (this is also
+  what starved the init account loop). `restart: unless-stopped` restored on both
+  services - podman's own policy is the only member-level supervisor
+- [x] (Regression, hit on real init) llm_librechat default-account retry loop sat
+  SILENT for minutes (mongoose ~30s connect timeouts x 60 attempts, no output ->
+  read as a hang; violated the fail-loudly rule). Fixed: progress line every
+  attempt, `timeout 20` per attempt, stdin `< /dev/null` (an unexpected prompt
+  fails fast instead of hanging), 30 attempts, and the block moved to the LAST
+  post_install step so an interrupt loses nothing else
+- [x] llm_openwebui: OpenRouter pre-wired via `--env OPENAI_API_BASE_URL=...` on the
+  `podman run` line - a FIRST-LAUNCH seed only (Open WebUI PersistentConfig: after
+  first boot the UI-stored value under `~/openwebui/data` wins, env ignored), so
+  later Admin Settings -> Connections edits stick; both llm_openwebui and
+  llm_librechat `description:` now state OpenRouter is pre-wired (paste key in UI)
 - [x] llm_librechat usability pass (from first real use): ship
   `~/librechat/librechat.yaml` (guarded like .env) with OpenRouter as a
   `user_provided` custom endpoint (key pasted in the web UI -> mongo, encrypted
