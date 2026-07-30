@@ -63,6 +63,23 @@ post_install_script: |
       NODE_ENV=production npm install --no-save --no-audit --no-fund --loglevel=error --no-progress --omit=dev --ignore-scripts
     fi
   '
+  # Ship the CharacterLibrary extension (github.com/Sillyanonymous/SillyTavern-CharacterLibrary):
+  # character discovery/management UI (ChubAI/JanitorAI/... providers). A plain FULL git
+  # clone into ST's per-user extensions dir, so UPGRADING is one in-guest command -
+  #   git -C ~/SillyTavern/data/default-user/extensions/SillyTavern-CharacterLibrary pull
+  # (or the Update button in ST's Extensions panel) - and it lives under data/, so
+  # llm-backup already carries it. Guarded like the ST clone (re-init = no-op). MUST run
+  # AFTER the ST clone above (cloning ST fails on a non-empty ~/SillyTavern). The
+  # OPTIONAL cl-helper SERVER plugin (Pygmalion login / DataCat / some extractors) is
+  # deliberately NOT installed - it needs `enableServerPlugins: true` plus a plugins/
+  # copy; see the extension README if ever wanted.
+  su - user -c 'set -eu
+    character_library_dir=~/SillyTavern/data/default-user/extensions/SillyTavern-CharacterLibrary
+    if [ ! -d "$character_library_dir" ]; then
+      mkdir -p ~/SillyTavern/data/default-user/extensions
+      git clone https://github.com/Sillyanonymous/SillyTavern-CharacterLibrary "$character_library_dir"
+    fi
+  '
   # Make ST reachable from the host. Its default config binds 127.0.0.1 and whitelists
   # localhost only; it also REFUSES to start with `listen: true` unless an access control is
   # on. So: listen + keep whitelistMode on + whitelist the RFC1918 ranges (covers whatever
@@ -82,6 +99,9 @@ post_install_script: |
   # /api/secrets/view endpoint). Fine for THIS box - it is NAT-only (reachable from the
   # host alone, single user) and ST stores secrets.json in plaintext on disk regardless.
   allowKeysExposure: true
+  # CharacterLibrary's embedded-media downloads route through ST's own CORS proxy
+  # (browsers block direct cross-origin fetches of card media otherwise).
+  enableCorsProxy: true
   EOF
   # Run ST as a PER-USER systemd service (~/.config/systemd/user), so `user` - who has no
   # sudo - fully controls it: the llm-backup helper stops/starts it for a consistent snapshot

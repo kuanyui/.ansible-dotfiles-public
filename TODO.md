@@ -1370,6 +1370,12 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   `ivm info` gains host-bound-dir + guest-shell-dir fields; `ivm cd`/`list` show
   labelled placeholders; appliance default name `ivm-<template>` (no path
   suffix); schema + README/SPEC/DESIGN updated
+- [x] llm_sillytavern: ship the CharacterLibrary extension by default (full git
+  clone into `data/default-user/extensions/`, guarded, AFTER the ST clone) +
+  `enableCorsProxy: true` in config.yaml (its embedded-media downloads).
+  Upgrade = `git -C <extension dir> pull` or ST's Extensions Update button;
+  lives under data/ so llm-backup already carries it. cl-helper SERVER plugin
+  deliberately not installed (needs enableServerPlugins; README has the recipe)
 - [x] llm_librechat: `user_provided` apiKey never fetches the live model list
   (upstream LibreChat#4500/#1028, open since 2023) - dropdown showed only the
   `default` fallback. Switched the shipped config to `${OPENROUTER_KEY}` from
