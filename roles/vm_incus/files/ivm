@@ -1572,8 +1572,8 @@ def storage_location_lines(root: Path, storage_pool_name: str, storage_pool_driv
         mountpoint: str = recorded.get("mountpoint") or ""
         try:
             loop_stat: os.stat_result = os.stat(loop_file)
-            usage: str = (f"  (sparse: {human_iec_bytes(loop_stat.st_blocks * 512)} on disk now / "
-                          f"{human_iec_bytes(loop_stat.st_size)} max)")
+            usage: str = (f"  (sparse: {human_iec_bytes(loop_stat.st_blocks * 512)} on host disk now / "
+                          f"{human_iec_bytes(loop_stat.st_size)} max; shrinks only via fstrim/discard)")
         except OSError:
             usage = ""
         mount_note: str = f"  -> mounted at {mountpoint}" if mountpoint else ""
@@ -1609,7 +1609,13 @@ def preview_storage_pool(root: Path, *, dry_run: bool) -> list[str]:
     storage_pool_driver: str = str(info.get("driver", "")) or "?"
     space_used: Any = info.get("space used")
     space_total: Any = info.get("total space")
-    space: str = f"  -  {space_used} used / {space_total} total" if space_used and space_total else ""
+    # These figures invite two misreadings, so label them inline: ONE pool is shared by
+    # every VM (each VM's root disk is a volume inside it), and used/total is measured
+    # INSIDE the pool's filesystem - neither "this VM's size" nor real host bytes (the
+    # location line below carries the host-side view).
+    space: str = (f"  -  {space_used} used / {space_total} total"
+                  "  (all VMs share this one pool; used = inside its filesystem)"
+                  if space_used and space_total else "")
     return [
         f"  storage pool:  {storage_pool_name} ({storage_pool_driver}){space}",
         *storage_location_lines(root, storage_pool_name, storage_pool_driver),
@@ -1643,7 +1649,8 @@ def preview_storage_pool_location(storage_pool_name: str, storage_pool_driver: s
         return [f"{value_column_indent}{storage_pool_driver} dataset/volume: {storage_pool_source}"]
     except OSError:
         # A real path under a root-only dir we can't traverse unprivileged.
-        return [f"{value_column_indent}{storage_pool_driver} backing at {storage_pool_source}  (size hidden - needs root)"]
+        return [f"{value_column_indent}{storage_pool_driver} backing at {storage_pool_source}"
+                "  (its allocated size = the pool's real host usage; hidden - stat needs root)"]
     if stat.S_ISREG(storage_pool_source_stat.st_mode):
         # Loop file: a sparse `.img` whose REAL host-disk use (st_blocks, the same
         # number `du` reports) sits far below its declared size (st_size, the sparse
@@ -1653,7 +1660,7 @@ def preview_storage_pool_location(storage_pool_name: str, storage_pool_driver: s
         loop_file_logical_size_bytes: int = storage_pool_source_stat.st_size
         return [f"{value_column_indent}loop file at {storage_pool_source}  "
                 f"(sparse: {human_iec_bytes(loop_file_real_bytes_on_disk)} on host disk now / "
-                f"{human_iec_bytes(loop_file_logical_size_bytes)} max)"]
+                f"{human_iec_bytes(loop_file_logical_size_bytes)} max; shrinks only via fstrim/discard)"]
     if stat.S_ISBLK(storage_pool_source_stat.st_mode):
         return [f"{value_column_indent}{storage_pool_driver} on block device {storage_pool_source}"]
     return [f"{value_column_indent}{storage_pool_driver} subvolume at {storage_pool_source}"]
@@ -2947,6 +2954,14 @@ def cmd_info(name: str, root: Path) -> None:
     print("\nStorage")
     for line in preview_storage_pool(root, dry_run=False):
         print(line)
+    # This VM's OWN usage, distinct from the shared-pool figures above - the SAME
+    # guest_disk_used source as `ivm list`'s DISK column, so the two never drift.
+    if status.upper() == "RUNNING":
+        vm_disk_used_display: str = guest_disk_used(name) or "(unreadable - guest `df /` failed)"
+    else:
+        vm_disk_used_display = "(vm not running)"
+    print(f"  vm disk used:  {vm_disk_used_display}"
+          "  (this VM alone - guest `df /`, same figure as `ivm list` DISK)")
 
 
 def _parse_gib(size: str) -> int | None:

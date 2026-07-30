@@ -423,13 +423,15 @@ def render_text(data: dict[str, Any]) -> str:
     lines.append(f"  source:  {live['source'] or '(empty / admin-only - not readable unprivileged)'}")
     pool_space: dict[str, Any] = data["pool_space"]
     if pool_space["available"]:
-        # For a `dir` pool the numbers are a statvfs of its host filesystem, so they
-        # describe that WHOLE filesystem, not this pool alone - say so.
-        dir_pool_note: str = ("  (dir pool - used/total = its whole host filesystem)"
-                              if live["driver"] == "dir" else "")
+        # The figures invite misreading, so name their VIEW + SCOPE inline. For a `dir`
+        # pool the statvfs IS its host filesystem; for every other driver it is the
+        # pool-internal filesystem, distinct from the backing file's host allocation.
+        pool_space_meaning: str = ("dir pool - used/total = its whole host filesystem, shared by ALL VMs"
+                                   if live["driver"] == "dir"
+                                   else "inside the pool filesystem, shared by ALL VMs - not host bytes")
         lines.append(f"  space:   {human_iec_bytes(pool_space['space_used_bytes'])} used"
                      f" / {human_iec_bytes(pool_space['space_total_bytes'])} total"
-                     f"  (incus-reported, inside the pool filesystem){dir_pool_note}")
+                     f"  ({pool_space_meaning})")
     else:
         lines.append(f"  space:   (unavailable - {pool_space['error'] or '`incus query` failed'})")
     lines.append("")
@@ -442,7 +444,8 @@ def render_text(data: dict[str, Any]) -> str:
     lines.append(f"  /etc/fstab:   {data['fstab_line'] or '(no line for this mountpoint)'}")
     if data["loop_file"]:
         usage: str = (f"sparse: {human_iec_bytes(footprint['on_disk_bytes'])} on host disk now / "
-                      f"{human_iec_bytes(footprint['logical_bytes'])} max") if footprint["exists"] else footprint["stat_error"]
+                      f"{human_iec_bytes(footprint['logical_bytes'])} max; shrinks only via fstrim/discard"
+                      ) if footprint["exists"] else footprint["stat_error"]
         discovered_note: str = ("  (discovered from the live pool mount - no storage-info.json)"
                                 if data["loop_file_origin"] == "live-mount" else "")
         lines.append(f"  loop file:    {data['loop_file']}  ({usage}){discovered_note}")
