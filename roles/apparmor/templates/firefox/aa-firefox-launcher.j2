@@ -6,7 +6,8 @@ Backs the single visible Firefox entry (`~/.local/share/applications/ansible_aa_
 which also owns the http/https MIME associations. Shows a filter box over a three-column
 profile table, then replaces itself with:
 
-    aa-exec --profile <apparmor_profile> -- firefox [-P <firefox_profile>] [url ...]
+    aa-exec --profile <apparmor_profile> -- firefox \
+        {-P <firefox_profile> | --ProfileManager} [url ...]
 
 Table columns (default sort: Modified, newest first; click a header to re-sort):
 
@@ -23,7 +24,8 @@ row: it spans every profile, so it must not be filterable away, sortable, or mis
 for one profile among peers. Its label "Common restrictions, no isolation between
 Firefox profiles" spells out the tradeoff: the common base AppArmor confinement
 (`abstractions/local_base_firefox`) still applies; only the isolation BETWEEN profile
-directories is absent.
+directories is absent. It launches `firefox --ProfileManager`: the choice names no single
+profile, so Firefox's own Profile Manager picks one at startup.
 
 Interaction:
 
@@ -124,7 +126,8 @@ class FirefoxLaunchChoice(NamedTuple):
 
     display_label: str
     apparmor_profile_name: str
-    # None = pass no -P flag at all (the all-profiles choice spans every profile, so it names none).
+    # None = pass --ProfileManager instead of -P (the all-profiles choice names no single
+    # profile, so Firefox's own Profile Manager picks one at startup).
     firefox_profile_name: str | None
     # N of the `[ProfileN]` section in profiles.ini; None only in ALL_PROFILES_LAUNCH_CHOICE.
     profiles_ini_id: int | None
@@ -167,6 +170,14 @@ def build_launch_argv(choice: FirefoxLaunchChoice, url_args: list[str]) -> list[
         # it does not exist, so passing a profile name to it would spawn a junk profile. The
         # repo's long-flag rule deliberately does not apply here.
         launch_argv += ["-P", choice.firefox_profile_name]
+    else:
+        # Firefox's own Profile Manager. NOT a bare `-P` (which shows the same dialog when it
+        # lacks a value): Firefox's CheckArg consumes the next argv entry as -P's value unless
+        # it starts with `-` (toolkit/xre/CmdLineAndEnvUtils.h), so with a `%u` URL appended,
+        # `-P <url>` would swallow the URL as a nonexistent profile name. `--ProfileManager`
+        # takes no value; both paths return NS_ERROR_SHOW_PROFILE_MANAGER in
+        # SelectStartupProfile (toolkit/profile/nsToolkitProfileService.cpp).
+        launch_argv.append("--ProfileManager")
     return launch_argv + url_args
 
 

@@ -43,7 +43,7 @@ profile local_attachmentless_firefox_isolated_{{ aa_label }} {
 
 # Full access to all Firefox profiles, no per-profile isolation.
 # Use for multi-profile workflows or when per-profile isolation is not needed.
-# Launched via: aa-exec -p local_attachmentless_firefox_all_profiles -- firefox
+# Launched via: aa-exec -p local_attachmentless_firefox_all_profiles -- firefox --ProfileManager
 profile local_attachmentless_firefox_all_profiles {
     #include <abstractions/local_base_firefox>
 
