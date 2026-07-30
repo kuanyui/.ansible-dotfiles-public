@@ -3,7 +3,10 @@
 # rootless podman, reached from the HOST browser at http://<guest-ip>:8080 (incus NAT lets
 # the host route to the guest; the LAN cannot). No GUI and no /workspaces mount - a
 # single-purpose appliance, not a dev/agent box. First browser visit creates the admin
-# account; LLM provider API keys are entered in the web UI and stored under ~/openwebui/data.
+# account. OpenRouter is pre-wired as the OpenAI-compatible base URL - a FIRST-LAUNCH
+# seed only (Open WebUI "PersistentConfig": after first boot the value lives under
+# ~/openwebui/data and is edited in the web UI, env ignored); paste your key - and
+# change provider/URL any time - in Admin Settings -> Connections.
 #
 # Self-contained on purpose: the whole install lives in post_install_script, NOT in the
 # shared provision_thirdparty_software registry (same appliance doctrine as
@@ -13,7 +16,7 @@
 # in-guest `llm-backup` (tars ~/openwebui into host-shared ~/Downloads/OpenWebUIBackups/);
 # fast in-place rollback -> `ivm snapshot`; whole-VM archive -> `incus export`.
 template_name: llm_openwebui
-description: "Open WebUI LLM chat server (Debian, headless; rootless podman; host browser -> guest:8080; backups land in ~/Downloads)"
+description: "Open WebUI LLM chat server (Debian, headless; rootless podman; OpenRouter pre-wired - paste your key in the web UI; host browser -> guest:8080; backups land in ~/Downloads)"
 # Appliance, not a project box: bound to NO host dir (empty = unbound) - target it by name
 # anywhere (`ivm shell <vm>`); default instance name is `ivm-llm-openwebui` (no path suffix).
 host_bound_dir: ""
@@ -68,12 +71,15 @@ post_install_script: |
   # pattern as llm_sillytavern.yaml: `user` (no sudo) fully controls it, and llm-backup
   # stops/starts it for consistent tars. --rm --replace keep restarts clean after a crash;
   # the published 8080 binds on the guest's interfaces, which NAT exposes to the host only.
+  # OPENAI_API_BASE_URL pre-wires OpenRouter; it is a FIRST-LAUNCH seed only (Open WebUI
+  # "PersistentConfig") - once the data dir exists, the UI-stored value wins and this env
+  # is ignored, so later UI changes stick across restarts.
   su - user -c 'mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/openwebui.service' <<'EOF'
   [Unit]
   Description=Open WebUI (rootless podman)
   [Service]
   Type=simple
-  ExecStart=/usr/bin/podman run --rm --replace --name openwebui --publish 8080:8080 --volume %h/openwebui/data:/app/backend/data ghcr.io/open-webui/open-webui:main
+  ExecStart=/usr/bin/podman run --rm --replace --name openwebui --publish 8080:8080 --env OPENAI_API_BASE_URL=https://openrouter.ai/api/v1 --volume %h/openwebui/data:/app/backend/data ghcr.io/open-webui/open-webui:main
   ExecStop=/usr/bin/podman stop --time 10 openwebui
   Restart=on-failure
   [Install]
