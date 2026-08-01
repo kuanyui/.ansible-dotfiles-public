@@ -10,7 +10,7 @@ Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
 `delete`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set`+`unset` (guest
-settings: password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/MEM guest+host/disk/host-bound dir/IPv4; args -> raw incus list); `cd` (print a VM's host-bound dir for the `ivm()` shell wrapper to cd into);
+settings: password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/MEM guest+host/disk/created/up-last-on/host-bound dir/IPv4; args -> raw incus list); `cd` (print a VM's host-bound dir for the `ivm()` shell wrapper to cd into);
 `adopt` (bring an unmanaged VM - hand-made or older-ivm - under ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, a global `--name <vm>`, or (when the
 subcommand takes no positional of its own) a trailing `<vm>` name (`ivm stop foo`).
@@ -40,6 +40,7 @@ import stat
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, NoReturn, TextIO
 
@@ -2522,11 +2523,118 @@ def guest_disk_used(name: str) -> str | None:
     return human_iec_bytes(int(df_fields[2]) * 1024)
 
 
+class InstanceTimestamps(NamedTuple):
+    """The three timestamps incus keeps per instance (upstream `shared/api/instance.go`
+    + `instance_state.go`), as aware datetimes; None = never / unavailable. incus
+    records STARTS only - there is no stop/shutdown timestamp anywhere."""
+
+    created_at: datetime | None    # instance creation
+    last_used_at: datetime | None  # last START ("Last start timestamp" upstream)
+    started_at: datetime | None    # THIS boot's start (`state.started_at`); None when stopped
+
+
+def parse_incus_rfc3339(timestamp_rfc3339: str) -> datetime | None:
+    """An incus API timestamp (Go RFC3339Nano, e.g. `2026-07-12T09:15:03.123456789+08:00`)
+    -> aware datetime. None for empty / unparseable / the Go zero time
+    (`0001-01-01T00:00:00Z`, incus's "never"). Go emits up to 9 fractional-second
+    digits while fromisoformat caps at 6 - trim first; the `Z` -> `+00:00` rewrite
+    covers pre-3.11 Pythons that reject the `Z` suffix."""
+    if not timestamp_rfc3339:
+        return None
+    iso_compatible: str = re.sub(r"\.(\d{6})\d+", r".\1", timestamp_rfc3339).replace("Z", "+00:00")
+    try:
+        parsed_timestamp: datetime = datetime.fromisoformat(iso_compatible)
+    except ValueError:
+        return None
+    return None if parsed_timestamp.year <= 1 else parsed_timestamp
+
+
+def brief_duration(elapsed: timedelta) -> str:
+    """A duration as its two leading units, table-cell brief: `3d 4h` / `5h 12m` /
+    `34m` / `<1m`. Clock skew (negative) clamps to `<1m`."""
+    total_minutes: int = max(0, int(elapsed.total_seconds() // 60))
+    days, day_remainder_minutes = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(day_remainder_minutes, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m" if minutes else "<1m"
+
+
+def brief_ago(past_moment: datetime) -> str:
+    """Elapsed-since as ONE leading unit (`19d` / `5h` / `34m` / `<1m`), for
+    `(19d ago)`-style suffixes."""
+    elapsed_minutes: int = max(
+        0, int((datetime.now(timezone.utc) - past_moment).total_seconds() // 60))
+    if elapsed_minutes >= 24 * 60:
+        return f"{elapsed_minutes // (24 * 60)}d"
+    if elapsed_minutes >= 60:
+        return f"{elapsed_minutes // 60}h"
+    return f"{elapsed_minutes}m" if elapsed_minutes else "<1m"
+
+
+def incus_instance_timestamps(vm_name: str | None = None) -> dict[str, InstanceTimestamps]:
+    """`created_at` / `last_used_at` / `state.started_at` for every instance (or just
+    `vm_name`), keyed by instance name - ONE `incus list --format json` call (its
+    InstanceFull objects embed the state). JSON, not the CSV date columns: those are
+    pre-formatted localized strings (upstream `cmd/incus/list.go` formats via
+    `.Local().Format(dateLayout)`), useless for computing an age/uptime.
+    `state.started_at` needs the `instance_state_started_at` API extension (incus
+    6.1, backported to the 6.0 LTS branch); absent -> None, and RUNNING-uptime
+    callers fall back to `last_used_at` - for a running instance the same fact
+    (upstream doc comment: "Last start timestamp"). Empty dict when incus fails -
+    callers then print placeholders, never crash."""
+    incus_list_json_cmd: list[str] = (
+        ["incus", "list"] + ([vm_name] if vm_name else []) + ["--format", "json"])
+    try:
+        instances: Any = json.loads(capture(incus_list_json_cmd) or "[]")
+    except json.JSONDecodeError:
+        return {}
+    timestamps_by_vm_name: dict[str, InstanceTimestamps] = {}
+    for instance in instances if isinstance(instances, list) else []:
+        instance_state: dict[str, Any] = instance.get("state") or {}
+        timestamps_by_vm_name[instance.get("name", "")] = InstanceTimestamps(
+            created_at=parse_incus_rfc3339(instance.get("created_at") or ""),
+            last_used_at=parse_incus_rfc3339(instance.get("last_used_at") or ""),
+            started_at=parse_incus_rfc3339(instance_state.get("started_at") or ""),
+        )
+    return timestamps_by_vm_name
+
+
+def created_at_cell(vm_timestamps: InstanceTimestamps) -> str:
+    """CREATED cell: `2026-07-12 (19d)` - local date + age. `?` when unknown (incus
+    JSON unavailable); the full time-of-day lives in `ivm info`, not here."""
+    if vm_timestamps.created_at is None:
+        return "?"
+    return (f"{vm_timestamps.created_at.astimezone():%Y-%m-%d}"
+            f" ({brief_ago(vm_timestamps.created_at)})")
+
+
+def uptime_or_last_on_cell(vm_state: str, vm_timestamps: InstanceTimestamps) -> str:
+    """UP/LAST-ON cell. RUNNING/FROZEN -> `up 3d 4h` since this boot's start (a FROZEN
+    VM's qemu lives on; the STATE column right beside it already says frozen).
+    Otherwise `last on 19d ago` - the last START, because incus records no stop time
+    (see InstanceTimestamps) - or `(never started)`. `up ?` = running but incus
+    returned no timestamps (JSON call failed)."""
+    if vm_state.upper() in ("RUNNING", "FROZEN"):
+        this_boot_started_at: datetime | None = (
+            vm_timestamps.started_at or vm_timestamps.last_used_at)
+        if this_boot_started_at is None:
+            return "up ?"
+        return "up " + brief_duration(datetime.now(timezone.utc) - this_boot_started_at)
+    if vm_timestamps.last_used_at is None:
+        return "(never started)"
+    return f"last on {brief_ago(vm_timestamps.last_used_at)} ago"
+
+
 def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
     """List ivm-managed VMs (those tagged with `user.ivm_init_at_dir`) as a table:
-    State, Name, MEM(guest), MEM(host), DISK, Host-Bound Dir (`user.ivm_host_bound_dir`,
-    the dir cwd resolution matches + `ivm cd` jumps to; labelled placeholder when
-    unbound/legacy), IPv4. MEM(guest) is incus's guest-agent memory figure;
+    State, Name, MEM(guest), MEM(host), DISK, Created (local date + age, from incus
+    `created_at`), Up/Last-On (running -> `up 3d 4h` since this boot's start; stopped ->
+    `last on 19d ago` = the last START, incus records no stop time; `(never started)`
+    labelled), Host-Bound Dir (`user.ivm_host_bound_dir`, the dir cwd resolution
+    matches + `ivm cd` jumps to; labelled placeholder when unbound/legacy), IPv4. MEM(guest) is incus's guest-agent memory figure;
     MEM(host) is the qemu process's real host RSS (`qemu_host_rss`), which the guest figure
     under-reports. DISK is the guest root filesystem's USED space, read live per running VM
     via `incus exec ... df` (`guest_disk_used`) - reliable, unlike incus's sporadic guest-agent
@@ -2543,9 +2651,14 @@ def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
     list_columns: str = "s,n,4,m,p,config:user.ivm_host_bound_dir,config:user.ivm_init_at_dir"
     if dry_run:
         print(f"+ incus list --format csv --columns {list_columns}", file=sys.stderr)
+        print("+ incus list --format json  # created_at + last_used_at + state.started_at "
+              "-> CREATED, UP/LAST-ON", file=sys.stderr)
         print("  + per running VM: read /proc/<qemu-pid>/status VmRSS (MEM host) + "
               "`incus exec <vm> -- df -Pk /` (DISK)", file=sys.stderr)
         return
+    # One extra incus call for the raw timestamps (see incus_instance_timestamps on
+    # why the CSV date columns can't serve here).
+    instance_timestamps_by_vm_name: dict[str, InstanceTimestamps] = incus_instance_timestamps()
     table_rows: list[tuple[str, ...]] = []
     for state, name, ipv4, guest_mem, qemu_pid, host_bound_dir, _init_at_dir in managed_vm_rows(list_columns):
         # Non-running VMs show `(<state>)`; a running VM whose figure can't be read shows `-`.
@@ -2557,11 +2670,15 @@ def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
         running_gap: str = "-" if is_running else f"({state.lower()})"
         mem_host: str = qemu_host_rss(qemu_pid) or running_gap
         disk: str = (guest_disk_used(name) or running_gap) if is_running else running_gap
+        vm_timestamps: InstanceTimestamps = instance_timestamps_by_vm_name.get(
+            name, InstanceTimestamps(None, None, None))
         table_rows.append((
             state, name,
             guest_mem or running_gap,
             mem_host,
             disk,
+            created_at_cell(vm_timestamps),
+            uptime_or_last_on_cell(state, vm_timestamps),
             display_host_bound_dir(host_bound_dir),
             ipv4.replace("\n", ", "),
         ))
@@ -2569,7 +2686,8 @@ def cmd_list(list_args: list[str], *, dry_run: bool) -> None:
         print("No ivm-managed VMs (none carry `user.ivm_init_at_dir`); "
               "create one with `ivm init <template>`.", file=sys.stderr)
         return
-    print_table(["STATE", "NAME", "MEM(guest)", "MEM(host)", "DISK", "HOST-BOUND DIR", "IPV4"], table_rows)
+    print_table(["STATE", "NAME", "MEM(guest)", "MEM(host)", "DISK", "CREATED",
+                 "UP/LAST-ON", "HOST-BOUND DIR", "IPV4"], table_rows)
 
 
 def cmd_cd(name: str | None) -> None:
@@ -2872,9 +2990,10 @@ def _guest_status_values(name: str, status: str) -> tuple[str, str]:
 
 def cmd_info(name: str, root: Path) -> None:
     """`ivm info`: the TARGET VM's live state, GROUPED for readability -
-    Basic (status/image/hw/snapshots/host-bound-dir/guest-shell-dir/user-sudo), Network (ip/services/
-    bridge/ssh-server/forwards), Mounts, Storage. Read from `incus config show --expanded`
-    + `incus list`; target resolved by cwd or `--name`. Read-only. Prints EVERY
+    Basic (status/created/last-started/image/hw/snapshots/host-bound-dir/guest-shell-dir/
+    user-sudo), Network (ip/services/bridge/ssh-server/forwards), Mounts, Storage. Read
+    from `incus config show --expanded` + `incus list` (+ `--format json` for the raw
+    timestamps); target resolved by cwd or `--name`. Read-only. Prints EVERY
     field every run, with a placeholder when empty (never hides a field)."""
     import yaml  # lazy, same as load_yaml (ships with ansible-core / python3-yaml)
     parsed: Any = yaml.safe_load(capture(["incus", "config", "show", "--expanded", name]) or "")
@@ -2905,6 +3024,29 @@ def cmd_info(name: str, root: Path) -> None:
     print(f"VM: {colorize_vm_name(name, stream=sys.stdout)}")
     print("\nBasic")
     field("status", status)
+    # created / last started: the two timestamps incus keeps. It records STARTS only,
+    # never a stop time - hence the label "last started", not "last on/off". Same
+    # sources and fallbacks as the `ivm list` CREATED / UP/LAST-ON columns.
+    vm_timestamps: InstanceTimestamps = incus_instance_timestamps(name).get(
+        name, InstanceTimestamps(None, None, None))
+    if vm_timestamps.created_at is None:
+        created_display: str = "?"
+    else:
+        created_display = (f"{vm_timestamps.created_at.astimezone():%Y-%m-%d %H:%M}"
+                           f" ({brief_ago(vm_timestamps.created_at)} ago)")
+    field("created", created_display)
+    this_boot_started_at: datetime | None = vm_timestamps.started_at or vm_timestamps.last_used_at
+    if status.upper() in ("RUNNING", "FROZEN") and this_boot_started_at is not None:
+        last_started_display: str = (
+            f"{this_boot_started_at.astimezone():%Y-%m-%d %H:%M}"
+            f" (up {brief_duration(datetime.now(timezone.utc) - this_boot_started_at)})")
+    elif vm_timestamps.last_used_at is None:
+        last_started_display = "(never started)"
+    else:
+        last_started_display = (
+            f"{vm_timestamps.last_used_at.astimezone():%Y-%m-%d %H:%M}"
+            f" ({brief_ago(vm_timestamps.last_used_at)} ago)")
+    field("last started", last_started_display)
     field("image", image)
     field("hw", f"cpu={config.get('limits.cpu', '?')} "
                 f"memory={config.get('limits.memory', '?')} disk={root_device.get('size', '?')}")
