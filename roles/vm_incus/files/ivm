@@ -1849,8 +1849,14 @@ def cmd_shell(name: str, root: Path, *, as_root: bool, dry_run: bool) -> None:
     if as_root:
         cmd += ["--env", "HOME=/root", "--env", "USER=root"]
     else:
+        # `incus exec` spawns the process directly - no PAM login, so pam_systemd
+        # never sets the session env. HOME/USER are patched up for the same reason;
+        # the two bus vars make `systemctl --user` / `journalctl --user` work (they
+        # locate the user bus through them).
         cmd += ["--user", "1000", "--group", "1000",
-                "--env", "HOME=/home/user", "--env", "USER=user"]
+                "--env", "HOME=/home/user", "--env", "USER=user",
+                "--env", "XDG_RUNTIME_DIR=/run/user/1000",
+                "--env", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"]
     cmd += [name, "--", "zsh"]
     exec_into(cmd, dry_run=dry_run)
 
