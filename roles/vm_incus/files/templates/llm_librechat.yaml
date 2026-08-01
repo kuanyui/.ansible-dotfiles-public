@@ -7,8 +7,9 @@
 # by EMAIL; registration is off - add accounts with
 # `podman exec LibreChat npm run create-user -- <email> <name> <username>`). OpenRouter
 # is pre-wired; set your API key with ONE in-guest command: `llm-key <key>` (writes
-# OPENROUTER_KEY into ~/librechat/.env - which llm-backup carries - and restarts the
-# api). The UI endpoint list carries the auto-routed "OpenRouter" endpoint PLUS one
+# OPENROUTER_KEY into ~/librechat/.env - which llm-backup carries - and RECREATES the
+# compose stack; a mere container restart keeps the old env, see the llm-key
+# comment). The UI endpoint list carries the auto-routed "OpenRouter" endpoint PLUS one
 # pinned "OpenRouter (<Provider>)" endpoint per curated provider - LibreChat has no UI
 # for picking OpenRouter's routed provider (the model dropdown picks only the MODEL),
 # so picking an endpoint IS picking the provider; all endpoints share the one key.
@@ -320,13 +321,19 @@ post_install_script: |
   for _ in $(seq 1 100); do [ -S "/run/user/$guest_user_uid/bus" ] && break; sleep 0.2; done
   su - user -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; systemctl --user daemon-reload; systemctl --user enable --now librechat'
   # One-command API-key setter at ~/.local/bin/llm-key: writes OPENROUTER_KEY into
-  # ~/librechat/.env and restarts the api container. Exists so setting the key never
+  # ~/librechat/.env and RECREATES the compose stack. Exists so setting the key never
   # means hand-editing a file.
   su - user -c 'mkdir -p ~/.local/bin && cat > ~/.local/bin/llm-key && chmod +x ~/.local/bin/llm-key' <<'LLMKEY'
   #!/usr/bin/env bash
   # Set the OpenRouter API key for LibreChat: updates OPENROUTER_KEY in ~/librechat/.env
-  # and restarts the api container so the full model list loads. Usage: llm-key <key>
+  # and RECREATES the compose stack so the container picks it up. `podman restart` is
+  # NOT enough: compose `env_file` is injected at container CREATION, a restarted
+  # container keeps its old env (containers/podman-compose#409) - the systemd unit's
+  # stop/start = `podman-compose down` / `up` recreates. Usage: llm-key <key>
   set -euo pipefail
+  # su/ssh contexts may lack these; systemctl --user needs both to reach the user bus.
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
   [ "$#" = 1 ] || { printf 'usage: llm-key <openrouter-api-key>\n' >&2; exit 1; }
   librechat_env_file="$HOME/librechat/.env"
   [ -f "$librechat_env_file" ] || { printf 'llm-key: %s not found\n' "$librechat_env_file" >&2; exit 1; }
@@ -335,8 +342,8 @@ post_install_script: |
   else
     printf 'OPENROUTER_KEY=%s\n' "$1" >> "$librechat_env_file"
   fi
-  podman restart LibreChat >/dev/null
-  printf 'llm-key: OpenRouter key set and LibreChat restarted - refresh the browser.\n'
+  systemctl --user restart librechat
+  printf 'llm-key: OpenRouter key set, LibreChat stack recreated - give it a few seconds, then refresh the browser.\n'
   LLMKEY
   # Guest-local backup/restore helper at ~/.local/bin/llm-backup (on PATH via the zsh
   # dotfiles) - same name + interface in every llm_* appliance VM. It writes/reads plain
