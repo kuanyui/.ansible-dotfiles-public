@@ -2990,11 +2990,13 @@ def _guest_status_values(name: str, status: str) -> tuple[str, str]:
 
 def cmd_info(name: str, root: Path) -> None:
     """`ivm info`: the TARGET VM's live state, GROUPED for readability -
-    Basic (status/created/last-started/image/hw/snapshots/host-bound-dir/guest-shell-dir/
-    user-sudo), Network (ip/services/bridge/ssh-server/forwards), Mounts, Storage. Read
-    from `incus config show --expanded` + `incus list` (+ `--format json` for the raw
-    timestamps); target resolved by cwd or `--name`. Read-only. Prints EVERY
-    field every run, with a placeholder when empty (never hides a field)."""
+    Basic (status/created/last-started/template/image/hw/snapshots/host-bound-dir/
+    guest-shell-dir/user-sudo), Network (ip/services/bridge/ssh-server/forwards), Mounts,
+    Storage, Usage (the template's `usage:` notes, read LIVE from the template file via
+    `user.ivm_template` - the post-init how-to that `init` prints once and is otherwise
+    forgotten). Read from `incus config show --expanded` + `incus list` (+ `--format
+    json` for the raw timestamps); target resolved by cwd or `--name`. Read-only. Prints
+    EVERY field every run, with a placeholder when empty (never hides a field)."""
     import yaml  # lazy, same as load_yaml (ships with ansible-core / python3-yaml)
     parsed: Any = yaml.safe_load(capture(["incus", "config", "show", "--expanded", name]) or "")
     cfg: dict[str, Any] = parsed if isinstance(parsed, dict) else {}
@@ -3047,6 +3049,10 @@ def cmd_info(name: str, root: Path) -> None:
             f"{vm_timestamps.last_used_at.astimezone():%Y-%m-%d %H:%M}"
             f" ({brief_ago(vm_timestamps.last_used_at)} ago)")
     field("last started", last_started_display)
+    # Which template this VM was initialized from (`user.ivm_template`, stamped at
+    # init/adopt) - also the key the Usage group below resolves the template file with.
+    vm_template_name: str = config.get("user.ivm_template", "") or ""
+    field("template", vm_template_name or "(unknown - no `user.ivm_template` tag)")
     field("image", image)
     field("hw", f"cpu={config.get('limits.cpu', '?')} "
                 f"memory={config.get('limits.memory', '?')} disk={root_device.get('size', '?')}")
@@ -3104,6 +3110,26 @@ def cmd_info(name: str, root: Path) -> None:
         vm_disk_used_display = "(vm not running)"
     print(f"  vm disk used:  {vm_disk_used_display}"
           "  (this VM alone - guest `df /`, same figure as `ivm list` DISK)")
+    # Usage: the template's `usage:` notes - the post-init how-to (`llm-key <key>`,
+    # default account, where backups land) that `init` prints ONCE and is then
+    # forgotten. Read LIVE from the template file (not stamped into VM config at init)
+    # so editing the template updates every existing VM's `info`. Placeholder per
+    # missing link in the chain (no tag / file gone / no `usage:` field) - a silently
+    # absent group would read as "this VM has no such concept".
+    print("\nUsage")
+    template_file_for_usage: Path = root / "templates" / f"{vm_template_name}.yaml"
+    if not vm_template_name:
+        print("  (unknown - VM has no `user.ivm_template` tag to look notes up by)")
+    elif not template_file_for_usage.is_file():
+        print(f"  (template file not found: {template_file_for_usage} - notes unavailable)")
+    else:
+        template_usage_notes: Any = (yaml.safe_load(template_file_for_usage.read_text())
+                                     or {}).get("usage")
+        if isinstance(template_usage_notes, list) and template_usage_notes:
+            for usage_note in template_usage_notes:
+                print(f"  - {usage_note}")
+        else:
+            print(f"  (none - template '{vm_template_name}' declares no `usage:` notes)")
 
 
 def _parse_gib(size: str) -> int | None:

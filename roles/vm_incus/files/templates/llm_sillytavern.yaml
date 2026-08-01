@@ -16,6 +16,12 @@ host_bound_dir: ""
 # Host-reachable endpoints, queryable later via `ivm info` (annotation of what
 # post_install_script sets up; init warns if the port literal vanishes from the script).
 services: { webui: 8000 }
+# Post-init how-to, shown by `ivm info` (Usage group) - so nothing here needs remembering
+# after init. Read live from this file; keep in sync with post_install_script.
+usage:
+  - "web UI: open the `services` address above in the HOST browser; set API keys in its API Connections panel"
+  - "character cards: ~/Downloads is shared with the host - drop PNGs there to trade both ways"
+  - "backup / restore data: in the VM run `llm-backup` / `llm-backup restore latest` (tars land in host-shared ~/Downloads/SillyTavernBackups/)"
 hw:
   cpu: 2
   memory: 3G

@@ -23,6 +23,12 @@ host_bound_dir: ""
 # Host-reachable endpoints, queryable later via `ivm info` (annotation of what
 # post_install_script sets up; init warns if the port literal vanishes from the script).
 services: { webui: 8080 }
+# Post-init how-to, shown by `ivm info` (Usage group) - so nothing here needs remembering
+# after init. Read live from this file; keep in sync with post_install_script.
+usage:
+  - "web UI: open the `services` address above in the HOST browser; the FIRST visit creates the admin account"
+  - "OpenRouter key: paste it in the web UI (Admin Settings -> Connections) - env pre-wires only the first launch"
+  - "backup / restore data: in the VM run `llm-backup` / `llm-backup restore latest` (tars land in host-shared ~/Downloads/OpenWebUIBackups/)"
 hw:
   cpu: 2
   memory: 4G

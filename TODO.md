@@ -5,6 +5,19 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## ivm info Usage group (post-init how-to, no more forgetting `llm-key`)
+
+- [x] template schema: optional `usage:` (list of short strings) - the post-init
+  how-to `init` printed once and was then lost (set an API key, default account,
+  where backups land)
+- [x] `ivm info`: Basic gains a `template` row (`user.ivm_template`, placeholder when
+  untagged); new final Usage group reads `usage:` LIVE from `<root>/templates/<name>.yaml`
+  (template edits update existing VMs' info); placeholders for no-tag / file-gone /
+  no-usage - the group always prints
+- [x] `llm_librechat` / `llm_openwebui` / `llm_sillytavern` declare `usage:` (web UI +
+  account, OpenRouter key via `llm-key` or the web UI, `llm-backup` + backup dir);
+  SPEC.md `info` row + template-field table updated
+
 ## push-dotfiles fleet safety + template default shell dir
 
 - [x] `make vm-incus-push-dotfiles` pushes to RUNNING VMs only - it used to

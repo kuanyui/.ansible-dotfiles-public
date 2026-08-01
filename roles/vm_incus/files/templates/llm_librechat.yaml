@@ -36,6 +36,12 @@ host_bound_dir: ""
 # post_install_script sets up; init warns if the port literal vanishes from the script).
 # mongo is deliberately NOT listed: it lives on the compose-internal network only.
 services: { webui: 3080 }
+# Post-init how-to, shown by `ivm info` (Usage group) - so nothing here needs remembering
+# after init. Read live from this file; keep in sync with post_install_script.
+usage:
+  - "web UI: open the `services` address above in the HOST browser; log in with the EMAIL admin@example.com / adminadmin"
+  - "OpenRouter key (set once, survives backups): `ivm shell` into the VM, then `llm-key <your-key>`"
+  - "backup / restore chats: in the VM run `llm-backup` / `llm-backup restore latest` (tars land in host-shared ~/Downloads/LibreChatBackups/)"
 hw:
   cpu: 2
   memory: 4G

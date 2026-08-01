@@ -25,6 +25,11 @@
       "propertyNames": { "pattern": "^[a-z][a-z0-9_-]*$" },
       "additionalProperties": { "type": "integer", "minimum": 1, "maximum": 65535 }
     },
+    "usage": {
+      "type": "array",
+      "description": "Post-init usage notes - the how-do-I-drive-this facts that are otherwise only printed once at the end of `ivm init` and then forgotten (set an API key, default account, where backups land). Shown by `ivm info` in its Usage group, read LIVE from this template file (via the VM's `user.ivm_template` tag) on every run - editing the template updates existing VMs' `info` output. One short line per entry. Optional.",
+      "items": { "type": "string" }
+    },
     "hw": {
       "type": "object",
       "description": "Hardware allocation. Optional; `ivm` supplies defaults for anything omitted.",
