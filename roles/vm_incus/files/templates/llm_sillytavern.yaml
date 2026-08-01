@@ -18,7 +18,7 @@ host_bound_dir: ""
 services: { webui: 8000 }
 hw:
   cpu: 2
-  memory: 4G
+  memory: 3G
   disk: 10G
 os:
   type: linux
