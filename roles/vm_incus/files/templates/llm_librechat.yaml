@@ -8,7 +8,11 @@
 # `podman exec LibreChat npm run create-user -- <email> <name> <username>`). OpenRouter
 # is pre-wired; set your API key with ONE in-guest command: `llm-key <key>` (writes
 # OPENROUTER_KEY into ~/librechat/.env - which llm-backup carries - and restarts the
-# api). NOT `user_provided`: that mode never fetches the live model list (upstream
+# api). The UI endpoint list carries the auto-routed "OpenRouter" endpoint PLUS one
+# pinned "OpenRouter (<Provider>)" endpoint per curated provider - LibreChat has no UI
+# for picking OpenRouter's routed provider (the model dropdown picks only the MODEL),
+# so picking an endpoint IS picking the provider; all endpoints share the one key.
+# NOT `user_provided`: that mode never fetches the live model list (upstream
 # LibreChat#4500/#1028), leaving only the fallback model in the dropdown.
 #
 # Upstream extras deliberately left out: meilisearch (message full-text search), and
@@ -24,7 +28,7 @@
 # in-guest `llm-backup` (tars ~/librechat into host-shared ~/Downloads/LibreChatBackups/);
 # fast in-place rollback -> `ivm snapshot`; whole-VM archive -> `incus export`.
 template_name: llm_librechat
-description: "LibreChat LLM chat server (Debian, headless; rootless podman-compose api+mongodb; OpenRouter pre-wired - set key with `llm-key <key>` in the VM; host browser -> guest:3080; backups land in ~/Downloads. ACCOUNT: admin@example.com / adminadmin)"
+description: "LibreChat LLM chat server (Debian, headless; rootless podman-compose api+mongodb; OpenRouter pre-wired, ZDR-only auto + per-provider pinned endpoints - set key once with `llm-key <key>` in the VM; host browser -> guest:3080; backups land in ~/Downloads. ACCOUNT: admin@example.com / adminadmin)"
 # Appliance, not a project box: bound to NO host dir (empty = unbound) - target it by name
 # anywhere (`ivm shell <vm>`); default instance name is `ivm-llm-librechat` (no path suffix).
 host_bound_dir: ""
@@ -129,26 +133,49 @@ post_install_script: |
         - ./data-node:/data/db
   EOF
   # LibreChat custom-endpoint config (mounted to /app/librechat.yaml by the compose
-  # file). OpenRouter's key comes from .env (`OPENROUTER_KEY`) - NOT `user_provided`:
+  # file), GENERATED here: the auto-routed "OpenRouter" endpoint + one PINNED endpoint
+  # per entry in the loop below. Why per-provider endpoints: LibreChat's UI picks only
+  # the MODEL - it has NO control for OpenRouter's routed provider - so "pick a
+  # provider" must be expressed as "pick an endpoint". Every endpoint reads the same
+  # `OPENROUTER_KEY` from .env (one `llm-key` sets them all) - NOT `user_provided`:
   # with user_provided the live model fetch is broken upstream (LibreChat#4500/#1028,
-  # open since 2023), leaving only the `default` fallback in the dropdown. The .env
-  # route makes the server fetch the full list; .env is in llm-backup's tar anyway.
-  # Guarded like .env, so a re-init never clobbers later hand edits (add endpoints freely).
+  # open since 2023), leaving only the `default` fallback in the dropdown.
+  # Guarded like .env, so a re-init never clobbers later hand edits (add/remove
+  # providers in the guest file, then `podman restart LibreChat`).
+  # Quoting map: outer heredoc is quoted (<<'...'), so the generator script below
+  # reaches `bash -s` verbatim; inner STATIC_HEAD is quoted -> literal (keeps
+  # `${OPENROUTER_KEY}` for LibreChat's own env substitution); inner PINNED_ENDPOINT
+  # is UNQUOTED -> `$provider_slug`/`$provider_label` expand, `\${OPENROUTER_KEY}`
+  # stays literal via the backslash.
   su - user -c 'set -eu
     [ -f ~/librechat/librechat.yaml ] && exit 0
-    cat > ~/librechat/librechat.yaml
-  ' <<'EOF'
+    exec bash -s
+  ' <<'GENERATE_LIBRECHAT_YAML'
+  set -eu
+  {
+  cat <<"STATIC_HEAD"
   # Custom endpoints - docs: librechat.ai/docs/configuration/librechat_yaml
+  # Generated ONCE at init by the llm_librechat ivm template; edit freely, then
+  # `podman restart LibreChat` - a re-init keeps this file.
   version: 1.2.1
   cache: true
   endpoints:
     custom:
-      # OpenRouter (docs example, verbatim except apiKey): `dropParams: ["stop"]`
-      # because OpenRouter models use varied stop tokens - dropping it avoids
-      # compatibility errors. `fetch: true` loads the live model list.
-      # `default` is ONLY the fallback shown if the live fetch fails - model switching
-      # (and picking the routed provider, e.g. Novita) happens in the UI dropdown.
-      - name: "OpenRouter"
+      # Endpoint NAMES self-describe routing + privacy: "(<who routes / which
+      # provider>, <data policy>)". Every endpoint carries `zdr: true` - route ONLY
+      # to endpoints with a formal Zero Data Retention policy
+      # (openrouter.ai/docs/guides/features/zdr; live list:
+      # https://openrouter.ai/api/v1/endpoints/zdr) - EXCEPT the one explicit
+      # "(Auto route, data may be collected)" escape hatch below. ZDR is the point
+      # of this whole setup: these endpoints exist for questions where privacy
+      # matters, so a model with no ZDR endpoint must FAIL ("No allowed providers
+      # are available"), never quietly fall back to a retaining one - reach for the
+      # escape hatch only when YOU decided the question needs no privacy guarantee.
+      # Auto-routed (docs example + `zdr`): OpenRouter picks the provider per request
+      # from the ZDR pool. `dropParams: ["stop"]` because OpenRouter models use
+      # varied stop tokens - dropping it avoids compatibility errors. `fetch: true`
+      # loads the live model list; `default` is ONLY the fallback if that fetch fails.
+      - name: "OpenRouter (Auto route, ZDR)"
         apiKey: "${OPENROUTER_KEY}"
         baseURL: "https://openrouter.ai/api/v1"
         models:
@@ -157,8 +184,83 @@ post_install_script: |
         titleConvo: true
         titleModel: "openrouter/auto"
         dropParams: ["stop"]
-        modelDisplayLabel: "OpenRouter"
-  EOF
+        addParams:
+          provider:
+            zdr: true
+        modelDisplayLabel: "OpenRouter (Auto route, ZDR)"
+      # The ONE endpoint without `zdr` (upstream docs example, verbatim except
+      # apiKey): auto-routed over ALL providers, retaining ones included - for
+      # questions that need no privacy guarantee (e.g. when the ZDR pool lacks the
+      # model). Picking it is the deliberate opt-out.
+      - name: "OpenRouter (Auto route, data may be collected)"
+        apiKey: "${OPENROUTER_KEY}"
+        baseURL: "https://openrouter.ai/api/v1"
+        models:
+          default: ["openrouter/auto"]
+          fetch: true
+        titleConvo: true
+        titleModel: "openrouter/auto"
+        dropParams: ["stop"]
+        modelDisplayLabel: "OpenRouter (Auto route, data may be collected)"
+      # Pinned endpoints below, one per provider, via OpenRouter provider routing
+      # (openrouter.ai/docs/features/provider-routing): `only` + `allow_fallbacks:
+      # false` lock the provider; `zdr` + `data_collection: "deny"` refuse endpoints
+      # that retain/collect/train on prompts, so a provider policy change FAILS
+      # LOUDLY ("No allowed providers are available") instead of silently leaking data
+      # (all 9 pinned providers have ZDR endpoints as of 2026-08). The model
+      # dropdown still lists the FULL OpenRouter catalog (the fetch is not
+      # per-provider) - picking a model the pinned provider does not host errors with
+      # the same "No allowed providers" message; that is expected, pick another model.
+      # `titleModel: current_model` = title generation reuses the conversation's
+      # model (the auto endpoint's `openrouter/auto` would clash with the pin).
+      # Accuracy knob: to REQUIRE full precision on an endpoint, add under `provider:`
+      #   quantizations: ["bf16", "fp16", "fp32"]
+      # Off by default on purpose: many reputable endpoints are DISCLOSED fp8 (or
+      # unknown) and the filter would exclude them; each endpoint's quantization is
+      # public on the model's openrouter.ai Providers tab, so serving a lower
+      # precision than declared is what third-party evals (e.g. MoonshotAI's
+      # K2-Vendor-Verifier) exist to catch - not something a filter can prevent.
+  STATIC_HEAD
+  # slug:Label pairs, ALPHABETICAL (the UI lists endpoints in this order, auto first).
+  # Curated 2026-08: common open-model inference hosts with good serving-accuracy
+  # reputations, non-CN-headquartered (per https://openrouter.ai/api/v1/providers),
+  # no training / no prompt retention (each verified `training:false,
+  # retainsPrompts:false` on its openrouter.ai provider pages) - and data_collection
+  # above RE-ENFORCES the no-collection bar per request.
+  for pinned_provider_entry in \
+    cerebras:Cerebras \
+    deepinfra:DeepInfra \
+    fireworks:Fireworks \
+    groq:Groq \
+    nebius:Nebius \
+    novita:Novita \
+    parasail:Parasail \
+    sambanova:SambaNova \
+    together:Together
+  do
+    provider_slug="${pinned_provider_entry%%:*}"
+    provider_label="${pinned_provider_entry#*:}"
+    cat <<PINNED_ENDPOINT
+      - name: "OpenRouter ($provider_label, ZDR)"
+        apiKey: "\${OPENROUTER_KEY}"
+        baseURL: "https://openrouter.ai/api/v1"
+        models:
+          default: ["openrouter/auto"]
+          fetch: true
+        titleConvo: true
+        titleModel: "current_model"
+        dropParams: ["stop"]
+        addParams:
+          provider:
+            only: ["$provider_slug"]
+            allow_fallbacks: false
+            zdr: true
+            data_collection: "deny"
+        modelDisplayLabel: "OpenRouter ($provider_label, ZDR)"
+  PINNED_ENDPOINT
+  done
+  } > ~/librechat/librechat.yaml
+  GENERATE_LIBRECHAT_YAML
   # LibreChat secrets, generated ONCE per VM (the guard means a re-init never rotates
   # them). CREDS_KEY/CREDS_IV encrypt provider API keys saved through the UI into mongo -
   # lose them and the keys inside every existing backup become undecryptable, which is why
