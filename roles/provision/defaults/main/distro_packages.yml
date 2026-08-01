@@ -215,7 +215,7 @@ provision_distro_packages:
   #     until verified on a real Tumbleweed box (`zypper search <name>`). Until
   #     then an openSUSE guest's zsh just runs without those two plugins.
   incus_guest_baseline:
-    description: "always-on ivm guest floor - zsh, sudo, sshd, curl/git/ca-certificates/tmux"
+    description: "always-on ivm guest floor - zsh, sudo, sshd, curl/git/ca-certificates/tmux/less"
     __common__:
       - curl
       - git
@@ -223,6 +223,7 @@ provision_distro_packages:
       - sudo
       - zsh
       - tmux
+      - less
     Debian:
       - openssh-server
       - zsh-syntax-highlighting
