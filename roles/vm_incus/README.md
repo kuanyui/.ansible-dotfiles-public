@@ -25,7 +25,7 @@ a full separate kernel (stronger isolation than a shared-kernel container).
 ```bash
 make vm-incus-install          # install `ivm` + example templates (+ host incus setup)
 cd ~/projects/foo
-ivm init claude              # build a VM from the `claude` template, bound to this dir
+ivm init agent_claude        # build a VM from the `agent_claude` template, bound to this dir
 ivm shell                    # zsh into it (Claude Code is on PATH inside)
 ivm snapshot create clean    # before risky changes
 ivm stop                     # shut down (disk state preserved)
@@ -44,7 +44,7 @@ validation). Shipped examples: `base_debian` / `base_opensuse` / `base_fedora`
 (bare distro + `tools_basic`, nothing else), `llm_sillytavern` / `llm_openwebui` /
 `llm_librechat` (self-contained LLM chat appliances, each with an in-guest
 `llm-backup` helper that tars app data into the host-shared `~/Downloads`),
-`claude`, `codex`, `webbrowser`, `windows11`.
+`agent_claude`, `agent_codex`, `webbrowser`, `windows11`.
 
 Field groups (see the schema for the full, authoritative list):
 

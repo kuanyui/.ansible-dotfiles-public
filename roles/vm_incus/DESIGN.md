@@ -8,7 +8,7 @@ file is the current state).
 
 `ivm` is ONE Python script, `files/ivm` (~2950 lines, stdlib + lazy
 `yaml`/`jsonschema`). One launcher manages both general workstation VMs and
-coding-agent VMs: there is NO `agent` abstraction - a "claude" VM is just a
+coding-agent VMs: there is NO `agent` abstraction - an "agent_claude" VM is just a
 template whose `post_install_script` installs Claude Code.
 
 ## 1. Host-side provisioning (no ansible/python in the guest)

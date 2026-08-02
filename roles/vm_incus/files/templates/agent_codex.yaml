@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=../template.schema.json
 # Codex agent VM: Node.js + npm `@openai/codex`.
-template_name: codex
+template_name: agent_codex
 description: "Codex agent box (Debian + Node.js + @openai/codex CLI)"
 host_bound_dir: $(pwd)
 hw:
@@ -24,4 +24,4 @@ mounts:
       - .git
 shell_default_dir_after_login: /workspaces/$(basename "$(pwd)")   # `ivm sh` starts in the mounted project (matches the mount's guest path)
 thirdparty_software:
-  - agent_codex   # npm install -g @openai/codex (brings its own nodejs + npm deps); recipe in roles/provision_thirdparty_software/defaults/main.yml
+  - agent_codex   # npm install -g @openai/codex (brings its own nodejs + npm deps); recipe in roles/provision/defaults/main/thirdparty_software.yml

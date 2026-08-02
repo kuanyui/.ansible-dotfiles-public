@@ -237,7 +237,7 @@ Two backend families behave differently on disk:
 
 Placeholders used in the cells below:
 
-- `<vm-name>` - the VM's name. `ivm` names it `ivm-<template>-<cwd-path>` by default (e.g. `ivm-claude-...`), or whatever you pass to `ivm init <template> <name>`.
+- `<vm-name>` - the VM's name. `ivm` names it `ivm-<template>-<cwd-path>` by default (e.g. `ivm-agent-claude-...`), or whatever you pass to `ivm init <template> <name>`.
 - `<image-fingerprint>` - the SHA256 fingerprint of a cached incus image, ~64 hex chars; for `images:debian/13` it's something like `b8a3e07c1f29...` (the daemon-level cache directory `/var/lib/incus/images/<image-fingerprint>/` stores the corresponding tarball + metadata).
 - `<snap>` - whatever name you passed to `incus snapshot create <vm-name> <snap>`.
 - `<volname>` - the volume name you passed to `incus storage volume import default <iso-file> <volname> --type=iso`.

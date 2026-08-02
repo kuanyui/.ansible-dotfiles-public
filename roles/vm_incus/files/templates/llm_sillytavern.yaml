@@ -6,7 +6,7 @@
 #
 # Self-contained on purpose: the whole install lives in post_install_script, NOT in the
 # shared provision_thirdparty_software registry. SillyTavern is a single-purpose appliance
-# (like webbrowser.yaml), not a reusable tool like claude/codex - keeping it out of the
+# (like webbrowser.yaml), not a reusable tool like agent_claude/agent_codex - keeping it out of the
 # registry means `ivm provision llm_sillytavern` can't accidentally land it on other VMs.
 template_name: llm_sillytavern
 description: "SillyTavern LLM chat server (Debian, headless; host browser -> guest:8000; shares ~/Downloads for character cards)"

@@ -189,7 +189,7 @@ You describe the VM once (OS/distro, hardware, mounts, packages, dotfiles, post-
 
 ```bash
 make vm-incus-install          # install `ivm` + example templates
-ivm init claude              # create a VM from the `claude` template, bound to the current dir
+ivm init agent_claude        # create a VM from the `agent_claude` template, bound to the current dir
 ivm shell                    # enter it (zsh); `ivm` from a subdir offers the parent's VM
 ```
 
@@ -197,11 +197,11 @@ ivm shell                    # enter it (zsh); `ivm` from a subdir offers the pa
 
 If your user was just added to `incus`, **log out + back in** (or `newgrp incus` in this shell) before running `ivm` - the role hard-aborts on this condition so it can't be missed, with the exact remediation steps printed; Linux only refreshes a session's supplementary group set at login time.
 
-Produces `~/.local/bin/ivm` (plus shell completion) + example templates (`claude`, `codex`, ...). You drive it from a project dir:
+Produces `~/.local/bin/ivm` (plus shell completion) + example templates (`agent_claude`, `agent_codex`, ...). You drive it from a project dir:
 
 ```bash
 cd ~/projects/foo
-ivm init claude      # build a VM from the `claude` template (claude.yaml): shares $PWD into
+ivm init agent_claude   # build a VM from the `agent_claude` template (agent_claude.yaml): shares $PWD into
                      #   /workspaces/foo, installs Claude Code, bound to this dir
 ivm shell            # zsh into that VM (Claude Code is on PATH inside)
 ivm stop             # shut down the VM (disk state preserved)

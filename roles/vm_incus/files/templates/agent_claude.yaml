@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=../template.schema.json
-template_name: claude
+template_name: agent_claude
 description: "Claude Code agent box (Debian; mounts cwd + shadows .git/.vscode; claude CLI)"
 host_bound_dir: $(pwd)
 hw:
@@ -39,7 +39,7 @@ distro_packages:
   - curl
   - git
 thirdparty_software:
-  - agent_claude   # curl|bash installer; recipe in roles/provision_thirdparty_software/defaults/main.yml
+  - agent_claude   # curl|bash installer; recipe in roles/provision/defaults/main/thirdparty_software.yml
 dotfiles:
   - bash
   - tmux
