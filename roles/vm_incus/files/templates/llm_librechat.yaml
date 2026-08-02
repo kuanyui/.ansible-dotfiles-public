@@ -214,7 +214,8 @@ post_install_script: |
       # false` lock the provider; `zdr` + `data_collection: "deny"` refuse endpoints
       # that retain/collect/train on prompts, so a provider policy change FAILS
       # LOUDLY ("No allowed providers are available") instead of silently leaking data
-      # (all 9 pinned providers have ZDR endpoints as of 2026-08). The model
+      # (all 11 pinned providers have ZDR endpoints as of 2026-08; Phala runs in GPU
+      # TEEs - hardware-attested privacy - and Venice is a no-log-by-design host). The model
       # dropdown still lists the FULL OpenRouter catalog (the fetch is not
       # per-provider) - picking a model the pinned provider does not host errors with
       # the same "No allowed providers" message; that is expected, pick another model.
@@ -242,8 +243,10 @@ post_install_script: |
     nebius:Nebius \
     novita:Novita \
     parasail:Parasail \
+    phala:Phala \
     sambanova:SambaNova \
-    together:Together
+    together:Together \
+    venice:Venice
   do
     provider_slug="${pinned_provider_entry%%:*}"
     provider_label="${pinned_provider_entry#*:}"
