@@ -78,6 +78,22 @@ provision_thirdparty_software:
         # on a clean guest where they are absent.
         su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/codex" "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/".codex-* && npm install -g @openai/codex'
 
+  agent_opencode:
+    description: "OpenCode CLI (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps; connect OpenRouter in-app with /connect)"
+    distro_packages:
+      __common__:
+        - nodejs
+        - npm
+    __common__:
+      # File test, not `command -v` - same reasoning as `agent_codex`.
+      already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/opencode'
+      install_script: |
+        # Same centralized-npm redirect as `agent_codex` (see its comment for the full
+        # story). `opencode-ai` is UNSCOPED, so npm's scoped-rename bug (npm/cli#4096)
+        # does not bite here - clearing the package dir before (re)install still
+        # self-heals a wedged partial download the same way.
+        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/opencode-ai" && npm install -g opencode-ai'
+
   # Rust via rustup - the official, recommended install (rust-lang.org/tools/install).
   # It downloads PREBUILT toolchain binaries (NOT source) into ~/.rustup + ~/.cargo as the
   # unprivileged `user`. The stable toolchain already bundles rustc/cargo/clippy/rustfmt;
