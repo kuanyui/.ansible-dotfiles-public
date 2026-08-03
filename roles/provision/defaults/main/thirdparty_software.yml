@@ -79,20 +79,78 @@ provision_thirdparty_software:
         su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/codex" "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/".codex-* && npm install -g @openai/codex'
 
   agent_opencode:
-    description: "OpenCode CLI (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps; connect OpenRouter in-app with /connect)"
+    description: "OpenCode CLI (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps; preloaded price-labeled OpenRouter model menu; connect OpenRouter in-app with /connect)"
     distro_packages:
       __common__:
         - nodejs
         - npm
     __common__:
-      # File test, not `command -v` - same reasoning as `agent_codex`.
-      already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/opencode'
+      # File tests, not `command -v` - same reasoning as `agent_codex`. The model-menu
+      # config counts as installed state, so a missing config re-runs the script
+      # (whose per-file guard keeps a hand-edited config untouched).
+      already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/opencode && test -f ~/.config/opencode/opencode.json'
       install_script: |
         # Same centralized-npm redirect as `agent_codex` (see its comment for the full
         # story). `opencode-ai` is UNSCOPED, so npm's scoped-rename bug (npm/cli#4096)
         # does not bite here - clearing the package dir before (re)install still
         # self-heals a wedged partial download the same way.
         su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/opencode-ai" && npm install -g opencode-ai'
+        # Preloaded OpenRouter model menu, written ONCE (guarded - a rerun never
+        # clobbers later hand edits). Per model: `name` is what the /models picker
+        # displays, so price/context/ZDR ride in it (nothing to memorize); `cost`
+        # ($/M tokens) feeds opencode's TUI cost readout; `options.provider` is
+        # OpenRouter provider routing - `zdr` + `data_collection: "deny"` = the same
+        # privacy floor as the llm_librechat endpoints. List prices are OpenRouter's
+        # as of 2026-08 - refresh from openrouter.ai when stale. `model`/`small_model`
+        # defaults: GLM-5.2 main driver, DeepSeek V4 Flash for cheap auxiliary calls.
+        # The API key is NOT here - run `/connect` once inside opencode.
+        su - user -c 'set -eu
+          [ -f ~/.config/opencode/opencode.json ] && exit 0
+          mkdir -p ~/.config/opencode
+          cat > ~/.config/opencode/opencode.json
+        ' <<'OPENCODE_JSON'
+        {
+          "$schema": "https://opencode.ai/config.json",
+          "model": "openrouter/z-ai/glm-5.2",
+          "small_model": "openrouter/deepseek/deepseek-v4-flash-0731",
+          "provider": {
+            "openrouter": {
+              "models": {
+                "z-ai/glm-5.2": {
+                  "name": "GLM-5.2 | $0.63/$1.98 | 1M ctx | ZDR",
+                  "cost": { "input": 0.63, "output": 1.98 },
+                  "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+                },
+                "deepseek/deepseek-v4-pro": {
+                  "name": "DeepSeek V4 Pro | $0.43/$0.87 | 1M ctx | ZDR",
+                  "cost": { "input": 0.43, "output": 0.87 },
+                  "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+                },
+                "moonshotai/kimi-k2.7-code": {
+                  "name": "Kimi K2.7 Code | $0.73/$3.50 | 262k ctx | ZDR",
+                  "cost": { "input": 0.73, "output": 3.5 },
+                  "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+                },
+                "deepseek/deepseek-v4-flash-0731": {
+                  "name": "DeepSeek V4 Flash | $0.09/$0.18 | 1M ctx | ZDR",
+                  "cost": { "input": 0.09, "output": 0.18 },
+                  "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+                },
+                "qwen/qwen3-coder-30b-a3b-instruct": {
+                  "name": "Qwen3 Coder 30B | $0.07/$0.28 | 262k ctx | ZDR",
+                  "cost": { "input": 0.07, "output": 0.28 },
+                  "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+                },
+                "moonshotai/kimi-k3": {
+                  "name": "Kimi K3 | $3.00/$15.00 | 1M ctx | ZDR | strongest open",
+                  "cost": { "input": 3, "output": 15 },
+                  "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+                }
+              }
+            }
+          }
+        }
+        OPENCODE_JSON
 
   # Rust via rustup - the official, recommended install (rust-lang.org/tools/install).
   # It downloads PREBUILT toolchain binaries (NOT source) into ~/.rustup + ~/.cargo as the
