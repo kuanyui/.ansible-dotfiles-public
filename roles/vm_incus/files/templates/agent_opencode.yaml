@@ -32,4 +32,60 @@ dotfiles:
   - zsh
 usage:
   - "connect OpenRouter (one-time): run `opencode`, then its `/connect` command - pick OpenRouter, paste your API key (stored in-guest at ~/.local/share/opencode/auth.json)"
-  - "pick a model: `/models` inside opencode"
+  - "pick a model: `/models` inside opencode - the preloaded menu shows price + context + ZDR in each name (from ~/.config/opencode/opencode.json; edit it to add models or refresh prices)"
+# Preloaded OpenRouter model menu, written ONCE (guarded - a re-init never clobbers
+# later hand edits). Per model: `name` is what the /models picker displays, so price/
+# context/ZDR ride in it (nothing to memorize); `cost` ($/M tokens) feeds opencode's
+# TUI cost readout; `options.provider` is OpenRouter provider routing - `zdr` +
+# `data_collection: "deny"` = the same privacy floor as the llm_librechat endpoints.
+# List prices are OpenRouter's as of 2026-08 - refresh from openrouter.ai when stale.
+# `model`/`small_model` defaults: GLM-5.2 as the main driver, DeepSeek V4 Flash for
+# cheap auxiliary calls. The API key is NOT here - `/connect` once inside opencode.
+post_install_script: |
+  su - user -c 'set -eu
+    [ -f ~/.config/opencode/opencode.json ] && exit 0
+    mkdir -p ~/.config/opencode
+    cat > ~/.config/opencode/opencode.json
+  ' <<'OPENCODE_JSON'
+  {
+    "$schema": "https://opencode.ai/config.json",
+    "model": "openrouter/z-ai/glm-5.2",
+    "small_model": "openrouter/deepseek/deepseek-v4-flash-0731",
+    "provider": {
+      "openrouter": {
+        "models": {
+          "z-ai/glm-5.2": {
+            "name": "GLM-5.2 | $0.63/$1.98 | 1M ctx | ZDR",
+            "cost": { "input": 0.63, "output": 1.98 },
+            "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+          },
+          "deepseek/deepseek-v4-pro": {
+            "name": "DeepSeek V4 Pro | $0.43/$0.87 | 1M ctx | ZDR",
+            "cost": { "input": 0.43, "output": 0.87 },
+            "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+          },
+          "moonshotai/kimi-k2.7-code": {
+            "name": "Kimi K2.7 Code | $0.73/$3.50 | 262k ctx | ZDR",
+            "cost": { "input": 0.73, "output": 3.5 },
+            "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+          },
+          "deepseek/deepseek-v4-flash-0731": {
+            "name": "DeepSeek V4 Flash | $0.09/$0.18 | 1M ctx | ZDR",
+            "cost": { "input": 0.09, "output": 0.18 },
+            "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+          },
+          "qwen/qwen3-coder-30b-a3b-instruct": {
+            "name": "Qwen3 Coder 30B | $0.07/$0.28 | 262k ctx | ZDR",
+            "cost": { "input": 0.07, "output": 0.28 },
+            "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+          },
+          "moonshotai/kimi-k3": {
+            "name": "Kimi K3 | $3.00/$15.00 | 1M ctx | ZDR | strongest open",
+            "cost": { "input": 3, "output": 15 },
+            "options": { "provider": { "zdr": true, "data_collection": "deny" } }
+          }
+        }
+      }
+    }
+  }
+  OPENCODE_JSON
