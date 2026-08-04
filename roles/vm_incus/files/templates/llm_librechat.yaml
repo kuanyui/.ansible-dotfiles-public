@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=../template.schema.json
 # LibreChat server VM: a headless box running upstream's docker-compose deployment -
-# trimmed to the minimal api + mongodb pair - via rootless podman-compose, reached from
+# trimmed to api + mongodb + meilisearch - via rootless podman-compose, reached from
 # the HOST browser at http://<guest-ip>:3080 (incus NAT lets the host route to the guest;
 # the LAN cannot). No GUI and no /workspaces mount - a single-purpose appliance, not a
 # dev/agent box. Log in as admin@example.com / adminadmin (pre-created at init; login is
@@ -16,10 +16,12 @@
 # NOT `user_provided`: that mode never fetches the live model list (upstream
 # LibreChat#4500/#1028), leaving only the fallback model in the dropdown.
 #
-# Upstream extras deliberately left out: meilisearch (message full-text search), and
-# vectordb + rag_api (RAG file Q&A, which also needs an embedding API key). To add one
-# later, copy its service block from upstream's docker-compose.yml into the in-guest
-# ~/librechat/docker-compose.yml and restart - no VM rebuild needed.
+# meilisearch (message full-text search) IS included: LibreChat has no other search
+# backend (with `SEARCH=false` the UI search box just disappears), and its index is a
+# regenerable cache - the api re-syncs it from mongo at every startup. Upstream extras
+# deliberately left out: vectordb + rag_api (RAG file Q&A, which also needs an embedding
+# API key). To add one later, copy its service block from upstream's docker-compose.yml
+# into the in-guest ~/librechat/docker-compose.yml and restart - no VM rebuild needed.
 #
 # Self-contained on purpose: the whole install lives in post_install_script, NOT in the
 # shared provision_thirdparty_software registry (same appliance doctrine as
@@ -35,7 +37,8 @@ description: "LibreChat LLM chat server (Debian, headless; rootless podman-compo
 host_bound_dir: ""
 # Host-reachable endpoints, queryable later via `ivm info` (annotation of what
 # post_install_script sets up; init warns if the port literal vanishes from the script).
-# mongo is deliberately NOT listed: it lives on the compose-internal network only.
+# mongo + meilisearch are deliberately NOT listed: they live on the compose-internal
+# network only.
 services: { webui: 3080 }
 # Post-init how-to, shown by `ivm info` (Usage group) - so nothing here needs remembering
 # after init. Read live from this file; keep in sync with post_install_script.
@@ -82,9 +85,10 @@ dotfiles:
 # the `|` block strips the common 2 spaces, so the written files (compose keys, the unit's
 # `[Section]` headers, the script) and the heredoc terminators land at column 0.
 post_install_script: |
-  # Create the data dirs and pull both images NOW so registry/network trouble fails the
-  # init loudly, instead of the systemd service flapping after first boot. Re-running just
-  # refreshes the moving tags (:latest / :8), so a re-init is an upgrade.
+  # Create the data dirs and pull all three images NOW so registry/network trouble fails
+  # the init loudly, instead of the systemd service flapping after first boot. Re-running
+  # just refreshes the moving tags (:latest / :8), so a re-init is an upgrade -
+  # meilisearch's tag is PINNED instead, see its compose comment below.
   # The api image runs as `node` (container uid 1000 - `USER node` in upstream's
   # Dockerfile), but rootless podman maps the guest user to container uid 0, so freshly
   # mkdir'd bind mounts are container-ROOT-owned and node gets `EACCES: permission
@@ -92,17 +96,20 @@ post_install_script: |
   # node uid = a guest subuid) hands node its three dirs; llm-backup already tars inside
   # `podman unshare`, so the subuid ownership round-trips through backup/restore.
   # data-node is deliberately NOT chowned - the mongo image entrypoint starts as
-  # container root and fixes its own ownership. (The compose-level fix
+  # container root and fixes its own ownership. meili_data_* likewise: meilisearch runs
+  # as container root (its Dockerfile sets no `USER`), which rootless podman maps back
+  # to the guest user. (The compose-level fix
   # `userns_mode: keep-id` is unavailable here: podman-compose runs services in a pod,
   # and podman rejects --userns together with --pod.)
   su - user -c 'set -eu
-    mkdir -p ~/librechat/data-node ~/librechat/images ~/librechat/uploads ~/librechat/logs
+    mkdir -p ~/librechat/data-node ~/librechat/images ~/librechat/uploads ~/librechat/logs ~/librechat/meili_data_v1.35.1
     podman unshare chown --recursive 1000:1000 ~/librechat/images ~/librechat/uploads ~/librechat/logs
     podman pull ghcr.io/danny-avila/librechat:latest
     podman pull docker.io/library/mongo:8
+    podman pull docker.io/getmeili/meilisearch:v1.35.1
   '
-  # Trimmed 1:1 from upstream LibreChat docker-compose.yml: api + mongodb only (see the
-  # header comment for how to add meilisearch / RAG back). One deviation: fully-qualified
+  # Trimmed 1:1 from upstream LibreChat docker-compose.yml: api + mongodb + meilisearch
+  # (see the header comment for how to add RAG back). One deviation: fully-qualified
   # image names (no short-name resolution surprises). `restart: unless-stopped` is KEPT
   # from upstream on purpose: the systemd unit below supervises only the podman-compose
   # process, NOT the member containers - when a member crashes, podman-compose stays
@@ -124,6 +131,7 @@ post_install_script: |
         - HOST=0.0.0.0
         - PORT=3080
         - MONGO_URI=mongodb://mongodb:27017/LibreChat
+        - MEILI_HOST=http://meilisearch:7700
       volumes:
         - ./images:/app/client/public/images
         - ./uploads:/app/uploads
@@ -138,6 +146,24 @@ post_install_script: |
       command: mongod --noauth
       volumes:
         - ./data-node:/data/db
+    # meilisearch deviations from upstream (beyond the fully-qualified image):
+    # `env_file` replaces upstream's MEILI_MASTER_KEY compose-interpolation - env_file
+    # injection is the path this file already proves out on api, while a silently-failed
+    # interpolation would boot meilisearch KEYLESS and every keyed api request would 403
+    # (meilisearch reads its MEILI_* vars, ignores the rest of .env). Upstream's
+    # `user: "UID:GID"` line is dropped - a rootful-docker artifact (keeps ./meili_data
+    # host-user-owned there); rootless podman maps container root to the guest user
+    # already. The image tag is PINNED (not :latest) and the data dir carries the same
+    # version, both kept from upstream: the on-disk index format is per-version, so an
+    # upgrade = bump the tag AND the dir suffix together (and the pull above) - the
+    # fresh dir re-fills via the api's startup mongo->meili sync.
+    meilisearch:
+      image: docker.io/getmeili/meilisearch:v1.35.1
+      container_name: chat-meilisearch
+      restart: unless-stopped
+      env_file: .env
+      volumes:
+        - ./meili_data_v1.35.1:/meili_data
   EOF
   # LibreChat custom-endpoint config (mounted to /app/librechat.yaml by the compose
   # file), GENERATED here: the auto-routed "OpenRouter" endpoint + one PINNED endpoint
@@ -288,8 +314,12 @@ post_install_script: |
         printf "# is why it is admin twice. Add accounts with:\n"
         printf "#   podman exec LibreChat npm run create-user -- <email> <name> <username>\n"
         printf "ALLOW_REGISTRATION=false\n"
-        printf "# No meilisearch container in the trimmed compose -> keep message search off.\n"
-        printf "SEARCH=false\n"
+        printf "# Message search (meilisearch container). MEILI_MASTER_KEY is the api<->meilisearch\n"
+        printf "# shared secret; compose env_file hands this whole file to BOTH containers, so the\n"
+        printf "# two sides always agree.\n"
+        printf "SEARCH=true\n"
+        printf "MEILI_NO_ANALYTICS=true\n"
+        printf "MEILI_MASTER_KEY=%s\n" "$(openssl rand -hex 32)"
         printf "# LibreChat default SESSION_EXPIRY is 15 MINUTES - constant re-logins. NAT-only\n"
         printf "# single-user box, so long-lived sessions are the right trade (same doctrine as\n"
         printf "# the weak password): 1 year - browsers cap cookie lifetime at ~400 days anyway.\n"
@@ -360,8 +390,8 @@ post_install_script: |
   su - user -c 'mkdir -p ~/.local/bin && cat > ~/.local/bin/llm-backup && chmod +x ~/.local/bin/llm-backup' <<'LCSCRIPT'
   #!/usr/bin/env bash
   # LibreChat backup/restore (guest-local, no sudo). Tars ~/librechat (mongo data-node,
-  # .env with the CREDS_* decryption secrets, uploads, images, logs, compose file) into
-  # ~/Downloads/LibreChatBackups/ (host-shared). Stops the service around the tar so the
+  # meili_data_* search index, .env with the CREDS_* decryption secrets, uploads, images,
+  # logs, compose file) into ~/Downloads/LibreChatBackups/ (host-shared). Stops the service around the tar so the
   # raw mongo data dir is consistent, and restarts it after. Restore is destructive.
   set -euo pipefail
   # su/cron contexts don't set these, and systemctl --user needs both to reach the user bus.
