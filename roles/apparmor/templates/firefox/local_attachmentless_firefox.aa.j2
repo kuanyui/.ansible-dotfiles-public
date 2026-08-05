@@ -11,10 +11,14 @@ abi <abi/5.0>,
 #
 # Common rules are in /etc/apparmor.d/abstractions/local_base_firefox.
 # aa_label: label_name lowercased, spaces replaced with underscores
+#
+# flags=(attach_disconnected): reattaches disconnected paths so the journal-socket
+# deny in local_base_firefox matches (the audit reports the socket without its /run
+# prefix); without the flag the lookup fails before rule matching and keeps logging.
 
 {% for ff_profile in apparmor_firefox_profiles %}
 {% set aa_label = ff_profile.label_name | lower | replace(' ', '_') %}
-profile local_attachmentless_firefox_isolated_{{ aa_label }} {
+profile local_attachmentless_firefox_isolated_{{ aa_label }} flags=(attach_disconnected) {
     #include <abstractions/local_base_firefox>
 
     # Firefox multi-process sandbox requires ptrace between its own processes
@@ -44,7 +48,7 @@ profile local_attachmentless_firefox_isolated_{{ aa_label }} {
 # Full access to all Firefox profiles, no per-profile isolation.
 # Use for multi-profile workflows or when per-profile isolation is not needed.
 # Launched via: aa-exec -p local_attachmentless_firefox_all_profiles -- firefox --ProfileManager
-profile local_attachmentless_firefox_all_profiles {
+profile local_attachmentless_firefox_all_profiles flags=(attach_disconnected) {
     #include <abstractions/local_base_firefox>
 
     ptrace (trace) peer=local_attachmentless_firefox_all_profiles,

@@ -65,6 +65,14 @@ profile local_attachmentless_glycin flags=(attach_disconnected) {
     #include <abstractions/local_mixin_network_local_ipc>
     #include <abstractions/local_mixin_deny_mounted_external_media>
 
+    # Callers leak their own AF_UNIX SOCK_SEQPACKET socketpairs into the bwrap
+    # child via fd inheritance (e.g. Firefox's crash-reporter pipe, passed to
+    # every Firefox child). Glycin's IPC is SOCK_STREAM (UnixStream::pair,
+    # glycin-core/src/dbus.rs), granted by local_mixin_network_local_ipc above -
+    # seqpacket is never needed here. Plain deny revokes the leaked fds at exec
+    # (operation=file_inherit) and silences the spam for any caller.
+    deny unix (send, receive) type=seqpacket,
+
     # User/group namespace ID mapping
     /proc/sys/kernel/overflowuid r,
     /proc/sys/kernel/overflowgid r,

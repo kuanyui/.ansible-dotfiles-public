@@ -44,6 +44,16 @@
     #include <abstractions/local_mixin_glycin>
     /usr/bin/bwrap Px -> local_attachmentless_glycin,
 
+    # The bwrap child also inherits Firefox's crash-reporter pipe - an unnamed AF_UNIX
+    # SOCK_SEQPACKET socketpair Firefox passes to every child process. At the Px
+    # transition AppArmor revalidates inherited fds (operation=file_inherit) on both
+    # ends against the peer's label. Glycin's own IPC is SOCK_STREAM
+    # (UnixStream::pair, glycin-core/src/dbus.rs), granted via
+    # local_mixin_network_local_ipc - the decoder has no use for the crash pipe, so
+    # plain deny revokes the fd and silences the spam on the Firefox side
+    # (counterpart deny in local_attachmentless_glycin).
+    deny unix (send, receive) type=seqpacket peer=(label=local_attachmentless_glycin),
+
     # User/group namespace ID mapping - needed by bwrap for user namespace setup
     /proc/sys/kernel/overflowuid r,
     /proc/sys/kernel/overflowgid r,
@@ -97,4 +107,32 @@
     # exactly what an isolated browser must not see. `deny` (NOT `audit
     # deny`) silences the spam from GTK probing it on each dialog open.
     deny owner @{HOME}/.local/share/recently-used.xbel r,
+
+    # Firefox 146+ MemoryPoller reads PSI (Pressure Stall Information) memory
+    # pressure every few seconds to react to low memory (Mozilla bug 2007019).
+    # System-wide stall percentages only - no per-process data.
+    @{PROC}/pressure/memory r,
+
+    # Camera enumeration (WebRTC device listing) - only `r` audited so far;
+    # actual capture will surface a `w` denial and gets granted then.
+    /dev/video* r,
+
+    # Web Speech API TTS: libspeechd autospawns the speech-dispatcher daemon
+    # when voices are enumerated. No speechd profile exists in this setup and
+    # an isolated browser gets no TTS daemon - plain deny silences the probe.
+    deny /usr/bin/speech-dispatcher x,
+
+    # System D-Bus intentionally denied - only the session bus
+    # (dbus-session-strict above) is granted. Firefox retries from many threads
+    # (rtkit realtime-audio priority, NetworkManager link/proxy state); all
+    # degrade gracefully. Plain `deny` silences the connect spam.
+    deny /run/dbus/system_bus_socket rw,
+
+    # systemd journal: Firefox tries to log to the journal socket; intentionally
+    # not granted. The audit reports the target as systemd/journal/socket
+    # without the /run prefix (disconnected path), so deny both the canonical
+    # and the reported form; matching the disconnected form needs the
+    # flags=(attach_disconnected) set on the profile headers.
+    deny /run/systemd/journal/socket w,
+    deny /systemd/journal/socket w,
 
