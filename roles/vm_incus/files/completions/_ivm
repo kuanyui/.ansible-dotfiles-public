@@ -139,6 +139,36 @@ for row in csv.reader(sys.stdin):
 '
 }
 
+# Add VM-name completions from `name[:description]` lines, one match PER LINE. NOT
+# `_describe` on purpose: with the `list-grouped` style true (the default) it stacks
+# matches sharing one description onto a single line (`vm-a vm-b vm-c -- (unbound; init
+# dir ...)`) - confusing for VM names. `compadd -l -d` keeps a strict 1:1 name ->
+# display-line mapping (names padded so the `--` descriptions still align).
+# $1 = the completion-listing header, rest = the lines.
+_ivm_add_vms_ungrouped() {
+  local _ivm_listing_header="$1" _ivm_line _ivm_vm_name
+  shift
+  local -a _ivm_match_names _ivm_display_lines _ivm_expl
+  local _ivm_name_pad_width=0
+  for _ivm_line in "$@"; do
+    [[ -n "$_ivm_line" ]] || continue
+    _ivm_vm_name="${_ivm_line%%:*}"
+    (( ${#_ivm_vm_name} > _ivm_name_pad_width )) && _ivm_name_pad_width=${#_ivm_vm_name}
+  done
+  for _ivm_line in "$@"; do
+    [[ -n "$_ivm_line" ]] || continue
+    _ivm_vm_name="${_ivm_line%%:*}"
+    _ivm_match_names+=("$_ivm_vm_name")
+    if [[ "$_ivm_line" == *:* ]]; then
+      _ivm_display_lines+=("$(printf "%-${_ivm_name_pad_width}s  -- %s" "$_ivm_vm_name" "${_ivm_line#*:}")")
+    else
+      _ivm_display_lines+=("$_ivm_vm_name")
+    fi
+  done
+  (( $#_ivm_match_names )) || return 1
+  _wanted vms _ivm_expl "$_ivm_listing_header" compadd -l -d _ivm_display_lines -a _ivm_match_names
+}
+
 # REUSABLE: only the VMs `ivm cd` can jump to - those with a REAL `user.ivm_host_bound_dir`
 # - as `name:host_bound_dir` pairs. Deliberately NOT built on `_ivm_vms_with_dir`: its
 # `(unbound; ...)` fallback descriptions would sneak unbound VMs (which `ivm cd` refuses)
@@ -182,9 +212,7 @@ case "$state" in
   subcmd) _describe 'ivm subcommand' _ivm_subcommands ;;
   vmname)
     # `--name <vm>`: any incus VM, with its working dir shown on the right for managed ones.
-    local -a _ivm_name_targets
-    _ivm_name_targets=(${(f)"$(_ivm_vms_with_dir)"})
-    _describe -t vms 'VM' _ivm_name_targets ;;
+    _ivm_add_vms_ungrouped 'VM' ${(f)"$(_ivm_vms_with_dir)"} ;;
   args)
     case "$words[1]" in
       init|env)
@@ -193,18 +221,14 @@ case "$state" in
         _ivm_templates=(${(f)"$(_ivm_template_names)"})
         _describe -t templates 'template' _ivm_templates ;;
       cd)
-        # An ivm-managed VM by name; the description column is its working dir, so
-        # `_describe` renders `<name>  -- <working dir>` (left name, right path).
-        local -a _ivm_cd_targets
-        _ivm_cd_targets=(${(f)"$(_ivm_managed_vms)"})
-        _describe -t vms 'ivm-managed VM' _ivm_cd_targets ;;
+        # An ivm-managed VM by name; the description column is its working dir
+        # (`<name>  -- <working dir>` - left name, right path).
+        _ivm_add_vms_ungrouped 'ivm-managed VM' ${(f)"$(_ivm_managed_vms)"} ;;
       # The no-positional subcommands take an optional trailing `<vm>` (shortcut for --name);
       # complete any incus VM with its working dir shown (managed ones). `resize` adds its flags.
       shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
         [[ "$words[1]" == resize ]] && compadd -- --cpu --memory --disk
-        local -a _ivm_vm_targets
-        _ivm_vm_targets=(${(f)"$(_ivm_vms_with_dir)"})
-        _describe -t vms 'VM' _ivm_vm_targets ;;
+        _ivm_add_vms_ungrouped 'VM' ${(f)"$(_ivm_vms_with_dir)"} ;;
       storage-status) compadd -- --json ;;
       mount)
         # 1=mount, then the action (ls/attach/shadow/detach); flags may sit between -> skip them.
@@ -258,9 +282,8 @@ case "$state" in
         # --name resolves it), 2nd/last = the NEW name. BOTH complete VM names: a rename
         # usually tweaks a few trailing chars, so completing the old name as an editable
         # starting point for the NEW name saves retyping it.
-        local -a _ivm_rename_targets
-        _ivm_rename_targets=(${(f)"$(_ivm_vms_with_dir)"})
-        _describe -t vms 'VM name (old to rename, or as a starting point to edit into the new name)' _ivm_rename_targets
+        _ivm_add_vms_ungrouped 'VM name (old to rename, or as a starting point to edit into the new name)' \
+          ${(f)"$(_ivm_vms_with_dir)"}
         ;;
       expose) _message 'host port, or host-port:guest-port (e.g. 8000 or 9000:8000)' ;;
       unexpose)
