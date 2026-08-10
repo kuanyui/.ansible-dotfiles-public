@@ -86,7 +86,7 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 `resize` - also accept a trailing VM name: `ivm stop foo`, `ivm info foo`, `ivm sh
 foo` (a shortcut for `--name`, tab-completed with each VM's bound dir shown in
 zsh). Omit it to resolve by the current directory. Commands that DO take an argument
-(`provision`, `push`, `mount`, `snapshot`, `expose`, `unexpose`) use `--name` only.
+(`provision`, `push`, `mount`, `snapshot`, `expose`, `unexpose`, `rename`) use `--name` only.
 
 | Subcommand | What it does |
 |---|---|
@@ -99,6 +99,7 @@ zsh). Omit it to resolve by the current directory. Commands that DO take an argu
 | `start` / `stop` | Start / stop the target VM. `stop` asks first (`--yes` skips). |
 | `reboot` | `incus restart` the target VM (asks first; `--yes` skips). |
 | `delete` | Delete the VM + its disk + snapshots (asks first; `--yes` skips). |
+| `rename <new-name>` | Rename the VM (`incus rename`; stopped VMs only - `ivm stop` first; asks first, `--yes` skips). Snapshots and the dir binding travel with it, so cwd resolution keeps working. The positional is the NEW name - target the old VM by cwd or `--name`. |
 | `update` | Refresh + upgrade all packages in the VM (per-family apt/zypper/dnf). |
 | `resize [--cpu N] [--memory NG] [--disk NG]` | Change an existing VM's vCPU / RAM / root-disk (the template `hw.*` only applies at `init`). cpu/memory apply live; **disk grows only** (refuses shrink) and resizes just the host block device - the guest fs needs `ivm reboot` or in-guest `growpart`+`resize2fs`. |
 | `mount ls\|attach\|shadow\|detach` | Inspect / change a VM's virtio-fs shares after creation (template `mounts` only apply at `init`, but incus disk devices hotplug for VMs). `attach <host> <guest> [--ro] [--shadow SUB ...]` (`--shadow` masks subpaths *of this mount*, at attach time); `shadow <guest_path>` masks one **already-existing guest directory** with an empty read-only dir, independent of any mount (e.g. hide a mounted project's `.git` you forgot to `--shadow`). Directories only - a VM disk device can't mask a single file. `detach <mount>` (drops its masks too) **or** `detach <masked-path>` to un-mask one subpath. `detach` prints what it will unbind (`device: host-source -> guest-path`) + confirms first (`--yes` skips); it only unbinds the share - **host data is never deleted**. `ls`. |

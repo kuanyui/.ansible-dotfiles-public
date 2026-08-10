@@ -18,6 +18,7 @@ _ivm_subcommands=(
   'reboot:restart the target VM (incus restart)'
   'stop:stop the target VM'
   'delete:delete the target VM (confirms)'
+  'rename:rename the target VM (incus rename; stopped only; confirms)'
   'env:load + print a template'\''s resolved config'
   'list:table of managed VMs - state/name/MEM guest+host/disk/created/up-last-on/host-bound dir/IPv4 (extra args -> raw incus list)'
   'top:live per-instance CPU/memory/disk usage (incus top passthrough)'
@@ -252,6 +253,9 @@ case "$state" in
           _ivm_guest_dirs   # <guest>: the destination path in the guest
         fi
         ;;
+      # rename's positional is the NEW name (nothing to complete); the OLD VM is
+      # picked by cwd or --name only, so no trailing <vm> either.
+      rename) _message 'new VM name (the OLD VM resolves by cwd or --name)' ;;
       expose) _message 'host port, or host-port:guest-port (e.g. 8000 or 9000:8000)' ;;
       unexpose)
         # Existing forwards on the target VM (--name, else the cwd-bound VM): the

@@ -60,7 +60,8 @@ With neither, the VM is the one whose `user.ivm_host_bound_dir` tag matches the
 current directory (or a parent dir, offered interactively). `user.ivm_init_at_dir`
 is a pure HISTORICAL record (where `ivm init` ran; also the managed-VM marker) and
 MUST NOT drive resolution. Subcommands that DO take a positional (`provision` /
-`push` / `mount` / `snapshot` / `expose` / `unexpose`) target a VM only by cwd or
+`push` / `mount` / `snapshot` / `expose` / `unexpose` / `rename` - rename's
+positional is the NEW name, never the target) target a VM only by cwd or
 `--name`. `adopt` is the one exception - it MUST require `--name` (the VM has no
 tags yet).
 
@@ -89,6 +90,7 @@ key-aligned.
 | `stop` | - | stop the VM (disk state preserved). | yes |
 | `reboot` | - | `incus restart` the VM. | yes |
 | `delete` | - | delete the VM + disk + snapshots + its dir binding. | yes |
+| `rename` | `<new-name>` | rename the VM (`incus rename`). MUST refuse a running VM (incus renames stopped instances only) and MUST re-apply the init-time name checks to the new name (valid incus name, not taken, virtiofs socket paths still fit `sun_path`). Snapshots + binding tags travel with the instance. | yes |
 | `update` | - | refresh + upgrade all guest packages (apt/zypper/dnf per family). | no |
 | `provision` | `[unit ...]` | install distro bundle(s) / thirdparty recipe(s) / dotfiles feature(s) onto an existing VM. NO units => LIST all installable units + descriptions (needs no VM). | no |
 | `resize` | `--cpu N` / `--memory NG` / `--disk NG` | change an existing VM's vCPU / RAM / root-disk. cpu+memory apply live; disk GROWS only (MUST refuse shrink) and resizes only the host block device. | no |

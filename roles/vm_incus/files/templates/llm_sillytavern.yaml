@@ -22,6 +22,8 @@ usage:
   - "web UI: open the `services` address above in the HOST browser; set API keys in its API Connections panel"
   - "character cards: ~/Downloads is shared with the host - drop PNGs there to trade both ways"
   - "backup / restore data: in the VM run `llm-backup` / `llm-backup restore latest` (tars land in host-shared ~/Downloads/SillyTavernBackups/)"
+  - "debug output: in the VM `journalctl --user --unit sillytavern --follow` (status: `systemctl --user status sillytavern`); foreground run: `systemctl --user stop sillytavern` then `cd ~/SillyTavern && node server.js`"
+  - "UI / extension errors (e.g. CharacterLibrary) surface only in the HOST browser devtools console (F12), not in the server journal"
 hw:
   cpu: 2
   memory: 3G

@@ -9,7 +9,7 @@ the guest). Contract: roles/vm_incus/SPEC.md; architecture: roles/vm_incus/DESIG
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
-`delete`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set`+`unset` (guest
+`delete`/`rename`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set`+`unset` (guest
 settings: password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/MEM guest+host/disk/created/up-last-on/host-bound dir/IPv4; args -> raw incus list); `cd` (print a VM's host-bound dir for the `ivm()` shell wrapper to cd into);
 `adopt` (bring an unmanaged VM - hand-made or older-ivm - under ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, a global `--name <vm>`, or (when the
@@ -84,16 +84,17 @@ DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
 # or overridden with the global `--name`. (`init`/`env`/`list` are NOT here -
 # they don't resolve a target VM.)
 CWD_RESOLVED: tuple[str, ...] = (
-    "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete",
+    "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete", "rename",
     "overwrite-dotfiles", "update", "provision", "resize", "mount", "push", "snapshot", "gui", "info",
     "expose", "unexpose",
 )
 # CWD_RESOLVED subcommands that ALREADY take a positional of their own (a unit, a path, an
-# action, a port), so a trailing `<vm>` would be ambiguous - they target a VM only by cwd or
-# `--name`. EVERY OTHER cwd-resolved subcommand also accepts an optional trailing `<vm>` name
-# (a shortcut for `--name`; build_parser adds it, main() folds it into the resolved target).
+# action, a port, rename's NEW name), so a trailing `<vm>` would be ambiguous - they target a
+# VM only by cwd or `--name`. EVERY OTHER cwd-resolved subcommand also accepts an optional
+# trailing `<vm>` name (a shortcut for `--name`; build_parser adds it, main() folds it into
+# the resolved target).
 CWD_RESOLVED_WITH_OWN_POSITIONAL: frozenset[str] = frozenset(
-    {"provision", "mount", "push", "snapshot", "expose", "unexpose"})
+    {"provision", "mount", "push", "snapshot", "expose", "unexpose", "rename"})
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
 # share one useless generic line. Keys MUST match CWD_RESOLVED exactly.
 CWD_RESOLVED_HELP: dict[str, str] = {
@@ -104,6 +105,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "reboot": "restart the VM (`incus restart`; confirms, `--yes` skips)",
     "stop": "stop the VM (disk state preserved; confirms, `--yes` skips)",
     "delete": "delete the VM + disk + snapshots (confirms; `--yes` skips)",
+    "rename": "rename the VM (`incus rename`; stopped VMs only; confirms, `--yes` skips)",
     "overwrite-dotfiles": "re-push the host-staged dotfiles into the VM (no re-provision)",
     "update": "refresh + upgrade all packages in the VM",
     "provision": "install distro bundle(s) / thirdparty recipe(s) onto the VM",
@@ -1965,6 +1967,47 @@ def cmd_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> Non
     run(["incus", "delete", "--force", name], dry_run=dry_run)
 
 
+def cmd_rename(name: str, new_name: str, *, assume_yes: bool, dry_run: bool) -> None:
+    """Rename the target VM (`incus rename`). The VM must be STOPPED (incus cannot
+    rename a running instance) - `ivm stop` first. Confirms before renaming (unless
+    `--yes`). Everything stored ON the instance travels with it: snapshots, and the
+    `user.ivm_host_bound_dir` binding tag - so cwd resolution keeps working under the
+    new name. The positional here is the NEW name; the OLD VM resolves by cwd or
+    `--name` only (`ivm --name <old> rename <new>` from anywhere)."""
+    if new_name == name:
+        print(f"==> already named {colorize_vm_name(name)}; nothing to rename.", file=sys.stderr)
+        return
+    if not INCUS_NAME_RE.match(new_name):
+        die(f"'{new_name}' is not a valid incus name ([a-zA-Z0-9-], starts alnum, <=63)")
+    # The incus queries below (existence, running state, attached shares) are skipped
+    # under `--dry-run` - hermetic, same as name_error.
+    if not dry_run:
+        if not instance_exists(name):
+            die(f"no such incus VM: '{name}' (see `incus list`)")
+        if vm_is_running(name):
+            die(f"{colorize_vm_name(name)} is running; incus renames stopped VMs only - "
+                f"run `ivm stop` first")
+        if instance_exists(new_name):
+            die(f"a VM named '{new_name}' already exists")
+        # Same AF_UNIX sun_path guard as init / mount-attach: every attached share's
+        # virtiofs socket path embeds the instance name, so the NEW name must still fit.
+        incus_project_prefix: str = current_incus_project_prefix()
+        for device_name in _vm_disk_devices(name):
+            socket_path: str = virtiofs_socket_path(incus_project_prefix, new_name, device_name)
+            if len(socket_path) > SUN_PATH_MAX - 1:
+                die(f"'{new_name}' is a valid incus name but too long for the virtiofs "
+                    f"socket path it produces ({len(socket_path)} > {SUN_PATH_MAX - 1}): "
+                    f"{socket_path}. Pick a shorter name.")
+    if not (assume_yes or dry_run):
+        if not sys.stdin.isatty():
+            die(f"refusing to rename {name} without a TTY; pass --yes")
+        if input(f"Rename {colorize_vm_name(name)} -> {colorize_vm_name(new_name)}? "
+                 f"[y/N] ").strip().lower() not in ("y", "yes"):
+            die("aborted; VM not renamed")
+    run(["incus", "rename", name, new_name], dry_run=dry_run)
+    print(f"==> {colorize_vm_name(name)} renamed to {colorize_vm_name(new_name)}.", file=sys.stderr)
+
+
 def cmd_overwrite_dotfiles(name: str, shared_prebuilt_provision_assets_root: Path, *, dry_run: bool) -> None:
     """Re-push the host-staged baseline dotfiles (bash/tmux/zsh + the
     `~/.centralized-lang-pkgs` install-redirect env file) into an existing VM
@@ -3559,6 +3602,7 @@ def cmd_stub(subcommand: str) -> NoReturn:
 CWD_RESOLVED_HANDLER: dict[str, Callable[..., None]] = {
     "shell": cmd_shell, "shell-user": cmd_shell, "shell-root": cmd_shell,
     "start": cmd_start, "reboot": cmd_reboot, "stop": cmd_stop, "delete": cmd_delete,
+    "rename": cmd_rename,
     "overwrite-dotfiles": cmd_overwrite_dotfiles, "update": cmd_update, "provision": cmd_provision,
     "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info, "resize": cmd_resize,
     "mount": cmd_mount, "push": cmd_push,
@@ -3662,6 +3706,10 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("vm", nargs="?",
                             help="target this VM by name instead of the cwd binding "
                                  "(shortcut for `--name`; omit to resolve by the current dir)")
+        if name == "rename":
+            sp.add_argument("new_name", metavar="new-name",
+                            help="the VM's NEW incus name; the OLD VM resolves by cwd or "
+                                 "`--name` (this positional is never the target)")
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name == "provision":
@@ -3787,6 +3835,8 @@ def main() -> None:
         cmd_stop(name, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "delete":
         cmd_delete(name, root, assume_yes=args.yes, dry_run=args.dry_run)
+    elif args.subcommand == "rename":
+        cmd_rename(name, args.new_name, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "overwrite-dotfiles":
         cmd_overwrite_dotfiles(name, shared_prebuilt_provision_assets_root, dry_run=args.dry_run)
     elif args.subcommand == "set":
