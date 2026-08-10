@@ -90,9 +90,12 @@ CWD_RESOLVED: tuple[str, ...] = (
 )
 # CWD_RESOLVED subcommands that ALREADY take a positional of their own (a unit, a path, an
 # action, a port, rename's NEW name), so a trailing `<vm>` would be ambiguous - they target a
-# VM only by cwd or `--name`. EVERY OTHER cwd-resolved subcommand also accepts an optional
-# trailing `<vm>` name (a shortcut for `--name`; build_parser adds it, main() folds it into
-# the resolved target).
+# VM only by cwd or `--name`. Exception: `rename` also takes its target as an optional
+# LEADING `<old-vm>` positional (the `incus rename <old> <new>` order); build_parser wires it
+# to the same `vm` dest as the trailing shortcut, so main() resolves + conflict-checks it
+# identically. EVERY OTHER cwd-resolved subcommand also accepts an optional trailing `<vm>`
+# name (a shortcut for `--name`; build_parser adds it, main() folds it into the resolved
+# target).
 CWD_RESOLVED_WITH_OWN_POSITIONAL: frozenset[str] = frozenset(
     {"provision", "mount", "push", "snapshot", "expose", "unexpose", "rename"})
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
@@ -1972,8 +1975,9 @@ def cmd_rename(name: str, new_name: str, *, assume_yes: bool, dry_run: bool) -> 
     rename a running instance) - `ivm stop` first. Confirms before renaming (unless
     `--yes`). Everything stored ON the instance travels with it: snapshots, and the
     `user.ivm_host_bound_dir` binding tag - so cwd resolution keeps working under the
-    new name. The positional here is the NEW name; the OLD VM resolves by cwd or
-    `--name` only (`ivm --name <old> rename <new>` from anywhere)."""
+    new name. The LAST positional is the NEW name; the OLD VM is the optional
+    positional before it (`ivm rename <old> <new>`, the `incus rename` order) or
+    resolves by cwd / `--name` (`ivm rename <new>` from the bound dir)."""
     if new_name == name:
         print(f"==> already named {colorize_vm_name(name)}; nothing to rename.", file=sys.stderr)
         return
@@ -3707,9 +3711,14 @@ def build_parser() -> argparse.ArgumentParser:
                             help="target this VM by name instead of the cwd binding "
                                  "(shortcut for `--name`; omit to resolve by the current dir)")
         if name == "rename":
-            sp.add_argument("new_name", metavar="new-name",
-                            help="the VM's NEW incus name; the OLD VM resolves by cwd or "
-                                 "`--name` (this positional is never the target)")
+            # `incus rename` argument order: an optional LEADING <old-vm>, then the NEW
+            # name. dest `vm` on purpose: main()'s generic explicit-vm resolution (and
+            # its `--name` conflict check) picks it up like any trailing `<vm>` shortcut.
+            # argparse assigns a single argument to the REQUIRED `new_name`, not to `vm`.
+            sp.add_argument("vm", nargs="?", metavar="old-vm",
+                            help="the VM to rename (`incus rename` order); omit to resolve "
+                                 "by cwd or `--name`")
+            sp.add_argument("new_name", metavar="new-name", help="the VM's NEW incus name")
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name == "provision":

@@ -253,9 +253,15 @@ case "$state" in
           _ivm_guest_dirs   # <guest>: the destination path in the guest
         fi
         ;;
-      # rename's positional is the NEW name (nothing to complete); the OLD VM is
-      # picked by cwd or --name only, so no trailing <vm> either.
-      rename) _message 'new VM name (the OLD VM resolves by cwd or --name)' ;;
+      rename)
+        # `incus rename` order: 1st positional = the OLD VM (optional - omitted, cwd or
+        # --name resolves it), 2nd/last = the NEW name. BOTH complete VM names: a rename
+        # usually tweaks a few trailing chars, so completing the old name as an editable
+        # starting point for the NEW name saves retyping it.
+        local -a _ivm_rename_targets
+        _ivm_rename_targets=(${(f)"$(_ivm_vms_with_dir)"})
+        _describe -t vms 'VM name (old to rename, or as a starting point to edit into the new name)' _ivm_rename_targets
+        ;;
       expose) _message 'host port, or host-port:guest-port (e.g. 8000 or 9000:8000)' ;;
       unexpose)
         # Existing forwards on the target VM (--name, else the cwd-bound VM): the

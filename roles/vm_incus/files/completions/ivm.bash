@@ -151,8 +151,11 @@ _ivm() {
             COMPREPLY=( $(compgen -W "--as-root" -- "$cur") $(compgen -A file -- "$cur") )
             ;;
         rename)
-            # The positional is the NEW name (nothing to complete); the OLD VM is picked
-            # by cwd or --name only, so no trailing <vm> either.
+            # `incus rename` order: 1st positional may be the OLD VM (optional - omitted,
+            # cwd or --name resolves it), 2nd/last is the NEW name. BOTH complete VM
+            # names: a rename usually tweaks a few trailing chars, so completing the old
+            # name as an editable starting point for the NEW name saves retyping it.
+            COMPREPLY=( $(compgen -W "$(incus list --format csv --columns n 2>/dev/null)" -- "$cur") )
             ;;
         unexpose)
             # Existing forwards: the `expose-tcp-<port>` proxy device names on the target
