@@ -153,6 +153,25 @@ Never place `#include` lines at the bottom or interspersed among rules.
 
 Do not insert blank lines between consecutive `#include` lines.
 
+## AppArmor profile flags syntax
+
+A multi-flag header uses COMMA + space, alphabetically sorted - `flags=(a, b)`:
+
+```
+profile local_pathbased_mscore3 /usr/{,local/}bin/mscore3 flags=(attach_disconnected, mediate_deleted) {
+```
+
+Both separators are legal - `apparmor.d(5)` defines the flag list as "comma or white space
+separated" - but the comma form is the one the tools WRITE BACK, so it is the only form that
+survives a deploy. `aa-enforce` / `aa-complain` / `aa-logprof` (the Python utils, NOT
+`apparmor_parser`, which never rewrites a file) rebuild the entire header line through
+`ProfileStorage.get_header()`, and `change_profile_flags()` serializes the flag set as
+`', '.join(...)` over an alphabetically sorted list (upstream `utils/apparmor/aa.py`,
+`utils/apparmor/profile_storage.py`). `tasks/_install.yml` runs `aa-enforce` across every managed
+profile on EVERY apply, so a space-separated header is rewritten on disk seconds after Ansible
+writes it: the deployed file then permanently differs from its template and `make check-apparmor`
+reports a phantom change on every run. Write what the tool writes.
+
 ## AppArmor file permission modes
 
 Valid mode characters for file rules in AppArmor policy syntax:

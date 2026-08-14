@@ -32,7 +32,7 @@ abi <abi/5.0>,
 # Draft - put in complain mode first to capture missing paths:
 #   sudo aa-complain /etc/apparmor.d/local_pathbased_telegram
 
-profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected mediate_deleted) {
+profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected, mediate_deleted) {
     #include <abstractions/base>
     #include <abstractions/nameservice>
     #include <abstractions/fonts>

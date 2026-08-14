@@ -1,16 +1,29 @@
 # TODO
 
-## `local_pathbased_dbeaver` (portable tarball) - complain pass pending 2026-08-14
+## `local_pathbased_dbeaver` (portable tarball) - complain round 1 applied 2026-08-14
 
 New profile for the official DBeaver CE binary tarball, run in place (no install). Name-based
 attachment `/**/dbeaver` like anydesk. Whole unpack tree allowed (`owner /**/dbeaver/** rwkm`);
 workspace `~/.local/share/DBeaverData/`; network via `local_mixin_network_app`; browser data /
 SSH+GPG keys / clipboard stores / ALL customized_extra_dirs (DENY_ALL variant) hard-denied.
 
-- [ ] Complain pass on the real machine (`sudo aa-complain /etc/apparmor.d/local_pathbased_dbeaver`),
-  collect denials, re-tighten. Authored blind - likely first-launch candidates: `~/.java/`
-  (Java Preferences API), `~/.swt/` (SWT native extraction fallback), `/usr/bin/xdg-open`
-  (OAuth login flows open a browser), GTK portal paths.
+- [x] Round 1: first-launch denials (2026-08-14) folded into the profile.
+
+  | Denial | Verdict |
+  |--------|---------|
+  | `~/.swt/` mkdir | allow `rw` + `**  rwm` - SWT native extraction, denying it pushes the same `.so` into `$HOME` instead |
+  | `/sys/kernel/mm/hugepages/`, `.../transparent_hugepage/shmem_enabled` | allow `r` - HotSpot large-page probe |
+  | `/proc/sys/vm/mmap_min_addr` | allow `r` |
+  | `/proc/<pid>/net/if_inet6` | allow `r` WITHOUT `owner` - proc net files are root-owned, so the existing `owner @{PROC}/@{pid}/**` cannot match |
+  | `/proc/<pid>/coredump_filter` | allow `owner ... w` - self-scoped |
+  | `/usr/share/glycin-loaders/2+/conf.d/` | allow `r` only; `local_mixin_glycin` deliberately NOT included (it grants loader `ix` + expects the `bwrap Px`) |
+  | AT-SPI bus `/run/user/*/at-spi/bus_1` | plain `deny` - cross-app UI read / input injection, not for a network-egress DB client |
+  | `systemd/journal/socket` sendmsg (disconnected) | plain `deny` both forms + `flags=(attach_disconnected)`, mscore3 pattern |
+
+- [ ] Round 2 after the next launch: confirm `~/.swt/**` is enough (round 1 saw only the denied
+  `mkdir`, the subtree grant is inferred from SWT's `Library.loadLibrary`), and watch for the
+  still-unseen blind-authoring candidates: `~/.java/` (Java Preferences API), `/usr/bin/xdg-open`
+  (OAuth login flows open a browser), GTK portal paths. Then take it out of complain mode.
 
 ## `aaa-logs` recent-denials viewer - done 2026-07-02
 

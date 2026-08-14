@@ -21,7 +21,9 @@ abi <abi/5.0>,
 # Draft - put in complain mode first to capture missing paths:
 #   sudo aa-complain /etc/apparmor.d/local_pathbased_dbeaver
 
-profile local_pathbased_dbeaver /**/dbeaver {
+# flags: attach_disconnected reattaches the disconnected systemd journal socket (see the
+# journal section) so its deny matches.
+profile local_pathbased_dbeaver /**/dbeaver flags=(attach_disconnected) {
     #include <abstractions/base>
     #include <abstractions/nameservice>
     #include <abstractions/fonts>
@@ -67,6 +69,14 @@ profile local_pathbased_dbeaver /**/dbeaver {
     owner @{HOME}/.local/share/DBeaverData/ rw,
     owner @{HOME}/.local/share/DBeaverData/** rwk,
 
+    # SWT native-library extraction fallback. SWT looks for libswt-*.so in swt.library.path,
+    # then java.library.path, and only if both miss does it mkdir ~/.swt/lib/<platform>/<arch>/,
+    # extract the .so from the plugin jar, chmod 755 it and dlopen it (m). Denying the mkdir
+    # does not prevent the write - SWT then falls back to extracting the same .so into $HOME
+    # itself (Library.loadLibrary, eclipse.platform.swt).
+    owner @{HOME}/.swt/ rw,
+    owner @{HOME}/.swt/** rwm,
+
     # D-Bus session bus (desktop notifications for long-running query completion)
     owner /run/user/*/bus rw,
 
@@ -77,10 +87,47 @@ profile local_pathbased_dbeaver /**/dbeaver {
     owner @{PROC}/@{pid}/ r,
     owner @{PROC}/@{pid}/** r,
 
+    # JVM startup probes, each read once while HotSpot sizes itself
+    /sys/kernel/mm/hugepages/ r,                          # large-page pool availability
+    /sys/kernel/mm/transparent_hugepage/shmem_enabled r,  # THP policy for shared memory
+    @{PROC}/sys/vm/mmap_min_addr r,                       # lowest mmap-able address
+    # /proc/<pid>/net/* is root-owned even for a user-owned process, so the `owner` rules
+    # above cannot match it - granted separately, for this pid's file only.
+    @{PROC}/@{pid}/net/if_inet6 r,                        # java.net: is the IPv6 stack up?
+    # HotSpot sets which mappings land in its own core dump. Self-scoped: no other process
+    # is affected, and the heap is dumped either way, so this grants no credential exposure.
+    owner @{PROC}/@{pid}/coredump_filter w,
+
+    # GTK image loading enumerates the glycin loader configs at startup - the layout is
+    # <data-dir>/glycin-loaders/<compat-version>+/conf.d/, where the version dir is bumped
+    # by glycin itself on a compat break (2+ -> 3+), so an upgrade re-audits here. Reading
+    # the config dir launches nothing, so this profile deliberately does NOT include
+    # local_mixin_glycin: that mixin grants ix on the loader binaries and expects a
+    # `/usr/bin/bwrap Px -> local_attachmentless_glycin` transition, which a database client
+    # has no reason to own. Revisit only if audit shows an actual decode attempt.
+    /usr/share/glycin-loaders/2+/conf.d/ r,
+
     # XDG cross-app recents (GtkRecentManager): network-facing app -> denied, same
     # calibration as the browsers; local_mixin_recent_file_list is for no-network local
     # viewers only. Plain deny (not audit): GTK file dialogs touch this on every
     # open/save dialog - noise, not signal.
     deny owner @{HOME}/.local/share/recently-used.xbel{,.*} rw,
+
+    # AT-SPI accessibility bus: denied, not granted. GTK's atk-bridge dials this socket on
+    # every launch, and a client on that bus can read the accessible text of OTHER
+    # applications' windows and generate synthetic input - the same whole-desktop reach that
+    # makes local_mixin_gui_x11 expensive, which a network-egress database client must not
+    # have. Plain deny (not audit): per-launch toolkit noise, not a tripwire. Trade-off: a
+    # screen reader (Orca) cannot read the DBeaver UI.
+    deny owner /run/user/*/at-spi/bus{,_*} rw,
+
+    # systemd journal: denied, not granted. libsystemd in the GTK/JVM stack logs to the
+    # journal socket; a database client needs no host-journal access. The socket is an
+    # AF_UNIX dgram whose dentry is disconnected from the policy namespace root, so the audit
+    # reports it as `systemd/journal/socket` (no /run prefix) with a "disconnected path"
+    # error; flags=(attach_disconnected) on the profile header reattaches it so these denies
+    # match. Deny both forms to silence the sendmsg spam. Same pattern as mscore3.
+    deny /run/systemd/journal/socket w,
+    deny /systemd/journal/socket w,
 
 }
