@@ -43,6 +43,9 @@ apparmor_profile_mode: enforce
 apparmor_shadowed_system_profiles:
   chromium: [chrome, chromium]
   anydesk: [anydesk, usr.bin.anydesk, usr.local.bin.anydesk]
+  # No distro ships a DBeaver profile today - candidate packaged spellings only, so a
+  # future vendor/distro profile is neutralized instead of shadowing our glob attachment.
+  dbeaver: [dbeaver, dbeaver-ce, usr.bin.dbeaver]
   gwenview: [gwenview]
   mcomix: [mcomix]
   mscore: [mscore]
@@ -153,6 +156,7 @@ apparmor_template_profile_names:
   - local_pathbased_mscore3
   - local_pathbased_mscore
   - local_pathbased_anydesk
+  - local_pathbased_dbeaver
 
 # Template profiles whose mode is set by their OWN in-file `flags=(...)` header, NOT by the
 # role's mode step. They are SEPARATE from `apparmor_template_profile_names` on purpose: the

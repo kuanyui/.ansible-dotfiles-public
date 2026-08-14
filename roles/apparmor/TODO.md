@@ -1,5 +1,17 @@
 # TODO
 
+## `local_pathbased_dbeaver` (portable tarball) - complain pass pending 2026-08-14
+
+New profile for the official DBeaver CE binary tarball, run in place (no install). Name-based
+attachment `/**/dbeaver` like anydesk. Whole unpack tree allowed (`owner /**/dbeaver/** rwkm`);
+workspace `~/.local/share/DBeaverData/`; network via `local_mixin_network_app`; browser data /
+SSH+GPG keys / clipboard stores / ALL customized_extra_dirs (DENY_ALL variant) hard-denied.
+
+- [ ] Complain pass on the real machine (`sudo aa-complain /etc/apparmor.d/local_pathbased_dbeaver`),
+  collect denials, re-tighten. Authored blind - likely first-launch candidates: `~/.java/`
+  (Java Preferences API), `~/.swt/` (SWT native extraction fallback), `/usr/bin/xdg-open`
+  (OAuth login flows open a browser), GTK portal paths.
+
 ## `aaa-logs` recent-denials viewer - done 2026-07-02
 
 New `/usr/local/bin/aaa-logs` (`files/aaa-logs`, deployed by `tasks/aaa_helpers.yml`). Standalone

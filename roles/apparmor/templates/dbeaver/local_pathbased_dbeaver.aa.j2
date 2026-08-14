@@ -1,0 +1,86 @@
+abi <abi/5.0>,
+#include <tunables/global>
+
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
+# DBeaver CE AppArmor profile - /etc/apparmor.d/local_pathbased_dbeaver
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
+#
+# Attaches to any executable named "dbeaver" at any path - covers the official portable
+# binary tarball, which unpacks to a dbeaver/ directory (Eclipse launcher `dbeaver`,
+# bundled JRE under jre/, OSGi bundles under plugins/) and runs in place, no installation.
+# Same name-based attachment pattern as local_pathbased_anydesk.
+#
+# Threat model: network-egress database client (SQL over TCP to arbitrary hosts, renders
+# untrusted server responses). It gets its own unpack tree and its default workspace;
+# browser data, SSH/GPG keys, and clipboard/notes stores are hard-denied via mixins.
+#
+# customized_extra_dirs: includes the DENY_ALL variant, NOT a __for__<category> allow
+# list - a database client has no business in ANY customized extra dir, so every listed
+# dir is audit-denied regardless of its allow list.
+#
+# Draft - put in complain mode first to capture missing paths:
+#   sudo aa-complain /etc/apparmor.d/local_pathbased_dbeaver
+
+profile local_pathbased_dbeaver /**/dbeaver {
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_deny_browser_config>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_probably_credentials>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_deny_machine_id>
+    #include <abstractions/local_mixin_deny_audio>
+    #include <abstractions/local_mixin_customized_extra_dirs__DENY_ALL>
+    #include <abstractions/local_mixin_kernel_surface_general_app>
+    #include <abstractions/local_mixin_network_app>
+    #include <abstractions/local_mixin_gpu_probe>
+    #include <abstractions/local_mixin_deny_gpu>
+    #include <abstractions/local_mixin_gui_wayland>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
+
+    # The portable unpack tree, matched by directory name like the attachment.
+    # Whole-tree access is the design: the Eclipse launcher rewrites configuration/ and
+    # p2/ in place, OSGi extracts native .so bundles next to the plugins (m: libjvm.so
+    # and extracted SWT/JNA natives mmap PROT_EXEC), and Eclipse .lock files need flock
+    # (k). owner: a portable unpack is user-owned by definition.
+    owner /**/dbeaver/ r,
+    owner /**/dbeaver/** rwkm,
+    # Self re-exec (restart after driver/plugin install, -clean relaunch); the glob also
+    # matches the dbeaver/dbeaver launcher path itself. ix keeps confinement.
+    owner /**/dbeaver rix,
+    # Bundled JRE - DBeaver spawns jre/bin/java for helper processes; ix keeps them confined
+    owner /**/dbeaver/jre/bin/* rix,
+
+    # Default workspace (upstream-documented location, used even by a portable run unless
+    # dbeaver.ini overrides -data): connection definitions, SQL scripts,
+    # credentials-config.json, Eclipse .metadata; k: workspace .lock flock
+    owner @{HOME}/.local/share/DBeaverData/ rw,
+    owner @{HOME}/.local/share/DBeaverData/** rwk,
+
+    # D-Bus session bus (desktop notifications for long-running query completion)
+    owner /run/user/*/bus rw,
+
+    # SSL certificate verification (TLS to database hosts)
+    /etc/ssl/{,**} r,
+
+    # Process self-inspection (JVM reads its own maps/stat/cgroup at startup)
+    owner @{PROC}/@{pid}/ r,
+    owner @{PROC}/@{pid}/** r,
+
+    # XDG cross-app recents (GtkRecentManager): network-facing app -> denied, same
+    # calibration as the browsers; local_mixin_recent_file_list is for no-network local
+    # viewers only. Plain deny (not audit): GTK file dialogs touch this on every
+    # open/save dialog - noise, not signal.
+    deny owner @{HOME}/.local/share/recently-used.xbel{,.*} rw,
+
+}

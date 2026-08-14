@@ -1,0 +1,79 @@
+---
+# =============================================
+# Deploy AppArmor profile
+# =============================================
+
+- name: Write DBeaver AppArmor profile to /etc/apparmor.d/local_pathbased_dbeaver
+  ansible.builtin.template:
+    src: dbeaver/local_pathbased_dbeaver.aa.j2
+    dest: /etc/apparmor.d/local_pathbased_dbeaver
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Reload apparmor
+  tags: dbeaver
+
+# =============================================
+# Neutralize conflicting system DBeaver profiles
+# =============================================
+# No distro ships a DBeaver AppArmor profile today; the candidate names in
+# `apparmor_shadowed_system_profiles['dbeaver']` are the packaged spellings (`dbeaver`
+# rpm symlink, `dbeaver-ce` deb package, path-convention `usr.bin.dbeaver`) so a future
+# vendor/distro profile cannot silently take attachment priority over our glob-based
+# profile. Moved into _backup_of_default_profiles_from_package_manager/ so AppArmor does
+# not scan them, while keeping them available for reference or restoration:
+#   sudo cp /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/dbeaver /etc/apparmor.d/
+
+- name: Ensure /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/ directory exists
+  ansible.builtin.file:
+    path: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  tags: dbeaver
+
+- name: Stat system DBeaver profiles in /etc/apparmor.d/
+  ansible.builtin.stat:
+    path: /etc/apparmor.d/{{ item }}
+  loop: "{{ apparmor_shadowed_system_profiles['dbeaver'] }}"
+  register: apparmor__sys_dbeaver_stat
+  tags: dbeaver
+
+- name: Back up system DBeaver profiles to _backup_of_default_profiles_from_package_manager/
+  ansible.builtin.copy:
+    remote_src: true
+    src: /etc/apparmor.d/{{ item.item }}
+    dest: /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item.item }}
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ apparmor__sys_dbeaver_stat.results }}"
+  when: item.stat.exists
+  become: true
+  tags: dbeaver
+
+- name: Remove system DBeaver profiles from /etc/apparmor.d/
+  ansible.builtin.file:
+    path: /etc/apparmor.d/{{ item.item }}
+    state: absent
+  loop: "{{ apparmor__sys_dbeaver_stat.results }}"
+  when: item.stat.exists
+  become: true
+  notify: Reload apparmor
+  tags: dbeaver
+
+- name: Flush handlers to trigger AppArmor reload
+  ansible.builtin.meta: flush_handlers
+  tags: dbeaver
+
+- name: Remove system DBeaver profiles from kernel using backup files
+  ansible.builtin.command:
+    cmd: apparmor_parser -R /etc/apparmor.d/_backup_of_default_profiles_from_package_manager/{{ item }}
+  loop: "{{ apparmor_shadowed_system_profiles['dbeaver'] }}"
+  become: true
+  failed_when: false
+  changed_when: false
+  tags: dbeaver
