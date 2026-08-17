@@ -104,7 +104,7 @@ _ivm() {
                 aspect="${COMP_WORDS[aspect_word_index]}"; break
             done
             if [[ -z "$aspect" ]]; then
-                COMPREPLY=( $(compgen -W "password ssh-server guest-shell-dir host-bound-dir user-sudo git-ssh-key" -- "$cur") )
+                COMPREPLY=( $(compgen -W "password ssh-server guest-shell-dir host-bound-dir user-sudo git-ssh-key static-ip" -- "$cur") )
             else
                 case "$aspect" in
                     password) COMPREPLY=( $(compgen -W "user root" -- "$cur") ) ;;

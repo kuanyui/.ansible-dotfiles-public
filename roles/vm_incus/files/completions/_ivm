@@ -29,8 +29,8 @@ _ivm_subcommands=(
   'overwrite-dotfiles:re-push staged dotfiles into the VM'
   'update:upgrade all packages in the VM'
   'provision:install distro bundle(s) / thirdparty recipe(s) onto the VM'
-  'set:configure a VM setting - password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo (no aspect lists them)'
-  'unset:clear a VM setting - password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo'
+  'set:configure a VM setting - password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo/git-ssh-key/static-ip (no aspect lists them)'
+  'unset:clear a VM setting - password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo/git-ssh-key/static-ip'
   'snapshot:incus snapshot (create/list/restore/delete/rename/show)'
   'gui:open a SPICE graphical console'
   'resize:change vCPU/RAM/root-disk of an existing VM (--cpu/--memory/--disk)'
@@ -314,6 +314,7 @@ case "$state" in
             'host-bound-dir:HOST dir that resolves this VM by cwd (unset = target it by name)'
             'user-sudo:whether `user` may sudo (root-password gated)'
             'git-ssh-key:copy a host private ssh key in + wire git SSH for private repos'
+            'static-ip:whether the IPv4 is pinned to its current DHCP lease (stable across host/VM reboots)'
           )
           _describe 'ivm aspect' _ivm_aspects
         else
@@ -322,7 +323,7 @@ case "$state" in
             ssh-server) compadd -- user root --pubkey; _files ;;
             # `set guest-shell-dir <path>` takes an existing GUEST directory -> complete real
             # guest dirs; `set host-bound-dir [<path>]` takes a HOST directory -> `_files -/`
-            # (`unset` of either and `(un)set user-sudo` take no further args).
+            # (`unset` of either and `(un)set user-sudo` / `(un)set static-ip` take no further args).
             guest-shell-dir) [[ "$words[1]" == set ]] && _ivm_guest_dirs ;;
             host-bound-dir) [[ "$words[1]" == set ]] && _files -/ ;;
             # `set git-ssh-key <keyfile>` takes a HOST key file (-> _files); both verbs take --host.

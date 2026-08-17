@@ -155,6 +155,8 @@ SET_UNSET_ASPECTS: dict[str, tuple[str, str]] = {
                   "revert: remove the sudoers drop-in so `user` can no longer sudo"),
     "git-ssh-key": ("copy a host PRIVATE ssh key in + wire git/go to SSH for private repos (warns; type 'yes i know')",
                     "remove the pushed key + git's https->ssh rewrite"),
+    "static-ip": ("pin the VM's IPv4 to its current DHCP lease (incus eth0 `ipv4.address`), so it survives host/VM reboots",
+                  "unpin: back to a dynamic DHCP lease (refused while `expose` forwards target it)"),
 }
 
 # Installed on EVERY guest at first provision (the ivm-guest floor: zsh + login
@@ -2891,7 +2893,8 @@ def host_tcp_port_in_use(host_port: int) -> bool:
 
 
 def pin_vm_ipv4(name: str, *, dry_run: bool) -> tuple[str, list[str] | None]:
-    """Ensure eth0 has a STATIC IPv4 (incus proxy `nat=true` needs a fixed target IP).
+    """Ensure eth0 has a STATIC IPv4 - for `expose` (incus proxy `nat=true` needs a
+    fixed target IP) and standalone via `ivm set static-ip`.
     Returns (ipv4, rollback_command): if it was already pinned, (the IP, None); if we pin
     it now - to the CURRENT lease, same address so no reboot - (the IP, the argv that
     undoes the pin) so a later failure can leave no half-state. Under --dry-run with no
@@ -2918,6 +2921,52 @@ def pin_vm_ipv4(name: str, *, dry_run: bool) -> tuple[str, list[str] | None]:
         ["incus", "config", "device", "remove", name, "eth0"] if override_or_set == "override"
         else ["incus", "config", "device", "unset", name, "eth0", "ipv4.address"])
     return current_ipv4, rollback_command
+
+
+def cmd_set_static_ip(name: str, *, dry_run: bool) -> None:
+    """`ivm set static-ip`: pin the VM's IPv4 to its CURRENT DHCP lease (incus eth0
+    `ipv4.address` = a static allocation in the bridge's DHCP server), so the address
+    stops reshuffling across host/VM reboots - e.g. for a host-browser bookmark to an
+    in-guest service like `vscode_web`. Same-address pin, so nothing changes now and no
+    reboot is needed. `expose` does the same pin implicitly (its proxy needs a fixed
+    target); this is the standalone knob for host->guest access, where NAT already works
+    without a forward. Needs the VM running with a lease. Reverse with
+    `ivm unset static-ip`."""
+    ensure_up(name, dry_run=dry_run)
+    pinned_ipv4, pin_rollback_command = pin_vm_ipv4(name, dry_run=dry_run)
+    if pin_rollback_command is None:
+        if dry_run and pinned_ipv4 == "<vm-ipv4>":
+            # --dry-run on a VM with no live lease: pin_vm_ipv4 could read no address to
+            # pin, so preview the command it would run.
+            print(f"+ (incus config device override/set {name} eth0 ipv4.address=<current-lease>)",
+                  file=sys.stderr)
+            return
+        print(f"==> {colorize_vm_name(name)} already has a static IPv4: {pinned_ipv4}.",
+              file=sys.stderr)
+        return
+    print(f"==> {colorize_vm_name(name)}: IPv4 pinned to {pinned_ipv4} (its current lease, so "
+          f"nothing changes now) - the bridge hands it this same address from now on, across "
+          f"host/VM reboots. Undo: `ivm unset static-ip`.", file=sys.stderr)
+
+
+def cmd_unset_static_ip(name: str, *, dry_run: bool) -> None:
+    """`ivm unset static-ip`: drop the eth0 `ipv4.address` pin (set by `ivm set
+    static-ip`, or implicitly by `ivm expose`) - back to a DYNAMIC DHCP lease that may
+    change across host/VM reboots. Refused while `expose` forwards exist: their proxy
+    devices target the pinned address (`ivm unexpose` first). Config-only, so it works
+    on a stopped VM; a running VM keeps the address until the lease turns over."""
+    remaining_forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
+    if remaining_forwards:
+        forwarded_host_ports: str = ", ".join(host_port for _dev, host_port, _guest in remaining_forwards)
+        die(f"{name} still has `expose` forwards (host ports: {forwarded_host_ports}) whose "
+            f"proxy devices target the pinned address - `ivm unexpose` them first")
+    if not dry_run and not (instance_level_devices(name).get("eth0") or {}).get("ipv4.address"):
+        print(f"==> {colorize_vm_name(name)} has no static IPv4 pin (already dynamic).",
+              file=sys.stderr)
+        return
+    run(["incus", "config", "device", "unset", name, "eth0", "ipv4.address"], dry_run=dry_run)
+    print(f"==> {colorize_vm_name(name)}: static IPv4 pin removed - back to a dynamic DHCP "
+          f"lease (the address may change again across reboots).", file=sys.stderr)
 
 
 def cmd_expose(name: str, *, port_spec: str | None, dry_run: bool) -> None:
@@ -2965,7 +3014,7 @@ def cmd_expose(name: str, *, port_spec: str | None, dry_run: bool) -> None:
 def cmd_unexpose(name: str, *, port_spec: str | None, assume_yes: bool, dry_run: bool) -> None:
     """`ivm unexpose [<host-port>]`: remove a forward added by `expose`. With no port it
     removes ALL of this VM's forwards (confirms; --yes skips). The pinned IPv4 is left in
-    place - harmless, and a later `expose` reuses it."""
+    place - harmless, and a later `expose` reuses it (`ivm unset static-ip` removes it)."""
     forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
     if not forwards:
         print(f"==> {colorize_vm_name(name)} has no forwards to remove.", file=sys.stderr)
@@ -3070,7 +3119,20 @@ def cmd_info(name: str, root: Path) -> None:
     shell_dir: str = config.get("user.ivm_shell_default_dir_after_login", "") or ""
     user_sudo_value, ssh_server_value = _guest_status_values(name, status)
     ipv4: str = vm_primary_ipv4(name)
-    ip_display: str = "(vm not running)" if status.upper() != "RUNNING" else (ipv4 or "(no IPv4 lease yet)")
+    # Label whether the IP is PINNED (eth0 `ipv4.address`, set by `ivm set static-ip` or
+    # implicitly by `expose`) or a dynamic lease that may change across host/VM reboots -
+    # an unlabelled address reads as stable, which a dynamic lease is not.
+    pinned_static_ipv4: str = eth0_device.get("ipv4.address", "") or ""
+    ip_display: str
+    if status.upper() != "RUNNING":
+        ip_display = (f"(vm not running; static {pinned_static_ipv4} pinned)"
+                      if pinned_static_ipv4 else "(vm not running)")
+    elif not ipv4:
+        ip_display = "(no IPv4 lease yet)"
+    elif pinned_static_ipv4:
+        ip_display = f"{ipv4}  (static - survives host/VM reboots)"
+    else:
+        ip_display = f"{ipv4}  (dynamic dhcp lease - `ivm set static-ip` to pin)"
 
     def field(label: str, value: str) -> None:
         # 2-space indent + label padded so all values line up at one column across groups.
@@ -3674,7 +3736,7 @@ def build_parser() -> argparse.ArgumentParser:
     for verb in ("set", "unset"):
         verb_parser: argparse.ArgumentParser = sub.add_parser(
             verb, help=f"{verb} a VM setting: password / ssh-server / guest-shell-dir / host-bound-dir / user-sudo "
-                       f"(no aspect lists them)")
+                       f"/ git-ssh-key / static-ip (no aspect lists them)")
         aspect_sub = verb_parser.add_subparsers(dest="aspect")
         for aspect, (aspect_set_help, aspect_unset_help) in SET_UNSET_ASPECTS.items():
             aspect_help: str = aspect_set_help if verb == "set" else aspect_unset_help
@@ -3861,6 +3923,8 @@ def main() -> None:
             cmd_enable_user_sudo(name, dry_run=args.dry_run)
         elif args.aspect == "git-ssh-key":
             cmd_set_git_ssh_key(name, args.keyfile, args.host or [], dry_run=args.dry_run)
+        elif args.aspect == "static-ip":
+            cmd_set_static_ip(name, dry_run=args.dry_run)
     elif args.subcommand == "unset":
         if args.aspect == "password":
             cmd_unset_password(name, args.username, dry_run=args.dry_run)
@@ -3874,6 +3938,8 @@ def main() -> None:
             cmd_disable_user_sudo(name, dry_run=args.dry_run)
         elif args.aspect == "git-ssh-key":
             cmd_unset_git_ssh_key(name, args.host or [], dry_run=args.dry_run)
+        elif args.aspect == "static-ip":
+            cmd_unset_static_ip(name, dry_run=args.dry_run)
     elif args.subcommand == "update":
         cmd_update(name, dry_run=args.dry_run)
     elif args.subcommand == "provision":

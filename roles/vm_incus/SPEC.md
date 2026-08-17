@@ -140,6 +140,7 @@ MUST list the aspects + descriptions (needs no VM).
 | `host-bound-dir` | `[<path>]` | bind the VM to a HOST dir for cwd resolution (`user.ivm_host_bound_dir`); no path = the current dir. Also the legacy-VM migration path. | unbind: remove the tag (name-only targeting). |
 | `user-sudo` | - | let `user` sudo, gated by ROOT's password (`Defaults:user rootpw`); needs `set password root` first. | remove the sudoers drop-in. |
 | `git-ssh-key` | `<keyfile> [--host HOST]` | copy a host PRIVATE ssh key into the VM (renamed to its type's default name so ssh auto-uses it), trust each `--host` (default github.com), and set git `insteadOf` to rewrite https->ssh - so in-guest git / `go get` reach private repos. MUST warn + require typing `yes i know` (not skippable by `--yes`; refuses with no TTY); records the pushed key name in `user.ivm_git_ssh_key_name`. | remove that recorded key + the `insteadOf` rewrite. |
+| `static-ip` | - | pin the VM's IPv4 to its CURRENT DHCP lease (eth0 `ipv4.address` - the same pin `expose` makes implicitly; same address, so no reboot). Needs the VM running with a lease. `info`'s Network `ip` row MUST label static vs dynamic. | unpin - back to a dynamic lease. MUST refuse while `expose` forwards exist (their proxy devices target the pinned address). |
 
 ### 2d. Completions drift risk
 
