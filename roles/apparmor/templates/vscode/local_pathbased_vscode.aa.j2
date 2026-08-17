@@ -45,10 +45,14 @@ profile local_pathbased_vscode /usr/share/code/code {
     /usr/share/code/code ix,
     /usr/share/code/code-sandbox ix,                # setuid sandbox helper
     /usr/share/code/chrome_crashpad_handler ix,     # out-of-process crash reporter
-    /usr/share/code/resources/app/node_modules/@vscode/ripgrep/bin/rg ix,  # bundled ripgrep for workspace search
-    /usr/share/code/resources/app/node_modules/@vscode/ripgrep-universal/bin/linux-x64/rg ix,  # newer bundled ripgrep (per-arch path) for workspace search
-    /usr/share/code/resources/app/node_modules/@vscode/vsce-sign/bin/vsce-sign ix,  # bundled VSIX signature verifier (extension marketplace installs)
-    /usr/share/code/resources/app/node_modules.asar.unpacked/@vscode/ripgrep-universal/bin/linux-x64/rg ix,  # bundled ripgrep, asar-unpacked layout
+    # Bundled npm helpers (ripgrep for workspace search, vsce-sign for VSIX signature checks, ...).
+    # One tree rule, not a per-helper list: the tree is root-owned so the confined app cannot add a
+    # binary to it, `ix` keeps each helper under THIS profile, and `/usr/share/code/** rm` above
+    # already allows PROT_EXEC mmap of the same files in-process - so enumeration bought no
+    # confinement, only a silently broken feature plus an audit round every time an update moved a
+    # helper (ripgrep -> ripgrep-universal -> asar-unpacked, then vsce-sign). `{,.asar.unpacked}`:
+    # Electron leaves binaries that must be real files next to the asar archive.
+    /usr/share/code/resources/app/node_modules{,.asar.unpacked}/**/bin/** ix,
 
     deny /usr/share/code/resources/app/extensions/ w,  # VS Code probes this; root-owned so mkdir fails anyway
 
@@ -112,6 +116,12 @@ profile local_pathbased_vscode /usr/share/code/code {
     # podman API socket world-writable, granting arbitrary container control to other processes.
     # VSCode is not a container management tool; use a dedicated terminal for podman.
     deny /run/user/*/libpod/{,**} w,
+
+    # System D-Bus intentionally denied - only the session bus (dbus-session-strict above) is
+    # granted. Electron probes the system bus for power/battery (UPower) and link state
+    # (NetworkManager) and degrades gracefully; a marketplace extension has no business there.
+    # Plain `deny` silences the connect spam. Same calibration as firefox / telegram / mscore3.
+    deny /run/dbus/system_bus_socket rw,
 
     # System-wide git configuration - read by git child processes inheriting this profile
     /etc/gitconfig r,
