@@ -401,3 +401,119 @@ provision_thirdparty_software:
         # `bash -ec` with no tty. Also pulls the app's flatpak RUNTIME (several hundred MB).
         flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
         flatpak install --system --assumeyes --noninteractive flathub io.dbeaver.DBeaverCommunity
+
+  # VS Code reached from the HOST browser: the official Microsoft repo's `code` package
+  # (a REPO, not a one-off .deb/.rpm, so `ivm update` keeps it current - README rule; repo
+  # setup per family is upstream's documented install, code.visualstudio.com/docs/setup/linux,
+  # verified 2026-08-17) + a systemd unit running `code serve-web` - VS Code's own web
+  # server subcommand (the desktop `code` dispatches it to the BUNDLED VS Code CLI, no
+  # display needed - src/vs/code/node/cli.ts spawns bin/code-tunnel). It listens on the
+  # guest's interfaces, which incus NAT exposes to the HOST ONLY - the LAN cannot route to
+  # the guest, so nothing is published beyond the machine. RAM: idle = the small Rust
+  # listener only - the real VS Code server (node) spawns on the FIRST browser visit and
+  # auto-exits after 1h with no connections (cli/src/commands/serve_web.rs, verified
+  # 2026-08-17) - so the always-on unit costs ~nothing between sessions.
+  #
+  # Connection token kept ON (serve-web's default; `--connection-token-file` just persists
+  # it): tokenless would let EVERY sibling VM on incusbr0 - e.g. a sandboxed agent box -
+  # open the IDE and run code in this VM as `user`. The in-guest `code-web-url` helper
+  # prints the ready-to-open URL (ip + token) any time.
+  #
+  # ONE `__common__` body instead of per-family overlays: the body resolves as OVERRIDE
+  # (the family's entry if defined, else `__common__` - no common+overlay composition), so
+  # per-family overlays would have to copy the family-independent serve-web tail 3x. Only
+  # the repo setup varies by family, branched below on the present package manager.
+  vscode_web:
+    description: "VS Code Web via `code serve-web` on guest :8000 - MS repo `code` + systemd service; HOST browser only (NAT), token-gated; `code-web-url` in the guest prints the URL"
+    # Guest service on :8000 - never for the HOST itself (0.0.0.0 on a desktop would hand
+    # the LAN a terminal-equipped IDE).
+    available_on: [ivm, qvm, pvm]
+    distro_packages:
+      Debian:
+        - gpg   # `gpg --dearmor` for the MS signing key (curl is guest baseline)
+    __common__:
+      # Family-independent probe: /usr/bin/code is the launcher path BOTH the deb and the
+      # rpm ship AND the exact path the unit execs (no dbeaver-style per-packaging name
+      # drift); the unit file is the LAST artifact, so an install interrupted before the
+      # service was wired correctly re-runs.
+      already_installed: test -x /usr/bin/code && test -f /etc/systemd/system/code-serve-web.service
+      install_script: |
+        # Repo + `code` install - the ONLY per-family part, branched on the present
+        # package manager (upstream's documented setup per distro, minus sudo - we ARE root).
+        if command -v apt-get >/dev/null 2>&1; then
+          # Debian family: dearmored key + a deb822 .sources file. curl for the docs'
+          # wget (curl is guest baseline); `--batch --yes` so a re-run after a mid-script
+          # failure overwrites the key instead of dying on gpg's prompt.
+          curl --fail --silent --show-error --location https://packages.microsoft.com/keys/microsoft.asc \
+            | gpg --batch --yes --dearmor --output /usr/share/keyrings/microsoft.gpg
+          cat > /etc/apt/sources.list.d/vscode.sources <<'VSCODE_APT_REPO'
+        Types: deb
+        URIs: https://packages.microsoft.com/repos/code
+        Suites: stable
+        Components: main
+        Architectures: amd64,arm64,armhf
+        Signed-By: /usr/share/keyrings/microsoft.gpg
+        VSCODE_APT_REPO
+          apt-get update
+          apt-get install --yes code
+        else
+          # rpm families (Suse/RedHat): same key + same repo body; only the repo DIR and
+          # the package manager differ (zypper reads /etc/zypp/repos.d, dnf
+          # /etc/yum.repos.d). The pre-imported rpm key satisfies gpgcheck without a
+          # prompt. NO `dnf check-update` (its rc 100 = "updates exist" would abort
+          # `bash -ec`); install refreshes the new repo's metadata itself.
+          rpm --import https://packages.microsoft.com/keys/microsoft.asc
+          if command -v zypper >/dev/null 2>&1; then
+            vscode_repo_file=/etc/zypp/repos.d/vscode.repo
+          else
+            vscode_repo_file=/etc/yum.repos.d/vscode.repo
+          fi
+          cat > "$vscode_repo_file" <<'VSCODE_RPM_REPO'
+        [code]
+        name=Visual Studio Code
+        baseurl=https://packages.microsoft.com/yumrepos/vscode
+        enabled=1
+        autorefresh=1
+        type=rpm-md
+        gpgcheck=1
+        gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+        VSCODE_RPM_REPO
+          if command -v zypper >/dev/null 2>&1; then
+            zypper --non-interactive install code
+          else
+            dnf install --assumeyes code
+          fi
+        fi
+        # Random token, generated ONCE (`[ -f ] ||`) - a re-provision keeps existing
+        # browser bookmarks valid. umask 077 -> dir 700 / file 600, owned by `user`.
+        su - user -c 'umask 077 && mkdir --parents ~/.config/code-serve-web && { [ -f ~/.config/code-serve-web/token ] || tr --delete --complement a-f0-9 </dev/urandom | head --bytes=32 > ~/.config/code-serve-web/token; }'
+        # SYSTEM unit with User=user (not a --user unit: no linger / user-bus deps, uniform
+        # across families; restart it from `ivm shell-root`). Literal /home/user paths - %h
+        # in a SYSTEM unit is root's home, NOT User='s. First start downloads the matching
+        # web workbench (one-time, ~100+ MB) before it listens.
+        cat > /etc/systemd/system/code-serve-web.service <<'VSCODE_WEB_UNIT'
+        [Unit]
+        Description=VS Code Web (code serve-web)
+        After=network.target
+
+        [Service]
+        Type=simple
+        User=user
+        ExecStart=/usr/bin/code serve-web --host 0.0.0.0 --port 8000 --connection-token-file /home/user/.config/code-serve-web/token --accept-server-license-terms --disable-telemetry
+        Restart=on-failure
+
+        [Install]
+        WantedBy=multi-user.target
+        VSCODE_WEB_UNIT
+        systemctl daemon-reload
+        systemctl enable --now code-serve-web
+        # `code-web-url` helper (~/.local/bin is on the guest PATH via the dotfiles): re-print
+        # the ready-to-open URL any time from `ivm shell` - same line the install echoes below.
+        su - user -c 'mkdir --parents ~/.local/bin && cat > ~/.local/bin/code-web-url && chmod +x ~/.local/bin/code-web-url' <<'VSCODE_WEB_URL_HELPER'
+        #!/usr/bin/env bash
+        # Print the URL that opens this VM's VS Code Web (HOST browser; token-gated).
+        guest_ipv4="$(ip -4 -oneline address show scope global | awk '{print $4}' | cut --delimiter=/ --fields=1 | head --lines=1)"
+        printf 'http://%s:8000/?tkn=%s\n' "$guest_ipv4" "$(cat ~/.config/code-serve-web/token)"
+        VSCODE_WEB_URL_HELPER
+        echo "==> VS Code Web up. Open in the HOST browser (first load waits for the one-time workbench download):" >&2
+        su - user -c '~/.local/bin/code-web-url' >&2
