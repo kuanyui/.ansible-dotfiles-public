@@ -29,6 +29,7 @@ profile local_pathbased_dbeaver /**/dbeaver flags=(attach_disconnected) {
     #include <abstractions/fonts>
 
     #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_glycin>
     #include <abstractions/local_mixin_sysinfo>
     #include <abstractions/local_mixin_tmpdir>
     #include <abstractions/local_mixin_deny_browser_config>
@@ -98,14 +99,13 @@ profile local_pathbased_dbeaver /**/dbeaver flags=(attach_disconnected) {
     # is affected, and the heap is dumped either way, so this grants no credential exposure.
     owner @{PROC}/@{pid}/coredump_filter w,
 
-    # GTK image loading enumerates the glycin loader configs at startup - the layout is
-    # <data-dir>/glycin-loaders/<compat-version>+/conf.d/, where the version dir is bumped
-    # by glycin itself on a compat break (2+ -> 3+), so an upgrade re-audits here. Reading
-    # the config dir launches nothing, so this profile deliberately does NOT include
-    # local_mixin_glycin: that mixin grants ix on the loader binaries and expects a
-    # `/usr/bin/bwrap Px -> local_attachmentless_glycin` transition, which a database client
-    # has no reason to own. Revisit only if audit shows an actual decode attempt.
-    /usr/share/glycin-loaders/2+/conf.d/ r,
+    # Glycin image loader - bwrap exec transitions to local_attachmentless_glycin.
+    # Px (discrete, non-stacked): the decoder runs under the glycin profile, so this profile's
+    # `audit deny userns` (local_mixin_kernel_surface_general_app) does not follow it into
+    # bwrap's namespace setup. The security boundary is bwrap's mount namespace - only what
+    # bwrap bind-mounts is visible to the decoder, whatever the glycin profile permits.
+    /usr/bin/bwrap Px -> local_attachmentless_glycin,
+    signal (send) set=(kill) peer=local_attachmentless_glycin,
 
     # XDG cross-app recents (GtkRecentManager): network-facing app -> denied, same
     # calibration as the browsers; local_mixin_recent_file_list is for no-network local

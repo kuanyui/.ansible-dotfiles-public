@@ -16,7 +16,7 @@ SSH+GPG keys / clipboard stores / ALL customized_extra_dirs (DENY_ALL variant) h
   | `/proc/sys/vm/mmap_min_addr` | allow `r` |
   | `/proc/<pid>/net/if_inet6` | allow `r` WITHOUT `owner` - proc net files are root-owned, so the existing `owner @{PROC}/@{pid}/**` cannot match |
   | `/proc/<pid>/coredump_filter` | allow `owner ... w` - self-scoped |
-  | `/usr/share/glycin-loaders/2+/conf.d/` | allow `r` only; `local_mixin_glycin` deliberately NOT included (it grants loader `ix` + expects the `bwrap Px`) |
+  | glycin: `conf.d/**` reads, then `exec /usr/bin/bwrap` from `gly-hdl-loader` | `#include <abstractions/local_mixin_glycin>` + the caller-contract pair `bwrap Px -> local_attachmentless_glycin` and `signal (send) set=(kill)`, i.e. the same full stack as mcomix / stardict / firefox. Two wasted rounds got here: first a narrower inline dir rule (next launch denied every `*.conf`), then the mixin without the `Px` (next launch denied the bwrap exec, ~2 tries per image). DBeaver DOES decode through glycin - do not assume a Java/SWT app bypasses it |
   | AT-SPI bus `/run/user/*/at-spi/bus_1` | plain `deny` - cross-app UI read / input injection, not for a network-egress DB client |
   | `systemd/journal/socket` sendmsg (disconnected) | plain `deny` both forms + `flags=(attach_disconnected)`, mscore3 pattern |
 
