@@ -20,10 +20,24 @@ SSH+GPG keys / clipboard stores / ALL customized_extra_dirs (DENY_ALL variant) h
   | AT-SPI bus `/run/user/*/at-spi/bus_1` | plain `deny` - cross-app UI read / input injection, not for a network-egress DB client |
   | `systemd/journal/socket` sendmsg (disconnected) | plain `deny` both forms + `flags=(attach_disconnected)`, mscore3 pattern |
 
-- [ ] Round 2 after the next launch: confirm `~/.swt/**` is enough (round 1 saw only the denied
-  `mkdir`, the subtree grant is inferred from SWT's `Library.loadLibrary`), and watch for the
-  still-unseen blind-authoring candidates: `~/.java/` (Java Preferences API), `/usr/bin/xdg-open`
-  (OAuth login flows open a browser), GTK portal paths. Then take it out of complain mode.
+- [x] Round 2: second-launch denials (2026-08-18) folded into the profile.
+
+  Round 1's open questions all came back CLEAN this round - no `~/.swt/**` denial (so round 1's
+  inferred subtree grant holds), and none of the blind-authoring candidates appeared: no
+  `~/.java/`, no `/usr/bin/xdg-open`, no GTK portal paths. Absence of evidence only - none of
+  them was necessarily exercised by this launch.
+
+  | Denial | Verdict |
+  |--------|---------|
+  | `~/.local/share/DBeaver/` mkdir (`comm=olveDirectories`, the truncated Eclipse ResolveDirectories thread) | allow `rw` + `** rwk` - a SECOND XDG data dir beside `DBeaverData/`, created even when the workspace exists; mirrors the workspace rules |
+  | `/dev/dri/` listing, `vulkan/{icd.d,implicit_layer.d}/`, `drirc.d/`, `egl_external_platform.d/`, `nvidia-application-profiles-*`, `~/.cache/mesa_shader_cache/index`, `/dev/udmabuf` | `#include <abstractions/local_mixin_deny_gpu_metadata>` - NEW opt-in deny mixin. `local_mixin_deny_gpu` covers only the device NODES; the loader's metadata scan around them kept logging. Telegram had the identical 8 lines inlined, so this round extracted them rather than making DBeaver a second copy. NOT folded into `local_mixin_deny_gpu` itself: gwenview + mscore3 include that mixin and ALLOW these paths inline (llvmpipe reads drirc, writes the shader cache), and deny beats allow - a split-policy set, so CLAUDE.md prescribes a dedicated opt-in mixin |
+  | `/sys/firmware/acpi/pm_profile` | plain `deny` INLINE - already denied by `audit deny /sys/firmware/{,**}` in `local_mixin_deny_persistent_attack`, but that glob is a firmware-PERSISTENCE tripwire and this benign read logged on every launch. The quiet mask is OR'd across matching rules, so this silences exactly this path+perm and leaves the rest of `/sys/firmware` audited. Inline, not in the mixin: a property of this app's startup |
+  | `/usr/libexec/libwebkit2gtk-4_1-0/WebKitNetworkProcess` exec | plain `deny` (version-globbed, covers the sibling helper processes) - the SWT Browser widget behind DBeaver's Welcome / Help views. Granting the exec would put a full web engine WITH network egress inside a profile that hard-denies browser config and data. **Functional trade-off: the embedded Welcome / Help view will not render** (connections, SQL editing and driver management are unaffected). Flip the rule to `ix` to restore it, accepting the web engine under this profile's confinement |
+
+- [ ] Round 3 after the next launch: verify the WebKit deny degrades gracefully (an SWT
+  `Browser` that cannot start its helper may surface an error dialog rather than an empty
+  view) and decide whether to keep the deny or move to `ix`. Still unseen and still worth
+  watching: `~/.java/`, `/usr/bin/xdg-open`, GTK portal paths. Then take it out of complain mode.
 
 ## `aaa-logs` recent-denials viewer - done 2026-07-02
 

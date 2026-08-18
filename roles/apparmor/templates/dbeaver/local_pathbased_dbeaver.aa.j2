@@ -44,6 +44,7 @@ profile local_pathbased_dbeaver /**/dbeaver flags=(attach_disconnected) {
     #include <abstractions/local_mixin_network_app>
     #include <abstractions/local_mixin_gpu_probe>
     #include <abstractions/local_mixin_deny_gpu>
+    #include <abstractions/local_mixin_deny_gpu_metadata>
     #include <abstractions/local_mixin_gui_wayland>
 {% if apparmor_allow_x11 %}
     #include <abstractions/local_mixin_gui_x11>
@@ -69,6 +70,13 @@ profile local_pathbased_dbeaver /**/dbeaver flags=(attach_disconnected) {
     # credentials-config.json, Eclipse .metadata; k: workspace .lock flock
     owner @{HOME}/.local/share/DBeaverData/ rw,
     owner @{HOME}/.local/share/DBeaverData/** rwk,
+
+    # Second XDG data dir, created alongside the workspace by the Eclipse runtime's
+    # directory resolution at startup (audit: operation=mkdir, comm=olveDirectories i.e. the
+    # truncated ResolveDirectories thread). Distinct path from DBeaverData above - product
+    # state rather than the workspace - and created even when the workspace already exists.
+    owner @{HOME}/.local/share/DBeaver/ rw,
+    owner @{HOME}/.local/share/DBeaver/** rwk,
 
     # SWT native-library extraction fallback. SWT looks for libswt-*.so in swt.library.path,
     # then java.library.path, and only if both miss does it mkdir ~/.swt/lib/<platform>/<arch>/,
@@ -106,6 +114,28 @@ profile local_pathbased_dbeaver /**/dbeaver flags=(attach_disconnected) {
     # bwrap bind-mounts is visible to the decoder, whatever the glycin profile permits.
     /usr/bin/bwrap Px -> local_attachmentless_glycin,
     signal (send) set=(kill) peer=local_attachmentless_glycin,
+
+    # ACPI power profile, read by that same startup probe (comm=java, in the same audit
+    # burst as the /dev/dri enumeration local_mixin_deny_gpu_metadata now silences). It is
+    # ALREADY denied - by `audit deny /sys/firmware/{,**}` in
+    # local_mixin_deny_persistent_attack - but that glob is a firmware-PERSISTENCE tripwire
+    # and a read of this one file is not that, so it logs on every launch. Silence exactly
+    # this path+perm here: the quiet mask is OR'd across matching rules, so the rest of
+    # /sys/firmware stays audited. Inline, not in the mixin: the read is a property of THIS
+    # app's startup, and the mixin's other callers have not hit it.
+    deny /sys/firmware/acpi/pm_profile r,
+
+    # WebKitGTK helper processes, spawned by the SWT Browser widget DBeaver uses for its
+    # Welcome / Help views: denied. Granting the exec would put a full web engine WITH
+    # network egress inside a profile that hard-denies browser config and data
+    # (local_mixin_deny_browser_config) - precisely the surface that mixin exists to keep
+    # out. Connections, SQL editing and driver management are unaffected; the embedded
+    # Welcome / Help view does not render. Plain deny (not audit): DBeaver re-attempts this
+    # on every launch, so it is per-launch noise rather than a tripwire. To restore the
+    # widget instead, change this line to `ix` - the helper then runs under THIS profile, no
+    # separate profile needed, at the cost of the web engine sharing the client's
+    # confinement. Version-globbed: the directory carries the WebKitGTK API version.
+    deny /usr/libexec/libwebkit2gtk-*/WebKit*Process x,
 
     # XDG cross-app recents (GtkRecentManager): network-facing app -> denied, same
     # calibration as the browsers; local_mixin_recent_file_list is for no-network local
