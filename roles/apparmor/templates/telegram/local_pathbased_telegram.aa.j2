@@ -53,6 +53,7 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected, m
     #include <abstractions/local_mixin_deny_mounted_external_media>
     #include <abstractions/local_mixin_gpu_probe>
     #include <abstractions/local_mixin_deny_gpu>
+    #include <abstractions/local_mixin_deny_gpu_metadata>
     #include <abstractions/local_mixin_deny_machine_id>
     #include <abstractions/local_mixin_network_app>
     #include <abstractions/local_mixin_gui_wayland>
@@ -109,16 +110,11 @@ profile local_pathbased_telegram /usr/bin/Telegram flags=(attach_disconnected, m
     # to gwenview, which inlines these as ALLOW precisely so Telegram can keep them denied - a
     # compromised Telegram must not pollute the shared mesa shader cache. local_mixin_deny_gpu
     # above already blocks the device nodes; these lines silence the leftover discovery reads.
-    deny /dev/dri/ r,
-    deny /usr/share/vulkan/icd.d/{,**} r,
-    deny /usr/share/vulkan/implicit_layer.d/{,**} r,
-    deny /usr/share/drirc.d/{,**} r,
-    deny /usr/share/egl/egl_external_platform.d/{,**} r,
-    deny /usr/share/nvidia/nvidia-application-profiles-* r,
-    deny @{HOME}/.cache/mesa_shader_cache/{,**} rwk,
-    # udmabuf zero-copy buffer assembly: denied (silence) - the minimal GPU-less posture uses
-    # plain memory copies for frame delivery. gwenview grants this inline; Telegram does not.
-    deny /dev/udmabuf rw,
+    # These eight denies (incl. the udmabuf one below) now live in the shared
+    # local_mixin_deny_gpu_metadata abstraction, included at the top of this profile -
+    # DBeaver reached the identical set, and a second inline copy would fragment the
+    # maintenance. udmabuf rides along in that mixin: the minimal GPU-less posture uses plain
+    # memory copies for frame delivery, and gwenview grants it inline instead.
 
     # Audio: Telegram plays no sound by design - the bwrap launcher binds no audio
     # socket (its "Audio" section binds only D-Bus) and `--dev /dev` exposes no
