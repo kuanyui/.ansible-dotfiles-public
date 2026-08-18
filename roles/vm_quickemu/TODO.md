@@ -34,6 +34,15 @@ Status: `[ ]` pending · `[~]` in progress · `[x]` done
   SAME `distro-package-groups.json` ivm materializes (see discussion below);
   would give base-tools install on qvm guests without duplicating any package
   list.
+- [ ] **No BASELINE dotfiles at `init`** - ivm pushes
+  `BASELINE_DOTFILE_FEATURES` (bash/tmux/zsh + `centralize-lang-pkgs-dir`) into
+  every guest at `init` and again on `overwrite-dotfiles`; qvm pushes dotfiles
+  ONLY on demand via `qvm provision <feature>`, so a fresh qvm guest has no
+  managed rc files at all. `cmd_provision` now force-pushes
+  `centralize-lang-pkgs-dir` ahead of thirdparty recipes (they source its env
+  file, and a missing file aborts the whole `bash -ec` script) - but that is a
+  correctness guard for recipes, NOT a baseline. Decide whether qvm should adopt
+  ivm's baseline-at-init model or stay fully on-demand by design.
 
 ## Design discussion: sharing templates between `ivm` and `qvm`
 

@@ -334,7 +334,7 @@ def load_package_groups(shared_root: Path) -> dict[str, Any]:
     dropping entries whose `available_on` excludes this launcher."""
     path: Path = shared_root / "distro-package-groups.json"
     if not path.is_file():
-        die(f"distro-package-groups.json not found: {path}; re-run `make quickemu-install`")
+        die(f"distro-package-groups.json not found: {path}; re-run `make vm-quickemu-install`")
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
         die(f"distro-package-groups.json is not a mapping: {path}")
@@ -347,7 +347,7 @@ def load_thirdparty_software(shared_root: Path) -> dict[str, Any]:
     dropping entries whose `available_on` excludes this launcher."""
     path: Path = shared_root / "thirdparty-software.json"
     if not path.is_file():
-        die(f"thirdparty-software.json not found: {path}; re-run `make quickemu-install`")
+        die(f"thirdparty-software.json not found: {path}; re-run `make vm-quickemu-install`")
     loaded: Any = json.loads(path.read_text())
     if not isinstance(loaded, dict):
         die(f"thirdparty-software.json is not a mapping: {path}")
@@ -760,6 +760,13 @@ def push_feature_dotfiles_qga(feature: str, ansible_os_family: str, vm_record: V
 
 # ---------- provision (install bundles / recipes / dotfiles onto a VM) ----------
 
+# The dotfiles feature carrying `~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh`
+# (+ `~/.config/pip/pip.conf`): redirects npm/pip/pipx/cargo/go GLOBAL installs into
+# `~/.centralized-lang-pkgs/<tool>/`, the tree `roles/centralize_lang_pkgs_dir` manages on
+# the host. Thirdparty recipes SOURCE the env file, so cmd_provision pushes this feature
+# before running any of them (ivm does the same in its cmd_provision).
+CENTRALIZE_LANG_PKGS_DIR_FEATURE: str = "centralize-lang-pkgs-dir"
+
 
 def cmd_list_provision_units(shared_root: Path) -> None:
     """List the installable units (name + `description`), grouped by kind - shown when
@@ -815,7 +822,9 @@ def cmd_provision(vm_record: VmRecord, unit_names: list[str], shared_root: Path,
     feature - all that match are applied. Distro bundles install via the VM's package
     manager, thirdparty recipes run their (probe-guarded) script as root, dotfiles
     features are pushed into /home/user (+ /root). Idempotent. With NO unit args the
-    caller lists the registry instead (handled before VM resolution)."""
+    caller lists the registry instead (handled before VM resolution).
+    Naming a thirdparty recipe also pushes the `centralize-lang-pkgs-dir` feature first -
+    the recipes source its env file (see the block below)."""
     distro_registry: dict[str, Any] = load_package_groups(shared_root)
     thirdparty_registry: dict[str, Any] = load_thirdparty_software(shared_root)
     dotfiles_root: Path = shared_root / "dotfiles"
@@ -842,6 +851,22 @@ def cmd_provision(vm_record: VmRecord, unit_names: list[str], shared_root: Path,
                 f"  thirdparty software: {', '.join(sorted(thirdparty_registry))}\n"
                 f"  dotfiles features:   {', '.join(available_features)}")
     ansible_os_family: str = vm_ansible_os_family(vm_record)
+    if thirdparty_names:
+        # Thirdparty recipes source `~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh`
+        # (the npm/pip/pipx/cargo/go install redirect) - push its feature FIRST, because the
+        # recipes run in the ONE `bash -ec` script below and a failed `.` of a missing file
+        # aborts the whole provision. Unlike ivm, qvm pushes NO dotfiles at `init` (every
+        # feature is on-demand), so on a fresh VM this is the only thing that puts the file
+        # there. `init --provision` routes through here too, so both paths are covered.
+        staged_env_file: Path = (shared_root / "dotfiles" / CENTRALIZE_LANG_PKGS_DIR_FEATURE
+                                 / "__common__" / "home" / "user" / ".centralized-lang-pkgs"
+                                 / "centralized-lang-pkgs.env.sh")
+        if not staged_env_file.is_file():
+            die(f"staged env file missing: {staged_env_file}\n"
+                f"re-stage the shared provision assets first:\n\n"
+                f"make vm-quickemu-install\n")
+        push_feature_dotfiles_qga(CENTRALIZE_LANG_PKGS_DIR_FEATURE, ansible_os_family,
+                                  vm_record, shared_root, dry_run=dry_run)
     # Always (re)write the managed-guest marker so the shared PS1 snippet can badge the
     # prompt; `script` is therefore never empty, so the qga_run_script below always runs.
     script: str = guest_type_marker_script()
