@@ -26,10 +26,6 @@ mounts:
 shell_default_dir_after_login: /workspaces/$(basename "$(pwd)")   # `ivm sh` starts in the mounted project (matches the mount's guest path)
 thirdparty_software:
   - agent_opencode   # npm install -g opencode-ai (brings its own nodejs + npm deps); recipe in roles/provision/defaults/main/thirdparty_software.yml
-dotfiles:
-  - bash
-  - tmux
-  - zsh
 usage:
   - "connect OpenRouter (one-time): run `opencode`, then its `/connect` command - pick OpenRouter, paste your API key (stored in-guest at ~/.local/share/opencode/auth.json)"
   - "pick a model: `/models` inside opencode - the preloaded menu shows price + context + ZDR in each name (deployed by the `agent_opencode` recipe to ~/.config/opencode/opencode.json; edit it to add models or refresh prices)"

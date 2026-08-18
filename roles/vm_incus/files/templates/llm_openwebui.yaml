@@ -60,9 +60,6 @@ distro_package_groups:
   - podman_rootless
 distro_packages:
   - dbus-user-session   # per-user D-Bus, so `systemctl --user` works for the user service
-dotfiles:
-  - bash
-  - zsh
 # Everything below runs as ROOT after packages install (and after podman_rootless's
 # post_install prepared subuids + linger). Heredocs are kept at a FLAT indent on purpose:
 # the `|` block strips the common 2 spaces, so the written files (the unit's `[Section]`

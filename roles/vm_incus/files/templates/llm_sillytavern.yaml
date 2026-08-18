@@ -52,9 +52,6 @@ distro_packages:
   - npm
   - git
   - dbus-user-session   # per-user D-Bus, so `systemctl --user` works for the ST user service
-dotfiles:
-  - bash
-  - zsh
 # Everything below runs as ROOT after packages install. Heredocs are kept at a FLAT indent
 # on purpose: the `|` block strips the common 2 spaces, so the written files (config.yaml
 # keys, the unit's `[Section]` headers) and the heredoc terminators land at column 0.

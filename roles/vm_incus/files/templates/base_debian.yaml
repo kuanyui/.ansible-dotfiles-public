@@ -24,7 +24,3 @@ net:
   mode: nat
 distro_package_groups:
   - tools_basic
-dotfiles:
-  - bash
-  - tmux
-  - zsh

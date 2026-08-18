@@ -77,9 +77,6 @@ distro_package_groups:
 distro_packages:
   - dbus-user-session   # per-user D-Bus, so `systemctl --user` works for the user service
   - openssl             # generates the one-time .env secrets (JWT_*, CREDS_*) below
-dotfiles:
-  - bash
-  - zsh
 # Everything below runs as ROOT after packages install (and after podman_rootless's
 # post_install prepared subuids + linger). Heredocs are kept at a FLAT indent on purpose:
 # the `|` block strips the common 2 spaces, so the written files (compose keys, the unit's

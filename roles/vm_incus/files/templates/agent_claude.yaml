@@ -40,7 +40,3 @@ distro_packages:
   - git
 thirdparty_software:
   - agent_claude   # curl|bash installer; recipe in roles/provision/defaults/main/thirdparty_software.yml
-dotfiles:
-  - bash
-  - tmux
-  - zsh

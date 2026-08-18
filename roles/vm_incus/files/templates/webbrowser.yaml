@@ -39,9 +39,6 @@ distro_packages:
   - icewm                 # window manager
   - icewm-theme-branding  # openSUSE-only: the openSUSE default icewm theme/background
   - lightdm               # display manager
-dotfiles:
-  - bash
-  - zsh
 post_install_script: |
   systemctl set-default graphical.target
   mkdir -p /etc/lightdm/lightdm.conf.d
