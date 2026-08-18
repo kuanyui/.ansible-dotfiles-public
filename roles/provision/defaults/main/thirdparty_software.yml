@@ -10,7 +10,12 @@
 # host/guest family's entry if defined, else `__common__`. Each family overlay:
 #   install_script    REQUIRED  shell run as ROOT in the guest; `su - user -c '...'`
 #                               for user-scoped installs (root switches to anyone,
-#                               no password).
+#                               no password). CAREFUL: the inner string runs under
+#                               the guest user's LOGIN shell - zsh from `useradd`
+#                               on - NOT bash: an unmatched glob is a fatal zsh
+#                               `nomatch` error (bash passes it through literally)
+#                               and unquoted `$vars` do not word-split. Keep these
+#                               strings zsh/bash-agnostic; never an unquoted glob.
 #   already_installed OPTIONAL  probe run as root; rc 0 -> skip the install
 #                               (idempotency, esp. for a future `ivm provision`
 #                               re-run). Omit -> always run. Pick a probe that can
@@ -74,9 +79,12 @@ provision_thirdparty_software:
         # above re-runs this and `npm install -g` then dies on `ENOTEMPTY: ... rename` - npm
         # cannot atomically move the stale scoped dir aside (npm/cli#4096, #5825; a long-standing
         # npm bug on scoped globals - `--force` does NOT fix it, deleting the target does). Clear
-        # the package dir AND any `.codex-<rand>` temp dir npm orphaned; both are no-ops (`rm -f`)
-        # on a clean guest where they are absent.
-        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/codex" "$NPM_CONFIG_PREFIX/lib/node_modules/@openai/".codex-* && npm install -g @openai/codex'
+        # the whole `@openai` SCOPE dir (codex is the only @openai global these recipes install;
+        # npm recreates it): that drops the stale package dir AND any `.codex-<rand>` temp dir npm
+        # orphaned inside it - without a glob, because this string runs under the guest user's
+        # login shell zsh (see the registry header), where an unmatched `.codex-*` would be a
+        # FATAL `no matches found` on any guest with nothing to heal. No-op on a clean guest.
+        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/@openai" && npm install -g @openai/codex'
 
   agent_opencode:
     description: "OpenCode CLI (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps; preloaded price-labeled OpenRouter model menu; connect OpenRouter in-app with /connect)"
@@ -315,10 +323,14 @@ provision_thirdparty_software:
         # Sourcing the env file sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm (the
         # shared install redirect), so the global lands user-owned and on the PATH interactive
         # guest shells get from their rc files. Env var only - nothing persisted to ~/.npmrc.
-        # Same `ENOTEMPTY: ... rename` self-heal as `agent_codex` (npm/cli#4096): drop a stale
-        # web-ext install + any `.web-ext-<rand>` temp dir npm orphaned before reinstalling, so a
-        # re-run after an interrupted install converges instead of wedging. No-op on a clean guest.
-        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/web-ext" "$NPM_CONFIG_PREFIX/lib/node_modules/".web-ext-* && npm install --global web-ext'
+        # Same interrupted-install self-heal idea as `agent_codex`, but `web-ext` is UNSCOPED, so
+        # (exactly like `agent_opencode`) npm's scoped-rename bug does not bite and clearing the
+        # package dir alone converges a re-run. Deliberately NO `.web-ext-<rand>` temp-dir glob:
+        # this string runs under the guest user's login shell zsh (see the registry header), where
+        # the unmatched glob would be a FATAL `no matches found` on every guest with nothing to
+        # heal - and orphaned npm temp dirs are inert disk junk, not an install blocker. No-op on
+        # a clean guest.
+        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/web-ext" && npm install --global web-ext'
 
   # mise (jdx/mise, formerly rtx) - polyglot runtime VERSION MANAGER (node / python / go /
   # java / ..., asdf-compatible) + task runner. The sibling of `dev_nvm` / `dev_gvm` when ONE
