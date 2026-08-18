@@ -20,7 +20,6 @@ dotfiles:
   - bash
   - tmux
   - zsh
-  - centralize-lang-pkgs-dir   # ~/.centralized-lang-pkgs install redirect (env file + pip.conf)
 hide_dirs:
   - .git
   - .vscode

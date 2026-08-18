@@ -516,6 +516,24 @@ def guest_type_marker_script() -> str:
     )
 
 
+# The dotfiles feature carrying `~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh`
+# (+ `~/.config/pip/pip.conf`): redirects npm/pip/pipx/cargo/go GLOBAL installs into
+# `~/.centralized-lang-pkgs/<tool>/`, the tree `roles/centralize_lang_pkgs_dir` manages on
+# the host. Same constant name in ivm/qvm.
+CENTRALIZE_LANG_PKGS_DIR_FEATURE: str = "centralize-lang-pkgs-dir"
+
+
+def dotfiles_features(template: dict[str, Any]) -> list[str]:
+    """The dotfiles features this image stages, = the template's `dotfiles` PLUS the
+    always-on `centralize-lang-pkgs-dir`. Mandatory because the build script writes that
+    feature's env file itself (recipes source it) but NOT its `~/.config/pip/pip.conf`,
+    which only this copy delivers - so a template that omits `dotfiles`, or lists it
+    without the feature, would get the npm/cargo/go redirect and silently lose pip's.
+    (The schema's `default` is documentation only: jsonschema validates, it does not fill
+    defaults, so `template.get("dotfiles", [])` really is empty when the key is absent.)"""
+    return list(dict.fromkeys(list(template.get("dotfiles", [])) + [CENTRALIZE_LANG_PKGS_DIR_FEATURE]))
+
+
 def centralized_lang_pkgs_env_provision(shared_root: Path) -> str:
     """Shell (run as root in the build container) writing the STAGED
     `centralized-lang-pkgs.env.sh` into `/home/user/.centralized-lang-pkgs/` - inlined
@@ -523,9 +541,9 @@ def centralized_lang_pkgs_env_provision(shared_root: Path) -> str:
     that file (npm/pip/pipx/cargo/go install redirect) and the dotfiles copy happens only
     after the script ran. Content is read from the staged `centralize-lang-pkgs-dir`
     feature at build time, so `roles/centralize_lang_pkgs_dir/files/` stays the single
-    source; a template listing the feature in `dotfiles` re-copies the same file (plus
-    `pip.conf`)."""
-    staged_env_file: Path = (shared_root / "dotfiles" / "centralize-lang-pkgs-dir" / "__common__"
+    source; the always-on `centralize-lang-pkgs-dir` dotfiles copy (see `dotfiles_features`)
+    re-copies the same file afterwards, plus the `pip.conf` this script does not write."""
+    staged_env_file: Path = (shared_root / "dotfiles" / CENTRALIZE_LANG_PKGS_DIR_FEATURE / "__common__"
                              / "home" / "user" / ".centralized-lang-pkgs" / "centralized-lang-pkgs.env.sh")
     if not staged_env_file.is_file():
         die(f"staged env file missing: {staged_env_file}\n"
@@ -569,11 +587,12 @@ def build_provision_script(template: dict[str, Any], distro_registry: dict[str, 
 
 def dotfiles_copy_argv(container: str, template: dict[str, Any], family: str,
                        shared_root: Path) -> list[list[str]]:
-    """`podman cp` argv to stage each requested dotfiles feature's `{__common__,<family>}`
-    home/user + root buckets into the container (common first, family overlays)."""
+    """`podman cp` argv to stage each dotfiles feature's `{__common__,<family>}`
+    home/user + root buckets into the container (common first, family overlays).
+    Features per `dotfiles_features` - the template's list plus the always-on redirect."""
     copy_commands: list[list[str]] = []
     dotfiles_root: Path = shared_root / "dotfiles"
-    for feature in template.get("dotfiles", []):
+    for feature in dotfiles_features(template):
         for bucket in ("__common__", family):
             for side_subpath, container_dest in DOTFILE_BUCKET_SIDES:
                 source_dir: Path = dotfiles_root / feature / bucket / side_subpath
@@ -612,7 +631,7 @@ def content_hash(template: dict[str, Any], family: str, shared_root: Path, provi
     hasher.update(WORKSPACE_AUTOCD_BASH.encode())
     hasher.update(IMAGE_ENV_PATH.encode())
     dotfiles_root: Path = shared_root / "dotfiles"
-    for feature in sorted(template.get("dotfiles", [])):
+    for feature in sorted(dotfiles_features(template)):
         for bucket in ("__common__", family):
             for side_subpath, _ in DOTFILE_BUCKET_SIDES:
                 source_dir: Path = dotfiles_root / feature / bucket / side_subpath
@@ -695,7 +714,7 @@ def cmd_env(template_name: str | None, *, runtime: str, network: str | None) -> 
     print(f"pkg groups          : {', '.join(template.get('distro_package_groups', [])) or '(none)'}")
     print(f"packages            : {', '.join(template.get('distro_packages', [])) or '(none)'}")
     print(f"thirdparty          : {', '.join(template.get('thirdparty_software', [])) or '(none)'}")
-    print(f"dotfiles            : {', '.join(template.get('dotfiles', [])) or '(none)'}")
+    print(f"dotfiles            : {', '.join(dotfiles_features(template)) or '(none)'}")
     print(f"hide_dirs           : {', '.join(hide_dirs) or '(none)'}")
     print(f"publish_ports       : {', '.join(template.get('publish_ports', [])) or '(none)'}")
     print(f"mount               : {mount.host} -> /workspaces/{mount.name}")
