@@ -1,43 +1,51 @@
 # TODO
 
-## `local_pathbased_dbeaver` (portable tarball) - complain round 1 applied 2026-08-14
+## `local_pathbased_dbeaver` (portable tarball)
 
-New profile for the official DBeaver CE binary tarball, run in place (no install). Name-based
-attachment `/**/dbeaver` like anydesk. Whole unpack tree allowed (`owner /**/dbeaver/** rwkm`);
-workspace `~/.local/share/DBeaverData/`; network via `local_mixin_network_app`; browser data /
-SSH+GPG keys / clipboard stores / ALL customized_extra_dirs (DENY_ALL variant) hard-denied.
+Profile is working - the workbench starts. Every rule's rationale lives in the profile's own
+comments; the per-round denial tables that used to sit here were deleted once applied, since
+they only restated those comments.
 
-- [x] Round 1: first-launch denials (2026-08-14) folded into the profile.
+- [ ] **Retry the GPU tightening now that WEBKIT_DISABLE_COMPOSITING_MODE=1 is in use.**
+  The working launch is `WEBKIT_DISABLE_COMPOSITING_MODE=1 ./dbeaver` plus
+  `-Djava.awt.headless=true` in `dbeaver.ini`. With compositing off, WebKit should no longer
+  need the GPU at all - so swap `local_mixin_gpu` back to `local_mixin_deny_gpu`, drop the
+  inline `/dev/udmabuf rw`, and see whether the workbench still starts. That is a one-line
+  test that would close the over-grant below.
 
-  | Denial | Verdict |
-  |--------|---------|
-  | `~/.swt/` mkdir | allow `rw` + `**  rwm` - SWT native extraction, denying it pushes the same `.so` into `$HOME` instead |
-  | `/sys/kernel/mm/hugepages/`, `.../transparent_hugepage/shmem_enabled` | allow `r` - HotSpot large-page probe |
-  | `/proc/sys/vm/mmap_min_addr` | allow `r` |
-  | `/proc/<pid>/net/if_inet6` | allow `r` WITHOUT `owner` - proc net files are root-owned, so the existing `owner @{PROC}/@{pid}/**` cannot match |
-  | `/proc/<pid>/coredump_filter` | allow `owner ... w` - self-scoped |
-  | glycin: `conf.d/**` reads, then `exec /usr/bin/bwrap` from `gly-hdl-loader` | `#include <abstractions/local_mixin_glycin>` + the caller-contract pair `bwrap Px -> local_attachmentless_glycin` and `signal (send) set=(kill)`, i.e. the same full stack as mcomix / stardict / firefox. Two wasted rounds got here: first a narrower inline dir rule (next launch denied every `*.conf`), then the mixin without the `Px` (next launch denied the bwrap exec, ~2 tries per image). DBeaver DOES decode through glycin - do not assume a Java/SWT app bypasses it |
-  | AT-SPI bus `/run/user/*/at-spi/bus_1` | plain `deny` - cross-app UI read / input injection, not for a network-egress DB client |
-  | `systemd/journal/socket` sendmsg (disconnected) | plain `deny` both forms + `flags=(attach_disconnected)`, mscore3 pattern |
+- [ ] **GPU is granted, and probably should not be.** The profile includes `local_mixin_gpu`
+  because the workbench would not start with it denied. Web research afterwards says the
+  workbench itself does NOT need it: Eclipse/SWT runs fine on llvmpipe, but WebKitGTK's
+  accelerated compositing "does not behave properly under software-provided OpenGL" and its
+  DMA-BUF renderer fails with DRM/GBM buffer-creation permission errors -> blank/failed view.
+  DBeaver builds an SWT `Browser` (WebKitGTK) at startup for the Welcome page, and that
+  failure surfaces as the well-known `SWTError: No more handles` unhandled event-loop
+  exception (dbeaver#18197). So the GPU grant is almost certainly paying for WebKit alone.
+  The next launch's audit supports this: with the helpers actually running, essentially every
+  new denial came from `comm=WebKitNetworkPr` / `WebKitWebProces` - the DRM card nodes, the
+  NVIDIA device probes, GStreamer, ORC. The JVM itself only asked for `/dev/dri/card*`.
+  Untested hypothesis: with `WEBKIT_DISABLE_COMPOSITING_MODE=1` (and/or
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1`) in DBeaver's environment, the profile could go back to
+  `local_mixin_deny_gpu` and drop `/dev/udmabuf`. Blocker: AppArmor cannot set env vars, and
+  the portable tarball lives at a user-chosen path, so a shipped `.desktop`/wrapper would
+  have to learn that path without hardcoding a real home layout.
 
-- [x] Round 2: second-launch denials (2026-08-18) folded into the profile.
+- [ ] **Latent: the tree rules assume the unpack dir is named `dbeaver`.** The profile
+  ATTACHES on the binary name (`/**/dbeaver`), but every tree rule is `/**/dbeaver/**`,
+  which needs a DIRECTORY literally named `dbeaver` in the path. A tarball unpacked to
+  e.g. `dbeaver-25.2/` would still attach the profile while matching none of the tree
+  rules. Not observed (the app runs, so today's layout matches) - but the attachment and
+  the rules disagree about what identifies the install, and one day they will diverge.
 
-  Round 1's open questions all came back CLEAN this round - no `~/.swt/**` denial (so round 1's
-  inferred subtree grant holds), and none of the blind-authoring candidates appeared: no
-  `~/.java/`, no `/usr/bin/xdg-open`, no GTK portal paths. Absence of evidence only - none of
-  them was necessarily exercised by this launch.
-
-  | Denial | Verdict |
-  |--------|---------|
-  | `~/.local/share/DBeaver/` mkdir (`comm=olveDirectories`, the truncated Eclipse ResolveDirectories thread) | allow `rw` + `** rwk` - a SECOND XDG data dir beside `DBeaverData/`, created even when the workspace exists; mirrors the workspace rules |
-  | `/dev/dri/` listing, `vulkan/{icd.d,implicit_layer.d}/`, `drirc.d/`, `egl_external_platform.d/`, `nvidia-application-profiles-*`, `~/.cache/mesa_shader_cache/index`, `/dev/udmabuf` | `#include <abstractions/local_mixin_deny_gpu_metadata>` - NEW opt-in deny mixin. `local_mixin_deny_gpu` covers only the device NODES; the loader's metadata scan around them kept logging. Telegram had the identical 8 lines inlined, so this round extracted them rather than making DBeaver a second copy. NOT folded into `local_mixin_deny_gpu` itself: gwenview + mscore3 include that mixin and ALLOW these paths inline (llvmpipe reads drirc, writes the shader cache), and deny beats allow - a split-policy set, so CLAUDE.md prescribes a dedicated opt-in mixin |
-  | `/sys/firmware/acpi/pm_profile` | plain `deny` INLINE - already denied by `audit deny /sys/firmware/{,**}` in `local_mixin_deny_persistent_attack`, but that glob is a firmware-PERSISTENCE tripwire and this benign read logged on every launch. The quiet mask is OR'd across matching rules, so this silences exactly this path+perm and leaves the rest of `/sys/firmware` audited. Inline, not in the mixin: a property of this app's startup |
-  | `/usr/libexec/libwebkit2gtk-4_1-0/WebKitNetworkProcess` exec | plain `deny` (version-globbed, covers the sibling helper processes) - the SWT Browser widget behind DBeaver's Welcome / Help views. Granting the exec would put a full web engine WITH network egress inside a profile that hard-denies browser config and data. **Functional trade-off: the embedded Welcome / Help view will not render** (connections, SQL editing and driver management are unaffected). Flip the rule to `ix` to restore it, accepting the web engine under this profile's confinement |
-
-- [ ] Round 3 after the next launch: verify the WebKit deny degrades gracefully (an SWT
-  `Browser` that cannot start its helper may surface an error dialog rather than an empty
-  view) and decide whether to keep the deny or move to `ix`. Still unseen and still worth
-  watching: `~/.java/`, `/usr/bin/xdg-open`, GTK portal paths. Then take it out of complain mode.
+- [ ] **Interface-language change does not survive a restart - NOT this profile.** Checked
+  every abstraction the profile includes for a deny that could match the install tree
+  (`~/.local/share/dbeaver/`, per the app's own "Install path:" banner): none. The write of
+  `-nl` into `dbeaver.ini` is covered by `owner /**/dbeaver/** rwkm`, the workspace by the
+  `DBeaverData` rules, and no audit entry has ever named either. Cause is DBeaver-side -
+  DBeaver's own issue tracker attributes "language won't change" to a non-writable install
+  dir, and documents editing `-nl` by hand as the workaround. Retest AFTER the headless fix
+  below: the AWT class-init failure poisons `GraphicsEnvironment` for the whole process, so
+  UI machinery downstream of it may be misbehaving for the same reason.
 
 ## `aaa-logs` recent-denials viewer - done 2026-07-02
 

@@ -78,8 +78,6 @@ apparmor_static_abstractions:
     dest: abstractions/local_mixin_deny_mounted_external_media
   - src: local_mixin_deny_gpu.aa
     dest: abstractions/local_mixin_deny_gpu
-  - src: local_mixin_deny_gpu_metadata.aa
-    dest: abstractions/local_mixin_deny_gpu_metadata
   - src: local_mixin_deny_machine_id.aa
     dest: abstractions/local_mixin_deny_machine_id
   - src: local_mixin_deny_keyrings.aa

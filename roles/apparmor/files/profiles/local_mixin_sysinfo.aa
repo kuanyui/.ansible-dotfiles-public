@@ -10,6 +10,7 @@
 /sys/devices/system/cpu/{,**} r,         # CPU topology and frequency
 /sys/devices/system/node/{,**} r,        # NUMA memory topology
 /sys/devices/system/memory/block_size_bytes r,  # memory block size (heap sizing)
+@{PROC}/zoneinfo r,                      # per-zone memory stats; JVM/Chromium memory-pressure monitors poll this ~1/s
 /sys/fs/cgroup/{,**} r,                  # cgroup CPU/memory limits (thread pool sizing)
 deny /sys/devices/virtual/dmi/id/** r,   # hardware fingerprinting - intentionally denied
 /dev/ r,                                 # device directory listing
