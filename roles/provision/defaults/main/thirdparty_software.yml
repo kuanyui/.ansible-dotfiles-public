@@ -355,8 +355,51 @@ provision_thirdparty_software:
         su - user -c 'curl --fail --silent --show-error --location https://mise.run | MISE_VERSION=v2026.7.12 sh'
         su - user -c 'echo "==> mise ready. Install a runtime:  mise use --global node@22" >&2'
 
+  # Azimutt CLI (azimuttapp/azimutt, MIT) - database schema EXPLORER / linter, the
+  # non-GUI half of the `dba_` group. Different shape from `dba_dbeaver_ce`: that is a
+  # desktop SQL client, this is a terminal tool that extracts a schema and reasons about it
+  # (`analyze` = schema linter with improvement recommendations, `export` = schema to JSON,
+  # `convert` = between AML / SQL / Mermaid / Markdown / JSON, `gateway` = a local HTTP->SQL
+  # bridge). No desktop needed, so it pairs with a headless VM.
+  #
+  # PRIVACY NOTE, stated not hidden (verified against cli/README.md, 2026-08-19): the CLI
+  # ships NO self-hosted web UI. `azimutt explore` starts the local gateway and then opens
+  # the HOSTED frontend at azimutt.app in a browser, which talks to that gateway - so your
+  # schema reaches a third-party web app the moment you use `explore`. The commands that
+  # stay entirely local are `analyze`, `export` and `convert`. Azimutt does publish a
+  # self-hostable Docker image, but that is a full Phoenix + Postgres SERVICE - template
+  # territory (cf. `llm_librechat`), not a thirdparty recipe, so it is deliberately not here.
+  #
+  # CONFIDENCE, lower than its neighbours - say so rather than let the next reader assume:
+  # this recipe was authored from upstream docs + the npm registry metadata, and has NOT been
+  # run in a guest. Checked against registry.npmjs.org/azimutt/latest (2026-08-19): version
+  # 0.1.39 (pre-1.0), `bin` is `azimutt` (so the probe below is the right path), and there is
+  # NO `engines` field - unlike `dev_webext`, no minimum-node gate can fail the install on any
+  # family's distro node. What is unproven is the RUN: that the install completes and the
+  # commands work on a real guest. First `ivm provision dba_azimutt` confirms or kills it.
+  dba_azimutt:
+    description: "Azimutt CLI - database schema explorer / linter (npm global into ~/.centralized-lang-pkgs; brings its nodejs + npm deps; `explore` opens the HOSTED azimutt.app, `analyze`/`export`/`convert` stay local)"
+    # Same two packages as the other npm recipes, re-listed rather than referenced: a
+    # recipe's deps are its own implementation detail.
+    distro_packages:
+      __common__:
+        - nodejs
+        - npm
+    __common__:
+      # File test, not `command -v` - same reasoning as `agent_codex`: the probe runs in a
+      # non-interactive shell where the env file's PATH prepend is not in effect.
+      already_installed: su - user -c 'test -x ~/.centralized-lang-pkgs/npm/bin/azimutt'
+      install_script: |
+        # Sourcing the env file sets `NPM_CONFIG_PREFIX` -> ~/.centralized-lang-pkgs/npm (the
+        # shared install redirect), so the global lands user-owned and on the PATH interactive
+        # guest shells get from their rc files. Env var only - nothing persisted to ~/.npmrc.
+        # `azimutt` is UNSCOPED, so npm's scoped-rename bug (npm/cli#4096) does not bite -
+        # clearing the package dir before (re)install is enough to self-heal a wedged partial
+        # download, exactly like `agent_opencode` / `dev_webext`. No-op on a clean guest.
+        su - user -c '. ~/.centralized-lang-pkgs/centralized-lang-pkgs.env.sh && rm -rf "$NPM_CONFIG_PREFIX/lib/node_modules/azimutt" && npm install -g azimutt'
+
   # DBeaver Community Edition - database GUI client (SQL editor / admin tool). A GUI app:
-  # pair it with a desktop, e.g. `ivm provision gui_x11 desktop_lxqt dbeaver_ce`. Install
+  # pair it with a desktop, e.g. `ivm provision gui_x11 desktop_lxqt dba_dbeaver_ce`. Install
   # method SPLITS by family (external facts verified 2026-07-24):
   #   Debian - the vendor's own flat apt repo (`deb ... https://dbeaver.io/debs/dbeaver-ce /`;
   #     the trailing `/` = flat repo, `Packages` at the URL root - InRelease/Packages verified
@@ -375,7 +418,7 @@ provision_thirdparty_software:
   #     (`remote-add --if-not-exists`, idempotent; the official URL per
   #     docs.flatpak.org/en/latest/using-flatpak.html). Runs as root -> lands in the
   #     system-wide installation, shared by every user in the guest.
-  dbeaver_ce:
+  dba_dbeaver_ce:
     description: "DBeaver CE database GUI - Debian via the vendor apt repo; others via Flathub flatpak, system-wide (brings its gpg / flatpak deps + adds the flathub remote)"
     distro_packages:
       Debian:
