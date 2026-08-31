@@ -99,8 +99,8 @@ by cwd / `--name`.
 | `info` | The target VM's live state, **grouped** for readability: **Basic** (status/created/last-started/image/hw/snapshots/host-bound-dir/guest-shell-dir/user-sudo), **Network** (the VM's current **IP**, **services** = the template's declared endpoints as ready-to-open `name=<ip>:<port>`, bridge, ssh-server, **forwards** = `expose`d ports), **Mounts**, **Storage** (the pool its disk lives in, incl. the loop `.img` + usage). Target = cwd or `--name`. Read-only; prints every field with a placeholder when empty. |
 | `shell` / `shell-user` (aliases `sh` / `sh-user`) | zsh into the target VM as `user` (starts it if stopped). Starts in the template's `shell_default_dir_after_login` when set + present in the guest (else the home dir); only the start dir, `$HOME` / `cd` unaffected. |
 | `shell-root` (alias `sh-root`) | zsh into it as `root`. |
-| `start` / `stop` | Start / stop the target VM. `stop` asks first (`--yes` skips). |
-| `reboot` | `incus restart` the target VM (asks first; `--yes` skips). |
+| `start` / `stop [--force]` | Start / stop the target VM. `stop` asks first (`--yes` skips). `--force` = `incus stop --force`: no clean guest shutdown, incus SIGKILLs the VM's qemu process. |
+| `reboot [--force]` | `incus restart` the target VM (asks first; `--yes` skips). `--force` = `incus restart --force`: SIGKILL, then start. |
 | `delete` | Delete the VM + its disk + snapshots (asks first; `--yes` skips). |
 | `rename [<old-vm>] <new-name>` | Rename the VM (`incus rename`; stopped VMs only - `ivm stop` first; asks first, `--yes` skips). Snapshots and the dir binding travel with it, so cwd resolution keeps working. The LAST positional is the NEW name; give the old VM as the leading positional (`incus rename` order), or omit it to target by cwd / `--name`. |
 | `update` | Refresh + upgrade all packages in the VM (per-family apt/zypper/dnf). |
@@ -125,6 +125,22 @@ by cwd / `--name`.
 Before `stop` / `reboot` / `delete` interrupt a VM, `ivm` **loudly warns** if the guest
 has live interactive sessions (an `ivm shell` / SSH login) the action would kill, then
 asks. Best-effort (asks the guest for pty-owning processes); a stopped VM warns nothing.
+
+### `--force`: when the VM is wedged in `Error` status
+
+Incus reports `Error` when the VM's qemu process is still alive but incusd can no longer
+reach its QMP (QEMU Machine Protocol - the socket incusd drives qemu through) monitor.
+A plain restart then fails outright:
+
+```
+Error: The instance cannot be cleanly shutdown as in Error status
+```
+
+`ivm reboot --force` / `ivm stop --force` are the way out: incus SIGKILLs the qemu
+process instead of asking the guest to shut down. **Guest writes not yet flushed to disk
+are lost** (same as pulling the power), so `ivm` warns before its confirm prompt. A
+common cause of `Error` is the storage pool running out of space - check `ivm
+storage-status` before assuming the VM itself is at fault.
 
 ## VM identity
 

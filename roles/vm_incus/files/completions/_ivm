@@ -15,8 +15,8 @@ _ivm_subcommands=(
   'shell-root:open a zsh shell as root'
   'sh-root:alias of shell-root'
   'start:start the target VM'
-  'reboot:restart the target VM (incus restart)'
-  'stop:stop the target VM'
+  'reboot:restart the target VM (incus restart; --force = SIGKILL qemu)'
+  'stop:stop the target VM (--force = SIGKILL qemu)'
   'delete:delete the target VM (confirms)'
   'rename:rename the target VM (incus rename; stopped only; confirms)'
   'env:load + print a template'\''s resolved config'
@@ -225,9 +225,17 @@ case "$state" in
         # (`<name>  -- <working dir>` - left name, right path).
         _ivm_add_vms_ungrouped 'ivm-managed VM' ${(f)"$(_ivm_managed_vms)"} ;;
       # The no-positional subcommands take an optional trailing `<vm>` (shortcut for --name);
-      # complete any incus VM with its working dir shown (managed ones). `resize` adds its flags.
+      # complete any incus VM with its working dir shown (managed ones). `resize` adds its
+      # flags; `stop`/`reboot` add the hard-kill `--force`.
       shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
         [[ "$words[1]" == resize ]] && compadd -- --cpu --memory --disk
+        if [[ "$words[1]" == (stop|reboot) ]]; then
+          local -a _ivm_force_flag
+          _ivm_force_flag=(
+            '--force:no clean guest shutdown - SIGKILL qemu (clears incus Error status; unflushed guest writes lost)'
+          )
+          _describe -t flags 'flag' _ivm_force_flag
+        fi
         _ivm_add_vms_ungrouped 'VM' ${(f)"$(_ivm_vms_with_dir)"} ;;
       storage-status) compadd -- --json ;;
       mount)

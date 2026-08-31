@@ -89,8 +89,8 @@ key-aligned.
 | `shell` / `shell-user` (`sh` / `sh-user`) | - | zsh into the VM as `user`; start it if stopped. Start dir = `shell_default_dir_after_login` when set + present, else home. | no |
 | `shell-root` (`sh-root`) | - | zsh into the VM as `root`. | no |
 | `start` | - | start the VM, wait until ready (no-op if running). | no |
-| `stop` | - | stop the VM (disk state preserved). | yes |
-| `reboot` | - | `incus restart` the VM. | yes |
+| `stop` | `[--force]` | stop the VM (disk state preserved). `--force` => `incus stop --force`: no clean guest shutdown, incus SIGKILLs the qemu process (unflushed guest writes lost). | yes |
+| `reboot` | `[--force]` | `incus restart` the VM. `--force` => `incus restart --force`: SIGKILL, then start. | yes |
 | `delete` | - | delete the VM + disk + snapshots + its dir binding. | yes |
 | `rename` | `[<old-vm>] <new-name>` | rename the VM (`incus rename`; the optional leading `<old-vm>` mirrors incus's argument order). MUST refuse a running VM (incus renames stopped instances only) and MUST re-apply the init-time name checks to the new name (valid incus name, not taken, virtiofs socket paths still fit `sun_path`). Snapshots + binding tags travel with the instance. | yes |
 | `update` | - | refresh + upgrade all guest packages (apt/zypper/dnf per family). | no |
@@ -112,6 +112,13 @@ key-aligned.
 guest has live interactive sessions (each an `ivm shell` / console / SSH login) the
 action would kill - detected best-effort by asking the guest for pty-owning processes
 (`ps -eo tty=`); a stopped / unreachable VM just warns nothing.
+
+`stop --force` / `reboot --force` MUST additionally warn that the guest gets no clean
+shutdown before the same prompt. They exist for incus `Error` status - qemu still
+running but incusd cannot reach its QMP monitor - where incus refuses a clean shutdown
+("The instance cannot be cleanly shutdown as in Error status") and only a SIGKILL
+clears it. So `stop --force` MUST NOT take the "already stopped" no-op shortcut on a
+non-`stopped` VM (`error`, `frozen`): those still have a process to kill.
 
 ### 2b. Non-VM subcommands (resolve no VM)
 

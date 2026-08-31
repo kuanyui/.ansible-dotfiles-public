@@ -105,8 +105,8 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "shell-user": "open a zsh shell in the VM as `user`",
     "shell-root": "open a zsh shell in the VM as `root`",
     "start": "start the VM",
-    "reboot": "restart the VM (`incus restart`; confirms, `--yes` skips)",
-    "stop": "stop the VM (disk state preserved; confirms, `--yes` skips)",
+    "reboot": "restart the VM (`incus restart`; confirms, `--yes` skips; `--force` = SIGKILL qemu)",
+    "stop": "stop the VM (disk state preserved; confirms, `--yes` skips; `--force` = SIGKILL qemu)",
     "delete": "delete the VM + disk + snapshots (confirms; `--yes` skips)",
     "rename": "rename the VM (`incus rename`; stopped VMs only; confirms, `--yes` skips)",
     "overwrite-dotfiles": "re-push the host-staged dotfiles into the VM (no re-provision)",
@@ -1458,10 +1458,19 @@ def resolve_vm_by_cwd(cwd: Path, *, dry_run: bool) -> str:
     die(f"no VM is bound to {cwd} or any parent; run `ivm init <template>` here first{hint}")
 
 
+def vm_status(name: str) -> str:
+    """The target VM's incus status word, lowercased (`running` / `stopped` / `frozen` /
+    `error` / ...); empty string if the VM does not exist. `error` means the qemu process
+    is still alive but incusd cannot reach its QMP (QEMU Machine Protocol - the control
+    socket incusd drives qemu through) monitor, so incus refuses a clean shutdown and only
+    a forced stop clears it."""
+    status_rows: list[str] = capture(
+        ["incus", "list", name, "--format", "csv", "--columns", "s"]).splitlines()
+    return status_rows[0].strip().lower() if status_rows else ""
+
+
 def vm_is_running(name: str) -> bool:
-    return capture(
-        ["incus", "list", name, "--format", "csv", "--columns", "s"]
-    ).strip().lower().startswith("running")
+    return vm_status(name).startswith("running")
 
 
 def ensure_up(name: str, *, dry_run: bool) -> None:
@@ -1913,35 +1922,56 @@ def warn_live_guest_sessions(name: str, action: str, *, dry_run: bool) -> None:
     print("", file=sys.stderr)
 
 
-def confirm_action(name: str, action: str, *, assume_yes: bool, dry_run: bool) -> None:
+def confirm_action(name: str, action: str, *, assume_yes: bool, force: bool, dry_run: bool) -> None:
     """y/N gate before a disruptive lifecycle action (stop / reboot) that interrupts a
     running VM. `--yes` / `--dry-run` skip it; non-TTY without `--yes` aborts (same
-    policy as `delete`). Loudly warns first if someone has a live shell in the guest."""
+    policy as `delete`). Loudly warns first if someone has a live shell in the guest,
+    and again if `--force` turns the action into a hard kill."""
     if assume_yes or dry_run:
         return
     if not sys.stdin.isatty():
         die(f"refusing to {action} {name} without a TTY; pass --yes")
     warn_live_guest_sessions(name, action, dry_run=dry_run)
+    if force:
+        print("", file=sys.stderr)
+        print("!! --force: no clean guest shutdown - incus SIGKILLs the VM's qemu process.",
+              file=sys.stderr)
+        print("!! Guest writes not yet flushed to disk are LOST (same as pulling the power).",
+              file=sys.stderr)
+        print("", file=sys.stderr)
     if input(f"{action.capitalize()} {colorize_vm_name(name)}? [y/N] ").strip().lower() not in ("y", "yes"):
         die("aborted")
 
 
-def cmd_reboot(name: str, *, assume_yes: bool, dry_run: bool) -> None:
+def cmd_reboot(name: str, *, assume_yes: bool, force: bool, dry_run: bool) -> None:
     """`incus restart` the target VM (ivm-friendly alias; incus calls it restart).
-    Confirms first (unless `--yes`)."""
-    confirm_action(name, "reboot", assume_yes=assume_yes, dry_run=dry_run)
-    run(["incus", "restart", name], dry_run=dry_run)
+    Confirms first (unless `--yes`). `--force` (`incus restart --force`) skips the clean
+    guest shutdown and SIGKILLs its qemu process before starting again - the way out of
+    incus `Error` status, where a plain restart fails with "The instance cannot be
+    cleanly shutdown as in Error status"."""
+    confirm_action(name, "reboot", assume_yes=assume_yes, force=force, dry_run=dry_run)
+    run(["incus", "restart"] + (["--force"] if force else []) + [name], dry_run=dry_run)
     print(f"==> {colorize_vm_name(name)} rebooted.", file=sys.stderr)
 
 
-def cmd_stop(name: str, *, assume_yes: bool, dry_run: bool) -> None:
+def cmd_stop(name: str, *, assume_yes: bool, force: bool, dry_run: bool) -> None:
     """Stop the target VM (`incus stop`); disk state is preserved. Confirms first
-    (unless `--yes`); no-op if already stopped."""
-    if not dry_run and not vm_is_running(name):
-        print(f"==> {colorize_vm_name(name)} already stopped.", file=sys.stderr)
-        return
-    confirm_action(name, "stop", assume_yes=assume_yes, dry_run=dry_run)
-    run(["incus", "stop", name], dry_run=dry_run)
+    (unless `--yes`); no-op if already stopped. `--force` (`incus stop --force`) SIGKILLs
+    the qemu process instead of asking the guest to shut down - needed when the VM is
+    wedged in incus `Error` status, which a plain stop refuses."""
+    if not dry_run:
+        vm_status_word: str = vm_status(name)
+        # A plain stop only has something to do on a RUNNING VM; `--force` also has a qemu
+        # process to kill in every other non-stopped state (`error` = qemu alive but its QMP
+        # monitor unreachable, `frozen` = paused) - which is exactly when it gets used, so it
+        # must not hit the "already stopped" shortcut there. Absent VM (empty) -> no-op both ways.
+        is_stoppable: bool = (vm_status_word not in ("", "stopped") if force
+                              else vm_status_word.startswith("running"))
+        if not is_stoppable:
+            print(f"==> {colorize_vm_name(name)} already stopped.", file=sys.stderr)
+            return
+    confirm_action(name, "stop", assume_yes=assume_yes, force=force, dry_run=dry_run)
+    run(["incus", "stop"] + (["--force"] if force else []) + [name], dry_run=dry_run)
 
 
 def confirm_delete(name: str, root: Path, *, assume_yes: bool, dry_run: bool) -> None:
@@ -3027,7 +3057,7 @@ def cmd_unexpose(name: str, *, port_spec: str | None, assume_yes: bool, dry_run:
             die(f"no forward on host port {host_port} (open: {open_host_ports})")
         device_names_to_remove: list[str] = [device_name]
     else:
-        confirm_action(name, "remove ALL forwards from", assume_yes=assume_yes, dry_run=dry_run)
+        confirm_action(name, "remove ALL forwards from", assume_yes=assume_yes, force=False, dry_run=dry_run)
         device_names_to_remove = [forward[0] for forward in forwards]
     for device_name in device_names_to_remove:
         run(["incus", "config", "device", "remove", name, device_name], dry_run=dry_run)
@@ -3781,6 +3811,11 @@ def build_parser() -> argparse.ArgumentParser:
                             help="the VM to rename (`incus rename` order); omit to resolve "
                                  "by cwd or `--name`")
             sp.add_argument("new_name", metavar="new-name", help="the VM's NEW incus name")
+        if name in ("reboot", "stop"):
+            sp.add_argument("--force", action="store_true",
+                            help="skip the clean guest shutdown - SIGKILL the VM's qemu process "
+                                 "(`incus restart/stop --force`). The way out of incus `Error` "
+                                 "status; unflushed guest writes are lost")
         if name == "snapshot":
             sp.add_argument("snapshot_args", nargs=argparse.REMAINDER)
         if name == "provision":
@@ -3901,9 +3936,9 @@ def main() -> None:
     elif args.subcommand == "start":
         cmd_start(name, dry_run=args.dry_run)
     elif args.subcommand == "reboot":
-        cmd_reboot(name, assume_yes=args.yes, dry_run=args.dry_run)
+        cmd_reboot(name, assume_yes=args.yes, force=args.force, dry_run=args.dry_run)
     elif args.subcommand == "stop":
-        cmd_stop(name, assume_yes=args.yes, dry_run=args.dry_run)
+        cmd_stop(name, assume_yes=args.yes, force=args.force, dry_run=args.dry_run)
     elif args.subcommand == "delete":
         cmd_delete(name, root, assume_yes=args.yes, dry_run=args.dry_run)
     elif args.subcommand == "rename":

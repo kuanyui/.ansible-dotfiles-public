@@ -88,11 +88,12 @@ _ivm() {
         shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
             # These take an optional trailing <vm> (a shortcut for --name) -> complete any VM
             # name. bash can't show descriptions, so bound dirs show in `ivm list` / `ivm cd`.
-            # `resize` also offers its flags.
-            local vm_names_and_resize_flags
-            vm_names_and_resize_flags="$(incus list --format csv --columns n 2>/dev/null)"
-            [[ "$sub" == resize ]] && vm_names_and_resize_flags="--cpu --memory --disk ${vm_names_and_resize_flags}"
-            COMPREPLY=( $(compgen -W "${vm_names_and_resize_flags}" -- "$cur") )
+            # `resize` also offers its flags; `stop`/`reboot` the hard-kill `--force`.
+            local vm_names_and_subcommand_flags
+            vm_names_and_subcommand_flags="$(incus list --format csv --columns n 2>/dev/null)"
+            [[ "$sub" == resize ]] && vm_names_and_subcommand_flags="--cpu --memory --disk ${vm_names_and_subcommand_flags}"
+            [[ "$sub" == stop || "$sub" == reboot ]] && vm_names_and_subcommand_flags="--force ${vm_names_and_subcommand_flags}"
+            COMPREPLY=( $(compgen -W "${vm_names_and_subcommand_flags}" -- "$cur") )
             ;;
         set|unset)
             # Two levels (like mount): the aspect after set/unset, then its args. `i` indexes
