@@ -127,8 +127,13 @@ alternative to building a host bridge (incus proxy device `nat=true`, not nmcli)
 - [x] restricted-project gotcha: `user-<uid>` projects block proxy devices by default
   (`restricted.devices.proxy=block`); expose now rolls back the IP pin on failure + tells
   you to `sudo incus project set user-$(id -u) restricted.devices.proxy=allow` (admin, one-time)
-- [ ] LIVE-TEST on a real host: after the allow above, does expose actually forward (proxy
-  `nat=true` on a VM)? not verifiable in this exec env (no incus perms)
+- [x] incus < 7.2 rejects `listen=tcp:0.0.0.0:<port>` on a `nat=true` proxy ("Cannot listen on
+  wildcard address ... when in nat mode"; lifted upstream in v7.2.0) and a VM proxy has NO non-NAT
+  mode - `expose` now reads the daemon version (`incus info`) and listens on `0.0.0.0` (>= 7.2) or
+  the host's default-route IPv4 (older). Failure advice is picked from incus's actual stderr
+  instead of always blaming the proxy-device restriction
+- [ ] LIVE-TEST on a real host: the 2026-09-02 first live run failed on the wildcard listen
+  address (fixed above); re-test that a forward actually reaches the guest
 - [x] `vm-incus-install` allows proxy devices in the user project by default
   (`vm_incus_allow_proxy_devices: true`, opt-out for shared hosts) - `incus_host_install.yml`
 - [ ] sandbox = `make vm-incus-sandbox` (blocked in this exec env - no podman build; run on a real host)

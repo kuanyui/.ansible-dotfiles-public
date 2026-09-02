@@ -388,6 +388,20 @@ def run(cmd: list[str], *, dry_run: bool) -> None:
         subprocess.run(cmd, check=True)
 
 
+def run_capturing_stderr(cmd: list[str], *, dry_run: bool) -> None:
+    """`run` with the command's stderr captured and re-printed verbatim, so a failing
+    call can hand its message to the caller (`CalledProcessError.stderr`) for tailored
+    advice - without hiding a single line of it from the terminal."""
+    print("+ " + shlex.join(cmd), file=sys.stderr)
+    if dry_run:
+        return
+    result = subprocess.run(cmd, check=False, stderr=subprocess.PIPE, text=True)
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, cmd, stderr=result.stderr)
+
+
 def exec_into(cmd: list[str], *, dry_run: bool) -> None:
     """Hand the terminal to an interactive command (a guest shell / console) by
     REPLACING the ivm process with it (os.execvp). The command's exit status
@@ -2869,6 +2883,22 @@ def cmd_env(template_name: str, root: Path, shared_prebuilt_provision_assets_roo
 # case - a dev HTTP server); a UDP flag can hang off this later without touching callers.
 EXPOSE_DEVICE_PREFIX: str = "expose-tcp-"
 
+# incus 7.2 is where a `nat=true` proxy device may listen on the wildcard address
+# (upstream v7.2.0, "incusd/firewall: Allow wildcard listen address in proxy NAT").
+# Older daemons reject `listen=tcp:0.0.0.0:<port>` outright - and a VM's proxy device has
+# no alternative there ("Only NAT mode is supported for proxies on VM instances"), so on
+# those `expose` must name ONE concrete host address instead.
+INCUS_WILDCARD_PROXY_LISTEN_MIN_VERSION: tuple[int, int] = (7, 2)
+
+
+class ExposeForward(NamedTuple):
+    """One `expose`-added proxy device. `listen_address` = the HOST address it listens on:
+    `0.0.0.0` (every host address) on incus >= 7.2, else the single host IP it was given."""
+    device_name: str
+    listen_address: str
+    host_port: str
+    guest_port: str
+
 
 def parse_host_guest_ports(port_spec: str) -> tuple[int, int]:
     """`<port>` (host == guest) or `<host-port>:<guest-port>` -> (host_port, guest_port),
@@ -2892,16 +2922,19 @@ def instance_level_devices(name: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def expose_proxy_forwards(name: str) -> list[tuple[str, str, str]]:
-    """This VM's `expose`-added proxy devices as (device_name, host_port, guest_port),
-    from its instance-level devices. Read-only - used by `info` and bare `expose`."""
-    forwards: list[tuple[str, str, str]] = []
+def expose_proxy_forwards(name: str) -> list[ExposeForward]:
+    """This VM's `expose`-added proxy devices, from its instance-level devices. Read-only -
+    used by `info` and bare `expose`."""
+    forwards: list[ExposeForward] = []
     for device_name, device in instance_level_devices(name).items():
         if not device_name.startswith(EXPOSE_DEVICE_PREFIX) or device.get("type") != "proxy":
             continue
-        host_port: str = str(device.get("listen", "")).rsplit(":", 1)[-1] or "?"
+        # `listen` is `tcp:<host-address>:<port>`; dropping the `tcp:` prefix and splitting
+        # at the LAST colon keeps a bracketed IPv6 host (`[::1]`) in one piece.
+        listen_address, _, host_port = str(device.get("listen", "")).partition(":")[2].rpartition(":")
         guest_port: str = str(device.get("connect", "")).rsplit(":", 1)[-1] or "?"
-        forwards.append((device_name, host_port, guest_port))
+        forwards.append(
+            ExposeForward(device_name, listen_address or "?", host_port or "?", guest_port))
     return forwards
 
 
@@ -2913,6 +2946,48 @@ def vm_primary_ipv4(name: str) -> str:
         if token.count(".") == 3 and all(octet.isdigit() for octet in token.split(".")):
             return token
     return ""
+
+
+def host_primary_ipv4() -> str:
+    """The host's own IPv4 that the LAN reaches it on: the source address of its default
+    route (`1.1.1.1` is only the route-lookup target - nothing is sent). Empty string when
+    the host has no IPv4 default route."""
+    route_tokens: list[str] = capture(["ip", "--oneline", "-4", "route", "get", "1.1.1.1"]).split()
+    for token_index, token in enumerate(route_tokens[:-1]):
+        if token == "src":
+            return route_tokens[token_index + 1]
+    return ""
+
+
+def incus_server_version() -> tuple[int, int]:
+    """The incus DAEMON's (major, minor) - the daemon validates device config, so its
+    version, not the CLI's, decides what a proxy device may look like. `(0, 0)` when it
+    cannot be read or parsed."""
+    import yaml  # lazy, same as instance_level_devices
+    server_info: Any = yaml.safe_load(capture(["incus", "info"]) or "")
+    raw_server_version: str = str(
+        ((server_info or {}).get("environment") or {}).get("server_version", ""))
+    version_match: re.Match[str] | None = re.match(r"(\d+)\.(\d+)", raw_server_version)
+    return (int(version_match.group(1)), int(version_match.group(2))) if version_match else (0, 0)
+
+
+def proxy_listen_ipv4(incus_version: tuple[int, int], *, dry_run: bool) -> str:
+    """Which HOST address `expose`'s proxy device listens on. incus >= 7.2 takes the
+    wildcard `0.0.0.0` - every host address, so the forward survives the host's IP changing
+    and `127.0.0.1` reaches it too. Older daemons refuse a wildcard in `nat=true` mode, so
+    there we name the host's current default-route IPv4: concrete, but the forward goes
+    dead if that address changes. An unreadable version `(0, 0)` takes the concrete path,
+    which is valid on every version."""
+    if incus_version >= INCUS_WILDCARD_PROXY_LISTEN_MIN_VERSION:
+        return "0.0.0.0"
+    host_ipv4: str = host_primary_ipv4()
+    if host_ipv4:
+        return host_ipv4
+    if dry_run:
+        return "<host-ipv4>"
+    die("incus < 7.2 refuses a wildcard listen address in `nat=true` mode, so the forward "
+        "needs ONE host address - and this host has no IPv4 default route to take it from. "
+        "Connect it to a network first.")
 
 
 def host_tcp_port_in_use(host_port: int) -> bool:
@@ -2985,9 +3060,9 @@ def cmd_unset_static_ip(name: str, *, dry_run: bool) -> None:
     change across host/VM reboots. Refused while `expose` forwards exist: their proxy
     devices target the pinned address (`ivm unexpose` first). Config-only, so it works
     on a stopped VM; a running VM keeps the address until the lease turns over."""
-    remaining_forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
+    remaining_forwards: list[ExposeForward] = expose_proxy_forwards(name)
     if remaining_forwards:
-        forwarded_host_ports: str = ", ".join(host_port for _dev, host_port, _guest in remaining_forwards)
+        forwarded_host_ports: str = ", ".join(forward.host_port for forward in remaining_forwards)
         die(f"{name} still has `expose` forwards (host ports: {forwarded_host_ports}) whose "
             f"proxy devices target the pinned address - `ivm unexpose` them first")
     if not dry_run and not (instance_level_devices(name).get("eth0") or {}).get("ipv4.address"):
@@ -3004,14 +3079,17 @@ def cmd_expose(name: str, *, port_spec: str | None, dry_run: bool) -> None:
     so the LAN can reach a service inside it. host<->VM already works over incusbr0 NAT;
     this only ADDS the LAN path, via an incus proxy device (`nat=true`). With no port it
     lists the VM's current forwards. The VM's incusbr0 IPv4 is pinned first (proxy
-    `nat=true` needs a static target) - pinned to the current lease, so no reboot."""
+    `nat=true` needs a static target) - pinned to the current lease, so no reboot. The HOST
+    side listens on `0.0.0.0` (incus >= 7.2) or on the host's default-route IPv4 (older
+    incus refuses a wildcard listen address in `nat=true` mode)."""
     if not port_spec:
-        forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
+        forwards: list[ExposeForward] = expose_proxy_forwards(name)
         if not forwards:
             print(f"==> {colorize_vm_name(name)} has no forwards.", file=sys.stderr)
             return
-        for _device_name, host_port_text, guest_port_text in forwards:
-            print(f"host :{host_port_text} -> guest :{guest_port_text}")
+        for forward in forwards:
+            print(f"host {forward.listen_address}:{forward.host_port} "
+                  f"-> guest :{forward.guest_port}")
         return
     host_port, guest_port = parse_host_guest_ports(port_spec)
     device_name: str = f"{EXPOSE_DEVICE_PREFIX}{host_port}"
@@ -3021,44 +3099,68 @@ def cmd_expose(name: str, *, port_spec: str | None, dry_run: bool) -> None:
         die(f"host TCP port {host_port} is already in use on this machine - pick another "
             f"host port, e.g. `ivm expose {host_port + 1}:{guest_port}`")
     ensure_up(name, dry_run=dry_run)
+    incus_version: tuple[int, int] = incus_server_version()
+    listen_ipv4: str = proxy_listen_ipv4(incus_version, dry_run=dry_run)
     target_ipv4, pin_rollback_command = pin_vm_ipv4(name, dry_run=dry_run)
     try:
-        run(["incus", "config", "device", "add", name, device_name, "proxy",
-             f"listen=tcp:0.0.0.0:{host_port}", f"connect=tcp:{target_ipv4}:{guest_port}", "nat=true"],
+        run_capturing_stderr(
+            ["incus", "config", "device", "add", name, device_name, "proxy",
+             f"listen=tcp:{listen_ipv4}:{host_port}", f"connect=tcp:{target_ipv4}:{guest_port}",
+             "nat=true"],
             dry_run=dry_run)
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as exc:
         # Undo the IP pin we just made, so a failed expose leaves no half-configured VM.
         if pin_rollback_command is not None:
             run(pin_rollback_command, dry_run=dry_run)
-        die('could not add the proxy device (see the incus error above).\n'
-            '  If it says "Proxy devices are forbidden": ivm\'s VMs live in a RESTRICTED incus\n'
-            '  project (user-<uid>) that blocks proxy devices by default. Re-run\n'
-            '  `make vm-incus-install` (it allows them for your user project unless you set\n'
-            '  `vm_incus_allow_proxy_devices: false`), or do it manually as admin:\n'
-            '      sudo incus project set user-$(id -u) restricted.devices.proxy=allow\n'
-            '  then re-run `ivm expose`.')
-    print(f"==> {colorize_vm_name(name)}: host :{host_port} -> guest :{guest_port}. "
-          f"LAN reaches it at <this-host-ip>:{host_port} (host<->VM unchanged).", file=sys.stderr)
+        # Advice is picked from what incus actually said: one hint printed for every failure
+        # sends the reader after the wrong cause (the wildcard rejection below did exactly
+        # that - it used to surface the proxy-devices-forbidden hint).
+        incus_error: str = exc.stderr or ""
+        if "Proxy devices are forbidden" in incus_error:
+            die("proxy devices are forbidden in this incus project.\n"
+                "  ivm's VMs live in a RESTRICTED incus project (user-<uid>) that blocks them\n"
+                "  by default. Re-run `make vm-incus-install` (it allows them for your user\n"
+                "  project unless you set `vm_incus_allow_proxy_devices: false`), or do it\n"
+                "  manually as admin:\n"
+                "      sudo incus project set user-$(id -u) restricted.devices.proxy=allow\n"
+                "  then re-run `ivm expose`.")
+        if "wildcard address" in incus_error:
+            incus_version_text: str = ("unknown" if incus_version == (0, 0)
+                                       else f"{incus_version[0]}.{incus_version[1]}")
+            die("this incus refuses a wildcard listen address in `nat=true` mode (upstream\n"
+                f"  lifted that in 7.2), but ivm read the daemon as {incus_version_text}.\n"
+                "  Add the device by hand with one host address:\n"
+                f"      incus config device add {name} {device_name} proxy "
+                f"listen=tcp:<host-ipv4>:{host_port} connect=tcp:{target_ipv4}:{guest_port} nat=true")
+        die("could not add the proxy device (see the incus error above).")
+    if listen_ipv4 == "0.0.0.0":
+        reachable_at: str = f"<this-host-ip>:{host_port} - any host address, `127.0.0.1` included"
+    else:
+        reachable_at = (f"{listen_ipv4}:{host_port} - that host address ONLY (`127.0.0.1` is not "
+                        f"forwarded), and the forward dies if the host's IP changes "
+                        f"(`ivm unexpose {host_port}`, then expose again)")
+    print(f"==> {colorize_vm_name(name)}: host :{host_port} -> guest :{guest_port} "
+          f"(host<->VM unchanged). LAN reaches it at {reachable_at}.", file=sys.stderr)
 
 
 def cmd_unexpose(name: str, *, port_spec: str | None, assume_yes: bool, dry_run: bool) -> None:
     """`ivm unexpose [<host-port>]`: remove a forward added by `expose`. With no port it
     removes ALL of this VM's forwards (confirms; --yes skips). The pinned IPv4 is left in
     place - harmless, and a later `expose` reuses it (`ivm unset static-ip` removes it)."""
-    forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
+    forwards: list[ExposeForward] = expose_proxy_forwards(name)
     if not forwards:
         print(f"==> {colorize_vm_name(name)} has no forwards to remove.", file=sys.stderr)
         return
     if port_spec:
         host_port, _guest_port = parse_host_guest_ports(port_spec)
         device_name: str = f"{EXPOSE_DEVICE_PREFIX}{host_port}"
-        if device_name not in {forward[0] for forward in forwards}:
-            open_host_ports: str = ", ".join(forward[1] for forward in forwards)
+        if device_name not in {forward.device_name for forward in forwards}:
+            open_host_ports: str = ", ".join(forward.host_port for forward in forwards)
             die(f"no forward on host port {host_port} (open: {open_host_ports})")
         device_names_to_remove: list[str] = [device_name]
     else:
         confirm_action(name, "remove ALL forwards from", assume_yes=assume_yes, force=False, dry_run=dry_run)
-        device_names_to_remove = [forward[0] for forward in forwards]
+        device_names_to_remove = [forward.device_name for forward in forwards]
     for device_name in device_names_to_remove:
         run(["incus", "config", "device", "remove", name, device_name], dry_run=dry_run)
     print(f"==> {colorize_vm_name(name)}: removed {len(device_names_to_remove)} forward(s).",
@@ -3225,11 +3327,12 @@ def cmd_info(name: str, root: Path) -> None:
     field("services", services_display)
     field("bridge", bridge)
     field("ssh-server", ssh_server_value)
-    expose_forwards: list[tuple[str, str, str]] = expose_proxy_forwards(name)
+    expose_forwards: list[ExposeForward] = expose_proxy_forwards(name)
     if expose_forwards:
         print("  forwards:")
-        for _expose_device_name, expose_host_port, expose_guest_port in expose_forwards:
-            print(f"    host :{expose_host_port} -> guest :{expose_guest_port}")
+        for expose_forward in expose_forwards:
+            print(f"    host {expose_forward.listen_address}:{expose_forward.host_port}"
+                  f" -> guest :{expose_forward.guest_port}")
     else:
         field("forwards", "(none; `ivm expose <port>` to add)")
     # Mounts: full virtio-fs detail (device name, [ro], shadow masks) - SAME rendering as

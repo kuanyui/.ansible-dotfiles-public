@@ -111,6 +111,14 @@ you edit the tables in lockstep - this map is the whole architecture:
   needs a STATIC target, so `expose` first pins the VM's IPv4 to its current lease
   (no reboot). host<->VM already works over incusbr0 NAT; this only ADDS the LAN
   path.
+- **`expose` host listen address is version-gated** - a VM's proxy device MUST be
+  `nat=true` ("Only NAT mode is supported for proxies on VM instances"), and before
+  incus 7.2 that mode also REJECTED a wildcard listen address ("Cannot listen on
+  wildcard address ... when in nat mode"; lifted in upstream v7.2.0, "incusd/firewall:
+  Allow wildcard listen address in proxy NAT"). So `expose` reads the DAEMON version
+  (`incus info` -> `environment.server_version`; the daemon is what validates device
+  config) and listens on `0.0.0.0` when >= 7.2, else on the host's default-route IPv4.
+  An unreadable version takes the concrete-IP path - valid on every version.
 
 ## 4. Why `incusbr0`, not the per-user `incusbr-<uid>`
 
