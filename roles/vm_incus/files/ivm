@@ -1487,6 +1487,27 @@ def vm_is_running(name: str) -> bool:
     return vm_status(name).startswith("running")
 
 
+def die_wedged_in_error_status(name: str, attempted_action: str) -> NoReturn:
+    """Dead-end reached: the VM sits in incus `Error` status, where incus refuses BOTH a
+    clean shutdown ("The instance cannot be cleanly shutdown as in Error status") and a
+    start ("The instance cannot be started as in Error status"), so every non-`--force`
+    lifecycle command can only fail. `incus stop --force` is the one lifecycle call that
+    accepts `Error` (it SIGKILLs qemu), and `incus restart --force` runs exactly that stop
+    before starting again - so hand the reader that command instead of letting incus
+    dead-end them."""
+    die(f"{name} is in incus `Error` status - its qemu process is alive but incusd can no "
+        f"longer reach its QMP (QEMU Machine Protocol - the socket incusd drives qemu "
+        f"through) monitor.\n"
+        f"  incus refuses BOTH a clean shutdown and a start while a VM is in it, so "
+        f"`{attempted_action}` dead-ends here; only a forced stop clears it (SIGKILL of "
+        f"qemu - guest writes not yet flushed to disk are LOST):\n"
+        f"\n"
+        f"ivm reboot --force {name}\n"
+        f"\n"
+        f"  leave it stopped instead:  ivm stop --force {name}\n"
+        f"  a full storage pool is a common cause - check it first:  ivm storage-status")
+
+
 def ensure_up(name: str, *, dry_run: bool) -> None:
     """Start the VM if stopped, then block until it accepts `incus exec`."""
     if dry_run:
@@ -1494,7 +1515,10 @@ def ensure_up(name: str, *, dry_run: bool) -> None:
         return
     if not instance_exists(name):
         die(f"VM '{name}' does not exist; run `ivm init <template>` here first")
-    if not vm_is_running(name):
+    vm_status_word: str = vm_status(name)
+    if vm_status_word == "error":
+        die_wedged_in_error_status(name, "start")
+    if not vm_status_word.startswith("running"):
         ensure_shadow_mask_sources(name)
         run(["incus", "start", name], dry_run=dry_run)
     wait_ready(name, dry_run=dry_run)
@@ -1963,6 +1987,8 @@ def cmd_reboot(name: str, *, assume_yes: bool, force: bool, dry_run: bool) -> No
     guest shutdown and SIGKILLs its qemu process before starting again - the way out of
     incus `Error` status, where a plain restart fails with "The instance cannot be
     cleanly shutdown as in Error status"."""
+    if not dry_run and not force and vm_status(name) == "error":
+        die_wedged_in_error_status(name, "reboot")
     confirm_action(name, "reboot", assume_yes=assume_yes, force=force, dry_run=dry_run)
     run(["incus", "restart"] + (["--force"] if force else []) + [name], dry_run=dry_run)
     print(f"==> {colorize_vm_name(name)} rebooted.", file=sys.stderr)
@@ -1979,6 +2005,11 @@ def cmd_stop(name: str, *, assume_yes: bool, force: bool, dry_run: bool) -> None
         # process to kill in every other non-stopped state (`error` = qemu alive but its QMP
         # monitor unreachable, `frozen` = paused) - which is exactly when it gets used, so it
         # must not hit the "already stopped" shortcut there. Absent VM (empty) -> no-op both ways.
+        # Without `--force`, `error` is the one non-stopped state that must NOT report
+        # "already stopped": qemu is still alive, the plain stop incus would run is refused,
+        # and that message used to send the reader away from the `--force` that fixes it.
+        if vm_status_word == "error" and not force:
+            die_wedged_in_error_status(name, "stop")
         is_stoppable: bool = (vm_status_word not in ("", "stopped") if force
                               else vm_status_word.startswith("running"))
         if not is_stoppable:

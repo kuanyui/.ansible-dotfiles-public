@@ -120,6 +120,13 @@ running but incusd cannot reach its QMP monitor - where incus refuses a clean sh
 clears it. So `stop --force` MUST NOT take the "already stopped" no-op shortcut on a
 non-`stopped` VM (`error`, `frozen`): those still have a process to kill.
 
+WITHOUT `--force`, `start` / `stop` / `reboot` MUST detect `error` up front and die
+naming `ivm reboot --force <vm>`. They MUST NOT run the incus call that cannot succeed
+(`incus start` / `incus restart`, which fail with "The instance cannot be started as in
+Error status" / "...cleanly shutdown as in Error status"), and `stop` MUST NOT report an
+`error` VM as "already stopped" - qemu is alive, and that message sends the reader away
+from the only command that clears the state.
+
 ### 2b. Non-VM subcommands (resolve no VM)
 
 | Subcommand | Args | Behavior |

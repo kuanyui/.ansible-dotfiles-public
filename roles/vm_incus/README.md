@@ -142,6 +142,11 @@ are lost** (same as pulling the power), so `ivm` warns before its confirm prompt
 common cause of `Error` is the storage pool running out of space - check `ivm
 storage-status` before assuming the VM itself is at fault.
 
+You do not have to recognise the state yourself: `start` / `stop` / `reboot` without
+`--force` detect `Error` first and stop with the exact `ivm reboot --force <vm>` to run,
+instead of firing an incus call that cannot succeed (and `stop` no longer mislabels such
+a VM "already stopped").
+
 ## VM identity
 
 `init` writes `user.ivm_init_at_dir=<cwd>` (pure historical record of where init
