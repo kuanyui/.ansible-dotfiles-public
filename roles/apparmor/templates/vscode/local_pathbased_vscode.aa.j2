@@ -148,6 +148,11 @@ profile local_pathbased_vscode /usr/share/code/code {
     owner @{HOME}/.config/Code/** rwkm,             # m: V8 bytecode cache files require executable mmap
     owner @{HOME}/.vscode/ rw,
     owner @{HOME}/.vscode/** rwkm,                  # m: native extension modules (.node files) require executable mmap
+    # Python Environments extension runs its bundled `pet server` (Python Environment Tools) to find
+    # interpreters and venvs. `*` = the `<version>-<platform>` suffix, renamed by every extension update.
+    # `ix` on this user-writable tree is no escape: the child keeps THIS profile, and the rwkm rule
+    # above already lets the extension host write files here and exec-mmap them.
+    owner @{HOME}/.vscode/extensions/ms-python.vscode-python-envs-*/python-env-tools/bin/pet ix,
 
     # NSS certificate database - Electron uses this for TLS; SQLite requires file locking
     owner @{HOME}/.pki/ rw,
