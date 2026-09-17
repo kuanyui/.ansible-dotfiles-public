@@ -125,15 +125,18 @@ CWD_RESOLVED_HELP: dict[str, str] = {
 # Short aliases for the most-typed subcommands. argparse stores the alias VERBATIM
 # in `args.subcommand` (e.g. `sh`, not `shell`), so main() folds it back to the
 # canonical name via SUBCOMMAND_ALIAS_TO_CANONICAL before dispatch - one dict drives
-# BOTH the parser's `aliases=` and that fold-back. Keys MUST be in CWD_RESOLVED.
-CWD_RESOLVED_ALIASES: dict[str, tuple[str, ...]] = {
+# BOTH the parser's `aliases=` and that fold-back. A CWD_RESOLVED key is picked up by
+# build_parser's loop; any other key (`list`) must pass `aliases=` at its own
+# hand-written `add_parser` call.
+SUBCOMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "shell": ("sh",),
     "shell-user": ("sh-user",),
     "shell-root": ("sh-root",),
+    "list": ("ls",),
 }
 SUBCOMMAND_ALIAS_TO_CANONICAL: dict[str, str] = {
     alias: canonical
-    for canonical, aliases in CWD_RESOLVED_ALIASES.items()
+    for canonical, aliases in SUBCOMMAND_ALIASES.items()
     for alias in aliases
 }
 # Aspects configurable via `ivm set <aspect>` / `ivm unset <aspect>` - a namespace (like
@@ -3949,7 +3952,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # No args here: `list` is a raw passthrough, so we collect everything after it
     # via parse_known_args in main() (REMAINDER mishandles leading `--flags`).
-    sub.add_parser("list", help="`incus list` passthrough (e.g. `ivm list --format csv`)",
+    sub.add_parser("list", aliases=list(SUBCOMMAND_ALIASES["list"]),
+                   help="`incus list` passthrough (e.g. `ivm list --format csv`)",
                    description=cmd_list.__doc__)
 
     sub.add_parser("top", help="`incus top` passthrough: live per-instance CPU/memory/disk usage",
@@ -4005,7 +4009,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name in CWD_RESOLVED:
         sp: argparse.ArgumentParser = sub.add_parser(
-            name, aliases=list(CWD_RESOLVED_ALIASES.get(name, ())),
+            name, aliases=list(SUBCOMMAND_ALIASES.get(name, ())),
             help=CWD_RESOLVED_HELP[name], description=CWD_RESOLVED_HANDLER[name].__doc__)
         # A subcommand with no positional of its own also accepts a trailing `<vm>` (dest
         # `vm`) as a shortcut for the global `--name`; main() folds it into the target.

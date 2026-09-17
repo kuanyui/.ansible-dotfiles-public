@@ -45,7 +45,7 @@ you edit the tables in lockstep - this map is the whole architecture:
 | `CWD_RESOLVED` | the VM-acting subcommand names (resolve by cwd / `--name`) | `CWD_RESOLVED_HELP`, `CWD_RESOLVED_HANDLER` |
 | `CWD_RESOLVED_HELP` | one-line `--help` per such subcommand | keys == `CWD_RESOLVED` |
 | `CWD_RESOLVED_HANDLER` | name -> `cmd_*` function | keys == `CWD_RESOLVED` |
-| `CWD_RESOLVED_ALIASES` / `SUBCOMMAND_ALIAS_TO_CANONICAL` | short aliases (`sh`->`shell`) + fold-back | both derived from the first |
+| `SUBCOMMAND_ALIASES` / `SUBCOMMAND_ALIAS_TO_CANONICAL` | short aliases (`sh`->`shell`, `ls`->`list`) + fold-back | both derived from the first; a non-`CWD_RESOLVED` key passes `aliases=` at its own `add_parser` |
 | `SET_UNSET_ASPECTS` | aspect -> (`set` help, `unset` help) | drives parser + bare-listing + dispatch |
 
 - **`build_parser()`** adds the special subcommands (`init`/`env`/`list`/`top`/
