@@ -228,7 +228,15 @@ case "$state" in
       # complete any incus VM with its working dir shown (managed ones). `resize` adds its
       # flags; `stop`/`reboot` add the hard-kill `--force`.
       shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
-        [[ "$words[1]" == resize ]] && compadd -- --cpu --memory --disk
+        if [[ "$words[1]" == resize ]]; then
+          local -a _ivm_resize_flags
+          _ivm_resize_flags=(
+            '--cpu:new vCPU count (live hotplug)'
+            '--memory:new RAM, number+unit - 16G / 1.2GB / 512MiB (bare G/M = IEC, 16G = 16GiB)'
+            '--disk:new root-disk size, same units (50G / 1.5TB) - GROWS only, never shrinks'
+          )
+          _describe -t flags 'flag' _ivm_resize_flags
+        fi
         if [[ "$words[1]" == (stop|reboot) ]]; then
           local -a _ivm_force_flag
           _ivm_force_flag=(

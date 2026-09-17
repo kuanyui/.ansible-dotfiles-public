@@ -41,6 +41,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, NoReturn, TextIO
 
@@ -640,11 +641,90 @@ def choose_instance_name(
         current = reply
 
 
-# ---------- incus command builders ----------
+# ---------- sizes (`hw.memory` / `hw.disk`, `resize --memory` / `--disk`) ----------
 
-def g_to_gib(value: str) -> str:
-    """`8G` -> `8GiB` (the template uses G; incus wants GiB)."""
-    return value[:-1] + "GiB" if value.endswith("G") else value
+# Unit suffixes ivm accepts on a size -> the unit incus names it by, one table per family
+# (IEC = 1024-based, SI = 1000-based). Keys are lowercase; lookups lowercase the suffix
+# first, so `GiB`/`gib`/`GIB` all land on `GiB`. A bare `K`/`M`/`G`/`T` is the IEC unit -
+# `16G` is 16GiB, what the templates have always meant.
+IEC_SIZE_SUFFIX_TO_INCUS_UNIT: dict[str, str] = {
+    "b": "B", "k": "KiB", "kib": "KiB", "m": "MiB", "mib": "MiB",
+    "g": "GiB", "gib": "GiB", "t": "TiB", "tib": "TiB",
+}
+SI_SIZE_SUFFIX_TO_INCUS_UNIT: dict[str, str] = {
+    "b": "B", "kb": "kB", "mb": "MB", "gb": "GB", "tb": "TB",
+}
+# Byte multiplier of every unit incus's own parser takes (`ParseByteSizeString` in
+# incus `shared/units/units.go`). That parser reads the number with `strconv.ParseInt`,
+# so it rejects a decimal point, and its suffix table has no bare `G`/`M` - which is why
+# ivm re-renders each size in the largest unit of its own family that divides it whole:
+# `1.2GB` goes out as `1200MB`, `1.5G` as `1536MiB`.
+INCUS_UNIT_TO_BYTES: dict[str, int] = {
+    "B": 1, "KiB": 1024, "MiB": 1024 ** 2, "GiB": 1024 ** 3, "TiB": 1024 ** 4,
+    "kB": 1000, "MB": 1000 ** 2, "GB": 1000 ** 3, "TB": 1000 ** 4,
+}
+
+
+def _split_size(size: str) -> tuple[Decimal, dict[str, str]] | None:
+    """`'16G'` / `'1.2GB'` / `'512 MiB'` -> (byte count, the suffix table of the family it
+    was written in, for the caller to re-render in that same family). None when `size` is
+    not a size ivm understands: missing or unknown unit suffix. The byte count may still
+    be FRACTIONAL (`0.5B`, `1.001MiB`) - each caller decides what to say about that.
+    `Decimal`, not float, so `1.2GB` is exactly 1200000000, not 1199999999.999."""
+    match: re.Match[str] | None = re.fullmatch(r"\s*([0-9]*\.?[0-9]+)\s*([A-Za-z]+)\s*", size or "")
+    if match is None:
+        return None
+    written_suffix: str = match.group(2).lower()
+    family_suffixes: dict[str, str] = (IEC_SIZE_SUFFIX_TO_INCUS_UNIT
+                                       if written_suffix in IEC_SIZE_SUFFIX_TO_INCUS_UNIT
+                                       else SI_SIZE_SUFFIX_TO_INCUS_UNIT)
+    incus_unit: str | None = family_suffixes.get(written_suffix)
+    if incus_unit is None:
+        return None
+    return Decimal(match.group(1)) * INCUS_UNIT_TO_BYTES[incus_unit], family_suffixes
+
+
+def size_to_bytes(size: str) -> int | None:
+    """A size string -> its exact byte count, for comparing two sizes. None when it is
+    not parseable or not a whole number of bytes, so a caller comparing sizes skips the
+    check rather than guess wrong. A bare number (no unit) reads as BYTES, the way incus
+    itself reads it - ivm never writes that form, but a `root size=` set by hand outside
+    ivm can carry it."""
+    if re.fullmatch(r"\s*[0-9]+\s*", size or ""):
+        return int(size)
+    split_size: tuple[Decimal, dict[str, str]] | None = _split_size(size)
+    if split_size is None or split_size[0] != split_size[0].to_integral_value():
+        return None
+    return int(split_size[0])
+
+
+def to_incus_size(size: str, *, field_name: str) -> str:
+    """A template / CLI size -> the form incus's parser accepts, kept in the unit family
+    it was written in: `16G` -> `16GiB`, `512MiB` -> `512MiB`, `1.2GB` -> `1200MB`.
+    `field_name` (`--memory`, `hw.disk`, ...) names the source in the error message."""
+    split_size: tuple[Decimal, dict[str, str]] | None = _split_size(size)
+    if split_size is None:
+        die(f"{field_name}: '{size}' is not a size - write a number and a unit, e.g. 16G / "
+            f"1.2GB / 512MiB (G/GiB/GB, M/MiB/MB, K/KiB/kB, T/TiB/TB; a bare G/M/K/T means "
+            f"the IEC unit, so 16G = 16GiB)")
+    exact_size_in_bytes, family_suffixes = split_size
+    if exact_size_in_bytes != exact_size_in_bytes.to_integral_value():
+        die(f"{field_name}: '{size}' works out to {exact_size_in_bytes} bytes - incus sizes "
+            f"are whole bytes, so give it fewer decimals")
+    if exact_size_in_bytes == 0:
+        die(f"{field_name}: '{size}' is zero bytes")
+    size_in_bytes: int = int(exact_size_in_bytes)
+    family_units_largest_first: list[str] = sorted(
+        set(family_suffixes.values()), key=lambda incus_unit: INCUS_UNIT_TO_BYTES[incus_unit],
+        reverse=True)
+    # `B` closes every family, so some unit always divides the byte count whole.
+    largest_whole_unit: str = next(
+        incus_unit for incus_unit in family_units_largest_first
+        if size_in_bytes % INCUS_UNIT_TO_BYTES[incus_unit] == 0)
+    return f"{size_in_bytes // INCUS_UNIT_TO_BYTES[largest_whole_unit]}{largest_whole_unit}"
+
+
+# ---------- incus command builders ----------
 
 
 def image_ref(os_block: dict[str, Any]) -> str:
@@ -681,7 +761,7 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
     if "cpu" in hw:
         cmd += ["--config", f"limits.cpu={hw['cpu']}"]
     if "memory" in hw:
-        cmd += ["--config", f"limits.memory={g_to_gib(hw['memory'])}"]
+        cmd += ["--config", "limits.memory=" + to_incus_size(hw["memory"], field_name="hw.memory")]
     if hw.get("secureboot") is False:  # incus VM default is on, so only emit to disable
         cmd += ["--config", "security.secureboot=false"]
     # `user.ivm_init_at_dir` is a pure HISTORICAL record (where init ran; also the
@@ -722,7 +802,7 @@ def create_command(doc: Template, name: str, cwd: Path) -> list[str]:
     if template_shell_login_dir:
         cmd += ["--config", f"user.ivm_shell_default_dir_after_login={sh_expand(template_shell_login_dir, cwd)}"]
     if "disk" in hw:
-        cmd += ["--device", f"root,size={g_to_gib(hw['disk'])}"]
+        cmd += ["--device", "root,size=" + to_incus_size(hw["disk"], field_name="hw.disk")]
     return cmd
 
 
@@ -3411,13 +3491,6 @@ def cmd_info(name: str, root: Path) -> None:
             print(f"  (none - template '{vm_template_name}' declares no `usage:` notes)")
 
 
-def _parse_gib(size: str) -> int | None:
-    """'50GiB' / '50G' / '50GB' -> 50. Anything else (empty, or MiB/TiB/other units)
-    -> None, so a caller comparing two sizes skips the check rather than guess wrong."""
-    match: re.Match[str] | None = re.fullmatch(r"([0-9]+)\s*(?:G|GB|GiB)", (size or "").strip())
-    return int(match.group(1)) if match else None
-
-
 def _resize_root_disk(name: str, new_size: str, *, dry_run: bool) -> bool:
     """Grow the VM's `root` device to `new_size` (incus form, e.g. '50GiB'). Returns
     True if a resize was issued, False if the disk was already that size. REFUSES to
@@ -3426,18 +3499,18 @@ def _resize_root_disk(name: str, new_size: str, *, dry_run: bool) -> bool:
     inherits `root` from the profile (-> `override`, since `set` rejects an inherited
     device)."""
     import yaml  # lazy, same as cmd_info / load_yaml
-    requested_gib: int | None = _parse_gib(new_size)
+    requested_size_bytes: int | None = size_to_bytes(new_size)
     expanded_raw: Any = yaml.safe_load(capture(["incus", "config", "show", "--expanded", name]) or "")
     expanded: dict[str, Any] = expanded_raw if isinstance(expanded_raw, dict) else {}
     expanded_devices: dict[str, Any] = expanded.get("devices", {}) or {}
     current_size: str = (expanded_devices.get("root", {}) or {}).get("size", "")
-    current_gib: int | None = _parse_gib(current_size)
-    if requested_gib is not None and current_gib is not None:
-        if requested_gib < current_gib:
+    current_size_bytes: int | None = size_to_bytes(current_size)
+    if requested_size_bytes is not None and current_size_bytes is not None:
+        if requested_size_bytes < current_size_bytes:
             die(f"refusing to SHRINK the root disk ({current_size} -> {new_size}): incus has no "
                 f"safe VM-disk shrink (it truncates under the guest filesystem). To go smaller, "
                 f"recreate the VM - `ivm delete` then `ivm init`.")
-        if requested_gib == current_gib:
+        if requested_size_bytes == current_size_bytes:
             print(f"    disk already {current_size}; left as-is.", file=sys.stderr)
             return False
     # `incus config device set` only edits an INSTANCE-LOCAL device; the non-expanded
@@ -3455,32 +3528,36 @@ def cmd_resize(name: str, *, cpu: int | None, memory: str | None, disk: str | No
     """`ivm resize`: change an EXISTING VM's vCPU / RAM / root-disk allocation. The
     template `hw.*` only applies at `init`, and editing the template never touches a
     live VM - this is how you change one afterward. Pass any subset of
-    `--cpu N` / `--memory NG` / `--disk NG` (at least one):
+    `--cpu N` / `--memory SIZE` / `--disk SIZE` (at least one):
 
       cpu    -> `incus config set <vm> limits.cpu=N`        (live hotplug; the guest
                 may need to bring the new vCPUs online, or just `ivm reboot`)
-      memory -> `incus config set <vm> limits.memory=NGiB`  (live: grow via hotplug,
+      memory -> `incus config set <vm> limits.memory=<size>`  (live: grow via hotplug,
                 shrink via balloon (slow); a reboot applies it cleanly)
-      disk   -> `incus config device set|override <vm> root size=NGiB`  (GROW ONLY)
+      disk   -> `incus config device set|override <vm> root size=<size>`  (GROW ONLY)
 
     Disk is grow-only and resizes only the HOST block device; the GUEST filesystem is
     NOT auto-grown (see the printed follow-up). Shrinking is refused (no safe VM-disk
-    shrink). `--memory`/`--disk` take the template's whole-GiB `NG` form (e.g. `16G`)."""
+    shrink). `--memory`/`--disk` take a number and a unit - `16G`, `1.2GB`, `512MiB`; a
+    bare `G`/`M` is the IEC unit (`16G` = 16GiB), and ivm re-renders whatever was written
+    into the whole-number unit incus's own parser accepts (`1.2GB` -> `1200MB`)."""
     if cpu is None and memory is None and disk is None:
         die("resize needs at least one of --cpu / --memory / --disk")
     if cpu is not None and cpu < 1:
         die(f"--cpu must be >= 1 (got {cpu})")
-    for flag_name, flag_value in (("--memory", memory), ("--disk", disk)):
-        if flag_value is not None and not re.fullmatch(r"[0-9]+G", flag_value):
-            die(f"{flag_name} must be a whole number of GiB with a 'G' suffix, e.g. 16G (got '{flag_value}')")
+    memory_incus_size: str | None = (to_incus_size(memory, field_name="--memory")
+                                     if memory is not None else None)
+    disk_incus_size: str | None = (to_incus_size(disk, field_name="--disk")
+                                   if disk is not None else None)
     if not dry_run and not instance_exists(name):
         die(f"no such incus VM: '{name}' (see `incus list`)")
 
     if cpu is not None:
         run(["incus", "config", "set", name, f"limits.cpu={cpu}"], dry_run=dry_run)
-    if memory is not None:
-        run(["incus", "config", "set", name, f"limits.memory={g_to_gib(memory)}"], dry_run=dry_run)
-    disk_changed: bool = _resize_root_disk(name, g_to_gib(disk), dry_run=dry_run) if disk is not None else False
+    if memory_incus_size is not None:
+        run(["incus", "config", "set", name, f"limits.memory={memory_incus_size}"], dry_run=dry_run)
+    disk_changed: bool = (_resize_root_disk(name, disk_incus_size, dry_run=dry_run)
+                          if disk_incus_size is not None else False)
 
     print(f"==> {colorize_vm_name(name)} resized.", file=sys.stderr)
     if cpu is not None or memory is not None:
@@ -3957,9 +4034,12 @@ def build_parser() -> argparse.ArgumentParser:
                             help="unit(s) to install: a distro_package_groups bundle, a thirdparty_software recipe, or a dotfiles feature; omit to list all units + descriptions")
         if name == "resize":
             sp.add_argument("--cpu", type=int, metavar="N", help="new vCPU count")
-            sp.add_argument("--memory", metavar="NG", help="new RAM, whole GiB with a G suffix (e.g. 16G)")
-            sp.add_argument("--disk", metavar="NG",
-                            help="new root-disk size, whole GiB with a G suffix (e.g. 50G); GROW only")
+            sp.add_argument("--memory", metavar="SIZE",
+                            help="new RAM as number+unit - G/GiB/GB, M/MiB/MB (e.g. 16G, 1.2GB, "
+                                 "512MiB); a bare G/M is the IEC unit, so 16G = 16GiB")
+            sp.add_argument("--disk", metavar="SIZE",
+                            help="new root-disk size, same units as --memory (e.g. 50G, 1.5TB); "
+                                 "GROW only")
         if name == "mount":
             mount_sub = sp.add_subparsers(dest="mount_action", required=True)
             mount_sub.add_parser("ls", help="list this VM's mounts + shadow masks")

@@ -36,8 +36,8 @@
       "additionalProperties": false,
       "properties": {
         "cpu": { "type": "integer", "minimum": 1, "description": "vCPU count." },
-        "memory": { "type": "string", "pattern": "^[0-9]+G$", "description": "RAM in GiB, written with a `G` suffix (e.g. `8G`); `ivm` converts to incus `GiB`." },
-        "disk": { "type": "string", "pattern": "^[0-9]+G$", "description": "Root disk size in GiB, `G` suffix; `ivm` converts to incus `GiB`." },
+        "memory": { "type": "string", "pattern": "^[0-9]*\\.?[0-9]+ *([Bb]|[KkMmGgTt]([Ii]?[Bb])?)$", "description": "RAM as a number + unit: `8G`, `1.5GiB`, `512MB`. A bare `G`/`M`/`K`/`T` is the IEC unit (`8G` = 8GiB); `ivm` re-renders the value into the whole-number unit incus takes." },
+        "disk": { "type": "string", "pattern": "^[0-9]*\\.?[0-9]+ *([Bb]|[KkMmGgTt]([Ii]?[Bb])?)$", "description": "Root disk size, same units as `memory` (e.g. `50G`, `1.5TB`)." },
         "nested_virt": { "type": "boolean", "default": false, "description": "Run nested KVM inside this VM. Host-gated, NOT a per-VM incus setting: incus VMs already expose the host CPU (vmx/svm), so this works whenever the HOST kernel has nesting on (`kvm_intel nested=1` / `kvm_amd nested=1`). `ivm` only warns if the host looks disabled - it cannot change the host's modprobe config." },
         "secureboot": { "type": "boolean", "default": true, "description": "UEFI Secure Boot. Required true for Windows 11." },
         "tpm": { "type": "boolean", "default": false, "description": "Attach a virtual TPM 2.0 device. Required for Windows 11." }
