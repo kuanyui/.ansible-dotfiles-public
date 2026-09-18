@@ -159,9 +159,11 @@ _ivm() {
             COMPREPLY=( $(compgen -W "$(incus list --format csv --columns n 2>/dev/null)" -- "$cur") )
             ;;
         unexpose)
-            # Existing forwards: the `expose-tcp-<port>` proxy device names on the target
-            # VM (--name, else the cwd-bound VM), stripped to bare host ports. (`expose`
-            # takes a free port number -> nothing to complete, so no case for it.)
+            # ONE arg - a host port or `--all` (mutually exclusive) - so nothing once it is
+            # given. Host ports: the `expose-tcp-<port>` proxy device names on the target VM
+            # (--name, else the cwd-bound VM), stripped to bare host ports. (`expose` takes a
+            # free port number -> nothing to complete, so no case for it.)
+            (( COMP_CWORD == i + 1 )) || return
             local unexpose_vm="" name_index
             for (( name_index = 1; name_index < COMP_CWORD; name_index++ )); do
                 if [[ "${COMP_WORDS[name_index]}" == "--name" ]]; then
@@ -169,7 +171,9 @@ _ivm() {
                 fi
             done
             [[ -z "$unexpose_vm" ]] && unexpose_vm="$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)"
-            [[ -n "$unexpose_vm" ]] && COMPREPLY=( $(compgen -W "$(incus config device list "$unexpose_vm" 2>/dev/null | sed -n 's/^expose-tcp-//p')" -- "$cur") )
+            local unexpose_host_ports=""
+            [[ -n "$unexpose_vm" ]] && unexpose_host_ports="$(incus config device list "$unexpose_vm" 2>/dev/null | sed -n 's/^expose-tcp-//p')"
+            [[ -n "$unexpose_host_ports" ]] && COMPREPLY=( $(compgen -W "$unexpose_host_ports --all" -- "$cur") )
             ;;
         storage-status)
             COMPREPLY=( $(compgen -W "--json" -- "$cur") )

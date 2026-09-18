@@ -121,6 +121,9 @@ alternative to building a host bridge (incus proxy device `nat=true`, not nmcli)
   `<host>:<guest>` (docker `-p` style); pins the VM's incusbr0 IPv4 (proxy needs a static
   target; pinned to the current lease -> no reboot) then adds an `expose-tcp-<port>` proxy device
 - [x] `expose` no-arg = list forwards; `unexpose` no-arg = remove all (confirms); host-port-in-use + dup checks; `--dry-run`
+- [x] `unexpose` no-arg = usage + current forwards, removes NOTHING (superseded "remove all" above); `--all`
+  removes all (lists them + confirms); dropped the false "live sessions ... will kill" warning (it
+  reused stop/reboot's `confirm_action`); zsh completion `_describe`s each port with its forward + `--all`
 - [x] `cmd_info` shows a `forwards:` section
 - [x] completion: `_ivm` + `ivm.bash` (`unexpose` completes the VM's open host ports)
 - [x] verified: py_compile + `--help` + `--dry-run` (parse / range / non-numeric / would-run); bash+zsh completion `-n`

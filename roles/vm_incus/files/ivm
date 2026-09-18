@@ -120,7 +120,7 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "gui": "open a SPICE graphical console, detached from the shell",
     "info": "show the VM's live state, grouped: Basic / Network (ip, services, bridge, ssh-server, forwards) / Mounts / Storage",
     "expose": "forward a host TCP port to the VM so the LAN can reach a service in it (no arg lists current forwards)",
-    "unexpose": "remove a port forward added by `expose` (no arg removes ALL; confirms, --yes skips)",
+    "unexpose": "remove port forward(s) added by `expose`: <host-port>, or --all (confirms, --yes skips); no arg lists current forwards",
 }
 # Short aliases for the most-typed subcommands. argparse stores the alias VERBATIM
 # in `args.subcommand` (e.g. `sh`, not `shell`), so main() folds it back to the
@@ -3172,13 +3172,13 @@ def cmd_unset_static_ip(name: str, *, dry_run: bool) -> None:
     """`ivm unset static-ip`: drop the eth0 `ipv4.address` pin (set by `ivm set
     static-ip`, or implicitly by `ivm expose`) - back to a DYNAMIC DHCP lease that may
     change across host/VM reboots. Refused while `expose` forwards exist: their proxy
-    devices target the pinned address (`ivm unexpose` first). Config-only, so it works
+    devices target the pinned address (`ivm unexpose --all` first). Config-only, so it works
     on a stopped VM; a running VM keeps the address until the lease turns over."""
     remaining_forwards: list[ExposeForward] = expose_proxy_forwards(name)
     if remaining_forwards:
         forwarded_host_ports: str = ", ".join(forward.host_port for forward in remaining_forwards)
         die(f"{name} still has `expose` forwards (host ports: {forwarded_host_ports}) whose "
-            f"proxy devices target the pinned address - `ivm unexpose` them first")
+            f"proxy devices target the pinned address - `ivm unexpose --all` first")
     if not dry_run and not (instance_level_devices(name).get("eth0") or {}).get("ipv4.address"):
         print(f"==> {colorize_vm_name(name)} has no static IPv4 pin (already dynamic).",
               file=sys.stderr)
@@ -3257,11 +3257,29 @@ def cmd_expose(name: str, *, port_spec: str | None, dry_run: bool) -> None:
           f"(host<->VM unchanged). LAN reaches it at {reachable_at}.", file=sys.stderr)
 
 
-def cmd_unexpose(name: str, *, port_spec: str | None, assume_yes: bool, dry_run: bool) -> None:
-    """`ivm unexpose [<host-port>]`: remove a forward added by `expose`. With no port it
-    removes ALL of this VM's forwards (confirms; --yes skips). The pinned IPv4 is left in
-    place - harmless, and a later `expose` reuses it (`ivm unset static-ip` removes it)."""
+def cmd_unexpose(name: str, *, port_spec: str | None, remove_all: bool, assume_yes: bool,
+                 dry_run: bool) -> None:
+    """`ivm unexpose <host-port> | --all`: remove forward(s) added by `expose` - `<host-port>`
+    removes that one, `--all` removes every one (lists them + confirms; --yes skips). With NO
+    arg it removes nothing: it prints the usage + this VM's current forwards, i.e. the args it
+    takes right now. The pinned IPv4 is left in place - harmless, and a later `expose` reuses
+    it (`ivm unset static-ip` removes it)."""
     forwards: list[ExposeForward] = expose_proxy_forwards(name)
+    if not port_spec and not remove_all:
+        # The bash-friendly alternative to <TAB> (bash completion shows no descriptions),
+        # like a no-arg `ivm provision` / `ivm set`.
+        print("Usage: ivm unexpose <host-port> | --all")
+        print("  <host-port>  remove that ONE forward")
+        print("  --all        remove ALL of this VM's forwards (lists them + confirms; --yes skips)")
+        print(f"\nCurrent forwards on {colorize_vm_name(name, stream=sys.stdout)}:")
+        if not forwards:
+            print("  (none - nothing to remove; `ivm expose <port>` adds one)")
+            return
+        host_port_column_width: int = max(len(forward.host_port) for forward in forwards)
+        for forward in forwards:
+            print(f"  {forward.host_port:<{host_port_column_width}}  host {forward.listen_address}:"
+                  f"{forward.host_port} -> guest :{forward.guest_port}")
+        return
     if not forwards:
         print(f"==> {colorize_vm_name(name)} has no forwards to remove.", file=sys.stderr)
         return
@@ -3273,7 +3291,21 @@ def cmd_unexpose(name: str, *, port_spec: str | None, assume_yes: bool, dry_run:
             die(f"no forward on host port {host_port} (open: {open_host_ports})")
         device_names_to_remove: list[str] = [device_name]
     else:
-        confirm_action(name, "remove ALL forwards from", assume_yes=assume_yes, force=False, dry_run=dry_run)
+        # Not `confirm_action`: its live-session warning belongs to stop / reboot. A forward
+        # is a hotplugged proxy device (host-side NAT); `ivm shell` sessions are `incus exec`,
+        # which reaches the in-guest agent over vsock and never passes through one.
+        print("", file=sys.stderr)
+        print(f"About to remove ALL {len(forwards)} forwards from {colorize_vm_name(name)}:",
+              file=sys.stderr)
+        for forward in forwards:
+            print(f"  host {forward.listen_address}:{forward.host_port} -> guest :{forward.guest_port}",
+                  file=sys.stderr)
+        print("", file=sys.stderr)
+        if not (assume_yes or dry_run):
+            if not sys.stdin.isatty():
+                die(f"refusing to remove all forwards from {name} without a TTY; pass --yes")
+            if input(f"Remove all {len(forwards)} forwards? [y/N] ").strip().lower() not in ("y", "yes"):
+                die("aborted; nothing removed")
         device_names_to_remove = [forward.device_name for forward in forwards]
     for device_name in device_names_to_remove:
         run(["incus", "config", "device", "remove", name, device_name], dry_run=dry_run)
@@ -4073,8 +4105,14 @@ def build_parser() -> argparse.ArgumentParser:
                             help="<port> (host==guest) or <host-port>:<guest-port> (e.g. 8000 or 9000:8000); "
                                  "omit to list this VM's current forwards")
         if name == "unexpose":
-            sp.add_argument("port", nargs="?",
-                            help="host port to stop forwarding; omit to remove ALL forwards (confirms; --yes skips)")
+            # ONE forward or ALL, never both; neither = list the forwards (removes nothing).
+            unexpose_target_group = sp.add_mutually_exclusive_group()
+            unexpose_target_group.add_argument(
+                "port", nargs="?", metavar="host-port",
+                help="host port of the ONE forward to remove; omit (and --all) to list this VM's forwards")
+            unexpose_target_group.add_argument(
+                "--all", dest="remove_all", action="store_true",
+                help="remove ALL of this VM's forwards (lists them + confirms; --yes skips)")
     return parser
 
 
@@ -4215,7 +4253,8 @@ def main() -> None:
     elif args.subcommand == "expose":
         cmd_expose(name, port_spec=args.port, dry_run=args.dry_run)
     elif args.subcommand == "unexpose":
-        cmd_unexpose(name, port_spec=args.port, assume_yes=args.yes, dry_run=args.dry_run)
+        cmd_unexpose(name, port_spec=args.port, remove_all=args.remove_all, assume_yes=args.yes,
+                     dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 

@@ -38,7 +38,7 @@ _ivm_subcommands=(
   'mount:inspect/change virtio-fs shares post-init (ls/attach/detach; hotplug)'
   'push:copy a host file/dir into the VM (incus file push; --as-root)'
   'expose:forward a host TCP port to the VM for LAN access (no arg lists forwards)'
-  'unexpose:remove a port forward (no arg removes all; confirms)'
+  'unexpose:remove a port forward - <host-port> or --all (no arg lists forwards)'
 )
 
 # All installable unit names for `provision`: keys of the materialized distro-bundle
@@ -113,6 +113,35 @@ PY
 # VM bound to the current directory (`user.ivm_host_bound_dir`). Empty if neither. REUSABLE.
 _ivm_target_vm() {
   print -r -- "${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)}"
+}
+
+# A VM's `expose` forwards as `_describe` lines - `<host-port>:host <listen-address>:<host-port>
+# -> guest :<guest-port>`, the rendering bare `ivm unexpose` prints. Same filter as ivm's
+# `expose_proxy_forwards` (`expose-tcp-*` proxy devices), but a line-scan of `incus config
+# device show` - no yaml dep in the completion. $1 = VM name; empty -> nothing.
+_ivm_expose_forwards() {
+  [[ -n "$1" ]] || return 1
+  python3 - "$(incus config device show "$1" 2>/dev/null)" 2>/dev/null <<'PY'
+import sys
+EXPOSE_DEVICE_PREFIX = "expose-tcp-"
+device_fields_by_name = {}
+device_name = ""
+# An unindented `<device>:` line opens a device; the indented `key: value` lines below are its fields.
+for line in sys.argv[1].splitlines():
+    if line and not line[0].isspace():
+        device_name = line.rstrip().rstrip(":")
+        device_fields_by_name[device_name] = {}
+    elif device_name and ":" in line:
+        field_key, _, field_value = line.strip().partition(":")
+        device_fields_by_name[device_name][field_key] = field_value.strip().strip("\"'")
+for device_name, device_fields in device_fields_by_name.items():
+    if not device_name.startswith(EXPOSE_DEVICE_PREFIX) or device_fields.get("type") != "proxy":
+        continue
+    # `listen` is `tcp:<host-address>:<port>`; split at the LAST colon (keeps `[::1]` whole).
+    listen_address, _, host_port = device_fields.get("listen", "").partition(":")[2].rpartition(":")
+    guest_port = device_fields.get("connect", "").rsplit(":", 1)[-1] or "?"
+    print(f"{host_port or '?'}:host {listen_address or '?'}:{host_port or '?'} -> guest :{guest_port}")
+PY
 }
 
 # REUSABLE: EVERY incus VM as a `_describe` line, for any VM-name completion that should
@@ -304,10 +333,18 @@ case "$state" in
         ;;
       expose) _message 'host port, or host-port:guest-port (e.g. 8000 or 9000:8000)' ;;
       unexpose)
-        # Existing forwards on the target VM (--name, else the cwd-bound VM): the
-        # `expose-tcp-<port>` proxy device names, stripped to bare host ports.
-        local _ivm_unexpose_vm="${opt_args[--name]:-$(incus list --format csv --columns n "user.ivm_host_bound_dir=$PWD" 2>/dev/null)}"
-        [[ -n "$_ivm_unexpose_vm" ]] && compadd -- ${(f)"$(incus config device list ${_ivm_unexpose_vm} 2>/dev/null | sed -n 's/^expose-tcp-//p')"}
+        # ONE arg - a host port or `--all` (mutually exclusive) - so nothing once it is given.
+        # Each host port is described by its forward, as bare `ivm unexpose` lists it; target
+        # VM = --name, else the cwd-bound VM.
+        if (( CURRENT == 2 )); then
+          local -a _ivm_unexpose_forwards _ivm_unexpose_all_flag
+          _ivm_unexpose_forwards=(${(f)"$(_ivm_expose_forwards "$(_ivm_target_vm)")"})
+          if (( $#_ivm_unexpose_forwards )); then
+            _describe -t forwards 'forward (host port)' _ivm_unexpose_forwards
+            _ivm_unexpose_all_flag=("--all:remove all $#_ivm_unexpose_forwards forwards (lists them + confirms; --yes skips)")
+            _describe -t flags 'flag' _ivm_unexpose_all_flag
+          fi
+        fi
         ;;
       provision)
         # `_describe` renders each "name:description" line as `name  -- description`.

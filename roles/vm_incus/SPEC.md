@@ -102,7 +102,7 @@ key-aligned.
 | `gui` | - | open a SPICE graphical console, detached from the shell. | no |
 | `info` | - | print the VM's live state, GROUPED: Basic (status/created/last-started/template/image/hw/snapshots/host-bound-dir/guest-shell-dir/user-sudo), Network (ip, services, bridge, ssh-server, forwards), Mounts, Storage, Usage (the template's `usage:` notes, read LIVE from the template file via `user.ivm_template`). `last started` = same start-only semantics as `list`'s Up/Last-On. Read-only. | no |
 | `expose` | `[<port>\|<host>:<guest>]` | forward a host TCP port to the VM so the LAN can reach a service in it (pins the VM's IPv4 first). Host listen address MUST follow the incus daemon version: `0.0.0.0` on >= 7.2, else the host's default-route IPv4 (older daemons reject a wildcard in `nat=true` mode, and a VM proxy has no non-NAT mode). NO arg => LIST current forwards. | no |
-| `unexpose` | `[<host-port>]` | remove a forward. NO arg => remove ALL of this VM's forwards. | yes (no-arg form) |
+| `unexpose` | `[<host-port>\|--all]` | remove a forward: `<host-port>` => that one; `--all` => ALL of this VM's forwards, PRINTED before the prompt. The two MUST be mutually exclusive. NO arg => remove NOTHING: print the usage + LIST current forwards (the passable host ports). MUST NOT reuse the stop/reboot live-session warning - removing a proxy device never touches `incus exec` sessions. | yes (`--all`) |
 | `overwrite-dotfiles` | - | re-push the host-staged dotfiles into the VM (no re-provision). | no |
 
 `info` MUST print EVERY field on EVERY run, with an explicit placeholder
