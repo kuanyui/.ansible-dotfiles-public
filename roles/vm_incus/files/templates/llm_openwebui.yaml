@@ -12,8 +12,8 @@
 # shared provision_thirdparty_software registry (same appliance doctrine as
 # llm_sillytavern.yaml - keeps `ivm provision` from landing it on unrelated VMs).
 #
-# Backup tiers (same model as every llm_* appliance): app DATA -> host-side `ivm backup` /
-# `ivm restore` (the `backup:` block below; tars ~/openwebui into the host's
+# Backup tiers (same model as every llm_* appliance): app DATA -> host-side `ivm script backup` /
+# `ivm script restore` (the `backup:` block below; tars ~/openwebui into the host's
 # ~/Downloads/OpenWebUIBackups/); fast in-place rollback -> `ivm snapshot`; whole-VM
 # archive -> `incus export`.
 template_name: llm_openwebui
@@ -29,8 +29,8 @@ services: { webui: 8080 }
 usage:
   - "web UI: open the `services` address above in the HOST browser; the FIRST visit creates the admin account"
   - "OpenRouter key: paste it in the web UI (Admin Settings -> Connections) - env pre-wires only the first launch"
-  - "backup / restore data: from the HOST `ivm backup <vm>` / `ivm restore latest <vm>` (tars land in the host's ~/Downloads/OpenWebUIBackups/)"
-# What `ivm backup` / `ivm restore` operate on, HOST-driven and read LIVE from this file via
+  - "backup / restore data: from the HOST `ivm --name <vm> script backup` / `ivm --name <vm> script restore latest` (tars land in the host's ~/Downloads/OpenWebUIBackups/)"
+# What `ivm script backup` / `ivm script restore` operate on, HOST-driven and read LIVE from this file via
 # the VM's `user.ivm_template` tag (like `usage`), so a fix here reaches every existing VM:
 # stop the per-user `unit`, tar `paths` inside `dir`, restart; tars land in the host's
 # `<XDG Download>/<host_downloads_subdir>/`.
@@ -79,7 +79,7 @@ post_install_script: |
   # below); re-running just refreshes the moving `:main` tag, so a re-init is an upgrade.
   su - user -c 'mkdir -p ~/openwebui/data && podman pull ghcr.io/open-webui/open-webui:main'
   # Run the container as a PER-USER systemd service (~/.config/systemd/user), the same
-  # pattern as llm_sillytavern.yaml: `user` (no sudo) fully controls it, and `ivm backup`
+  # pattern as llm_sillytavern.yaml: `user` (no sudo) fully controls it, and `ivm script backup`
   # stops/starts it for consistent tars. --rm --replace keep restarts clean after a crash;
   # the published 8080 binds on the guest's interfaces, which NAT exposes to the host only.
   # OPENAI_API_BASE_URL pre-wires OpenRouter; it is a FIRST-LAUNCH seed only (Open WebUI

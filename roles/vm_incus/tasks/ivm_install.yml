@@ -59,6 +59,16 @@
     dest: "{{ vm_incus_ivm_dir }}/templates/"
     mode: "0644"
 
+# `ivm script <name>` runs these HOST-side helper scripts (e.g. `backup` / `restore`) against
+# a VM; single-sourced here (nothing baked into guests), so a fix reaches every VM at once.
+# `mode: preserve` keeps the repo's +x on the runnable scripts and 0644 on the `_`-prefixed
+# shared libs (which `ivm script` skips when listing).
+- name: Install the `ivm script` helper scripts to `{{ vm_incus_ivm_dir }}/scripts/`
+  ansible.builtin.copy:
+    src: scripts/
+    dest: "{{ vm_incus_ivm_dir }}/scripts/"
+    mode: preserve
+
 # The copy above never purges, so the pre-rename template (sillytavern.yaml ->
 # llm_sillytavern.yaml) would linger on already-provisioned hosts and keep showing up in
 # `ivm init` listings + completions next to the renamed one.

@@ -3,7 +3,7 @@
 # https://<guest-ip>:6001 (incus NAT lets the host route to the guest; the LAN cannot).
 # No GUI and no /workspaces mount - it is not a dev/agent box. Same appliance shape as
 # llm_sillytavern.yaml (RisuAI is the other character-card chat frontend): cloned + built
-# into ~/RisuAI, run by a per-user systemd unit, host-side `ivm backup` / `ivm restore`.
+# into ~/RisuAI, run by a per-user systemd unit, host-side `ivm script backup` / `ivm script restore`.
 #
 # Built from SOURCE, not from upstream's container image, on purpose: since upstream
 # commit 6dcbfd6 (2026-04-15, src/App.svelte) a build WITHOUT the build-time flag
@@ -42,10 +42,10 @@ usage:
   - "password: the FIRST visit asks you to SET one, then to ENTER it (each browser/profile enters it once and is remembered by its own key); forgot it: in the VM `rm ~/RisuAI/save/__password`, `systemctl --user restart risuai`, then set a new one"
   - "API keys: set per provider in the web UI (Settings); keys, chats, characters and presets all live in ~/RisuAI/save"
   - "character cards (PNG / CHARX / JSON): import via the web UI - its file picker sees HOST files (the browser runs on the host)"
-  - "backup / restore data: from the HOST `ivm backup <vm>` / `ivm restore latest <vm>` (tars land in the host's ~/Downloads/RisuAIBackups/)"
+  - "backup / restore data: from the HOST `ivm --name <vm> script backup` / `ivm --name <vm> script restore latest` (tars land in the host's ~/Downloads/RisuAIBackups/)"
   - "upgrade: in the VM `cd ~/RisuAI && git pull && pnpm install --frozen-lockfile && VITE_RISU_LEGAL_CONFIGURED=TRUE pnpm run build && systemctl --user restart risuai` - the flag is BUILD-time: without it the app renders only the legal notice"
   - "debug output: in the VM `journalctl --user --unit risuai --follow` (status: `systemctl --user status risuai`); foreground run: `systemctl --user stop risuai` then `cd ~/RisuAI && PORT=6001 node server/node/server.cjs`"
-# What `ivm backup` / `ivm restore` operate on, HOST-driven and read LIVE from this file via
+# What `ivm script backup` / `ivm script restore` operate on, HOST-driven and read LIVE from this file via
 # the VM's `user.ivm_template` tag (like `usage`), so a fix here reaches every existing VM:
 # stop the per-user `unit`, tar `paths` inside `dir`, restart; tars land in the host's
 # `<XDG Download>/<host_downloads_subdir>/`.
@@ -112,7 +112,7 @@ post_install_script: |
     [ -f certificate/server.crt ] || bash "Generate Certificate.sh"
   '
   # Run RisuAI as a PER-USER systemd service (~/.config/systemd/user), so `user` - who has
-  # no sudo - fully controls it, and `ivm backup` / `ivm restore` stop/start it over the user
+  # no sudo - fully controls it, and `ivm script backup` / `ivm script restore` stop/start it over the user
   # bus for a consistent snapshot, no root and no reboot. NODE_ENV / PORT are upstream server.sh's
   # runtime knobs (6001 is also the server's default; explicit so the `services` tripwire
   # above holds). The server serves `dist/`, `save/` and the certificate relative to its

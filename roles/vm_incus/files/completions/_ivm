@@ -2,8 +2,8 @@
 # ivm zsh completion (ansible-managed by roles/vm_incus). zsh autoloads this via
 # fpath - see the `ansible-managed/*/zsh-completions` glob in roles/zsh/.zshrc.j2.
 # Two levels: subcommands, then their args - template names for `init`/`env`, unit
-# names for `provision`, `snapshot` actions + existing snapshot names, `restore`'s backup
-# tars, and the two-level `set`/`unset <aspect>` args (aspect, then `user`/`root`,
+# names for `provision`, `snapshot` actions + existing snapshot names, script names for
+# `script`, and the two-level `set`/`unset <aspect>` args (aspect, then `user`/`root`,
 # `--pubkey`, a guest dir, etc.).
 
 local -a _ivm_subcommands
@@ -40,8 +40,7 @@ _ivm_subcommands=(
   'push:copy a host file/dir into the VM (incus file push; --as-root)'
   'expose:forward a host TCP port to the VM for LAN access (no arg lists forwards)'
   'unexpose:remove a port forward - <host-port> or --all (no arg lists forwards)'
-  'backup:tar the app data named by the template'\''s backup: block into the host Downloads dir (stops/restarts the app unit)'
-  'restore:restore a backup tar (or latest) into the VM - destructive, confirms; no arg lists backups'
+  'script:run a host-side helper script (backup / restore / ...) against the VM (--name <vm>; no arg lists scripts)'
 )
 
 # All installable unit names for `provision`: keys of the materialized distro-bundle
@@ -147,34 +146,30 @@ for device_name, device_fields in device_fields_by_name.items():
 PY
 }
 
-# The backup tars `ivm restore` can take for a VM, newest first, as `_describe` lines
-# `<path>:<size>, <mtime>`. Dir = `<host XDG Download>/<host_downloads_subdir>`, the subdir
-# line-scanned from the `backup:` block of the template named by the VM's `user.ivm_template`
-# tag (no yaml dep in the completion). $1 = VM name; empty -> nothing.
-_ivm_backup_tars() {
-  [[ -n "$1" ]] || return 1
-  local _ivm_templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}/templates"
-  python3 - "$_ivm_templates_root" "$(incus config get "$1" user.ivm_template 2>/dev/null)" \
-    "$(xdg-user-dir DOWNLOAD 2>/dev/null || printf '%s' "$HOME/Downloads")" 2>/dev/null <<'PY'
-import os, sys, time
-templates_root, template_name, host_downloads_dir = sys.argv[1], sys.argv[2], sys.argv[3]
-host_downloads_subdir = ""
-if template_name:
-    try:  # cheap line-scan for the `backup:` block's `host_downloads_subdir:` key
-        for line in open(os.path.join(templates_root, template_name + ".yaml")):
-            if line.strip().startswith("host_downloads_subdir:"):
-                host_downloads_subdir = line.split(":", 1)[1].strip().strip('"').strip("'")
-                break
-    except Exception:
-        pass
-if host_downloads_subdir:
-    backups_dir = os.path.join(host_downloads_dir, host_downloads_subdir)
-    tars = [os.path.join(backups_dir, f) for f in os.listdir(backups_dir)] if os.path.isdir(backups_dir) else []
-    tars = [t for t in tars if t.endswith(".tar") and os.path.isfile(t)]
-    for tar_path in sorted(tars, key=os.path.getmtime, reverse=True):
-        size_mib = os.path.getsize(tar_path) / 1048576
-        mtime = time.strftime("%Y-%m-%d %H\\:%M", time.localtime(os.path.getmtime(tar_path)))
-        print(f"{tar_path}:{size_mib:.1f} MiB, {mtime}")
+# Script names + their `# description:` header for `ivm script` completion: the executable,
+# non-`_`-prefixed files in `<root>/scripts/` (the same filter as ivm's `available_scripts`;
+# `_`-prefixed = the scripts' shared libs).
+_ivm_script_names() {
+  local _ivm_scripts_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}/scripts"
+  python3 - "$_ivm_scripts_root" 2>/dev/null <<'PY'
+import os, sys
+scripts_root = sys.argv[1]
+if os.path.isdir(scripts_root):
+    for script_name in sorted(os.listdir(scripts_root)):
+        script_path = os.path.join(scripts_root, script_name)
+        if script_name.startswith("_") or not os.path.isfile(script_path) or not os.access(script_path, os.X_OK):
+            continue
+        description = ""
+        try:  # cheap line-scan for the `# description:` header (first 10 lines)
+            with open(script_path, errors="replace") as script_file:
+                for _ in range(10):
+                    line = script_file.readline()
+                    if line.startswith("# description:"):
+                        description = line[len("# description:"):].strip()
+                        break
+        except Exception:
+            pass
+        print(f"{script_name}:{description}" if description else script_name)
 PY
 }
 
@@ -291,7 +286,7 @@ case "$state" in
       # The no-positional subcommands take an optional trailing `<vm>` (shortcut for --name);
       # complete any incus VM with its working dir shown (managed ones). `resize` adds its
       # flags; `stop`/`reboot` add the hard-kill `--force`.
-      shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize|backup)
+      shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
         if [[ "$words[1]" == resize ]]; then
           local -a _ivm_resize_flags
           _ivm_resize_flags=(
@@ -366,39 +361,20 @@ case "$state" in
           ${(f)"$(_ivm_vms_with_dir)"}
         ;;
       expose) _message 'host port, or host-port:guest-port (e.g. 8000 or 9000:8000)' ;;
-      restore)
-        # restore <file>|latest [<vm>]: 1st positional = a backup tar of the TARGET VM (--name,
-        # else the cwd-bound VM) or `latest`, plus any host .tar; 2nd = an optional VM name
-        # (shortcut for --name - an appliance needs it, or `--name` before the tar).
-        local _ivm_restore_positional=0 _ivm_restore_word_index
-        for (( _ivm_restore_word_index = 2; _ivm_restore_word_index < CURRENT; _ivm_restore_word_index++ )); do
-          [[ "$words[_ivm_restore_word_index]" == -* ]] && continue
-          (( _ivm_restore_positional++ ))
+      script)
+        # script <name> [args...]: 1st positional = a script in <root>/scripts/ (shown with its
+        # `# description:` header); everything after it belongs to the script -> host files.
+        local _ivm_script_positional=0 _ivm_script_word_index
+        for (( _ivm_script_word_index = 2; _ivm_script_word_index < CURRENT; _ivm_script_word_index++ )); do
+          [[ "$words[_ivm_script_word_index]" == -* ]] && continue
+          (( _ivm_script_positional++ ))
         done
-        if (( _ivm_restore_positional == 0 )); then
-          local -a _ivm_restore_targets
-          _ivm_restore_targets=(
-            'latest:the newest .tar in the target VM'\''s backup dir'
-            ${(f)"$(_ivm_backup_tars "$(_ivm_target_vm)")"}
-          )
-          _describe -t backups 'backup to restore' _ivm_restore_targets
-          _files -g '*.tar'
-        elif (( _ivm_restore_positional == 1 )); then
-          _ivm_add_vms_ungrouped 'VM' ${(f)"$(_ivm_vms_with_dir)"}
-        fi
-        ;;
-      unexpose)
-        # ONE arg - a host port or `--all` (mutually exclusive) - so nothing once it is given.
-        # Each host port is described by its forward, as bare `ivm unexpose` lists it; target
-        # VM = --name, else the cwd-bound VM.
-        if (( CURRENT == 2 )); then
-          local -a _ivm_unexpose_forwards _ivm_unexpose_all_flag
-          _ivm_unexpose_forwards=(${(f)"$(_ivm_expose_forwards "$(_ivm_target_vm)")"})
-          if (( $#_ivm_unexpose_forwards )); then
-            _describe -t forwards 'forward (host port)' _ivm_unexpose_forwards
-            _ivm_unexpose_all_flag=("--all:remove all $#_ivm_unexpose_forwards forwards (lists them + confirms; --yes skips)")
-            _describe -t flags 'flag' _ivm_unexpose_all_flag
-          fi
+        if (( _ivm_script_positional == 0 )); then
+          local -a _ivm_scripts
+          _ivm_scripts=(${(f)"$(_ivm_script_names)"})
+          _describe -t scripts 'script' _ivm_scripts
+        else
+          _files
         fi
         ;;
       provision)

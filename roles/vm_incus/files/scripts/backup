@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+# description: tar the app data the VM's template `backup:` block names into the host's Downloads dir (stops/restarts the app's user unit around it)
+"""`ivm --name <vm> script backup`: tar the app data the VM's template `backup:` block
+names - `paths` inside `dir` - out of the guest into
+`<host XDG Download>/<host_downloads_subdir>/<vm>_<YYYYMMDD_HHMM>.tar`, streamed over
+`incus exec` as `user` (inside `podman unshare` when the block says so). The block's
+per-user systemd `unit` is stopped first for a consistent copy and started again after
+(only if it was running). Read LIVE from the template, so one fix there covers every VM
+built from it - nothing baked into the guest is involved. App DATA only: fast in-place
+rollback is `ivm snapshot`, a whole-VM archive is `incus export`. Takes no arguments."""
+from __future__ import annotations
+
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _ivm_backup_lib import BackupSpec, backup_tar_command, describe_backup_targets, load_backup_spec  # noqa: E402
+from _ivm_script_lib import announce, die, guest_user_unit_control, guest_user_unit_is_active, human_size  # noqa: E402
+
+
+def main() -> None:
+    if sys.argv[1:] in (["-h"], ["--help"]):
+        print(__doc__)
+        return
+    if sys.argv[1:]:
+        die("takes no arguments (usage: ivm --name <vm> script backup)")
+    spec: BackupSpec = load_backup_spec()
+    backup_path: Path = spec.host_backups_dir / f"{spec.vm_name}_{datetime.now():%Y%m%d_%H%M}.tar"
+    print(f"==> {spec.vm_name} ({spec.template_name}): {describe_backup_targets(spec)} -> {backup_path}",
+          file=sys.stderr)
+    unit_was_active: bool = guest_user_unit_is_active(spec.vm_name, spec.unit)
+    if unit_was_active:
+        guest_user_unit_control(spec.vm_name, "stop", spec.unit)
+    else:
+        print(f"    (user unit `{spec.unit}` is not running - nothing to stop)", file=sys.stderr)
+    tar_command: list[str] = backup_tar_command(spec, ["--create", "--file=-", *spec.paths])
+    announce(tar_command, f"> {backup_path}")
+    spec.host_backups_dir.mkdir(parents=True, exist_ok=True)
+    tar_exit_code: int = 0
+    try:
+        with open(backup_path, "wb") as backup_file:
+            tar_exit_code = subprocess.run(tar_command, stdin=subprocess.DEVNULL, stdout=backup_file).returncode
+    finally:
+        if unit_was_active:
+            guest_user_unit_control(spec.vm_name, "start", spec.unit)
+    if tar_exit_code != 0:
+        backup_path.unlink(missing_ok=True)
+        die(f"backup failed (tar / incus exec exit {tar_exit_code}); removed the partial {backup_path}")
+    print(f"==> wrote {backup_path} ({human_size(backup_path.stat().st_size)}). Restore it with:\n\n"
+          f"ivm --name {spec.vm_name} script restore latest\n", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

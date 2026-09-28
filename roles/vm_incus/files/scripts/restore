@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+# description: restore a backup tar (or `latest`) into the VM - destructive, confirms (--yes skips); no arg lists this VM's backups
+"""`ivm --name <vm> script restore [<file>|latest]`: stream a backup tar back into the
+VM - the reverse of `script backup` (same `backup:` block: stop the `unit`,
+`tar --extract` inside `dir` as `user` / in `podman unshare`, start the unit). `latest` =
+the newest `*.tar` in the VM's backup dir; a bare filename is looked up there too.
+DESTRUCTIVE: files in the tar overwrite the guest's (files only in the guest stay) - it
+prints what it overwrites and CONFIRMS (`ivm --yes` skips). NO argument => restore
+nothing: list this VM's backups, newest first, with the copyable command. The unit is
+started after the extract whether or not it was running before."""
+from __future__ import annotations
+
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _ivm_backup_lib import (BackupSpec, backup_tar_command, backup_tars_newest_first,  # noqa: E402
+                             describe_backup_targets, load_backup_spec)
+from _ivm_script_lib import announce, assume_yes, die, guest_user_unit_control, human_size  # noqa: E402
+
+
+def list_backups(spec: BackupSpec, backups: list[Path]) -> None:
+    """The no-argument mode: every backup of this VM, newest first (rows on stdout), plus
+    the copyable command for the newest."""
+    print(f"Backups of {spec.vm_name} ({spec.template_name}) in {spec.host_backups_dir}/:", file=sys.stderr)
+    if not backups:
+        print(f"  (none yet - create one with `ivm --name {spec.vm_name} script backup`)", file=sys.stderr)
+        return
+    for backup in backups:
+        print(f"  {human_size(backup.stat().st_size):>10}  "
+              f"{datetime.fromtimestamp(backup.stat().st_mtime):%Y-%m-%d %H:%M}  {backup.name}")
+    sys.stdout.flush()  # the rows (stdout) must land before the hint (stderr) when piped
+    print(f"\nRestore the newest with:\n\nivm --name {spec.vm_name} script restore latest\n", file=sys.stderr)
+
+
+def resolve_backup_path(spec: BackupSpec, backups: list[Path], target: str) -> Path:
+    """`latest`, a path, or a bare filename inside the VM's backup dir."""
+    if target == "latest":
+        if not backups:
+            die(f"no backups in {spec.host_backups_dir} - create one with `ivm --name {spec.vm_name} script backup`")
+        return backups[0]
+    backup_path: Path = Path(target).expanduser()
+    if not backup_path.is_file() and (spec.host_backups_dir / target).is_file():
+        backup_path = spec.host_backups_dir / target
+    if not backup_path.is_file():
+        die(f"not found: {target} (a backup .tar path, a filename in {spec.host_backups_dir}/, or `latest`)")
+    return backup_path
+
+
+def main() -> None:
+    restore_args: list[str] = sys.argv[1:]
+    if restore_args in (["-h"], ["--help"]):
+        print(__doc__)
+        return
+    if len(restore_args) > 1:
+        die("usage: ivm --name <vm> script restore [<file>|latest]")
+    spec: BackupSpec = load_backup_spec()
+    backups: list[Path] = backup_tars_newest_first(spec.host_backups_dir)
+    if not restore_args:
+        list_backups(spec, backups)
+        return
+    backup_path: Path = resolve_backup_path(spec, backups, restore_args[0])
+    print(f"==> {spec.vm_name} ({spec.template_name}): this OVERWRITES {describe_backup_targets(spec)} from\n"
+          f"    {backup_path}", file=sys.stderr)
+    if not assume_yes() and input("Continue? [y/N] ").strip().lower() not in ("y", "yes"):
+        die("aborted")
+    guest_user_unit_control(spec.vm_name, "stop", spec.unit)
+    tar_command: list[str] = backup_tar_command(spec, ["--extract", "--file=-"])
+    announce(tar_command, f"< {backup_path}")
+    with open(backup_path, "rb") as backup_file:
+        tar_exit_code: int = subprocess.run(tar_command, stdin=backup_file).returncode
+    guest_user_unit_control(spec.vm_name, "start", spec.unit)
+    if tar_exit_code != 0:
+        die(f"restore failed (tar / incus exec exit {tar_exit_code}); the unit was started again, "
+            f"but {spec.dir} may now MIX old and restored files - inspect before use")
+    print(f"==> restored {backup_path.name} into {spec.vm_name}; `{spec.unit}` started.", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

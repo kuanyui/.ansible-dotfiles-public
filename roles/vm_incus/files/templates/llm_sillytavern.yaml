@@ -21,10 +21,10 @@ services: { webui: 8000 }
 usage:
   - "web UI: open the `services` address above in the HOST browser; set API keys in its API Connections panel"
   - "character cards: ~/Downloads is shared with the host - drop PNGs there to trade both ways"
-  - "backup / restore data: from the HOST `ivm backup <vm>` / `ivm restore latest <vm>` (tars land in the host's ~/Downloads/SillyTavernBackups/, also visible in the VM's shared ~/Downloads)"
+  - "backup / restore data: from the HOST `ivm --name <vm> script backup` / `ivm --name <vm> script restore latest` (tars land in the host's ~/Downloads/SillyTavernBackups/, also visible in the VM's shared ~/Downloads)"
   - "debug output: in the VM `journalctl --user --unit sillytavern --follow` (status: `systemctl --user status sillytavern`); foreground run: `systemctl --user stop sillytavern` then `cd ~/SillyTavern && node server.js`"
   - "UI / extension errors (e.g. CharacterLibrary) surface only in the HOST browser devtools console (F12), not in the server journal"
-# What `ivm backup` / `ivm restore` operate on, HOST-driven and read LIVE from this file via
+# What `ivm script backup` / `ivm script restore` operate on, HOST-driven and read LIVE from this file via
 # the VM's `user.ivm_template` tag (like `usage`), so a fix here reaches every existing VM:
 # stop the per-user `unit`, tar `paths` inside `dir`, restart; tars land in the host's
 # `<XDG Download>/<host_downloads_subdir>/`.
@@ -82,7 +82,7 @@ post_install_script: |
   # clone into ST's per-user extensions dir, so UPGRADING is one in-guest command -
   #   git -C ~/SillyTavern/data/default-user/extensions/SillyTavern-CharacterLibrary pull
   # (or the Update button in ST's Extensions panel) - and it lives under data/, so
-  # `ivm backup` already carries it. Guarded like the ST clone (re-init = no-op). MUST run
+  # `ivm script backup` already carries it. Guarded like the ST clone (re-init = no-op). MUST run
   # AFTER the ST clone above (cloning ST fails on a non-empty ~/SillyTavern). The
   # OPTIONAL cl-helper SERVER plugin (Pygmalion login / DataCat / some extractors) is
   # deliberately NOT installed - it needs `enableServerPlugins: true` plus a plugins/
@@ -118,7 +118,7 @@ post_install_script: |
   enableCorsProxy: true
   EOF
   # Run ST as a PER-USER systemd service (~/.config/systemd/user), so `user` - who has no
-  # sudo - fully controls it, and `ivm backup` / `ivm restore` stop/start it over the user
+  # sudo - fully controls it, and `ivm script backup` / `ivm script restore` stop/start it over the user
   # bus for a consistent snapshot, no root and no reboot. `loginctl enable-linger` makes the user
   # manager run headless at boot (no login needed); `dbus-user-session` (a distro_package)
   # gives the per-user D-Bus that `systemctl --user` talks to. `%h` = the user's home.

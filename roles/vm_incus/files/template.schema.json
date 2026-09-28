@@ -32,7 +32,7 @@
     },
     "backup": {
       "type": "object",
-      "description": "What `ivm backup` / `ivm restore` operate on - HOST-driven (`incus exec` as `user`), read LIVE from this file via the VM's `user.ivm_template` tag (like `usage`), so a fix here reaches every existing VM. backup = stop `unit` (a per-user systemd unit, restarted after) -> `tar` `paths` inside `dir` -> stream the tar to `<host XDG DOWNLOAD dir>/<host_downloads_subdir>/<vm>_<YYYYMMDD_HHMM>.tar`; restore = the reverse (destructive; confirms). `podman_unshare` wraps tar in `podman unshare` for data a rootless-podman container wrote under guest subuids (plain `user` cannot read it; inside the namespace ownership round-trips). Optional - without it both commands refuse with a message naming this block.",
+      "description": "What `ivm script backup` / `ivm script restore` operate on - HOST-driven (`incus exec` as `user`), read LIVE from this file via the VM's `user.ivm_template` tag (like `usage`), so a fix here reaches every existing VM. backup = stop `unit` (a per-user systemd unit, restarted after) -> `tar` `paths` inside `dir` -> stream the tar to `<host XDG DOWNLOAD dir>/<host_downloads_subdir>/<vm>_<YYYYMMDD_HHMM>.tar`; restore = the reverse (destructive; confirms). `podman_unshare` wraps tar in `podman unshare` for data a rootless-podman container wrote under guest subuids (plain `user` cannot read it; inside the namespace ownership round-trips). Optional - without it both commands refuse with a message naming this block.",
       "additionalProperties": false,
       "required": ["unit", "dir", "paths", "host_downloads_subdir"],
       "properties": {

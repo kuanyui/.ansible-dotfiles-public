@@ -1484,38 +1484,50 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   in 4G, the https self-signed warning click-through, set-then-enter password flow,
   `llm-backup` round trip; plus `make vm-incus-sandbox` (no podman in the editing env)
 
-## ivm backup / restore (host-driven, replaces the in-guest llm-backup copies)
+## ivm script framework (host-side helper scripts) - backup / restore as its first two
 
 - [x] problem: each llm_* template baked its own ~65-line `llm-backup` bash copy into
   the VM at init - a template fix never reached existing VMs (the same staleness
-  `usage:` was moved to a live read for). Now ONE host-side implementation in `ivm`
-- [x] template schema: optional `backup:` block (`unit` / `dir` / `paths[]` /
-  `podman_unshare` / `host_downloads_subdir`), read LIVE via `user.ivm_template` like
-  `usage:` - a fix applies to every existing VM, old ones included
-- [x] `ivm backup [<vm>]`: stop the per-user unit (restarted only if it was running),
-  `tar --create` `paths` inside `dir` as `user` (in `podman unshare` when declared),
-  streamed over `incus exec` into `<xdg DOWNLOAD>/<subdir>/<vm>_<stamp>.tar`; the
-  partial file is removed on failure
-- [x] `ivm restore [<file>|latest] [<vm>]`: prints what it overwrites + confirms, stop,
-  `tar --extract` from stdin, start; `latest` = newest `*.tar` in the dir (the old
-  `STBackup_*` / `OWUIBackup_*` / `LCBackup_*` tars included); a bare filename is
-  looked up in the dir; no arg lists the VM's backups + the copyable command. Own
-  positional FIRST, optional trailing `<vm>` (a lone arg is always the target)
-- [x] 4 llm_* templates: `backup:` block added, the embedded `llm-backup` heredocs
-  removed (~260 lines), `usage:` lines point at `ivm backup` / `ivm restore`; the
-  ~/Downloads mount dropped from openwebui / librechat / risuai (it existed only for
-  the in-guest tars; ST keeps it as the character-card drop zone). Existing VMs keep
-  their old in-guest copy - harmless, just no longer the documented path
+  `usage:` was moved to a live read for). First cut (d2e1326, kept as a checkpoint)
+  made `backup` / `restore` dedicated ivm subcommands - too specialized: every new
+  per-VM helper would mean more ivm Python. Replaced by a generic framework
+- [x] `ivm [--name <vm>] script [<script> [args...]]`: runs `<root>/scripts/<script>` on
+  the HOST against the VM (started first) with `IVM_VM` / `IVM_TEMPLATE` /
+  `IVM_TEMPLATE_FILE` / `IVM_ROOT` / `IVM_YES` in env, args verbatim, process
+  replaced (stdin/stdout/exit code are the script's); `--dry-run` prints + runs
+  nothing; no script name lists them + `# description:` headers. Runnable = executable
+  + not `_`-prefixed (`_`-prefixed = shared libs). Host-vs-guest: scripts run on the
+  host and reach the guest via `incus exec` (data over its stdin/stdout - no share
+  needed), the same model as ivm itself; `_ivm_script_lib.py` carries the as-`user` +
+  D-Bus-env exec incantation, user-unit control, die/announce
+- [x] `scripts/backup` + `scripts/restore` (+ `_ivm_backup_lib.py`): the template's
+  `backup:` block (schema: `unit` / `dir` / `paths[]` / `podman_unshare` /
+  `host_downloads_subdir`), read LIVE via `IVM_TEMPLATE_FILE` - a fix applies to every
+  existing VM, old ones included. backup: stop the unit (restarted only if it was
+  running), `tar --create` as `user` (in `podman unshare` when declared) streamed into
+  `<xdg DOWNLOAD>/<subdir>/<vm>_<stamp>.tar`, partial file removed on failure.
+  restore `[<file>|latest]`: prints what it overwrites + confirms (`IVM_YES`), stop,
+  `tar --extract` from stdin, start; `latest` = newest `*.tar` (old `STBackup_*` etc.
+  included); bare filename looked up in the dir; no arg lists the VM's backups
+- [x] 4 llm_* templates: `backup:` block, embedded `llm-backup` heredocs removed
+  (~260 lines), `usage:` lines point at `ivm --name <vm> script backup` / `... restore
+  latest`; the ~/Downloads mount dropped from openwebui / librechat / risuai (it
+  existed only for the in-guest tars; ST keeps it as the character-card drop zone).
+  Existing VMs keep their old in-guest copy - harmless, just no longer the documented
+  path
 - [x] `scripts/st-vm-backup` retired (ST-only, hot backup without a unit stop, no
   completion, not in the Makefile)
-- [x] completions: `_ivm` (`backup` -> VM names; `restore` -> `latest` + the target VM's
-  tars with size/date via `_describe`, then VM names) + `ivm.bash`; SPEC 2a/3 + README
-  subcommand rows + shipped-examples sentence
-- [x] verify (structural): py_compile, `ivm backup --help` / `restore --help` parse,
+- [x] deploy: `tasks/ivm_install.yml` copies `files/scripts/` to `<root>/scripts/`
+  (`mode: preserve` keeps +x); uninstall already removes the whole role subdir
+- [x] completions: `_ivm` (`script` -> script names + descriptions via `_describe`, then
+  host files for the script's args) + `ivm.bash`; SPEC 2a/3 + README rows + files table
+- [x] verify (structural): py_compile (ivm + the 4 script files), `ivm script --help`,
   all templates pass the schema, `bash -n` on the 4 `post_install_script`s, `bash -n`
-  ivm.bash, `zsh -n` _ivm, pure-function checks (spec parse, `latest` pick)
-- [ ] verify (host): real `ivm backup` + `ivm restore latest` round trip on one podman
-  appliance (the unshare path) and one plain one (ST or risuai); `make vm-incus-sandbox`
+  ivm.bash, `zsh -n` _ivm, and a REAL local backup -> restore round trip through
+  `ivm --root <scratch> script ...` with a fake `incus` on PATH that runs the guest-side
+  argv locally
+- [ ] verify (host): real round trip on one podman appliance (the unshare path) and
+  one plain one (ST or risuai); `make vm-incus-sandbox`
 
 ## Notes / future
 

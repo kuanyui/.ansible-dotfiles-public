@@ -42,8 +42,8 @@ against `ivm/template.schema.json` (the files carry a `# yaml-language-server:
 $schema=...` modeline, so an editor with the YAML LSP shows inline field docs +
 validation). Shipped examples: `base_debian` / `base_opensuse` / `base_fedora`
 (bare distro + `tools_basic`, nothing else), `llm_sillytavern` / `llm_openwebui` /
-`llm_librechat` / `llm_risuai` (self-contained LLM chat appliances; `ivm backup` /
-`ivm restore` tar their app data into the host's `~/Downloads/<App>Backups/`),
+`llm_librechat` / `llm_risuai` (self-contained LLM chat appliances; `ivm script backup` /
+`ivm script restore` tar their app data into the host's `~/Downloads/<App>Backups/`),
 `agent_claude`, `agent_codex`, `webbrowser`, `windows11`.
 
 Field groups (see the schema for the full, authoritative list):
@@ -83,14 +83,13 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 
 **Targeting a VM by name.** Commands that take no argument of their own - `shell*`,
 `start`/`stop`/`reboot`/`delete`, `update`, `overwrite-dotfiles`, `gui`, `info`,
-`resize`, `backup` - also accept a trailing VM name: `ivm stop foo`, `ivm info foo`, `ivm sh
+`resize` - also accept a trailing VM name: `ivm stop foo`, `ivm info foo`, `ivm sh
 foo` (a shortcut for `--name`, tab-completed with each VM's bound dir shown in
 zsh). Omit it to resolve by the current directory. Commands that DO take an argument
-(`provision`, `push`, `mount`, `snapshot`, `expose`, `unexpose`) use `--name` only.
+(`provision`, `push`, `mount`, `snapshot`, `expose`, `unexpose`, `script`) use `--name` only.
 `rename` is the exception: its target is an optional **leading** positional -
 `ivm rename <old> <new>` (the `incus rename` order), or `ivm rename <new>` resolved
-by cwd / `--name`. `restore` takes its target **after** its own argument:
-`ivm restore latest <vm>`.
+by cwd / `--name`.
 
 | Subcommand | What it does |
 |---|---|
@@ -120,8 +119,7 @@ by cwd / `--name`. `restore` takes its target **after** its own argument:
 | `set git-ssh-key <keyfile> [--host HOST]` / `unset git-ssh-key [--host HOST]` | Copy a host **private** ssh key into the VM so in-guest `git` / `go get` reach **private** repos over SSH. Renamed to its type's default name (`id_ed25519`/`id_rsa`/...) so ssh auto-uses it (one key per VM); also trusts `--host` (default github.com) in known_hosts and sets git's `insteadOf` to rewrite `https`->`ssh` (needed for `go get`, which fetches via https). **WARNS + requires typing `yes i know`** (the key lives in the VM - use a low-value, passphrase-less, VM-only key); `--yes` does not skip it. `unset` removes the pushed key + the rewrite. |
 | `set static-ip` / `unset static-ip` | Pin the VM's IPv4 to its **current** DHCP lease (incus eth0 `ipv4.address` = a static allocation in the bridge's DHCP server), so the address survives host/VM reboots - e.g. for a host-browser bookmark to an in-guest service like `vscode_web`. Same-address pin: nothing changes now, no reboot needed (the VM must be running with a lease). `expose` makes this pin implicitly (its proxy needs a fixed target); `set static-ip` is the standalone knob when host->guest over NAT is all you need. `unset` reverts to a dynamic lease that may change across reboots (refused while `expose` forwards target the pinned address - `unexpose` first). |
 | `snapshot [create\|list\|restore\|delete] [name]` | Thin wrapper over `incus snapshot`, with the VM filled in. |
-| `backup [<vm>]` | Tar the app data the VM's template `backup:` block names (e.g. SillyTavern's `data` + `config.yaml`) out of the guest into the host's `~/Downloads/<App>Backups/<vm>_<date>.tar`, streamed over `incus exec`; the app's user unit is stopped around the tar for a consistent copy and restarted. Driven from the host and read live from the template, so one fix in the template covers every VM at once - nothing is baked into the guest. App data only: `ivm snapshot` is the fast in-place rollback, `incus export` the whole-VM archive. |
-| `restore [<file>\|latest] [<vm>]` | The reverse: stop the unit, extract the tar into the guest, start the unit. `latest` = the newest tar in that VM's backup dir; a bare filename is looked up there. Files in the tar overwrite the guest's (asks first; `--yes` skips). No arg lists the VM's backups + the command to restore the newest. |
+| `script [<script> [args...]]` | Run a host-side helper script from `~/.local/share/ansible-managed/vm-incus/ivm/scripts/` against the VM (`--name <vm>`; the args belong to the script). The VM is started first; the script gets `IVM_VM`, `IVM_TEMPLATE`, `IVM_TEMPLATE_FILE`, `IVM_ROOT`, `IVM_YES` in its env and drives the guest itself over `incus exec` (the guest runs nothing on its own; data streams over `incus exec` stdin/stdout, no share needed). Scripts are single-sourced on the host, so a fix reaches every VM at once. No arg lists them with their `# description:` header. Shipped: **`backup`** - tar the app data the VM's template `backup:` block names (e.g. SillyTavern's `data` + `config.yaml`) into the host's `~/Downloads/<App>Backups/<vm>_<date>.tar`, the app's user unit stopped around the tar; **`restore [<file>\|latest]`** - the reverse (asks first; `--yes` skips), `latest` = the newest tar there, no arg lists the VM's backups. App data only: `ivm snapshot` is the fast in-place rollback, `incus export` the whole-VM archive. |
 | `gui` | Open the VM's SPICE graphical console (`incus console --type=vga`), **detached** from the shell so you can close the terminal without killing it. Needs `remote-viewer` (virt-viewer) or `spicy` (spice-gtk) on the host + a desktop + `spice-vdagent` in the guest. |
 | `env <template>` | Load + validate a template and print its resolved config (incl. the flattened package list). |
 
@@ -195,13 +193,14 @@ staged user/root dotfiles. Linux on Debian / openSUSE / Fedora.
 | `ivm` binary | `~/.local/bin/ivm` |
 | Schema | `~/.local/share/ansible-managed/vm-incus/ivm/template.schema.json` |
 | Templates | `~/.local/share/ansible-managed/vm-incus/ivm/templates/*.yaml` |
+| Scripts (`ivm script`) | `~/.local/share/ansible-managed/vm-incus/ivm/scripts/*` (`_`-prefixed = shared libs) |
 | Provision-asset cache (SHARED w/ qvm/pvm) | `~/.local/share/ansible-managed/shared-prebuilt-provision-assets/{distro-package-groups,thirdparty-software}.json` |
 | Staged VM dotfiles (feature-first, in the shared cache) | `.../shared-prebuilt-provision-assets/dotfiles/<feature>/{__common__,<family>}/{home/user,root}/` |
 | zsh / bash completion | `~/.local/share/ansible-managed/vm-incus/{zsh,bash}-completions/` |
 | VM disk / snapshots (incus default pool) | `/var/lib/incus/storage-pools/default/virtual-machines[-snapshots]/<vm>/` |
 
 `ivm --root` (env `IVM_ROOT`) points at the `vm-incus/ivm/` dir (ivm-only assets:
-schema, templates, fcitx5 script, storage-info). The package-group/thirdparty JSON +
+schema, templates, scripts, fcitx5 script, storage-info). The package-group/thirdparty JSON +
 the dotfiles tree live in the SHARED `shared-prebuilt-provision-assets/` cache
 (`ivm --shared-assets-root`, env `SHARED_PREBUILT_PROVISION_ASSETS_ROOT`; default is
 standard, rarely set) because qvm/pvm consume them too. The completion dirs are
