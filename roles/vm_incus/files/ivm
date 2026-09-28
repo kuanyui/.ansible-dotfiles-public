@@ -9,7 +9,8 @@ the guest). Contract: roles/vm_incus/SPEC.md; architecture: roles/vm_incus/DESIG
 Implemented: `init` (name prompt -> launch -> mounts -> provision: install
 baseline+groups+packages, create user, run post_install_script -> push
 dotfiles); `shell`/`shell-user`/`shell-root`; lifecycle `start`/`reboot`/`stop`/
-`delete`/`rename`/`update`/`provision`/`resize`/`mount`/`push`/`overwrite-dotfiles`/`set`+`unset` (guest
+`delete`/`rename`/`update`/`provision`/`resize`/`mount`/`push`/`backup`+`restore` (app-data tar per the
+template's `backup:` block, host-driven)/`overwrite-dotfiles`/`set`+`unset` (guest
 settings: password/ssh-server/guest-shell-dir/host-bound-dir/user-sudo)/`info` (target VM status/hw/mounts/storage); `env`; `list` (table of managed VMs: state/name/MEM guest+host/disk/created/up-last-on/host-bound dir/IPv4; args -> raw incus list); `cd` (print a VM's host-bound dir for the `ivm()` shell wrapper to cd into);
 `adopt` (bring an unmanaged VM - hand-made or older-ivm - under ivm management; requires `--name`).
 VM-acting subcommands resolve the target by cwd, a global `--name <vm>`, or (when the
@@ -87,18 +88,20 @@ DEFAULT_SHARED_ASSETS_ROOT: Path = Path(
 CWD_RESOLVED: tuple[str, ...] = (
     "shell", "shell-user", "shell-root", "start", "reboot", "stop", "delete", "rename",
     "overwrite-dotfiles", "update", "provision", "resize", "mount", "push", "snapshot", "gui", "info",
-    "expose", "unexpose",
+    "expose", "unexpose", "backup", "restore",
 )
 # CWD_RESOLVED subcommands that ALREADY take a positional of their own (a unit, a path, an
 # action, a port, rename's NEW name), so a trailing `<vm>` would be ambiguous - they target a
 # VM only by cwd or `--name`. Exception: `rename` also takes its target as an optional
 # LEADING `<old-vm>` positional (the `incus rename <old> <new>` order); build_parser wires it
 # to the same `vm` dest as the trailing shortcut, so main() resolves + conflict-checks it
-# identically. EVERY OTHER cwd-resolved subcommand also accepts an optional trailing `<vm>`
-# name (a shortcut for `--name`; build_parser adds it, main() folds it into the resolved
-# target).
+# identically. `restore` is the other exception: its own `<file>|latest` positional comes
+# FIRST and an optional trailing `<vm>` follows (`ivm restore latest <vm>`) - unambiguous
+# because a lone arg is always the restore target; build_parser wires both. EVERY OTHER
+# cwd-resolved subcommand also accepts an optional trailing `<vm>` name (a shortcut for
+# `--name`; build_parser adds it, main() folds it into the resolved target).
 CWD_RESOLVED_WITH_OWN_POSITIONAL: frozenset[str] = frozenset(
-    {"provision", "mount", "push", "snapshot", "expose", "unexpose", "rename"})
+    {"provision", "mount", "push", "snapshot", "expose", "unexpose", "rename", "restore"})
 # One-line `--help` blurb per cwd-resolved subcommand; without these they'd all
 # share one useless generic line. Keys MUST match CWD_RESOLVED exactly.
 CWD_RESOLVED_HELP: dict[str, str] = {
@@ -121,6 +124,8 @@ CWD_RESOLVED_HELP: dict[str, str] = {
     "info": "show the VM's live state, grouped: Basic / Network (ip, services, bridge, ssh-server, forwards) / Mounts / Storage",
     "expose": "forward a host TCP port to the VM so the LAN can reach a service in it (no arg lists current forwards)",
     "unexpose": "remove port forward(s) added by `expose`: <host-port>, or --all (confirms, --yes skips); no arg lists current forwards",
+    "backup": "tar the app data the VM's template `backup:` block names into the host's Downloads dir (stops/restarts the app's user unit around it)",
+    "restore": "restore a backup tar (or `latest`) into the VM - destructive, confirms (--yes skips); no arg lists this VM's backups",
 }
 # Short aliases for the most-typed subcommands. argparse stores the alias VERBATIM
 # in `args.subcommand` (e.g. `sh`, not `shell`), so main() folds it back to the
@@ -2626,6 +2631,197 @@ def cmd_snapshot(name: str, snapshot_args: list[str], *, dry_run: bool) -> None:
     run(["incus", "snapshot", action, name, *rest], dry_run=dry_run)
 
 
+# ---------- backup / restore (host-driven; the template's `backup:` block) ----------
+
+# `incus exec` as the unprivileged guest `user` (uid/gid 1000) with the per-user D-Bus env -
+# the same patch-up `ivm shell` makes: `incus exec` spawns the process directly (no PAM
+# login), so without these `systemctl --user` cannot find the user bus and rootless podman
+# cannot find its runtime dir.
+GUEST_USER_EXEC_ARGS: tuple[str, ...] = (
+    "--user", "1000", "--group", "1000", "--cwd", "/home/user",
+    "--env", "HOME=/home/user", "--env", "USER=user",
+    "--env", "XDG_RUNTIME_DIR=/run/user/1000",
+    "--env", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+)
+
+
+def guest_user_exec_command(name: str, guest_argv: list[str]) -> list[str]:
+    """The full host command that runs `guest_argv` inside VM `name` as `user`."""
+    return ["incus", "exec", *GUEST_USER_EXEC_ARGS, name, "--", *guest_argv]
+
+
+class BackupSpec(NamedTuple):
+    """A template's `backup:` block (template.schema.json), resolved for one VM."""
+    template_name: str
+    unit: str                 # per-user systemd unit stopped around the tar
+    dir: str                  # absolute guest dir tar runs in (`tar --directory`)
+    paths: list[str]          # what to tar, relative to `dir`
+    podman_unshare: bool      # wrap tar in `podman unshare` (rootless-podman-owned data)
+    host_backups_dir: Path    # <host XDG DOWNLOAD dir>/<host_downloads_subdir>
+
+
+def host_downloads_dir() -> Path:
+    """The host's XDG DOWNLOAD dir (`xdg-user-dir DOWNLOAD` - what the templates' Downloads
+    mounts expand to); `~/Downloads` when the tool is absent."""
+    xdg_download_dir: str = capture(["xdg-user-dir", "DOWNLOAD"]).strip()
+    return Path(xdg_download_dir) if xdg_download_dir else Path.home() / "Downloads"
+
+
+def vm_backup_spec(name: str, root: Path) -> BackupSpec:
+    """The target VM's `backup:` block, read LIVE from its template (found via the
+    `user.ivm_template` tag - the same live read as `info`'s Usage group), so a fix in the
+    template applies to every existing VM. Dies naming the missing link when the tag, the
+    template file or the block is absent."""
+    template_name: str = capture(["incus", "config", "get", name, "user.ivm_template"]).strip()
+    if not template_name:
+        die(f"{name} has no `user.ivm_template` tag, so ivm cannot look up its template's "
+            f"`backup:` block (a hand-made VM? `ivm --name {name} adopt` sets the tag)")
+    template_file: Path = root / "templates" / f"{template_name}.yaml"
+    if not template_file.is_file():
+        die(f"template file not found: {template_file} (the VM's `user.ivm_template` tag "
+            f"names '{template_name}')")
+    doc: Template = load_and_validate(template_name, root)
+    backup_block: dict[str, Any] | None = doc.get("backup")
+    if not backup_block:
+        die(f"template '{template_name}' declares no `backup:` block - nothing tells ivm what "
+            f"to back up (add one: unit / dir / paths / host_downloads_subdir - see "
+            f"template.schema.json)")
+    return BackupSpec(
+        template_name=template_name,
+        unit=backup_block["unit"],
+        dir=backup_block["dir"],
+        paths=list(backup_block["paths"]),
+        podman_unshare=bool(backup_block.get("podman_unshare", False)),
+        host_backups_dir=host_downloads_dir() / backup_block["host_downloads_subdir"],
+    )
+
+
+def guest_user_unit_is_active(name: str, unit: str) -> bool:
+    """`systemctl --user is-active <unit>` inside the guest, as `user`."""
+    return capture(guest_user_exec_command(name, ["systemctl", "--user", "is-active", unit])).strip() == "active"
+
+
+def guest_user_unit_control(name: str, action: str, unit: str, *, dry_run: bool) -> None:
+    """`systemctl --user <start|stop> <unit>` inside the guest, as `user` (printed first)."""
+    run(guest_user_exec_command(name, ["systemctl", "--user", action, unit]), dry_run=dry_run)
+
+
+def backup_tar_command(name: str, spec: BackupSpec, tar_mode_args: list[str]) -> list[str]:
+    """The host command that streams a tar of `spec.paths` out of (`--create`) or into
+    (`--extract`) the guest as `user`, inside `podman unshare` when the block says so."""
+    tar_argv: list[str] = ["tar", "--directory", spec.dir, *tar_mode_args]
+    if spec.podman_unshare:
+        tar_argv = ["podman", "unshare", *tar_argv]
+    return guest_user_exec_command(name, tar_argv)
+
+
+def backup_tars_newest_first(host_backups_dir: Path) -> list[Path]:
+    """Every `*.tar` in the VM's backup dir, newest mtime first - the tars the OLD in-guest
+    `llm-backup` wrote (`STBackup_*` etc.) included, so `latest` and the listing cover them."""
+    if not host_backups_dir.is_dir():
+        return []
+    return sorted((tar_path for tar_path in host_backups_dir.glob("*.tar") if tar_path.is_file()),
+                  key=lambda tar_path: tar_path.stat().st_mtime, reverse=True)
+
+
+def cmd_backup(name: str, root: Path, *, dry_run: bool) -> None:
+    """`ivm backup [<vm>]`: tar the app data the VM's template `backup:` block names -
+    `paths` inside `dir` - out of the guest into
+    `<host XDG Download>/<host_downloads_subdir>/<vm>_<YYYYMMDD_HHMM>.tar`, streamed over
+    `incus exec` as `user` (inside `podman unshare` when the block says so). The block's
+    per-user systemd `unit` is stopped first for a consistent copy and started again after
+    (only if it was running). Host-driven and read LIVE from the template, so one fix in the
+    template covers every VM built from it - nothing baked into the guest is involved. App
+    DATA only: fast in-place rollback is `ivm snapshot`, a whole-VM archive is `incus export`.
+    The VM is started + waited-for if stopped."""
+    spec: BackupSpec = vm_backup_spec(name, root)
+    ensure_up(name, dry_run=dry_run)
+    backup_path: Path = spec.host_backups_dir / f"{name}_{datetime.now():%Y%m%d_%H%M}.tar"
+    print(f"==> {colorize_vm_name(name)} ({spec.template_name}): "
+          f"{spec.dir}/{{{', '.join(spec.paths)}}} -> {backup_path}", file=sys.stderr)
+    unit_was_active: bool = dry_run or guest_user_unit_is_active(name, spec.unit)
+    if unit_was_active:
+        guest_user_unit_control(name, "stop", spec.unit, dry_run=dry_run)
+    else:
+        print(f"    (user unit `{spec.unit}` is not running - nothing to stop)", file=sys.stderr)
+    tar_command: list[str] = backup_tar_command(name, spec, ["--create", "--file=-", *spec.paths])
+    tar_exit_code: int = 0
+    try:
+        print("+ " + shlex.join(tar_command) + f"  > {backup_path}", file=sys.stderr)
+        if not dry_run:
+            spec.host_backups_dir.mkdir(parents=True, exist_ok=True)
+            with open(backup_path, "wb") as backup_file:
+                tar_exit_code = subprocess.run(tar_command, stdin=subprocess.DEVNULL,
+                                               stdout=backup_file).returncode
+    finally:
+        if unit_was_active:
+            guest_user_unit_control(name, "start", spec.unit, dry_run=dry_run)
+    if tar_exit_code != 0:
+        backup_path.unlink(missing_ok=True)
+        die(f"backup failed (tar / incus exec exit {tar_exit_code}); removed the partial {backup_path}")
+    if dry_run:
+        return
+    print(f"==> wrote {backup_path} ({human_iec_bytes(backup_path.stat().st_size)}). "
+          f"Restore it with:\n\nivm restore latest {name}\n", file=sys.stderr)
+
+
+def cmd_restore(name: str, target: str | None, root: Path, *, assume_yes: bool, dry_run: bool) -> None:
+    """`ivm restore [<file>|latest] [<vm>]`: stream a backup tar back into the VM - the
+    reverse of `ivm backup` (same `backup:` block: stop the `unit`, `tar --extract` inside
+    `dir` as `user` / in `podman unshare`, start the unit). `latest` = the newest `*.tar` in
+    the VM's backup dir; a bare filename is looked up there too. DESTRUCTIVE: files in the
+    tar overwrite the guest's (files only in the guest stay) - prints what it overwrites and
+    CONFIRMS (`--yes` skips). NO target => restore nothing: list this VM's backups, newest
+    first, with the copyable command. The unit is started after the extract whether or not
+    it was running before."""
+    spec: BackupSpec = vm_backup_spec(name, root)
+    backups: list[Path] = backup_tars_newest_first(spec.host_backups_dir)
+    if target is None:
+        print(f"Backups of {colorize_vm_name(name)} ({spec.template_name}) in "
+              f"{spec.host_backups_dir}/:", file=sys.stderr)
+        if not backups:
+            print(f"  (none yet - create one with `ivm backup {name}`)", file=sys.stderr)
+            return
+        # The rows are the data (stdout, like `expose`'s forward list); headers/hints go to stderr.
+        for backup in backups:
+            print(f"  {human_iec_bytes(backup.stat().st_size):>10}  "
+                  f"{datetime.fromtimestamp(backup.stat().st_mtime):%Y-%m-%d %H:%M}  {backup.name}")
+        print(f"\nRestore the newest with:\n\nivm restore latest {name}\n", file=sys.stderr)
+        return
+    if target == "latest":
+        if not backups:
+            die(f"no backups in {spec.host_backups_dir} - create one with `ivm backup {name}`")
+        backup_path: Path = backups[0]
+    else:
+        backup_path = Path(target).expanduser()
+        if not backup_path.is_file() and (spec.host_backups_dir / target).is_file():
+            backup_path = spec.host_backups_dir / target
+        if not backup_path.is_file():
+            die(f"not found: {target} (a backup .tar path, a filename in {spec.host_backups_dir}/, "
+                f"or `latest`; the VM name goes AFTER it: `ivm restore latest {name}`)")
+    print(f"==> {colorize_vm_name(name)} ({spec.template_name}): this OVERWRITES "
+          f"{spec.dir}/{{{', '.join(spec.paths)}}} from\n    {backup_path}", file=sys.stderr)
+    if not assume_yes and not dry_run:
+        if input("Continue? [y/N] ").strip().lower() not in ("y", "yes"):
+            die("aborted")
+    ensure_up(name, dry_run=dry_run)
+    guest_user_unit_control(name, "stop", spec.unit, dry_run=dry_run)
+    tar_command: list[str] = backup_tar_command(name, spec, ["--extract", "--file=-"])
+    print("+ " + shlex.join(tar_command) + f"  < {backup_path}", file=sys.stderr)
+    tar_exit_code: int = 0
+    if not dry_run:
+        with open(backup_path, "rb") as backup_file:
+            tar_exit_code = subprocess.run(tar_command, stdin=backup_file).returncode
+    guest_user_unit_control(name, "start", spec.unit, dry_run=dry_run)
+    if tar_exit_code != 0:
+        die(f"restore failed (tar / incus exec exit {tar_exit_code}); the unit was started again, "
+            f"but {spec.dir} may now MIX old and restored files - inspect before use")
+    if dry_run:
+        return
+    print(f"==> restored {backup_path.name} into {colorize_vm_name(name)}; `{spec.unit}` started.",
+          file=sys.stderr)
+
+
 def cmd_gui(name: str, *, dry_run: bool) -> None:
     """Open the VM's SPICE graphical console (`incus console --type=vga`) DETACHED
     from the calling shell: spawn it in its own session with stdin/stdout/stderr
@@ -3949,6 +4145,7 @@ CWD_RESOLVED_HANDLER: dict[str, Callable[..., None]] = {
     "snapshot": cmd_snapshot, "gui": cmd_gui, "info": cmd_info, "resize": cmd_resize,
     "mount": cmd_mount, "push": cmd_push,
     "expose": cmd_expose, "unexpose": cmd_unexpose,
+    "backup": cmd_backup, "restore": cmd_restore,
 }
 
 
@@ -4100,6 +4297,15 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("guest", help="absolute destination path in the guest")
             sp.add_argument("--as-root", action="store_true",
                             help="own the pushed files as root (uid/gid 0); default is user (1000)")
+        if name == "restore":
+            # Own positional FIRST (a lone arg is always the restore target), then the optional
+            # trailing `<vm>` - dest `vm` so main()'s generic explicit-vm resolution picks it up.
+            sp.add_argument("target", nargs="?", metavar="file|latest",
+                            help="a backup .tar (a path, or a filename in this VM's backup dir) or "
+                                 "`latest` (the newest one there); omit to LIST this VM's backups")
+            sp.add_argument("vm", nargs="?",
+                            help="target this VM by name instead of the cwd binding "
+                                 "(shortcut for `--name`; omit to resolve by the current dir)")
         if name == "expose":
             sp.add_argument("port", nargs="?",
                             help="<port> (host==guest) or <host-port>:<guest-port> (e.g. 8000 or 9000:8000); "
@@ -4255,6 +4461,10 @@ def main() -> None:
     elif args.subcommand == "unexpose":
         cmd_unexpose(name, port_spec=args.port, remove_all=args.remove_all, assume_yes=args.yes,
                      dry_run=args.dry_run)
+    elif args.subcommand == "backup":
+        cmd_backup(name, root, dry_run=args.dry_run)
+    elif args.subcommand == "restore":
+        cmd_restore(name, args.target, root, assume_yes=args.yes, dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 

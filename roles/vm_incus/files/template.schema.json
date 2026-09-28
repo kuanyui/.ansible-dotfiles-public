@@ -30,6 +30,19 @@
       "description": "Post-init usage notes - the how-do-I-drive-this facts that are otherwise only printed once at the end of `ivm init` and then forgotten (set an API key, default account, where backups land). Shown by `ivm info` in its Usage group, read LIVE from this template file (via the VM's `user.ivm_template` tag) on every run - editing the template updates existing VMs' `info` output. One short line per entry. Optional.",
       "items": { "type": "string" }
     },
+    "backup": {
+      "type": "object",
+      "description": "What `ivm backup` / `ivm restore` operate on - HOST-driven (`incus exec` as `user`), read LIVE from this file via the VM's `user.ivm_template` tag (like `usage`), so a fix here reaches every existing VM. backup = stop `unit` (a per-user systemd unit, restarted after) -> `tar` `paths` inside `dir` -> stream the tar to `<host XDG DOWNLOAD dir>/<host_downloads_subdir>/<vm>_<YYYYMMDD_HHMM>.tar`; restore = the reverse (destructive; confirms). `podman_unshare` wraps tar in `podman unshare` for data a rootless-podman container wrote under guest subuids (plain `user` cannot read it; inside the namespace ownership round-trips). Optional - without it both commands refuse with a message naming this block.",
+      "additionalProperties": false,
+      "required": ["unit", "dir", "paths", "host_downloads_subdir"],
+      "properties": {
+        "unit": { "type": "string", "pattern": "^[A-Za-z0-9_.@-]+$", "description": "Per-user systemd unit (`systemctl --user`) stopped before the tar and started after, e.g. `sillytavern`." },
+        "dir": { "type": "string", "pattern": "^/", "description": "Absolute GUEST dir tar runs in (`tar --directory`), e.g. `/home/user/SillyTavern`." },
+        "paths": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "description": "What to tar, relative to `dir` (e.g. `[data, config.yaml]`). Every entry must exist - a missing one fails the backup loudly." },
+        "podman_unshare": { "type": "boolean", "default": false, "description": "Run tar inside `podman unshare` (rootless podman's user namespace)." },
+        "host_downloads_subdir": { "type": "string", "pattern": "^[^/]+$", "description": "Subdir of the HOST's XDG DOWNLOAD dir (`xdg-user-dir DOWNLOAD`) the tars land in, e.g. `SillyTavernBackups`." }
+      }
+    },
     "hw": {
       "type": "object",
       "description": "Hardware allocation. Optional; `ivm` supplies defaults for anything omitted.",

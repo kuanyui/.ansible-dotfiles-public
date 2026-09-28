@@ -64,8 +64,11 @@ MUST NOT drive resolution. Subcommands that DO take a positional (`provision` /
 `--name`. `rename` is special: its LAST positional is the NEW name, and the target
 may be given as an optional LEADING positional (`ivm rename [<old-vm>] <new-name>`,
 the `incus rename` order) - it MUST participate in the same `--name`-vs-positional
-conflict check. `adopt` is the one exception - it MUST require `--name` (the VM has
-no tags yet).
+conflict check. `restore` is the other special case: its own positional
+(`<file>|latest`) comes FIRST and an optional trailing `<vm>` follows (`ivm restore
+latest <vm>`) - unambiguous because a lone arg is always the restore target; it
+MUST join the same conflict check. `adopt` is the one exception - it MUST require
+`--name` (the VM has no tags yet).
 
 The binding tag has two states - NO sentinel value, because every read path
 (`incus list` CSV columns, `incus config get`) returns "" for an absent tag
@@ -103,6 +106,8 @@ key-aligned.
 | `info` | - | print the VM's live state, GROUPED: Basic (status/created/last-started/template/image/hw/snapshots/host-bound-dir/guest-shell-dir/user-sudo), Network (ip, services, bridge, ssh-server, forwards), Mounts, Storage, Usage (the template's `usage:` notes, read LIVE from the template file via `user.ivm_template`). `last started` = same start-only semantics as `list`'s Up/Last-On. Read-only. | no |
 | `expose` | `[<port>\|<host>:<guest>]` | forward a host TCP port to the VM so the LAN can reach a service in it (pins the VM's IPv4 first). Host listen address MUST follow the incus daemon version: `0.0.0.0` on >= 7.2, else the host's default-route IPv4 (older daemons reject a wildcard in `nat=true` mode, and a VM proxy has no non-NAT mode). NO arg => LIST current forwards. | no |
 | `unexpose` | `[<host-port>\|--all]` | remove a forward: `<host-port>` => that one; `--all` => ALL of this VM's forwards, PRINTED before the prompt. The two MUST be mutually exclusive. NO arg => remove NOTHING: print the usage + LIST current forwards (the passable host ports). MUST NOT reuse the stop/reboot live-session warning - removing a proxy device never touches `incus exec` sessions. | yes (`--all`) |
+| `backup` | - | tar the app data the VM's template `backup:` block names (`paths` inside `dir`) out of the guest into `<host XDG Download>/<host_downloads_subdir>/<vm>_<YYYYMMDD_HHMM>.tar`, streamed over `incus exec` as `user` (inside `podman unshare` when declared). MUST stop the block's per-user `unit` first and start it again after (only if it was running); a failed tar MUST remove the partial file. Read LIVE from the template (via `user.ivm_template`) - never from anything baked into the guest - so a template fix reaches every existing VM. Dies naming the missing link (no tag / no template file / no `backup:` block). | no |
+| `restore` | `[<file>\|latest] [<vm>]` | the reverse: stop the unit, `tar --extract` the tar inside `dir` (same `user` / `podman unshare` path), start the unit (unconditionally). `latest` = the newest `*.tar` in the VM's backup dir (the old in-guest `llm-backup` tars included); a bare filename is looked up there. Files in the tar overwrite the guest's; files only in the guest stay. MUST print what it overwrites + CONFIRM before touching the VM (`--yes` skips). NO target => restore NOTHING: list this VM's backups newest first + the copyable command. | yes |
 | `overwrite-dotfiles` | - | re-push the host-staged dotfiles into the VM (no re-provision). | no |
 
 `info` MUST print EVERY field on EVERY run, with an explicit placeholder
@@ -189,6 +194,7 @@ is the summary.
 | `host_bound_dir` | REQUIRED. The host dir the VM binds to for cwd resolution, written to `user.ivm_host_bound_dir` at init (`user.ivm_init_at_dir` separately records the init dir as history). Host-expanded like a mount `host` (`$(pwd)` = the init cwd - project boxes; relative results made absolute). `""` = unbound appliance (the `llm_*` templates; must be the explicit `""` - a bare key is YAML null and is rejected): NO tag written, never resolves by cwd (name-only targeting; `cd` refuses it + drops out of `cd` completion; `ivm set host-bound-dir` binds later), default instance name `ivm-<template_name>` with no path suffix. |
 | `services` | host-reachable endpoints as `name: port` (lowercase names; ports 1-65535). An ANNOTATION of what `post_install_script` sets up, not an input to it: `init` MUST warn when a declared port's literal is absent from the script (stale-declaration tripwire), writes the `user.ivm_services` tag (`name:port` comma-joined, sorted), and every surface prints ONE format `name=<host>:<port>`: `info` (live IP or empty host part - the neighbouring ip row explains), the init confirm preview (`<guest-ip>` stand-in), the init ready message (live IP - the moment the address is wanted), plus `env` (raw `name:port`). `(none declared)` when absent. Declare only HOST-reachable endpoints (llm_librechat lists the web UI, not the compose-internal mongo). |
 | `usage` | post-init how-to notes, one short line each (set an API key, default account, where backups land). Shown by `info` (Usage group); read LIVE from the template file (resolved via `user.ivm_template`, NOT stamped into VM config) so template edits update existing VMs' `info`. Placeholders when the tag / file / field is missing - the group itself always prints. Optional. |
+| `backup` | what `backup` / `restore` operate on: `unit` (per-user systemd unit stopped around the tar), `dir` (absolute guest dir tar runs in), `paths[]` (relative to `dir`; every entry must exist), `podman_unshare` (wrap tar for rootless-podman-owned data), `host_downloads_subdir` (subdir of the host XDG DOWNLOAD dir the tars land in). Read LIVE like `usage`. Optional - without it both commands refuse, naming the block. |
 | linux provisioning | `distro_package_groups[]`, `distro_packages[]`, `thirdparty_software[]`, `post_install_script`. Dotfiles are NOT a template field: the baseline set is pushed to every VM, anything else via `ivm provision <feature>`. |
 | `windows` | `unattend`, `post_install_powershell`. |
 

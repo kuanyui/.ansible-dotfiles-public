@@ -12,9 +12,10 @@
 # shared provision_thirdparty_software registry (same appliance doctrine as
 # llm_sillytavern.yaml - keeps `ivm provision` from landing it on unrelated VMs).
 #
-# Backup tiers (same model as llm_sillytavern.yaml / scripts/st-vm-backup): app DATA ->
-# in-guest `llm-backup` (tars ~/openwebui into host-shared ~/Downloads/OpenWebUIBackups/);
-# fast in-place rollback -> `ivm snapshot`; whole-VM archive -> `incus export`.
+# Backup tiers (same model as every llm_* appliance): app DATA -> host-side `ivm backup` /
+# `ivm restore` (the `backup:` block below; tars ~/openwebui into the host's
+# ~/Downloads/OpenWebUIBackups/); fast in-place rollback -> `ivm snapshot`; whole-VM
+# archive -> `incus export`.
 template_name: llm_openwebui
 description: "Open WebUI LLM chat server (Debian, headless; rootless podman; OpenRouter pre-wired - paste your key in the web UI; host browser -> guest:8080; backups land in ~/Downloads)"
 # Appliance, not a project box: bound to NO host dir (empty = unbound) - target it by name
@@ -28,7 +29,19 @@ services: { webui: 8080 }
 usage:
   - "web UI: open the `services` address above in the HOST browser; the FIRST visit creates the admin account"
   - "OpenRouter key: paste it in the web UI (Admin Settings -> Connections) - env pre-wires only the first launch"
-  - "backup / restore data: in the VM run `llm-backup` / `llm-backup restore latest` (tars land in host-shared ~/Downloads/OpenWebUIBackups/)"
+  - "backup / restore data: from the HOST `ivm backup <vm>` / `ivm restore latest <vm>` (tars land in the host's ~/Downloads/OpenWebUIBackups/)"
+# What `ivm backup` / `ivm restore` operate on, HOST-driven and read LIVE from this file via
+# the VM's `user.ivm_template` tag (like `usage`), so a fix here reaches every existing VM:
+# stop the per-user `unit`, tar `paths` inside `dir`, restart; tars land in the host's
+# `<XDG Download>/<host_downloads_subdir>/`.
+backup:
+  unit: openwebui
+  dir: /home/user
+  paths: [openwebui]
+  # Files the container created as a non-root container uid map to guest subuids that plain
+  # `user` cannot read; inside `podman unshare` they are readable AND ownership round-trips.
+  podman_unshare: true
+  host_downloads_subdir: OpenWebUIBackups
 hw:
   cpu: 2
   memory: 4G
@@ -48,11 +61,6 @@ net:
   # NAT (incusbr0) is exactly right for "reached only from the host": the host routes to
   # the guest's bridge IP, the LAN cannot (full rationale in llm_sillytavern.yaml).
   mode: nat
-mounts:
-  # Host XDG Download <-> guest ~/Downloads: llm-backup writes its tars here, so backups
-  # land on the host by themselves (virtio-fs).
-  - host: $(xdg-user-dir DOWNLOAD)
-    guest: /home/user/Downloads
 distro_package_groups:
   # rootless podman + passt + aardvark-dns + fuse-overlayfs (+ Debian-only uidmap/nftables);
   # its post_install also adds subuid/subgid ranges for `user`, enables linger and points
@@ -71,7 +79,7 @@ post_install_script: |
   # below); re-running just refreshes the moving `:main` tag, so a re-init is an upgrade.
   su - user -c 'mkdir -p ~/openwebui/data && podman pull ghcr.io/open-webui/open-webui:main'
   # Run the container as a PER-USER systemd service (~/.config/systemd/user), the same
-  # pattern as llm_sillytavern.yaml: `user` (no sudo) fully controls it, and llm-backup
+  # pattern as llm_sillytavern.yaml: `user` (no sudo) fully controls it, and `ivm backup`
   # stops/starts it for consistent tars. --rm --replace keep restarts clean after a crash;
   # the published 8080 binds on the guest's interfaces, which NAT exposes to the host only.
   # OPENAI_API_BASE_URL pre-wires OpenRouter; it is a FIRST-LAUNCH seed only (Open WebUI
@@ -97,74 +105,3 @@ post_install_script: |
   guest_user_uid="$(id -u user)"
   for _ in $(seq 1 100); do [ -S "/run/user/$guest_user_uid/bus" ] && break; sleep 0.2; done
   su - user -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; systemctl --user daemon-reload; systemctl --user enable --now openwebui'
-  # Guest-local backup/restore helper at ~/.local/bin/llm-backup (on PATH via the zsh
-  # dotfiles) - same name + interface in every llm_* appliance VM. It writes/reads plain
-  # tars under the host-shared ~/Downloads, so backups land on the host by themselves.
-  su - user -c 'mkdir -p ~/.local/bin && cat > ~/.local/bin/llm-backup && chmod +x ~/.local/bin/llm-backup' <<'OWUISCRIPT'
-  #!/usr/bin/env bash
-  # Open WebUI backup/restore (guest-local, no sudo). Tars ~/openwebui (chats, settings,
-  # provider API keys - all under data/) into ~/Downloads/OpenWebUIBackups/ (host-shared).
-  # Stops the service around the tar for a consistent copy and restarts it after, via the
-  # per-user systemd unit. Restore is destructive.
-  set -euo pipefail
-  # su/cron contexts don't set these, and systemctl --user needs both to reach the user bus.
-  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
-  APP_DIR="$HOME/openwebui"
-  BACKUP_DIR="$HOME/Downloads/OpenWebUIBackups"
-  die() { printf 'llm-backup: %s\n' "$1" >&2; exit 1; }
-  svc_active() { [ "$(systemctl --user is-active openwebui 2>/dev/null || true)" = active ]; }
-  svc_stop()  { systemctl --user stop openwebui 2>/dev/null || true; }
-  svc_start() { systemctl --user start openwebui 2>/dev/null || true; }
-  usage() {
-    printf '%s\n' \
-      "llm-backup - Open WebUI backup/restore (dir: $BACKUP_DIR)" \
-      "  llm-backup [backup]         stop Open WebUI, write OWUIBackup_YYYYMMDD_HHmm.tar, restart" \
-      "  llm-backup list             list existing backups" \
-      "  llm-backup restore <file>   stop Open WebUI, restore a backup (destructive), restart" \
-      "  llm-backup restore latest   restore the newest backup" >&2
-  }
-  do_backup() {
-    [ -d "$APP_DIR/data" ] || die "no $APP_DIR/data - is Open WebUI installed?"
-    mkdir -p "$BACKUP_DIR"
-    local out; out="$BACKUP_DIR/OWUIBackup_$(date +%Y%m%d_%H%M).tar"
-    local was_running=0
-    if svc_active; then was_running=1; fi
-    svc_stop
-    # podman unshare = run inside podman's user namespace: files a container creates as a
-    # non-root container uid map to host subuids that plain `user` cannot read; inside the
-    # namespace they are readable AND ownership survives backup + restore intact.
-    podman unshare tar -C "$HOME" -cf "$out" openwebui
-    if [ "$was_running" = 1 ]; then svc_start; fi
-    sync
-    printf 'llm-backup: wrote %s (%s)\n' "$out" "$(du -h "$out" | cut -f1)"
-  }
-  do_list() {
-    ls -lh "$BACKUP_DIR"/OWUIBackup_*.tar 2>/dev/null || die "no backups in $BACKUP_DIR"
-  }
-  do_restore() {
-    local target="$1" ans
-    [ -n "$target" ] || { usage; exit 1; }
-    if [ "$target" = latest ]; then
-      target="$(ls -1t "$BACKUP_DIR"/OWUIBackup_*.tar 2>/dev/null | head -n1 || true)"
-      [ -n "$target" ] || die "no backups in $BACKUP_DIR"
-    fi
-    if [ ! -f "$target" ] && [ -f "$BACKUP_DIR/$target" ]; then target="$BACKUP_DIR/$target"; fi
-    [ -f "$target" ] || die "not found: $target"
-    printf 'llm-backup: this OVERWRITES %s from:\n  %s\nContinue? [y/N] ' "$APP_DIR" "$target"
-    read -r ans
-    case "$ans" in [yY]*) ;; *) die "aborted" ;; esac
-    svc_stop
-    podman unshare tar -C "$HOME" -xf "$target"
-    svc_start
-    sync
-    printf 'llm-backup: restored and Open WebUI restarted.\n'
-  }
-  case "${1:-}" in
-    ""|backup) do_backup ;;
-    list)      do_list ;;
-    restore)   do_restore "${2:-}" ;;
-    -h|--help) usage ;;
-    *)         usage; exit 1 ;;
-  esac
-  OWUISCRIPT

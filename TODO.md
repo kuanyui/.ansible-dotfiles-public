@@ -1484,6 +1484,39 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   in 4G, the https self-signed warning click-through, set-then-enter password flow,
   `llm-backup` round trip; plus `make vm-incus-sandbox` (no podman in the editing env)
 
+## ivm backup / restore (host-driven, replaces the in-guest llm-backup copies)
+
+- [x] problem: each llm_* template baked its own ~65-line `llm-backup` bash copy into
+  the VM at init - a template fix never reached existing VMs (the same staleness
+  `usage:` was moved to a live read for). Now ONE host-side implementation in `ivm`
+- [x] template schema: optional `backup:` block (`unit` / `dir` / `paths[]` /
+  `podman_unshare` / `host_downloads_subdir`), read LIVE via `user.ivm_template` like
+  `usage:` - a fix applies to every existing VM, old ones included
+- [x] `ivm backup [<vm>]`: stop the per-user unit (restarted only if it was running),
+  `tar --create` `paths` inside `dir` as `user` (in `podman unshare` when declared),
+  streamed over `incus exec` into `<xdg DOWNLOAD>/<subdir>/<vm>_<stamp>.tar`; the
+  partial file is removed on failure
+- [x] `ivm restore [<file>|latest] [<vm>]`: prints what it overwrites + confirms, stop,
+  `tar --extract` from stdin, start; `latest` = newest `*.tar` in the dir (the old
+  `STBackup_*` / `OWUIBackup_*` / `LCBackup_*` tars included); a bare filename is
+  looked up in the dir; no arg lists the VM's backups + the copyable command. Own
+  positional FIRST, optional trailing `<vm>` (a lone arg is always the target)
+- [x] 4 llm_* templates: `backup:` block added, the embedded `llm-backup` heredocs
+  removed (~260 lines), `usage:` lines point at `ivm backup` / `ivm restore`; the
+  ~/Downloads mount dropped from openwebui / librechat / risuai (it existed only for
+  the in-guest tars; ST keeps it as the character-card drop zone). Existing VMs keep
+  their old in-guest copy - harmless, just no longer the documented path
+- [x] `scripts/st-vm-backup` retired (ST-only, hot backup without a unit stop, no
+  completion, not in the Makefile)
+- [x] completions: `_ivm` (`backup` -> VM names; `restore` -> `latest` + the target VM's
+  tars with size/date via `_describe`, then VM names) + `ivm.bash`; SPEC 2a/3 + README
+  subcommand rows + shipped-examples sentence
+- [x] verify (structural): py_compile, `ivm backup --help` / `restore --help` parse,
+  all templates pass the schema, `bash -n` on the 4 `post_install_script`s, `bash -n`
+  ivm.bash, `zsh -n` _ivm, pure-function checks (spec parse, `latest` pick)
+- [ ] verify (host): real `ivm backup` + `ivm restore latest` round trip on one podman
+  appliance (the unshare path) and one plain one (ST or risuai); `make vm-incus-sandbox`
+
 ## Notes / future
 
 - [x] **container_apps -> one engine + declarative templates** - DONE as

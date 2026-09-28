@@ -2,8 +2,9 @@
 # ivm zsh completion (ansible-managed by roles/vm_incus). zsh autoloads this via
 # fpath - see the `ansible-managed/*/zsh-completions` glob in roles/zsh/.zshrc.j2.
 # Two levels: subcommands, then their args - template names for `init`/`env`, unit
-# names for `provision`, `snapshot` actions + existing snapshot names, and the two-level
-# `set`/`unset <aspect>` args (aspect, then `user`/`root`, `--pubkey`, a guest dir, etc.).
+# names for `provision`, `snapshot` actions + existing snapshot names, `restore`'s backup
+# tars, and the two-level `set`/`unset <aspect>` args (aspect, then `user`/`root`,
+# `--pubkey`, a guest dir, etc.).
 
 local -a _ivm_subcommands
 _ivm_subcommands=(
@@ -39,6 +40,8 @@ _ivm_subcommands=(
   'push:copy a host file/dir into the VM (incus file push; --as-root)'
   'expose:forward a host TCP port to the VM for LAN access (no arg lists forwards)'
   'unexpose:remove a port forward - <host-port> or --all (no arg lists forwards)'
+  'backup:tar the app data named by the template'\''s backup: block into the host Downloads dir (stops/restarts the app unit)'
+  'restore:restore a backup tar (or latest) into the VM - destructive, confirms; no arg lists backups'
 )
 
 # All installable unit names for `provision`: keys of the materialized distro-bundle
@@ -141,6 +144,37 @@ for device_name, device_fields in device_fields_by_name.items():
     listen_address, _, host_port = device_fields.get("listen", "").partition(":")[2].rpartition(":")
     guest_port = device_fields.get("connect", "").rsplit(":", 1)[-1] or "?"
     print(f"{host_port or '?'}:host {listen_address or '?'}:{host_port or '?'} -> guest :{guest_port}")
+PY
+}
+
+# The backup tars `ivm restore` can take for a VM, newest first, as `_describe` lines
+# `<path>:<size>, <mtime>`. Dir = `<host XDG Download>/<host_downloads_subdir>`, the subdir
+# line-scanned from the `backup:` block of the template named by the VM's `user.ivm_template`
+# tag (no yaml dep in the completion). $1 = VM name; empty -> nothing.
+_ivm_backup_tars() {
+  [[ -n "$1" ]] || return 1
+  local _ivm_templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}/templates"
+  python3 - "$_ivm_templates_root" "$(incus config get "$1" user.ivm_template 2>/dev/null)" \
+    "$(xdg-user-dir DOWNLOAD 2>/dev/null || printf '%s' "$HOME/Downloads")" 2>/dev/null <<'PY'
+import os, sys, time
+templates_root, template_name, host_downloads_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+host_downloads_subdir = ""
+if template_name:
+    try:  # cheap line-scan for the `backup:` block's `host_downloads_subdir:` key
+        for line in open(os.path.join(templates_root, template_name + ".yaml")):
+            if line.strip().startswith("host_downloads_subdir:"):
+                host_downloads_subdir = line.split(":", 1)[1].strip().strip('"').strip("'")
+                break
+    except Exception:
+        pass
+if host_downloads_subdir:
+    backups_dir = os.path.join(host_downloads_dir, host_downloads_subdir)
+    tars = [os.path.join(backups_dir, f) for f in os.listdir(backups_dir)] if os.path.isdir(backups_dir) else []
+    tars = [t for t in tars if t.endswith(".tar") and os.path.isfile(t)]
+    for tar_path in sorted(tars, key=os.path.getmtime, reverse=True):
+        size_mib = os.path.getsize(tar_path) / 1048576
+        mtime = time.strftime("%Y-%m-%d %H\\:%M", time.localtime(os.path.getmtime(tar_path)))
+        print(f"{tar_path}:{size_mib:.1f} MiB, {mtime}")
 PY
 }
 
@@ -257,7 +291,7 @@ case "$state" in
       # The no-positional subcommands take an optional trailing `<vm>` (shortcut for --name);
       # complete any incus VM with its working dir shown (managed ones). `resize` adds its
       # flags; `stop`/`reboot` add the hard-kill `--force`.
-      shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
+      shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize|backup)
         if [[ "$words[1]" == resize ]]; then
           local -a _ivm_resize_flags
           _ivm_resize_flags=(
@@ -332,6 +366,27 @@ case "$state" in
           ${(f)"$(_ivm_vms_with_dir)"}
         ;;
       expose) _message 'host port, or host-port:guest-port (e.g. 8000 or 9000:8000)' ;;
+      restore)
+        # restore <file>|latest [<vm>]: 1st positional = a backup tar of the TARGET VM (--name,
+        # else the cwd-bound VM) or `latest`, plus any host .tar; 2nd = an optional VM name
+        # (shortcut for --name - an appliance needs it, or `--name` before the tar).
+        local _ivm_restore_positional=0 _ivm_restore_word_index
+        for (( _ivm_restore_word_index = 2; _ivm_restore_word_index < CURRENT; _ivm_restore_word_index++ )); do
+          [[ "$words[_ivm_restore_word_index]" == -* ]] && continue
+          (( _ivm_restore_positional++ ))
+        done
+        if (( _ivm_restore_positional == 0 )); then
+          local -a _ivm_restore_targets
+          _ivm_restore_targets=(
+            'latest:the newest .tar in the target VM'\''s backup dir'
+            ${(f)"$(_ivm_backup_tars "$(_ivm_target_vm)")"}
+          )
+          _describe -t backups 'backup to restore' _ivm_restore_targets
+          _files -g '*.tar'
+        elif (( _ivm_restore_positional == 1 )); then
+          _ivm_add_vms_ungrouped 'VM' ${(f)"$(_ivm_vms_with_dir)"}
+        fi
+        ;;
       unexpose)
         # ONE arg - a host port or `--all` (mutually exclusive) - so nothing once it is given.
         # Each host port is described by its forward, as bare `ivm unexpose` lists it; target

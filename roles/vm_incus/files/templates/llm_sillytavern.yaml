@@ -21,9 +21,18 @@ services: { webui: 8000 }
 usage:
   - "web UI: open the `services` address above in the HOST browser; set API keys in its API Connections panel"
   - "character cards: ~/Downloads is shared with the host - drop PNGs there to trade both ways"
-  - "backup / restore data: in the VM run `llm-backup` / `llm-backup restore latest` (tars land in host-shared ~/Downloads/SillyTavernBackups/)"
+  - "backup / restore data: from the HOST `ivm backup <vm>` / `ivm restore latest <vm>` (tars land in the host's ~/Downloads/SillyTavernBackups/, also visible in the VM's shared ~/Downloads)"
   - "debug output: in the VM `journalctl --user --unit sillytavern --follow` (status: `systemctl --user status sillytavern`); foreground run: `systemctl --user stop sillytavern` then `cd ~/SillyTavern && node server.js`"
   - "UI / extension errors (e.g. CharacterLibrary) surface only in the HOST browser devtools console (F12), not in the server journal"
+# What `ivm backup` / `ivm restore` operate on, HOST-driven and read LIVE from this file via
+# the VM's `user.ivm_template` tag (like `usage`), so a fix here reaches every existing VM:
+# stop the per-user `unit`, tar `paths` inside `dir`, restart; tars land in the host's
+# `<XDG Download>/<host_downloads_subdir>/`.
+backup:
+  unit: sillytavern
+  dir: /home/user/SillyTavern
+  paths: [data, config.yaml]
+  host_downloads_subdir: SillyTavernBackups
 hw:
   cpu: 2
   memory: 3G
@@ -73,7 +82,7 @@ post_install_script: |
   # clone into ST's per-user extensions dir, so UPGRADING is one in-guest command -
   #   git -C ~/SillyTavern/data/default-user/extensions/SillyTavern-CharacterLibrary pull
   # (or the Update button in ST's Extensions panel) - and it lives under data/, so
-  # llm-backup already carries it. Guarded like the ST clone (re-init = no-op). MUST run
+  # `ivm backup` already carries it. Guarded like the ST clone (re-init = no-op). MUST run
   # AFTER the ST clone above (cloning ST fails on a non-empty ~/SillyTavern). The
   # OPTIONAL cl-helper SERVER plugin (Pygmalion login / DataCat / some extractors) is
   # deliberately NOT installed - it needs `enableServerPlugins: true` plus a plugins/
@@ -109,8 +118,8 @@ post_install_script: |
   enableCorsProxy: true
   EOF
   # Run ST as a PER-USER systemd service (~/.config/systemd/user), so `user` - who has no
-  # sudo - fully controls it: the llm-backup helper stops/starts it for a consistent snapshot
-  # and a one-command restore, no root and no reboot. `loginctl enable-linger` makes the user
+  # sudo - fully controls it, and `ivm backup` / `ivm restore` stop/start it over the user
+  # bus for a consistent snapshot, no root and no reboot. `loginctl enable-linger` makes the user
   # manager run headless at boot (no login needed); `dbus-user-session` (a distro_package)
   # gives the per-user D-Bus that `systemctl --user` talks to. `%h` = the user's home.
   su - user -c 'mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/sillytavern.service' <<'EOF'
@@ -132,76 +141,3 @@ post_install_script: |
   st_uid="$(id -u user)"
   for _ in $(seq 1 100); do [ -S "/run/user/$st_uid/bus" ] && break; sleep 0.2; done
   su - user -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; systemctl --user daemon-reload; systemctl --user enable --now sillytavern'
-  # Guest-local backup/restore helper at ~/.local/bin/llm-backup (on PATH via the zsh
-  # dotfiles). Same name + interface in every llm_* appliance VM (llm_openwebui /
-  # llm_librechat), so the muscle memory transfers; VMs built from the pre-rename template
-  # keep the old st-backup name. It writes/reads plain tars under the host-shared
-  # ~/Downloads, so backups land on the host by themselves (virtio-fs). It drives ST's own
-  # per-user unit, so backups are taken stopped (consistent) and restore brings it back -
-  # no sudo, no reboot, no ivm/Makefile.
-  su - user -c 'mkdir -p ~/.local/bin && cat > ~/.local/bin/llm-backup && chmod +x ~/.local/bin/llm-backup' <<'STSCRIPT'
-  #!/usr/bin/env bash
-  # SillyTavern backup/restore (guest-local, no sudo). Tars ST's data + config.yaml into
-  # ~/Downloads/SillyTavernBackups/ (host-shared). Stops ST around the tar for a consistent
-  # copy and restarts it after, via the per-user systemd unit. Restore is destructive.
-  set -euo pipefail
-  # su/cron contexts don't set these, and systemctl --user needs both to reach the user bus.
-  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
-  ST_DIR="$HOME/SillyTavern"
-  BACKUP_DIR="$HOME/Downloads/SillyTavernBackups"
-  die() { printf 'llm-backup: %s\n' "$1" >&2; exit 1; }
-  st_active() { [ "$(systemctl --user is-active sillytavern 2>/dev/null || true)" = active ]; }
-  st_stop()  { systemctl --user stop sillytavern 2>/dev/null || true; }
-  st_start() { systemctl --user start sillytavern 2>/dev/null || true; }
-  usage() {
-    printf '%s\n' \
-      "llm-backup - SillyTavern backup/restore (dir: $BACKUP_DIR)" \
-      "  llm-backup [backup]         stop ST, write STBackup_YYYYMMDD_HHmm.tar, restart" \
-      "  llm-backup list             list existing backups" \
-      "  llm-backup restore <file>   stop ST, restore a backup (destructive), restart" \
-      "  llm-backup restore latest   restore the newest backup" >&2
-  }
-  do_backup() {
-    [ -d "$ST_DIR/data" ] || die "no $ST_DIR/data - is SillyTavern installed?"
-    mkdir -p "$BACKUP_DIR"
-    local out; out="$BACKUP_DIR/STBackup_$(date +%Y%m%d_%H%M).tar"
-    local extra=()
-    if [ -f "$ST_DIR/config.yaml" ]; then extra=(config.yaml); fi
-    local was_running=0
-    if st_active; then was_running=1; fi
-    st_stop
-    tar -C "$ST_DIR" -cf "$out" data "${extra[@]}"
-    if [ "$was_running" = 1 ]; then st_start; fi
-    sync
-    printf 'llm-backup: wrote %s (%s)\n' "$out" "$(du -h "$out" | cut -f1)"
-  }
-  do_list() {
-    ls -lh "$BACKUP_DIR"/STBackup_*.tar 2>/dev/null || die "no backups in $BACKUP_DIR"
-  }
-  do_restore() {
-    local target="$1" ans
-    [ -n "$target" ] || { usage; exit 1; }
-    if [ "$target" = latest ]; then
-      target="$(ls -1t "$BACKUP_DIR"/STBackup_*.tar 2>/dev/null | head -n1 || true)"
-      [ -n "$target" ] || die "no backups in $BACKUP_DIR"
-    fi
-    if [ ! -f "$target" ] && [ -f "$BACKUP_DIR/$target" ]; then target="$BACKUP_DIR/$target"; fi
-    [ -f "$target" ] || die "not found: $target"
-    printf 'llm-backup: this OVERWRITES %s/data from:\n  %s\nContinue? [y/N] ' "$ST_DIR" "$target"
-    read -r ans
-    case "$ans" in [yY]*) ;; *) die "aborted" ;; esac
-    st_stop
-    tar -C "$ST_DIR" -xf "$target"
-    st_start
-    sync
-    printf 'llm-backup: restored and SillyTavern restarted.\n'
-  }
-  case "${1:-}" in
-    ""|backup) do_backup ;;
-    list)      do_list ;;
-    restore)   do_restore "${2:-}" ;;
-    -h|--help) usage ;;
-    *)         usage; exit 1 ;;
-  esac
-  STSCRIPT

@@ -2,7 +2,7 @@
 # file under `~/.local/share/ansible-managed/*/bash-completions/` - see
 # roles/bash/templates/.bashrc.j2. Two levels: subcommands, then their args - template
 # names for `init`/`env`, unit names for `provision`, `snapshot` actions + snapshot
-# names, `user`/`root`.
+# names, `restore`'s `latest` + host .tar files, `user`/`root`.
 # All installable unit names for `provision`: keys of the materialized distro-bundle
 # + thirdparty-recipe registries + dotfiles feature dirs, from the SHARED provision-asset
 # cache (python3 is an ivm dependency, so always present).
@@ -40,7 +40,7 @@ _ivm() {
     COMPREPLY=()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local subcommands="init shell sh shell-user sh-user shell-root sh-root start reboot stop delete rename env list ls top cd info adopt storage-status overwrite-dotfiles update provision set unset snapshot gui resize mount push expose unexpose"
+    local subcommands="init shell sh shell-user sh-user shell-root sh-root start reboot stop delete rename env list ls top cd info adopt storage-status overwrite-dotfiles update provision set unset snapshot gui resize mount push expose unexpose backup restore"
     local templates_root="${IVM_ROOT:-$HOME/.local/share/ansible-managed/vm-incus/ivm}/templates"
 
     # --name / --root take a value: complete VM names after --name.
@@ -85,7 +85,7 @@ _ivm() {
             managed_vm_names="$(incus list --format csv --columns n,config:user.ivm_host_bound_dir 2>/dev/null | awk -F, 'NF >= 2 && $2 != "" { print $1 }')"
             COMPREPLY=( $(compgen -W "${managed_vm_names}" -- "$cur") )
             ;;
-        shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize)
+        shell|sh|shell-user|sh-user|shell-root|sh-root|start|stop|reboot|delete|overwrite-dotfiles|update|gui|info|resize|backup)
             # These take an optional trailing <vm> (a shortcut for --name) -> complete any VM
             # name. bash can't show descriptions, so bound dirs show in `ivm list` / `ivm cd`.
             # `resize` also offers its flags; `stop`/`reboot` the hard-kill `--force`.
@@ -177,6 +177,20 @@ _ivm() {
             ;;
         storage-status)
             COMPREPLY=( $(compgen -W "--json" -- "$cur") )
+            ;;
+        restore)
+            # restore <file>|latest [<vm>]: 1st positional = `latest` or a backup tar (a host
+            # file), 2nd = an optional VM name. bash can't show descriptions, so the tar list
+            # with sizes/dates is `ivm restore` with no arg.
+            local restore_positional=0 restore_word_index
+            for (( restore_word_index = i + 1; restore_word_index < COMP_CWORD; restore_word_index++ )); do
+                [[ "${COMP_WORDS[restore_word_index]}" == -* ]] || (( restore_positional++ ))
+            done
+            if (( restore_positional == 0 )); then
+                COMPREPLY=( $(compgen -W "latest" -- "$cur") $(compgen -A file -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "$(incus list --format csv --columns n 2>/dev/null)" -- "$cur") )
+            fi
             ;;
         provision)
             COMPREPLY=( $(compgen -W "$(_ivm_unit_names)" -- "$cur") )

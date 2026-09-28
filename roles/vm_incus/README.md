@@ -42,8 +42,8 @@ against `ivm/template.schema.json` (the files carry a `# yaml-language-server:
 $schema=...` modeline, so an editor with the YAML LSP shows inline field docs +
 validation). Shipped examples: `base_debian` / `base_opensuse` / `base_fedora`
 (bare distro + `tools_basic`, nothing else), `llm_sillytavern` / `llm_openwebui` /
-`llm_librechat` / `llm_risuai` (self-contained LLM chat appliances, each with an
-in-guest `llm-backup` helper that tars app data into the host-shared `~/Downloads`),
+`llm_librechat` / `llm_risuai` (self-contained LLM chat appliances; `ivm backup` /
+`ivm restore` tar their app data into the host's `~/Downloads/<App>Backups/`),
 `agent_claude`, `agent_codex`, `webbrowser`, `windows11`.
 
 Field groups (see the schema for the full, authoritative list):
@@ -83,13 +83,14 @@ to every VM-acting subcommand, not `init`/`env`/`list`).
 
 **Targeting a VM by name.** Commands that take no argument of their own - `shell*`,
 `start`/`stop`/`reboot`/`delete`, `update`, `overwrite-dotfiles`, `gui`, `info`,
-`resize` - also accept a trailing VM name: `ivm stop foo`, `ivm info foo`, `ivm sh
+`resize`, `backup` - also accept a trailing VM name: `ivm stop foo`, `ivm info foo`, `ivm sh
 foo` (a shortcut for `--name`, tab-completed with each VM's bound dir shown in
 zsh). Omit it to resolve by the current directory. Commands that DO take an argument
 (`provision`, `push`, `mount`, `snapshot`, `expose`, `unexpose`) use `--name` only.
 `rename` is the exception: its target is an optional **leading** positional -
 `ivm rename <old> <new>` (the `incus rename` order), or `ivm rename <new>` resolved
-by cwd / `--name`.
+by cwd / `--name`. `restore` takes its target **after** its own argument:
+`ivm restore latest <vm>`.
 
 | Subcommand | What it does |
 |---|---|
@@ -119,6 +120,8 @@ by cwd / `--name`.
 | `set git-ssh-key <keyfile> [--host HOST]` / `unset git-ssh-key [--host HOST]` | Copy a host **private** ssh key into the VM so in-guest `git` / `go get` reach **private** repos over SSH. Renamed to its type's default name (`id_ed25519`/`id_rsa`/...) so ssh auto-uses it (one key per VM); also trusts `--host` (default github.com) in known_hosts and sets git's `insteadOf` to rewrite `https`->`ssh` (needed for `go get`, which fetches via https). **WARNS + requires typing `yes i know`** (the key lives in the VM - use a low-value, passphrase-less, VM-only key); `--yes` does not skip it. `unset` removes the pushed key + the rewrite. |
 | `set static-ip` / `unset static-ip` | Pin the VM's IPv4 to its **current** DHCP lease (incus eth0 `ipv4.address` = a static allocation in the bridge's DHCP server), so the address survives host/VM reboots - e.g. for a host-browser bookmark to an in-guest service like `vscode_web`. Same-address pin: nothing changes now, no reboot needed (the VM must be running with a lease). `expose` makes this pin implicitly (its proxy needs a fixed target); `set static-ip` is the standalone knob when host->guest over NAT is all you need. `unset` reverts to a dynamic lease that may change across reboots (refused while `expose` forwards target the pinned address - `unexpose` first). |
 | `snapshot [create\|list\|restore\|delete] [name]` | Thin wrapper over `incus snapshot`, with the VM filled in. |
+| `backup [<vm>]` | Tar the app data the VM's template `backup:` block names (e.g. SillyTavern's `data` + `config.yaml`) out of the guest into the host's `~/Downloads/<App>Backups/<vm>_<date>.tar`, streamed over `incus exec`; the app's user unit is stopped around the tar for a consistent copy and restarted. Driven from the host and read live from the template, so one fix in the template covers every VM at once - nothing is baked into the guest. App data only: `ivm snapshot` is the fast in-place rollback, `incus export` the whole-VM archive. |
+| `restore [<file>\|latest] [<vm>]` | The reverse: stop the unit, extract the tar into the guest, start the unit. `latest` = the newest tar in that VM's backup dir; a bare filename is looked up there. Files in the tar overwrite the guest's (asks first; `--yes` skips). No arg lists the VM's backups + the command to restore the newest. |
 | `gui` | Open the VM's SPICE graphical console (`incus console --type=vga`), **detached** from the shell so you can close the terminal without killing it. Needs `remote-viewer` (virt-viewer) or `spicy` (spice-gtk) on the host + a desktop + `spice-vdagent` in the guest. |
 | `env <template>` | Load + validate a template and print its resolved config (incl. the flattened package list). |
 
