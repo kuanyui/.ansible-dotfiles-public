@@ -1,0 +1,210 @@
+# yaml-language-server: $schema=../template.schema.json
+# RisuAI server VM: a headless Node.js box you reach from the HOST browser at
+# https://<guest-ip>:6001 (incus NAT lets the host route to the guest; the LAN cannot).
+# No GUI and no /workspaces mount - it is not a dev/agent box. Same appliance shape as
+# llm_sillytavern.yaml (RisuAI is the other character-card chat frontend): cloned + built
+# into ~/RisuAI, run by a per-user systemd unit, in-guest `llm-backup`.
+#
+# Built from SOURCE, not from upstream's container image, on purpose: since upstream
+# commit 6dcbfd6 (2026-04-15, src/App.svelte) a build WITHOUT the build-time flag
+# VITE_RISU_LEGAL_CONFIGURED=TRUE renders only a "Legal documents not configured" notice
+# in place of the app, and ghcr.io/kwaroran/risuai is built without it (its Dockerfile
+# sets no env; upstream issue #1466, open as of 2026-09) - so the image is a dead end.
+# Upstream's own self-host script (server.sh) sets the flag for exactly this case ("a
+# personal private self-hosted instance") and does what this template does: pnpm install
+# -> pnpm build -> node server/node/server.cjs.
+#
+# HTTPS, not http, on purpose: in node-server mode the browser signs every storage request
+# with a WebCrypto ES256 key (src/ts/storage/nodeStorage.ts createAuth -> crypto.subtle),
+# and browsers expose crypto.subtle ONLY on secure origins (https, or localhost) - over
+# http://<guest-ip>:6001 the app cannot load its own data. The server switches to HTTPS by
+# itself once server/node/ssl/certificate/server.{key,crt} exist (server.cjs
+# getHttpsOptions), so init generates them with upstream's own "Generate Certificate.sh"
+# (self-signed: the host browser warns ONCE per browser; accept, and the origin is secure
+# from then on).
+#
+# Self-contained on purpose: the whole install lives in post_install_script, NOT in the
+# shared provision_thirdparty_software registry (same appliance doctrine as
+# llm_sillytavern.yaml - keeps `ivm provision` from landing it on unrelated VMs).
+template_name: llm_risuai
+description: "RisuAI LLM chat server (Debian, headless; built from source with upstream's self-host build flag; host browser -> https://guest:6001, self-signed cert - accept the warning once; backups land in ~/Downloads)"
+# Appliance, not a project box: bound to NO host dir (empty = unbound) - target it by name
+# anywhere (`ivm shell <vm>`); default instance name is `ivm-llm-risuai` (no path suffix).
+host_bound_dir: ""
+# Host-reachable endpoints, queryable later via `ivm info` (annotation of what
+# post_install_script sets up; init warns if the port literal vanishes from the script).
+# `ivm info` prints it as `webui=<ip>:6001`; the scheme is https (see usage).
+services: { webui: 6001 }
+# Post-init how-to, shown by `ivm info` (Usage group) - so nothing here needs remembering
+# after init. Read live from this file; keep in sync with post_install_script.
+usage:
+  - "web UI: in the HOST browser open https://<ip>:6001 (the `services` address above) - httpS is REQUIRED (the node-mode login signs requests with WebCrypto, which browsers enable only on secure origins); accept the self-signed-certificate warning once per browser"
+  - "password: the FIRST visit asks you to SET one, then to ENTER it (each browser/profile enters it once and is remembered by its own key); forgot it: in the VM `rm ~/RisuAI/save/__password`, `systemctl --user restart risuai`, then set a new one"
+  - "API keys: set per provider in the web UI (Settings); keys, chats, characters and presets all live in ~/RisuAI/save"
+  - "character cards (PNG / CHARX / JSON): import via the web UI - its file picker sees HOST files (the browser runs on the host); ~/Downloads is shared only as the backup drop zone"
+  - "backup / restore data: in the VM run `llm-backup` / `llm-backup restore latest` (tars land in host-shared ~/Downloads/RisuAIBackups/)"
+  - "upgrade: in the VM `cd ~/RisuAI && git pull && pnpm install --frozen-lockfile && VITE_RISU_LEGAL_CONFIGURED=TRUE pnpm run build && systemctl --user restart risuai` - the flag is BUILD-time: without it the app renders only the legal notice"
+  - "debug output: in the VM `journalctl --user --unit risuai --follow` (status: `systemctl --user status risuai`); foreground run: `systemctl --user stop risuai` then `cd ~/RisuAI && PORT=6001 node server/node/server.cjs`"
+hw:
+  cpu: 2
+  # The one-time `vite build` (the whole Svelte app, minified, with sourcemaps) is the
+  # peak; the running node server idles far below. 3G (llm_sillytavern) risks an
+  # OOM-killed build.
+  memory: 4G
+  # node_modules with dev deps (kept: needed to rebuild on upgrade) + pnpm store + dist.
+  disk: 15G
+os:
+  type: linux
+  distro: debian
+  image:
+    source: incus
+    uri: debian/13
+sys:
+  gui: false
+  timezone: host
+net:
+  # NAT (incusbr0) is exactly right for "reached only from the host": the host routes to
+  # the guest's bridge IP, the LAN cannot (full rationale in llm_sillytavern.yaml).
+  mode: nat
+mounts:
+  # Host XDG Download <-> guest ~/Downloads: llm-backup writes its tars here, so backups
+  # land on the host by themselves (virtio-fs). NOT a character-card drop zone: cards are
+  # imported by the HOST browser from host files, the guest never needs to see them.
+  - host: $(xdg-user-dir DOWNLOAD)
+    guest: /home/user/Downloads
+distro_packages:
+  - nodejs   # Debian 13 ships Node.js 20.19 = RisuAI's floor (package.json engines: ^20.19.0 || >=22.12.0)
+  - npm      # only to install pnpm (below); the build is pnpm-driven (pnpm-lock.yaml, no package-lock)
+  - git
+  - openssl  # the self-signed certificate (upstream's Generate Certificate.sh)
+  - dbus-user-session   # per-user D-Bus, so `systemctl --user` works for the risuai user service
+# Everything below runs as ROOT after packages install. Heredocs are kept at a FLAT indent
+# on purpose: the `|` block strips the common 2 spaces, so the written files (the unit's
+# `[Section]` headers, the script) and the heredoc terminators land at column 0.
+post_install_script: |
+  # Build RisuAI from source (user-scoped, ~/RisuAI) - upstream's server.sh recipe: pnpm
+  # (the version package.json `packageManager` pins; installed user-scoped under ~/.local,
+  # so no root-owned npm globals) -> `pnpm install --frozen-lockfile` (the repo ships only
+  # pnpm-lock.yaml; pnpm 10 skips dependencies' build scripts by default and that is fine -
+  # upstream's Dockerfile builds in node:24-slim the same way) -> `pnpm run build` with
+  # VITE_RISU_LEGAL_CONFIGURED=TRUE (see header). `main` is what upstream's own container
+  # + nightly builds ship (tags `v*` are the releases). Guarded on the build output so a
+  # re-run resumes after a failed step / no-ops when done, instead of failing on the
+  # existing clone.
+  su - user -c 'set -eu
+    if [ ! -f ~/RisuAI/dist/index.html ]; then
+      [ -d ~/RisuAI/.git ] || git clone --depth 1 https://github.com/kwaroran/RisuAI ~/RisuAI
+      cd ~/RisuAI
+      npm install --global --prefix ~/.local --no-audit --no-fund --loglevel=error --no-progress pnpm@10.34.1
+      ~/.local/bin/pnpm install --frozen-lockfile
+      VITE_RISU_LEGAL_CONFIGURED=TRUE ~/.local/bin/pnpm run build
+    fi
+  '
+  # Self-signed TLS certificate (why: header). Upstream's own generator, run from its dir
+  # (it uses relative paths): a private CA + a server cert into server/node/ssl/certificate/
+  # - exactly where server.cjs looks; the dir is gitignored, so `git pull` never touches
+  # it. Guarded: a re-run keeps the cert the host browser already accepted.
+  su - user -c 'set -eu
+    cd ~/RisuAI/server/node/ssl
+    [ -f certificate/server.crt ] || bash "Generate Certificate.sh"
+  '
+  # Run RisuAI as a PER-USER systemd service (~/.config/systemd/user), so `user` - who has
+  # no sudo - fully controls it: llm-backup stops/starts it for a consistent snapshot and
+  # a one-command restore, no root and no reboot. NODE_ENV / PORT are upstream server.sh's
+  # runtime knobs (6001 is also the server's default; explicit so the `services` tripwire
+  # above holds). The server serves `dist/`, `save/` and the certificate relative to its
+  # cwd, hence WorkingDirectory. `loginctl enable-linger` makes the user manager run
+  # headless at boot (no login needed); `dbus-user-session` (a distro_package) gives the
+  # per-user D-Bus that `systemctl --user` talks to. `%h` = the user's home.
+  su - user -c 'mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/risuai.service' <<'EOF'
+  [Unit]
+  Description=RisuAI
+  [Service]
+  Type=simple
+  WorkingDirectory=%h/RisuAI
+  Environment=NODE_ENV=production
+  Environment=PORT=6001
+  ExecStart=/usr/bin/node server/node/server.cjs
+  Restart=on-failure
+  [Install]
+  WantedBy=default.target
+  EOF
+  loginctl enable-linger user
+  # enable-linger asks logind to bring up the lingering user manager + its D-Bus
+  # ASYNCHRONOUSLY; wait for the user bus socket before driving systemctl --user (else
+  # "Failed to connect to bus"). `su` is not a PAM login, so XDG_RUNTIME_DIR and
+  # DBUS_SESSION_BUS_ADDRESS are unset - set BOTH (XDG alone is not always enough).
+  guest_user_uid="$(id -u user)"
+  for _ in $(seq 1 100); do [ -S "/run/user/$guest_user_uid/bus" ] && break; sleep 0.2; done
+  su - user -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; systemctl --user daemon-reload; systemctl --user enable --now risuai'
+  # Guest-local backup/restore helper at ~/.local/bin/llm-backup (on PATH via the zsh
+  # dotfiles) - same name + interface in every llm_* appliance VM. It writes/reads plain
+  # tars under the host-shared ~/Downloads, so backups land on the host by themselves
+  # (virtio-fs). It drives RisuAI's own per-user unit, so backups are taken stopped
+  # (consistent) and restore brings it back - no sudo, no reboot, no ivm/Makefile.
+  su - user -c 'mkdir -p ~/.local/bin && cat > ~/.local/bin/llm-backup && chmod +x ~/.local/bin/llm-backup' <<'RISUSCRIPT'
+  #!/usr/bin/env bash
+  # RisuAI backup/restore (guest-local, no sudo). Tars ~/RisuAI/save (everything RisuAI
+  # keeps server-side: chats, characters, presets, API keys, the password hash and the
+  # browsers' registered login keys) into ~/Downloads/RisuAIBackups/ (host-shared). Stops
+  # RisuAI around the tar for a consistent copy and restarts it after, via the per-user
+  # systemd unit. Restore is destructive.
+  set -euo pipefail
+  # su/cron contexts don't set these, and systemctl --user needs both to reach the user bus.
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
+  APP_DIR="$HOME/RisuAI"
+  BACKUP_DIR="$HOME/Downloads/RisuAIBackups"
+  die() { printf 'llm-backup: %s\n' "$1" >&2; exit 1; }
+  svc_active() { [ "$(systemctl --user is-active risuai 2>/dev/null || true)" = active ]; }
+  svc_stop()  { systemctl --user stop risuai 2>/dev/null || true; }
+  svc_start() { systemctl --user start risuai 2>/dev/null || true; }
+  usage() {
+    printf '%s\n' \
+      "llm-backup - RisuAI backup/restore (dir: $BACKUP_DIR)" \
+      "  llm-backup [backup]         stop RisuAI, write RisuBackup_YYYYMMDD_HHmm.tar, restart" \
+      "  llm-backup list             list existing backups" \
+      "  llm-backup restore <file>   stop RisuAI, restore a backup (destructive), restart" \
+      "  llm-backup restore latest   restore the newest backup" >&2
+  }
+  do_backup() {
+    [ -d "$APP_DIR/save" ] || die "no $APP_DIR/save - has RisuAI started once?"
+    mkdir -p "$BACKUP_DIR"
+    local out; out="$BACKUP_DIR/RisuBackup_$(date +%Y%m%d_%H%M).tar"
+    local was_running=0
+    if svc_active; then was_running=1; fi
+    svc_stop
+    tar -C "$APP_DIR" -cf "$out" save
+    if [ "$was_running" = 1 ]; then svc_start; fi
+    sync
+    printf 'llm-backup: wrote %s (%s)\n' "$out" "$(du -h "$out" | cut -f1)"
+  }
+  do_list() {
+    ls -lh "$BACKUP_DIR"/RisuBackup_*.tar 2>/dev/null || die "no backups in $BACKUP_DIR"
+  }
+  do_restore() {
+    local target="$1" ans
+    [ -n "$target" ] || { usage; exit 1; }
+    if [ "$target" = latest ]; then
+      target="$(ls -1t "$BACKUP_DIR"/RisuBackup_*.tar 2>/dev/null | head -n1 || true)"
+      [ -n "$target" ] || die "no backups in $BACKUP_DIR"
+    fi
+    if [ ! -f "$target" ] && [ -f "$BACKUP_DIR/$target" ]; then target="$BACKUP_DIR/$target"; fi
+    [ -f "$target" ] || die "not found: $target"
+    printf 'llm-backup: this OVERWRITES %s/save from:\n  %s\nContinue? [y/N] ' "$APP_DIR" "$target"
+    read -r ans
+    case "$ans" in [yY]*) ;; *) die "aborted" ;; esac
+    svc_stop
+    tar -C "$APP_DIR" -xf "$target"
+    svc_start
+    sync
+    printf 'llm-backup: restored and RisuAI restarted.\n'
+  }
+  case "${1:-}" in
+    ""|backup) do_backup ;;
+    list)      do_list ;;
+    restore)   do_restore "${2:-}" ;;
+    -h|--help) usage ;;
+    *)         usage; exit 1 ;;
+  esac
+  RISUSCRIPT

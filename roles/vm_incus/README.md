@@ -42,8 +42,8 @@ against `ivm/template.schema.json` (the files carry a `# yaml-language-server:
 $schema=...` modeline, so an editor with the YAML LSP shows inline field docs +
 validation). Shipped examples: `base_debian` / `base_opensuse` / `base_fedora`
 (bare distro + `tools_basic`, nothing else), `llm_sillytavern` / `llm_openwebui` /
-`llm_librechat` (self-contained LLM chat appliances, each with an in-guest
-`llm-backup` helper that tars app data into the host-shared `~/Downloads`),
+`llm_librechat` / `llm_risuai` (self-contained LLM chat appliances, each with an
+in-guest `llm-backup` helper that tars app data into the host-shared `~/Downloads`),
 `agent_claude`, `agent_codex`, `webbrowser`, `windows11`.
 
 Field groups (see the schema for the full, authoritative list):

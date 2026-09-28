@@ -1465,6 +1465,24 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   `tasks/ivm_install.yml` YAML-parse clean
 - [ ] verify (host): `make vm-incus-check` + `make vm-incus-sandbox` - the editing
   devcontainer has no ansible/podman (and sudo prompts); run on a provisioned host
+- [x] new `llm_risuai.yaml` (RisuAI = the other character-card chat frontend; mirrors
+  llm_sillytavern's clone-and-run shape): built from SOURCE with upstream's self-host
+  build flag `VITE_RISU_LEGAL_CONFIGURED=TRUE` - the official ghcr image is built
+  without it and boots into the "Legal documents not configured" wall (upstream
+  #1466, open) - via user-scoped pnpm (`~/.local/bin`, version from package.json
+  `packageManager`); served over HTTPS with upstream's own self-signed-cert generator
+  because the node-mode login signs requests with WebCrypto (`crypto.subtle`), which
+  browsers expose only on secure origins - plain `http://<guest-ip>` cannot load any
+  data; per-user unit `risuai` (host -> guest:6001, `services` declared); in-guest
+  `llm-backup` (tars `~/RisuAI/save` to `~/Downloads/RisuAIBackups/`); `usage:` notes
+  (https + cert warning, set-then-enter password flow, upgrade one-liner); README
+  shipped-examples list updated
+- [x] verify (structural, llm_risuai): passes template.schema.json via ivm's own
+  `load_and_validate` (PyYAML + jsonschema in a scratch venv), `services` tripwire
+  clean, `bash -n` on `post_install_script` + the embedded `llm-backup`
+- [ ] verify (host, llm_risuai): first real `ivm init llm_risuai` - the vite build fits
+  in 4G, the https self-signed warning click-through, set-then-enter password flow,
+  `llm-backup` round trip; plus `make vm-incus-sandbox` (no podman in the editing env)
 
 ## Notes / future
 
