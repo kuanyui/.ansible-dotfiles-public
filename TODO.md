@@ -1480,6 +1480,14 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
 - [x] verify (structural, llm_risuai): passes template.schema.json via ivm's own
   `load_and_validate` (PyYAML + jsonschema in a scratch venv), `services` tripwire
   clean, `bash -n` on `post_install_script` + the embedded `llm-backup`
+- [x] (hit on real init) llm_risuai: `pnpm install` looked stuck "fetching CUDA" -
+  RisuAI's `pnpm.neverBuiltDependencies: [sharp]` re-enables every other dependency's
+  install script in pnpm 10 (its 10.0 release notes), so onnxruntime-node 1.21.0 (a
+  Node-only dep of @huggingface/transformers) ran its postinstall = download of the
+  hundreds-of-MB `onnxruntime-linux-x64-gpu-<ver>.tgz` with no progress output. The
+  browser bundle uses onnxruntime-web (WASM), so the script's own switch
+  `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` now wraps the install (init + the `usage:`
+  upgrade one-liner)
 - [ ] verify (host, llm_risuai): first real `ivm init llm_risuai` - the vite build fits
   in 4G, the https self-signed warning click-through, set-then-enter password flow,
   `llm-backup` round trip; plus `make vm-incus-sandbox` (no podman in the editing env)
