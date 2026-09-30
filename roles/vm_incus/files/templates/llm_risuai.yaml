@@ -43,7 +43,7 @@ usage:
   - "API keys: set per provider in the web UI (Settings); keys, chats, characters and presets all live in ~/RisuAI/save"
   - "character cards (PNG / CHARX / JSON): import via the web UI - its file picker sees HOST files (the browser runs on the host)"
   - "backup / restore data: from the HOST `ivm --name <vm> script backup` / `ivm --name <vm> script restore latest` (tars land in the host's ~/Downloads/RisuAIBackups/)"
-  - "upgrade: in the VM `cd ~/RisuAI && git pull && ONNXRUNTIME_NODE_INSTALL_CUDA=skip pnpm install --frozen-lockfile && VITE_RISU_LEGAL_CONFIGURED=TRUE pnpm run build && systemctl --user restart risuai` - both env vars are BUILD-time: the first skips a useless multi-hundred-MB CUDA download, without the second the app renders only the legal notice"
+  - "upgrade: from the HOST `ivm --name <vm> script risuai-upgrade` (git pull, pnpm install with the CUDA download skipped, rebuild with the BUILD-time self-host flag VITE_RISU_LEGAL_CONFIGURED=TRUE - without it the app renders only the legal notice - then restart)"
   - "debug output: in the VM `journalctl --user --unit risuai --follow` (status: `systemctl --user status risuai`); foreground run: `systemctl --user stop risuai` then `cd ~/RisuAI && PORT=6001 node server/node/server.cjs`"
 # What `ivm script backup` / `ivm script restore` operate on, HOST-driven and read LIVE from this file via
 # the VM's `user.ivm_template` tag (like `usage`), so a fix here reaches every existing VM:

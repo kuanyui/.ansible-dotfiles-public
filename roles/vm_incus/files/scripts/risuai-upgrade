@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+# description: upgrade an llm_risuai VM's RisuAI checkout - git pull, pnpm install (CUDA download skipped), rebuild with the self-host legal flag, restart the risuai unit
+"""`ivm --name <vm> script risuai-upgrade`: bring an llm_risuai VM's ~/RisuAI to upstream
+`main` and rebuild it - `git pull --ff-only`; `pnpm install --frozen-lockfile` with
+ONNXRUNTIME_NODE_INSTALL_CUDA=skip (skips onnxruntime-node's useless multi-hundred-MB CUDA
+download, see the template); `pnpm run build` with VITE_RISU_LEGAL_CONFIGURED=TRUE (the
+BUILD-time self-host flag - without it the app renders only the legal notice); then
+`systemctl --user restart risuai`. All as `user` over `incus exec`, the template's own
+install recipe, so neither env var can be forgotten. When the pull brings nothing new and
+a build exists, nothing is rebuilt. Refuses a VM whose template is not llm_risuai. Takes
+no arguments."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _ivm_script_lib import (capture, die, guest_exec_command, guest_run, guest_succeeds,  # noqa: E402
+                             guest_user_unit_control, ivm_env)
+
+RISUAI_TEMPLATE_NAME: str = "llm_risuai"
+RISUAI_DIR: str = "/home/user/RisuAI"            # the template's clone location (guest path)
+PNPM: str = "/home/user/.local/bin/pnpm"         # the user-scoped pnpm the template installed
+RISUAI_UNIT: str = "risuai"                      # the template's per-user systemd unit
+
+
+def guest_head_commit(vm_name: str) -> str:
+    """The checkout's short HEAD sha, "" when there is no git checkout at RISUAI_DIR."""
+    return capture(guest_exec_command(vm_name, ["git", "-C", RISUAI_DIR, "rev-parse", "--short", "HEAD"])).strip()
+
+
+def main() -> None:
+    if sys.argv[1:] in (["-h"], ["--help"]):
+        print(__doc__)
+        return
+    if sys.argv[1:]:
+        die("takes no arguments (usage: ivm --name <vm> script risuai-upgrade)")
+    vm_name: str = ivm_env("IVM_VM")
+    template_name: str = ivm_env("IVM_TEMPLATE")
+    if template_name != RISUAI_TEMPLATE_NAME:
+        die(f"{vm_name} was built from template '{template_name or '(untagged)'}', not "
+            f"{RISUAI_TEMPLATE_NAME} - nothing to upgrade here")
+    head_before: str = guest_head_commit(vm_name)
+    if not head_before:
+        die(f"no git checkout at {RISUAI_DIR} in {vm_name} - did `ivm init` finish?")
+    guest_run(vm_name, ["git", "-C", RISUAI_DIR, "pull", "--ff-only"])
+    head_after: str = guest_head_commit(vm_name)
+    if head_after == head_before and guest_succeeds(vm_name, ["test", "-f", f"{RISUAI_DIR}/dist/index.html"]):
+        print(f"==> {vm_name}: RisuAI already at {head_after} and built - nothing to do.", file=sys.stderr)
+        return
+    guest_run(vm_name, ["env", "ONNXRUNTIME_NODE_INSTALL_CUDA=skip", PNPM, "--dir", RISUAI_DIR,
+                        "install", "--frozen-lockfile"])
+    guest_run(vm_name, ["env", "VITE_RISU_LEGAL_CONFIGURED=TRUE", PNPM, "--dir", RISUAI_DIR, "run", "build"])
+    guest_user_unit_control(vm_name, "restart", RISUAI_UNIT)
+    print(f"==> {vm_name}: RisuAI {head_before} -> {head_after}, rebuilt, `{RISUAI_UNIT}` restarted - "
+          f"reload the browser tab.", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

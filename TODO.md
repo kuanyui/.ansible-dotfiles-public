@@ -1488,6 +1488,13 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   browser bundle uses onnxruntime-web (WASM), so the script's own switch
   `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` now wraps the install (init + the `usage:`
   upgrade one-liner)
+- [x] `scripts/risuai-upgrade` (`ivm --name <vm> script risuai-upgrade`, llm_risuai VMs
+  only): `git pull --ff-only` -> skip when HEAD unchanged + dist exists -> `pnpm install`
+  with ONNXRUNTIME_NODE_INSTALL_CUDA=skip -> `pnpm run build` with
+  VITE_RISU_LEGAL_CONFIGURED=TRUE -> restart the unit; both build-time env vars live in
+  the script, the `usage:` upgrade note points at it instead of a 5-part one-liner.
+  Lib gained `guest_run` (announce + run + die) and `guest_succeeds` (silent probe);
+  unit control now builds on `guest_run`
 - [ ] verify (host, llm_risuai): first real `ivm init llm_risuai` - the vite build fits
   in 4G, the https self-signed warning click-through, set-then-enter password flow,
   `llm-backup` round trip; plus `make vm-incus-sandbox` (no podman in the editing env)

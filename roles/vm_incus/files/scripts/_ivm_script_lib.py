@@ -75,18 +75,31 @@ def guest_exec_command(vm_name: str, guest_argv: list[str], *, as_root: bool = F
     return ["incus", "exec", *GUEST_USER_EXEC_ARGS, vm_name, "--", *guest_argv]
 
 
+def guest_run(vm_name: str, guest_argv: list[str], *, as_root: bool = False) -> None:
+    """Run `guest_argv` inside the VM (printed first; its output streams through to the
+    terminal); dies when it fails."""
+    command: list[str] = guest_exec_command(vm_name, guest_argv, as_root=as_root)
+    announce(command)
+    exit_code: int = subprocess.run(command).returncode
+    if exit_code != 0:
+        die(f"`{shlex.join(guest_argv)}` failed in {vm_name} (exit {exit_code})")
+
+
+def guest_succeeds(vm_name: str, guest_argv: list[str], *, as_root: bool = False) -> bool:
+    """A silent probe: True when `guest_argv` exits 0 inside the VM (e.g. `test -f <path>`)."""
+    return subprocess.run(guest_exec_command(vm_name, guest_argv, as_root=as_root),
+                          stdin=subprocess.DEVNULL, capture_output=True).returncode == 0
+
+
 def guest_user_unit_is_active(vm_name: str, unit: str) -> bool:
     """`systemctl --user is-active <unit>` inside the guest, as `user`."""
     return capture(guest_exec_command(vm_name, ["systemctl", "--user", "is-active", unit])).strip() == "active"
 
 
 def guest_user_unit_control(vm_name: str, action: str, unit: str) -> None:
-    """`systemctl --user <start|stop> <unit>` inside the guest as `user` (printed first);
-    dies when it fails."""
-    command: list[str] = guest_exec_command(vm_name, ["systemctl", "--user", action, unit])
-    announce(command)
-    if subprocess.run(command).returncode != 0:
-        die(f"`systemctl --user {action} {unit}` failed in {vm_name}")
+    """`systemctl --user <start|stop|restart> <unit>` inside the guest as `user` (printed
+    first); dies when it fails."""
+    guest_run(vm_name, ["systemctl", "--user", action, unit])
 
 
 def host_downloads_dir() -> Path:
