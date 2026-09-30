@@ -1,9 +1,13 @@
 """Shared plumbing for the `ivm script` helper scripts in this directory. `_`-prefixed =
 a library, not a runnable script (`ivm script` lists/runs only the un-prefixed files).
 
-The model: a script runs on the HOST with the env `ivm script` sets - `IVM_VM` (the
-resolved VM name), `IVM_TEMPLATE` (its `user.ivm_template` tag, may be empty),
-`IVM_TEMPLATE_FILE` (that template's path, may not exist), `IVM_ROOT`, `IVM_YES` (`1`
+The model: a script runs on the HOST, in the caller's cwd, with its args verbatim and the
+env `ivm script` sets (names = the SOURCE identifiers, never renamed): `IVM_VM` (the
+resolved VM name); every `user.ivm_<tag>` of the VM as `IVM_<TAG>` - `IVM_TEMPLATE`
+(always set, empty when untagged), `IVM_HOST_BOUND_DIR`, `IVM_SHELL_DEFAULT_DIR_AFTER_LOGIN`,
+`IVM_ANSIBLE_OS_FAMILY`, ... (an absent tag = an absent variable); `IVM_TEMPLATE_FILE` (that
+template's path, may not exist); `IVM_PRIMARY_IPV4` (empty without a lease); `IVM_ROOT` +
+`SHARED_PREBUILT_PROVISION_ASSETS_ROOT` (the env names ivm itself honors); `IVM_YES` (`1`
 under `ivm --yes`) - and drives the guest through `incus exec`; the guest itself runs
 nothing on its own, the same model as ivm's own subcommands. Data moves through `incus
 exec`'s stdin/stdout, so no virtio-fs share is needed. Import with

@@ -1521,6 +1521,13 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   (`mode: preserve` keeps +x); uninstall already removes the whole role subdir
 - [x] completions: `_ivm` (`script` -> script names + descriptions via `_describe`, then
   host files for the script's args) + `ivm.bash`; SPEC 2a/3 + README rows + files table
+- [x] script env = the SOURCE identifiers, never renamed (user feedback): every
+  `user.ivm_<tag>` on the VM is exported as `IVM_<TAG>` (tag uppercased; absent tag =
+  absent variable; `IVM_TEMPLATE` always set) - scripts never re-learn tag names, a
+  future tag comes for free; plus `IVM_PRIMARY_IPV4` (ivm's `vm_primary_ipv4`),
+  `IVM_ROOT` + `SHARED_PREBUILT_PROVISION_ASSETS_ROOT` (the env names ivm itself
+  honors), `IVM_YES`; cwd inherited from the caller + argv verbatim now written into
+  the contract (ivm docstring, `_ivm_script_lib.py`, SPEC, README)
 - [x] verify (structural): py_compile (ivm + the 4 script files), `ivm script --help`,
   all templates pass the schema, `bash -n` on the 4 `post_install_script`s, `bash -n`
   ivm.bash, `zsh -n` _ivm, and a REAL local backup -> restore round trip through

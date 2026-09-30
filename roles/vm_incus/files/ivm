@@ -2676,17 +2676,43 @@ def cmd_list_scripts(root: Path) -> None:
               f"{script_description(script_path) or '(no `# description:` header)'}")
 
 
-def cmd_script(name: str, script_name: str, script_args: list[str], root: Path, *,
-               assume_yes: bool, dry_run: bool) -> None:
+# The env `ivm script` hands a script is the framework's whole API (plus argv, verbatim, and
+# the caller's cwd, inherited untouched). Names are the SOURCE identifiers, never renamed:
+# every `user.ivm_<tag>` on the VM becomes `IVM_<TAG>` (uppercased, `user.ivm_` dropped) -
+# `user.ivm_template` -> IVM_TEMPLATE, `user.ivm_host_bound_dir` -> IVM_HOST_BOUND_DIR,
+# `user.ivm_shell_default_dir_after_login` -> IVM_SHELL_DEFAULT_DIR_AFTER_LOGIN,
+# `user.ivm_ansible_os_family` -> IVM_ANSIBLE_OS_FAMILY, ... - so a script never re-learns
+# tag names, an absent tag is an absent variable, and a future tag is exported for free.
+VM_TAG_PREFIX: str = "user.ivm_"
+
+
+def vm_tags_as_script_env(name: str) -> dict[str, str]:
+    """Every `user.ivm_*` tag of the VM as `IVM_<TAG>` (see above); {} when the VM or incus
+    cannot be read. A read-only probe (`incus config show`), so it runs under --dry-run too."""
+    import yaml  # lazy, same as cmd_info (ships with ansible-core / python3-yaml)
+    parsed: Any = yaml.safe_load(capture(["incus", "config", "show", name]) or "")
+    vm_config: dict[str, Any] = (parsed.get("config") or {}) if isinstance(parsed, dict) else {}
+    return {"IVM_" + config_key[len(VM_TAG_PREFIX):].upper(): str(config_value)
+            for config_key, config_value in vm_config.items()
+            if config_key.startswith(VM_TAG_PREFIX) and config_value is not None}
+
+
+def cmd_script(name: str, script_name: str, script_args: list[str], root: Path,
+               shared_prebuilt_provision_assets_root: Path, *, assume_yes: bool, dry_run: bool) -> None:
     """`ivm --name <vm> script <script> [args...]`: run the HOST-side helper script
     `<root>/scripts/<script>` against the target VM. The framework contract: the script
     runs on the HOST (it drives the guest itself, via `incus exec`; the guest runs nothing
-    on its own - the same model as ivm's own subcommands) with the VM started + ready and
-    these env vars set: `IVM_VM` (the resolved VM name), `IVM_TEMPLATE` (its
-    `user.ivm_template` tag, may be empty), `IVM_TEMPLATE_FILE` (that template's path, may
-    not exist), `IVM_ROOT`, `IVM_YES` (`1` under `--yes`, else `0`); the remaining args are
-    passed through verbatim, and ivm's process is REPLACED by the script, so stdin / stdout
-    / the exit code are the script's. Scripts are single-sourced on the host (nothing baked
+    on its own - the same model as ivm's own subcommands) with the VM started + ready, in
+    the caller's cwd (inherited untouched), its args passed through verbatim (`--help`
+    included - the script owns them), and this env, named by the SOURCE identifiers:
+    `IVM_VM` (the resolved VM name); every `user.ivm_<tag>` on the VM as `IVM_<TAG>` -
+    IVM_TEMPLATE (always set, empty when untagged), IVM_HOST_BOUND_DIR,
+    IVM_SHELL_DEFAULT_DIR_AFTER_LOGIN, IVM_ANSIBLE_OS_FAMILY, IVM_INIT_AT_DIR, IVM_SERVICES,
+    ... (an absent tag = an absent variable); `IVM_TEMPLATE_FILE` (the template's path, may
+    not exist); `IVM_PRIMARY_IPV4` (empty without a lease); `IVM_ROOT` +
+    `SHARED_PREBUILT_PROVISION_ASSETS_ROOT` (the env names ivm itself honors); `IVM_YES`
+    (`1` under `--yes`, else `0`). ivm's process is REPLACED by the script, so stdin /
+    stdout / the exit code are the script's. Scripts are single-sourced on the host (nothing baked
     into guests), so a fix reaches every VM at once. `--dry-run` prints the exact command +
     env and runs nothing - ivm cannot know what a script mutates. No script name => list
     the scripts + their `# description:` headers. Shared Python plumbing for scripts (guest
@@ -2698,13 +2724,17 @@ def cmd_script(name: str, script_name: str, script_args: list[str], root: Path, 
         installed_names: str = ", ".join(installed.name for installed in installed_scripts) or "(none installed)"
         die(f"no such script: {script_name} (have: {installed_names}; a bare `ivm script` lists them "
             f"with descriptions)")
-    template_name: str = capture(["incus", "config", "get", name, "user.ivm_template"]).strip()
+    vm_tag_env: dict[str, str] = vm_tags_as_script_env(name)
+    template_name: str = vm_tag_env.get("IVM_TEMPLATE", "")
     ensure_up(name, dry_run=dry_run)
     script_env: dict[str, str] = {
         "IVM_VM": name,
-        "IVM_TEMPLATE": template_name,
+        **vm_tag_env,
+        "IVM_TEMPLATE": template_name,  # the one tag ALWAYS present (empty when untagged)
         "IVM_TEMPLATE_FILE": str(root / "templates" / f"{template_name}.yaml") if template_name else "",
+        "IVM_PRIMARY_IPV4": vm_primary_ipv4(name),
         "IVM_ROOT": str(root),
+        "SHARED_PREBUILT_PROVISION_ASSETS_ROOT": str(shared_prebuilt_provision_assets_root),
         "IVM_YES": "1" if assume_yes else "0",
     }
     script_command: list[str] = [str(script_path), *script_args]
@@ -4358,7 +4388,8 @@ def main() -> None:
         cmd_unexpose(name, port_spec=args.port, remove_all=args.remove_all, assume_yes=args.yes,
                      dry_run=args.dry_run)
     elif args.subcommand == "script":
-        cmd_script(name, args.script_name, args.script_args, root, assume_yes=args.yes, dry_run=args.dry_run)
+        cmd_script(name, args.script_name, args.script_args, root, shared_prebuilt_provision_assets_root,
+                   assume_yes=args.yes, dry_run=args.dry_run)
     else:
         cmd_stub(args.subcommand)
 
