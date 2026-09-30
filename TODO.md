@@ -1495,6 +1495,15 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   the script, the `usage:` upgrade note points at it instead of a 5-part one-liner.
   Lib gained `guest_run` (announce + run + die) and `guest_succeeds` (silent probe);
   unit control now builds on `guest_run`
+- [x] (hit on real init) llm_risuai: the ready message / `ivm info` printed
+  `webui=<ip>:6001` with no scheme, so the address was opened as http - which cannot
+  even connect (the port speaks TLS). `services` entries may now declare a scheme
+  (`webui: {port: 6001, scheme: https}`, schema `oneOf` next to the bare port); every
+  surface prints `name=https://<ip>:<port>` for them (`ServiceEndpoint` +
+  `declared_service_endpoints` / `services_tag_value` / `parse_services_tag` /
+  `format_service_endpoints`); `info` reads the entries LIVE from the template (like
+  `usage`), tag `name:scheme:port` as the fallback - so the existing VM shows https
+  right after `make vm-incus-install`, no re-tag
 - [ ] verify (host, llm_risuai): first real `ivm init llm_risuai` - the vite build fits
   in 4G, the https self-signed warning click-through, set-then-enter password flow,
   `llm-backup` round trip; plus `make vm-incus-sandbox` (no podman in the editing env)

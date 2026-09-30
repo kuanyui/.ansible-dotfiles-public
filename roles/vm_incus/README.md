@@ -56,7 +56,7 @@ Field groups (see the schema for the full, authoritative list):
 | `net` | `mode` (`nat`/`macvlan`/`bridge`), `parent` |
 | `mounts[]` | `host`, `guest`, `ro`, `shadow[]` (subpaths to mask, e.g. `.git`) |
 | `host_bound_dir` | REQUIRED. Host dir the VM binds to for cwd resolution, host-expanded (`$(pwd)` = the init dir - project boxes); `""` = unbound appliance, target it by name (the `llm_*` templates). |
-| `services` | Host-reachable endpoints as `name: port` (e.g. `webui: 8080`) - an annotation `ivm info` prints as `name=<ip>:<port>` (via the `user.ivm_services` tag); `init` warns if a declared port's literal is missing from `post_install_script`. |
+| `services` | Host-reachable endpoints as `name: port` (e.g. `webui: 8080`), or `name: {port, scheme}` (`webui: {port: 6001, scheme: https}`) when the address only works with its scheme - an annotation `ivm info` / the init ready message print as `name=<ip>:<port>`, or `name=https://<ip>:<port>` with a scheme (entries read live from the template when present, else from the `user.ivm_services` tag); `init` warns if a declared port's literal is missing from `post_install_script`. |
 | (linux provisioning) | `distro_package_groups[]`, `distro_packages[]`, `thirdparty_software[]`, `post_install_script` |
 | `windows` | `unattend`, `post_install_powershell` |
 

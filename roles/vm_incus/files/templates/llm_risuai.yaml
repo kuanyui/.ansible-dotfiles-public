@@ -33,12 +33,13 @@ description: "RisuAI LLM chat server (Debian, headless; built from source with u
 host_bound_dir: ""
 # Host-reachable endpoints, queryable later via `ivm info` (annotation of what
 # post_install_script sets up; init warns if the port literal vanishes from the script).
-# `ivm info` prints it as `webui=<ip>:6001`; the scheme is https (see usage).
-services: { webui: 6001 }
+# `scheme: https` makes every printed address read `webui=https://<ip>:6001` - opened as
+# plain http the page cannot work at all (see the header), so the address must say so.
+services: { webui: { port: 6001, scheme: https } }
 # Post-init how-to, shown by `ivm info` (Usage group) - so nothing here needs remembering
 # after init. Read live from this file; keep in sync with post_install_script.
 usage:
-  - "web UI: in the HOST browser open https://<ip>:6001 (the `services` address above) - httpS is REQUIRED (the node-mode login signs requests with WebCrypto, which browsers enable only on secure origins); accept the self-signed-certificate warning once per browser"
+  - "web UI: open the `services` address above (https://<ip>:6001) in the HOST browser - httpS is REQUIRED (the node-mode login signs requests with WebCrypto, which browsers enable only on secure origins; plain http cannot even connect, the port speaks TLS); accept the self-signed-certificate warning once per browser"
   - "password: the FIRST visit asks you to SET one, then to ENTER it (each browser/profile enters it once and is remembered by its own key); forgot it: in the VM `rm ~/RisuAI/save/__password`, `systemctl --user restart risuai`, then set a new one"
   - "API keys: set per provider in the web UI (Settings); keys, chats, characters and presets all live in ~/RisuAI/save"
   - "character cards (PNG / CHARX / JSON): import via the web UI - its file picker sees HOST files (the browser runs on the host)"

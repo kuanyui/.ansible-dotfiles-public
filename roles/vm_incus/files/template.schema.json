@@ -21,9 +21,22 @@
     },
     "services": {
       "type": "object",
-      "description": "HOST-reachable service endpoints this VM serves, as `name: port` (e.g. `webui: 8080`). A queryable ANNOTATION of what post_install_script sets up, NOT an input to it - the script still hardcodes its ports, and `ivm init` warns when a declared port's literal is missing from the script (stale-declaration tripwire). Written to the `user.ivm_services` tag at init; `ivm info` prints each as `name=<ip>:<port>`. Declare only endpoints reachable from the HOST (e.g. llm_librechat lists the web UI, not the compose-internal mongo). Optional.",
+      "description": "HOST-reachable service endpoints this VM serves, as `name: port` (e.g. `webui: 8080`), or `name: {port, scheme}` when the address only works with its URL scheme (`webui: {port: 6001, scheme: https}` - llm_risuai, whose login needs a secure origin and whose port speaks TLS): every printed address then reads `name=<scheme>://<ip>:<port>`, so nobody opens it as http. A queryable ANNOTATION of what post_install_script sets up, NOT an input to it - the script still hardcodes its ports, and `ivm init` warns when a declared port's literal is missing from the script (stale-declaration tripwire). Written to the `user.ivm_services` tag at init (`name:port` / `name:scheme:port`); `ivm info` prints each as `name=<ip>:<port>` (`name=<scheme>://<ip>:<port>` with a scheme), reading the entries LIVE from this file when it is present (like `usage`), else from the tag. Declare only endpoints reachable from the HOST (e.g. llm_librechat lists the web UI, not the compose-internal mongo). Optional.",
       "propertyNames": { "pattern": "^[a-z][a-z0-9_-]*$" },
-      "additionalProperties": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "integer", "minimum": 1, "maximum": 65535 },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["port", "scheme"],
+            "properties": {
+              "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "scheme": { "type": "string", "pattern": "^[a-z][a-z0-9+.-]*$", "description": "URL scheme every printed address carries, e.g. `https`." }
+            }
+          }
+        ]
+      }
     },
     "usage": {
       "type": "array",
