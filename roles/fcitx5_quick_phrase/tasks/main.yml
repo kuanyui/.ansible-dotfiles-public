@@ -1,0 +1,66 @@
+---
+- name: Verify required variables are set
+  ansible.builtin.assert:
+    that:
+      - target_home != ""
+      - target_user != ""
+      - target_group != ""
+    msg: "target_home, target_user, target_group must all be set by the calling playbook"
+
+- name: Create `~/.local/share/fcitx5/data/quickphrase.d/` (fcitx5 loads every `*.mb` in it)
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/share/fcitx5/data/quickphrase.d"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0755"
+
+- name: Deploy Quick Phrase files into `~/.local/share/fcitx5/data/quickphrase.d/`
+  ansible.builtin.copy:
+    src: "quickphrase.d/{{ item }}"
+    dest: "{{ target_home }}/.local/share/fcitx5/data/quickphrase.d/{{ item }}"
+    owner: "{{ target_user }}"
+    group: "{{ target_group }}"
+    mode: "0644"
+  loop:
+    - llm.mb
+  register: _fcitx5_quick_phrase_copy_results
+
+# fcitx5 reads `quickphrase.d/` at start and on an addon config reload.
+# `fcitx5-remote -r` is not enough: `Instance::reloadConfig` reloads only the
+# global config, never an addon's data files - so the reload goes through the
+# per-addon D-Bus method `ReloadAddonConfig` (fcitx/fcitx5
+# `src/lib/fcitx/instance.cpp`, `src/modules/dbus/dbusmodule.cpp`).
+- name: Check whether `fcitx5` is running (`fcitx5-remote --check`; exit 0 = running, 1 = not running)
+  ansible.builtin.command:
+    argv: [fcitx5-remote, --check]
+  register: _fcitx5_remote_check_result
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Reload the `quickphrase` addon over D-Bus (`busctl --user call org.fcitx.Fcitx5 ... ReloadAddonConfig s quickphrase`) so the running `fcitx5` re-reads `quickphrase.d/`
+  ansible.builtin.command:
+    argv:
+      - busctl
+      - --user
+      - call
+      - org.fcitx.Fcitx5
+      - /controller
+      - org.fcitx.Fcitx.Controller1
+      - ReloadAddonConfig
+      - s
+      - quickphrase
+  when:
+    - _fcitx5_quick_phrase_copy_results is changed
+    - _fcitx5_remote_check_result.rc == 0
+
+# `display_skipped_hosts = false` (ansible.cfg) hides a skipped reload, so say
+# out loud when there was no running fcitx5 to reload.
+- name: Note that `fcitx5` is not running - the deployed Quick Phrase files are read at its next start
+  ansible.builtin.debug:
+    msg: >-
+      `fcitx5-remote --check` rc={{ _fcitx5_remote_check_result.rc }}
+      ({{ _fcitx5_remote_check_result.msg }}): no running fcitx5 to reload.
+      The Quick Phrase files are read at the next fcitx5 start.
+  when: _fcitx5_remote_check_result.rc != 0

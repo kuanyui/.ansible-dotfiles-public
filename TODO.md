@@ -582,6 +582,7 @@ First real `ivm init webbrowser` on the host surfaced these (all fixed unless no
   run the installed copy yourself (`sh <ivm-root>/setup-fcitx5-input.sh`). If the
   manual step gets annoying, promote to a dedicated `roles/fcitx5` (parallel to
   `roles/zsh`/`emacs`, added to `playbooks/user.yml`) so the host auto-configures.
+  (`roles/fcitx5_quick_phrase` is Quick Phrase files ONLY - not the place for this.)
 - [x] **Global `--name <vm>`** - target an existing VM by name, ignoring the cwd
   binding (all VM-acting subcommands). Resolved once in `main()` and passed to
   each cmd (they no longer self-resolve). zsh + bash completion of `--name`
@@ -1559,6 +1560,25 @@ Full plan: `roles/vm_podman/IMPLEMENTATION_PLAN.md`.
   argv locally
 - [ ] verify (host): real round trip on one podman appliance (the unshare path) and
   one plain one (ST or risuai); `make vm-incus-sandbox`
+
+## fcitx5_quick_phrase role: Quick Phrase files (built + verified on a scratch home; needs a real-host run)
+
+- [x] **`roles/fcitx5_quick_phrase` + `playbooks/fcitx5_quick_phrase.yml` + `make
+  apply-fcitx5-quick-phrase` / `check-fcitx5-quick-phrase`** -
+  config-style face role (like `mpv`): copies `files/quickphrase.d/*.mb` to
+  `~/.local/share/fcitx5/data/quickphrase.d/` (fcitx5 merges every `.mb` there into ONE
+  table - a keyword in two files lists both candidates), then reloads the `quickphrase`
+  addon over D-Bus (`busctl --user call org.fcitx.Fcitx5 /controller
+  org.fcitx.Fcitx.Controller1 ReloadAddonConfig s quickphrase`) when a file changed and
+  `fcitx5-remote --check` says fcitx5 is running; otherwise prints a note (read at next
+  start). `fcitx5-remote -r` is NOT enough: `Instance::reloadConfig` reloads only the
+  global config, never an addon's data files (fcitx/fcitx5 `src/lib/fcitx/instance.cpp`).
+  First file: `llm.mb` - keyword `d` -> the standing LLM prompt preamble.
+- [ ] verify (host): `make apply-fcitx5-quick-phrase`, then `Super+grave` (or
+  `Super+semicolon`), type `d`, pick the phrase; re-run = no change, no reload.
+- [x] scope: Quick Phrase files only. The chewing keys + IM profile script
+  (`roles/vm_incus/files/setup-fcitx5-input.sh`) is NOT folded in here - a general
+  `roles/fcitx5` for it stays deferred (the "fcitx5 host-side wiring" item above).
 
 ## Notes / future
 

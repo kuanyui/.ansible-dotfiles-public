@@ -1,0 +1,11 @@
+---
+- name: Deploy fcitx5 Quick Phrase files for the current user via `roles/fcitx5_quick_phrase`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    target_home: "{{ ansible_facts['env']['HOME'] }}"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    target_group: "{{ ansible_facts['user_id'] }}"
+  roles:
+    - fcitx5_quick_phrase
