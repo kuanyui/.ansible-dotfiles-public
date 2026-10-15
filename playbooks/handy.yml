@@ -1,0 +1,9 @@
+---
+- name: Install Handy (offline speech-to-text) from its pinned GitHub release via `roles/handy`
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  # Unprivileged version probes + sudo-only package install: `become` is set per task in the role.
+  become: false
+  roles:
+    - handy

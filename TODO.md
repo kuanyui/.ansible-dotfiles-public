@@ -5,6 +5,18 @@ this file is the git-tracked, cross-machine source of truth). Keep in sync.
 
 Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 
+## Handy (offline speech-to-text) - host install + AppArmor complain draft
+
+- [x] `roles/handy` face role (`make apply-handy` / `check-handy`, playbook `handy.yml`): pinned
+  v0.9.8 GitHub release asset per family (`.rpm` openSUSE / `.deb` Debian, sha256-checked),
+  installed through zypper / apt-get so the declared deps resolve; idempotent on the package
+  manager's installed version; typing helpers `xdotool` + `wtype` (+ `ydotool` on openSUSE)
+- [x] `roles/apparmor`: `local_pathbased_handy` (template + `tasks/handy.yml` + shadow list +
+  `own_flags_mode` registration + sandbox post-check) - COMPLAIN draft authored from source
+- [ ] complain pass on the real machine, then promote to enforce - checklist in
+  `roles/apparmor/TODO.md`
+- [ ] KDE Wayland typing: ydotool daemon + `/dev/uinput` group (manual, see `roles/handy/README.md`)
+
 ## ivm info Usage group (post-init how-to, no more forgetting `llm-key`)
 
 - [x] template schema: optional `usage:` (list of short strings) - the post-init

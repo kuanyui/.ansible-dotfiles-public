@@ -1,0 +1,153 @@
+---
+# Installs Handy (offline speech-to-text, https://github.com/cjpais/Handy) on the HOST from the
+# upstream GitHub release asset (.rpm on openSUSE, .deb on Debian): pinned version + sha256
+# (defaults/main.yml), fed to the distro package manager so the asset's declared deps
+# (gtk-layer-shell, OpenBLAS, WebKitGTK, appindicator) resolve from the repos. Idempotent: the
+# package manager's installed version is compared to `handy_version`; nothing is downloaded
+# when they match. Upstream has no apt / zypper repo, so this is a one-off package install that
+# `zypper up` / `apt upgrade` never touches - bump `handy_version` (+ sha256) instead.
+#
+# Host-only: Handy needs a microphone, a desktop session and keystroke injection, none of
+# which an `ivm` / `qvm` / `pvm` guest has - hence a face role, not a
+# `provision_thirdparty_software` recipe (that registry is guest-side and has no host
+# executor). AppArmor confinement is the separate `roles/apparmor/tasks/handy.yml`
+# (`make apply-apparmor`); it ships as a complain-mode draft.
+
+- name: Assert the host architecture (`ansible_architecture`) is `x86_64` - the only one `handy_release_assets` pins
+  ansible.builtin.assert:
+    that: ansible_facts['architecture'] == 'x86_64'
+    fail_msg: >-
+      `handy_release_assets` pins x86_64 assets only; this host reports
+      `{{ ansible_facts['architecture'] }}`. Upstream also ships aarch64 / arm64 assets - add
+      their filename + sha256 to `handy_release_assets` (roles/handy/defaults/main.yml).
+
+- name: Assert `ansible_os_family` (`{{ ansible_facts['os_family'] }}`) has an entry in `handy_release_assets`
+  ansible.builtin.assert:
+    that: ansible_facts['os_family'] in handy_release_assets
+    fail_msg: >-
+      No Handy release asset is declared for os_family `{{ ansible_facts['os_family'] }}`
+      (declared: {{ handy_release_assets.keys() | list }}). Upstream ships .deb and .rpm only.
+
+- name: Set `_handy_release_asset` (filename, sha256, url) from `handy_release_assets` for `{{ ansible_facts['os_family'] }}`
+  ansible.builtin.set_fact:
+    _handy_release_asset: >-
+      {{ handy_release_assets[ansible_facts['os_family']]
+         | combine({'url': handy_github_release_download_base_url ~ '/'
+                           ~ handy_release_assets[ansible_facts['os_family']]['filename']}) }}
+
+# =============================================
+# Installed version (idempotence probe)
+# =============================================
+
+- name: Query the installed Handy version via `rpm --query handy` (openSUSE)
+  ansible.builtin.command:
+    argv: [rpm, --query, --queryformat, '%{VERSION}', handy]
+  register: _handy_rpm_query
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['os_family'] == 'Suse'
+
+- name: Query the installed Handy version + dpkg status via `dpkg-query --show handy` (Debian)
+  ansible.builtin.command:
+    argv: [dpkg-query, --showformat, '${db:Status-Status} ${Version}', --show, handy]
+  register: _handy_dpkg_query
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Default `_handy_installed_version` to empty (Handy not installed)
+  ansible.builtin.set_fact:
+    _handy_installed_version: ""
+
+- name: Set `_handy_installed_version` from the `rpm --query` output (openSUSE)
+  ansible.builtin.set_fact:
+    _handy_installed_version: "{{ _handy_rpm_query.stdout | trim }}"
+  when:
+    - ansible_facts['os_family'] == 'Suse'
+    - _handy_rpm_query.rc == 0
+
+# dpkg keeps removed-but-not-purged packages in its database, so a version alone is not proof
+# of an install: require status `installed` (`${db:Status-Status}`).
+- name: Set `_handy_installed_version` from the `dpkg-query` output when the dpkg status is `installed` (Debian)
+  ansible.builtin.set_fact:
+    _handy_installed_version: "{{ (_handy_dpkg_query.stdout | trim).split(' ')[1] }}"
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - _handy_dpkg_query.rc == 0
+    - (_handy_dpkg_query.stdout | trim).startswith('installed ')
+
+- name: Report installed vs pinned Handy version
+  ansible.builtin.debug:
+    msg: >-
+      Handy installed: {{ _handy_installed_version | default('(not installed)', true) }} -
+      pinned `handy_version`: {{ handy_version }} ->
+      {{ 'up to date, nothing to install' if _handy_installed_version == handy_version
+         else 'install ' ~ _handy_release_asset.filename }}
+
+# =============================================
+# Download + install (only when the version differs)
+# =============================================
+
+- name: Download + install Handy `{{ handy_version }}` when the installed version differs
+  when: _handy_installed_version != handy_version
+  vars:
+    _handy_package_path: "{{ _handy_download_dir.path }}/{{ _handy_release_asset.filename }}"
+    # ONE local package file, per family. zypper: `--allow-unsigned-rpm` because upstream does
+    # not GPG-sign its rpm (the sha256 pin is the integrity check); it still resolves the rpm's
+    # soname deps from the repos. apt-get (not `dpkg -i`) for the same reason on Debian - it
+    # resolves the .deb's Depends, incl. the virtual `libappindicator3-1` that
+    # `libayatana-appindicator3-1` provides on Debian 13.
+    _handy_install_argv_by_os_family:
+      Suse: ['zypper', '--non-interactive', 'install', '--allow-unsigned-rpm', "{{ _handy_package_path }}"]
+      Debian: ['apt-get', 'install', '--yes', "{{ _handy_package_path }}"]
+    _handy_install_argv: "{{ _handy_install_argv_by_os_family[ansible_facts['os_family']] }}"
+  block:
+    - name: Create a temporary download directory for `{{ _handy_release_asset.filename }}`
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .handy
+      register: _handy_download_dir
+      check_mode: false
+
+    - name: Print the download source and the privileged install command before running them
+      ansible.builtin.debug:
+        msg:
+          - "Source: {{ _handy_release_asset.url }} - cjpais/Handy GitHub release asset, sha256 {{ _handy_release_asset.sha256 }} (pinned in roles/handy/defaults/main.yml)"
+          - "Will run as root (sudo may prompt): {{ _handy_install_argv | join(' ') }}"
+
+    - name: Download `{{ _handy_release_asset.filename }}` to `{{ _handy_download_dir.path }}` and verify its sha256
+      ansible.builtin.get_url:
+        url: "{{ _handy_release_asset.url }}"
+        dest: "{{ _handy_package_path }}"
+        checksum: "sha256:{{ _handy_release_asset.sha256 }}"
+        mode: '0644'
+
+    - name: Install `{{ _handy_release_asset.filename }}` as root via `{{ _handy_install_argv | join(' ') }}`
+      ansible.builtin.command:
+        argv: "{{ _handy_install_argv }}"
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      become: true
+  always:
+    - name: Remove the temporary download directory `{{ _handy_download_dir.path | default('(none)') }}`
+      ansible.builtin.file:
+        path: "{{ _handy_download_dir.path }}"
+        state: absent
+      when: _handy_download_dir.path is defined
+      check_mode: false
+
+# =============================================
+# Keystroke-injection helpers
+# =============================================
+
+- name: Install the keystroke-injection helpers (`handy_typing_tools_install_distro_packages`) via `roles/_install_distro_packages`
+  ansible.builtin.include_role:
+    name: _install_distro_packages
+  vars:
+    install_distro_packages: "{{ handy_typing_tools_install_distro_packages }}"
+
+- name: Next steps (desktop shortcut on Wayland, ydotool daemon + /dev/uinput, AppArmor draft, in-app updater)
+  ansible.builtin.debug:
+    msg: "Handy {{ handy_version }} is installed. Manual steps and their why - roles/handy/README.md: bind `handy --toggle-transcription` to a desktop-wide shortcut (Wayland), enable ydotool + /dev/uinput access (KDE / GNOME Wayland), `make apply-apparmor` (complain draft, then tighten), turn off Handy's own update checks."

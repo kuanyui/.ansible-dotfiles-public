@@ -33,6 +33,7 @@ playbooks/                # entry playbooks
   ├─ trusted_pubkeys.yml  # ├─ dedicated entry: pin GitHub/GitLab SSH host keys + Debian CD signing keys
   ├─ firefox_tunes.yml    # ├─ dedicated entry: write per-profile user.js (session-store + cache off the SSD)
   ├─ centralize_lang_pkgs_dir.yml  # ├─ dedicated entry: redirect npm/pip/pipx/cargo/go globals into ~/.centralized-lang-pkgs/
+  ├─ handy.yml            # ├─ dedicated entry: install Handy (offline speech-to-text) from its pinned GitHub release .rpm/.deb
   └─ mpv.yml              # └─ dedicated entry: deploy mpv config (`vo=wlshm` + keybindings + Lua scripts)
 inventory.ini             # hosts and groups (localhost only)
 ansible.cfg               # project-level Ansible config (incl. custom `ansible_managed`)
@@ -65,6 +66,7 @@ Roles prefixed with `_` are internal sub-roles invoked via `include_role`; they 
 | [`trusted_pubkeys/`](roles/trusted_pubkeys/) | Pin well-known public keys for the current user (hardcoded in-repo for audit, not fetched): GitHub/GitLab SSH host keys into `~/.ssh/known_hosts` (no TOFU prompt on `git clone git@...`), plus Debian CD signing GPG keys into a dedicated keyring for verifying Debian images. |
 | [`firefox_tunes/`](roles/firefox_tunes/) | Cut Firefox SSD writes for the current user: write a per-profile `user.js` (enumerated from `profiles.ini`) that lengthens the session-store interval and keeps the cache off the SSD (RAM-only, or disk cache on a tmpfs dir). |
 | [`mpv/`](roles/mpv/) | Deploy mpv player config to `~/.config/mpv/` (migrated from the legacy stow dotfiles): `mpv.conf` with `vo=wlshm` (pairs with the no-GPU AppArmor profile - no X11, no `/dev/dri`), keybindings, touchscreen Lua scripts. |
+| [`handy/`](roles/handy/) | Install [Handy](https://github.com/cjpais/Handy) (offline push-to-talk speech-to-text) on the host from its pinned, sha256-checked GitHub release `.rpm` / `.deb`, plus the keystroke-injection helpers it shells out to (`xdotool` / `wtype` / `ydotool`). Host-only (microphone + desktop). Its AppArmor profile lives in `apparmor/` and ships as a complain-mode draft. |
 
 ## Installation
 

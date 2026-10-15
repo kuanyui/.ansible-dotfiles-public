@@ -1,0 +1,39 @@
+---
+# Pinned upstream release of Handy (https://github.com/cjpais/Handy) that `make apply-handy`
+# converges the host to. Upstream publishes GitHub release assets only (no apt / zypper repo),
+# so the distro's `zypper up` / `apt upgrade` never moves it: bump = edit `handy_version` AND
+# the two `sha256` below (README.md has the commands). The in-app updater is deliberately
+# blocked by the AppArmor profile (roles/apparmor/templates/handy/), so this stays the one
+# installer.
+handy_version: "0.9.8"
+handy_github_release_download_base_url: "https://github.com/cjpais/Handy/releases/download/v{{ handy_version }}"
+
+# Release asset per `ansible_os_family`, x86_64 only (the role asserts the architecture;
+# upstream also ships aarch64 / arm64 assets - add them here when a host needs them). The
+# package manager resolves the asset's declared deps (gtk-layer-shell, OpenBLAS, WebKitGTK,
+# appindicator) from the distro repos. `sha256` pins the exact bytes - upstream does not
+# GPG-sign the packages (its `.sig` files are minisign signatures for the in-app updater), and
+# a release asset can be re-uploaded. Values computed 2026-10-14 from the v0.9.8 downloads
+# (sizes matched the GitHub API: .deb 41941410 bytes, .rpm 104787529 bytes).
+handy_release_assets:
+  Debian:
+    filename: "Handy_{{ handy_version }}_amd64.deb"
+    sha256: "4efe1fdcc2b68e95612e866810ccb23e06bbdf004a4e857de0862b0c6927caa8"
+  Suse:
+    filename: "Handy-{{ handy_version }}-1.x86_64.rpm"
+    sha256: "7038045edb560bb5497503541b1c43ce6b467b796169d20accd4e17210c60baf"
+
+# Keystroke-injection helpers Handy shells out to at paste time (it probes `which <tool>`,
+# clipboard.rs): `xdotool` on X11; `wtype` on Wayland except KDE / GNOME (their compositors
+# lack zwp_virtual_keyboard_v1); `ydotool` (uinput) as the fallback that works on every
+# compositor incl. KDE Wayland - it needs its daemon + /dev/uinput access, a manual
+# security-relevant step (README.md). Handy's preferred KDE tool `kwtype` and `dotool` are
+# packaged by neither Debian 13 nor openSUSE Tumbleweed (checked 2026-10-14), and Debian 13
+# has no `ydotool` either. Shape = `roles/_install_distro_packages` input.
+handy_typing_tools_install_distro_packages:
+  Debian:
+    install: [xdotool, wtype]
+    probe: command -v xdotool && command -v wtype
+  Suse:
+    install: [xdotool, wtype, ydotool]
+    probe: command -v xdotool && command -v wtype && command -v ydotool

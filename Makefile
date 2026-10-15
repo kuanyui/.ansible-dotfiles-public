@@ -1,7 +1,7 @@
 PLAYBOOK := ansible-playbook
 PLAYBOOKS := playbooks
 
-.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-kde-touchscreen-desktop-entries apply-centralize-lang-pkgs-dir apply-fcitx5-quick-phrase vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-incus-strip-tmpfs vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm vm-podman-install vm-podman-check vm-podman-uninstall-pvm vm-podman-sandbox check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv check-kde-touchscreen-desktop-entries check-fcitx5-quick-phrase aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
+.PHONY: help unstow apply-essentials-user apply-essentials-root apply-essentials-all-users apply-podman-oci-runtimes unapply-podman-oci-runtimes apply-apparmor apply-trusted-pubkeys apply-firefox-tunes apply-mpv apply-kde-touchscreen-desktop-entries apply-centralize-lang-pkgs-dir apply-fcitx5-quick-phrase apply-handy vm-incus-install vm-incus-check vm-incus-sandbox vm-incus-uninstall-ivm vm-incus-teardown-host vm-incus-push-dotfiles vm-incus-strip-tmpfs vm-quickemu-install vm-quickemu-check vm-quickemu-uninstall-qvm vm-podman-install vm-podman-check vm-podman-uninstall-pvm vm-podman-sandbox check-essentials-user check-essentials-root check-essentials-all-users check-podman-oci-runtimes check-apparmor check-trusted-pubkeys check-firefox-tunes check-mpv check-kde-touchscreen-desktop-entries check-fcitx5-quick-phrase check-handy aa-notify-snapshot aa-notify-watch aa-log-watch aa-log-recent sandbox-essentials-user sandbox-essentials-root sandbox-podman-oci-runtimes sandbox-apparmor sandbox-clean pull pull--amended
 
 ### -------------------------------------------------------------------------
 ### Basic
@@ -77,6 +77,9 @@ apply-centralize-lang-pkgs-dir:  ## Redirect npm/pip/pipx/cargo/go global instal
 
 apply-fcitx5-quick-phrase:  ## Deploy fcitx5 Quick Phrase files (quickphrase.d/*.mb) to ~/.local/share/fcitx5/data/quickphrase.d/, then reload the `quickphrase` addon over D-Bus if fcitx5 is running. No sudo.
 	$(PLAYBOOK) --diff $(PLAYBOOKS)/fcitx5_quick_phrase.yml
+
+apply-handy:  ## Install Handy (offline push-to-talk speech-to-text, github.com/cjpais/Handy) from its pinned GitHub release .rpm/.deb (sha256-checked) + the keystroke-injection helpers (xdotool / wtype / ydotool). AppArmor profile is separate (`apply-apparmor`). Needs sudo.
+	$(PLAYBOOK) --diff --ask-become-pass $(PLAYBOOKS)/handy.yml
 
 ### -------------------------------------------------------------------------
 ### Incus (host daemon + the `ivm` VM launcher)
@@ -218,6 +221,9 @@ check-kde-touchscreen-desktop-entries:  ## Dry-run diff for KDE touchscreen .des
 
 check-fcitx5-quick-phrase:  ## Dry-run diff for fcitx5 Quick Phrase deployment (~/.local/share/fcitx5/data/quickphrase.d/)
 	$(PLAYBOOK) --check --diff $(PLAYBOOKS)/fcitx5_quick_phrase.yml
+
+check-handy:  ## Dry-run for the Handy install (installed vs pinned version; the package is not downloaded, the install command is printed and skipped)
+	$(PLAYBOOK) --check --diff --ask-become-pass $(PLAYBOOKS)/handy.yml
 
 ### -------------------------------------------------------------------------
 ### AppArmor runtime helpers (live denial inspection)
