@@ -1,0 +1,176 @@
+abi <abi/5.0>,
+#include <tunables/global>
+
+# THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY
+# Handy (offline speech-to-text) AppArmor profile - /etc/apparmor.d/local_pathbased_handy
+# Source template mtime: {{ (lookup('pipe', 'stat -c %y ' ~ template_fullpath))[:19] }}
+#
+# Attaches to /usr/bin/handy, the binary of the upstream .rpm / .deb (Tauri v2 app: Rust core +
+# a WebKitGTK webview for the settings window; the ggml / whisper / onnxruntime libs and the
+# bundled resources live under /usr/lib/Handy/). Installed by roles/handy. Every launch form
+# runs that path, so all of them are confined: the Handy.desktop entry, `handy
+# --toggle-transcription` from a desktop-wide shortcut (a second process that forwards its
+# argv to the running instance over D-Bus and exits), and the self re-exec below.
+#
+# Threat model: a network-egress app (model downloads from huggingface.co, optional LLM
+# post-processing against a user-configured HTTP API, GitHub update checks) that holds the
+# microphone and INJECTS KEYSTROKES into whatever window has focus. Injection is its purpose
+# and cannot be taken away; what the profile does is keep a compromised Handy out of
+# everything else: browser data, keyrings, clipboard-manager history, every customized extra
+# dir (DENY_ALL - a dictation tool has no business in any of them), the host's persistence
+# hooks, and privilege escalation (the in-app updater shells out to pkexec / sudo - denied
+# below; upgrades go through roles/handy).
+#
+# DRAFT - ships in COMPLAIN mode (`flags=(complain)` in the header), registered in
+# `apparmor_template_profile_names_own_flags_mode` so the role's aa-enforce step leaves the
+# flag alone. Authored from the upstream source (cjpais/Handy v0.9.8: clipboard.rs,
+# engine_supervisor/, settings.rs, lib.rs) and the Tauri / wry / plugin sources, never
+# audited on a real machine. Complain logs every would-be denial while the app keeps
+# working; explicit `deny` / `audit deny` rules (the deny mixins, pkexec / sudo) are ENFORCED
+# even in complain mode. Promotion checklist: roles/apparmor/TODO.md.
+#   aaa-logs 300                                           # denials of the last 5 min
+#   sudo aa-enforce /etc/apparmor.d/local_pathbased_handy  # only via the checklist - the
+#                                                          # header + defaults/main.yml change too
+
+profile local_pathbased_handy /usr/bin/handy flags=(complain) {
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+    #include <abstractions/fonts>
+
+    #include <abstractions/local_mixin_gtk>
+    #include <abstractions/local_mixin_sysinfo>
+    #include <abstractions/local_mixin_tmpdir>
+    #include <abstractions/local_mixin_audio>
+    #include <abstractions/local_mixin_gpu>
+    #include <abstractions/local_mixin_deny_browser_config>
+    #include <abstractions/local_mixin_deny_keyrings>
+    #include <abstractions/local_mixin_deny_probably_credentials>
+    #include <abstractions/local_mixin_deny_persistent_attack>
+    #include <abstractions/local_mixin_deny_mounted_external_media>
+    #include <abstractions/local_mixin_deny_machine_id>
+    #include <abstractions/local_mixin_customized_extra_dirs__DENY_ALL>
+    #include <abstractions/local_mixin_kernel_surface_general_app>
+    #include <abstractions/local_mixin_network_app>
+    #include <abstractions/local_mixin_gui_wayland>
+{% if apparmor_allow_x11 %}
+    #include <abstractions/local_mixin_gui_x11>
+{% else %}
+    #include <abstractions/local_mixin_gui_x11_deny>
+{% endif %}
+    # X11 NOTE: with apparmor_allow_x11 false (default) Handy is a Wayland client. Its own
+    # keystroke injection on Linux goes through the external tools below, so denying X11
+    # costs nothing in a Wayland session. An X11 session needs the toggle on: xdotool (and
+    # the enigo / libxdo fallback) talk XTEST to the X server.
+    # Audio: local_mixin_audio (the live PipeWire / Pulse sockets) - microphone capture goes
+    # cpal -> ALSA `default` -> the pipewire ALSA plugin -> the same socket as playback; the
+    # start / stop sounds (rodio) use it too.
+    # GPU: local_mixin_gpu - not for drawing (WEBKIT_DISABLE_DMABUF_RENDERER=1 is set by the
+    # app itself, main.rs) but for Vulkan COMPUTE: whisper runs through
+    # /usr/lib/Handy/libggml-vulkan.so on the render node. NVIDIA Vulkan needs
+    # /dev/nvidia[0-9]* + /dev/nvidia-uvm, which the mixin leaves out - audit before adding.
+
+    # ---- The app itself ----
+    # Self re-exec: the transcription engine runs in a worker child, spawned as
+    # `/usr/bin/handy --transcribe-worker` (engine_supervisor/supervisor.rs, current_exe()) and
+    # driven over stdin / stdout pipes. ix keeps it in this profile: same models, same GPU.
+    /usr/bin/handy ix,
+    # /usr/lib/Handy/: ggml backends (dlopen, `dynamic-backends`), onnxruntime, resources
+    # (silero VAD model, start / stop wavs, tray icons). abstractions/base already grants
+    # /usr/lib/** r and /usr/lib/**.so* mr, so no rule here.
+
+    # ---- Per-user state (Tauri app_data_dir = ~/.local/share/<identifier>) ----
+    # settings_store.json (tauri-plugin-store resolves against BaseDirectory::AppData),
+    # models/ (whisper .bin / parakeet), recordings/, history.db (rusqlite - k for the sqlite
+    # lock), logs/handy.log (tauri-plugin-log LogDir = local_data_dir/<identifier>/logs), and
+    # WebKitGTK's website data + cache (wry points base_data_directory AND
+    # base_cache_directory at the same dir). Upstream README says ~/.config/com.pais.handy/ -
+    # not what Tauri 2 resolves on Linux (tauri::path::PathResolver::app_data_dir ->
+    # $XDG_DATA_HOME); add it only if the audit shows the app there.
+    owner @{HOME}/.local/share/com.pais.handy/ rw,
+    owner @{HOME}/.local/share/com.pais.handy/** rwk,
+    # Hugging Face hub cache: hf-hub downloads the ONNX (Parakeet) models into $HF_HOME/hub,
+    # default ~/.cache/huggingface/hub, and Handy also picks up models already there.
+    owner @{HOME}/.cache/huggingface/ rw,
+    owner @{HOME}/.cache/huggingface/** rwk,
+
+    # D-Bus session bus: StatusNotifier tray icon, tauri-plugin-single-instance (owns the bus
+    # name com.pais.handy.SingleInstance - how `handy --toggle-transcription` reaches the
+    # running instance), desktop notifications.
+    owner /run/user/*/bus rw,
+    # System bus: denied, same as telegram / dbeaver - a dictation tool has no business there.
+    deny /run/dbus/system_bus_socket rw,
+
+    # SSL certificate verification (TLS to huggingface.co / github.com / the LLM API)
+    /etc/ssl/{,**} r,
+
+    # Process self-inspection (tauri / wry / WebKit read their own maps, stat, cgroup)
+    owner @{PROC}/@{pid}/ r,
+    owner @{PROC}/@{pid}/** r,
+
+    # ---- Keystroke injection + clipboard helpers (clipboard.rs) ----
+    # Handy probes each tool with `which <tool>` and spawns it. ix for all of them: a typing
+    # helper inherits THIS confinement, so it can do nothing Handy itself cannot.
+    #   X11 session:      xdotool, then ydotool
+    #   Wayland session:  wtype (skipped on KDE / GNOME - no zwp_virtual_keyboard_v1 there),
+    #                     then dotool, then ydotool
+    # ydotool is a client of `ydotoold`, an UNCONFINED user service that owns the uinput
+    # device; the client only connects to its socket, /tmp/.ydotool_socket (covered by
+    # local_mixin_tmpdir + local_mixin_network_local_ipc). dotool and kwtype (Handy's
+    # preferred KDE tool) are not packaged on openSUSE / Debian; when one is built and
+    # installed, its exec rule - and for dotool `/dev/uinput rw` - is an audit-driven addition.
+    # which: a shell script on Debian (which.debianutils), a binary on openSUSE - hence rix.
+    /usr/bin/which rix,
+    /usr/bin/xdotool ix,
+    /usr/bin/wtype ix,
+    /usr/bin/ydotool ix,
+    # wl-copy (wl-clipboard): the Wayland clipboard write; it forks a daemon that serves the
+    # selection, confined with it.
+    /usr/bin/wl-copy ix,
+
+    # ---- WebKitGTK (the settings window is a webview) ----
+    # Helper processes, ix: they stay under this profile (notably still under
+    # local_mixin_deny_browser_config). Version-globbed dir: openSUSE layout (audited via
+    # dbeaver) and Debian's multiarch libdir.
+    /usr/libexec/libwebkit2gtk-*/WebKit*Process rix,
+    /usr/lib/@{multiarch}/webkit2gtk-*/WebKit*Process rix,
+    # GStreamer + ORC: denied, dbeaver's rationale - the webview shows local HTML only, and
+    # ORC writes JIT code under $HOME / $TMPDIR / $XDG_RUNTIME_DIR and mmaps it PROT_EXEC.
+    deny /usr/libexec/gstreamer-*/gst-plugin-scanner* x,
+    deny owner @{HOME}/.cache/gstreamer-*/{,**} rwk,
+    deny owner @{HOME}/orcexec.* rwmk,
+    deny owner /tmp/orcexec.* rwmk,
+    deny owner /run/user/*/orcexec.* rwmk,
+    # XDG cross-app recents (GtkRecentManager): network-facing app -> denied, the browser
+    # calibration. Plain deny: file-dialog noise, not a tripwire.
+    deny owner @{HOME}/.local/share/recently-used.xbel{,.*} rw,
+    # AT-SPI accessibility bus: denied (a client there reads other apps' text and generates
+    # synthetic input - dbeaver's reasoning). Trade-off: a screen reader cannot read Handy's
+    # settings window.
+    deny owner /run/user/*/at-spi/bus{,_*} rw,
+
+    # ---- Privilege escalation: never ----
+    # tauri-plugin-updater installs a downloaded .deb / .rpm through `pkexec dpkg -i` /
+    # `pkexec rpm -U`, falling back to a zenity / kdialog password prompt that feeds `sudo -S`
+    # (plugins-workspace updater/src/updater.rs). A confined app runs none of them: upgrades go
+    # through `make apply-handy` (roles/handy pins version + sha256). audit deny on the
+    # escalators (a hit is a signal), plain deny on the password dialogs (Handy must never be
+    # the one asking for the password). Both bite even in complain mode. Turn the check itself
+    # off in Handy's settings (`update_checks_enabled`), or launch with HANDY_DISABLE_UPDATER=1,
+    # or the UI keeps offering an update it cannot install.
+    audit deny /usr/bin/pkexec x,
+    audit deny /usr/bin/sudo x,
+    deny /usr/bin/zenity x,
+    deny /usr/bin/kdialog x,
+
+    # ---- Deliberately absent ----
+    # - xdg-open (the "open data / logs / recordings folder" buttons, tauri-plugin-opener): with
+    #   ix the file manager would run INSIDE this confinement, broken and confusing; with a
+    #   transition to unconfined the rule would hand a network-facing app an unconfined exec.
+    #   Left denied once enforced - open ~/.local/share/com.pais.handy/ by hand.
+    # - XDG autostart: Handy's "launch at login" toggle writes ~/.config/autostart/handy.desktop
+    #   (auto-launch crate), audit-denied by local_mixin_deny_persistent_attack. Use the
+    #   desktop's own autostart settings, pointing at /usr/bin/handy.
+    # - systemd journal socket, /dev/snd/* and /proc/asound/* (cpal's ALSA device enumeration),
+    #   NVIDIA device nodes, Vulkan configs beyond local_mixin_gpu, the ~/.config/com.pais.handy/
+    #   dir the README names: not granted until the audit shows them (only audited paths).
+}

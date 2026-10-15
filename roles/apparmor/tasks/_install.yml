@@ -16,6 +16,7 @@
 - ansible.builtin.import_tasks: mscore.yml
 - ansible.builtin.import_tasks: anydesk.yml
 - ansible.builtin.import_tasks: dbeaver.yml
+- ansible.builtin.import_tasks: handy.yml
 - ansible.builtin.import_tasks: qtwebengineprocess.yml
 - ansible.builtin.import_tasks: seccomp.yml
 - ansible.builtin.import_tasks: aaa_helpers.yml

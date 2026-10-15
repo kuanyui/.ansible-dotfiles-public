@@ -46,6 +46,10 @@ apparmor_shadowed_system_profiles:
   # No distro ships a DBeaver profile today - candidate packaged spellings only, so a
   # future vendor/distro profile is neutralized instead of shadowing our glob attachment.
   dbeaver: [dbeaver, dbeaver-ce, usr.bin.dbeaver]
+  # Handy ships no AppArmor profile (Tauri-built .rpm / .deb) and no distro packages it - candidate
+  # packaged spellings only, so a future profile is neutralized instead of shadowing ours on the
+  # same /usr/bin/handy.
+  handy: [handy, usr.bin.handy]
   gwenview: [gwenview]
   mcomix: [mcomix]
   mscore: [mscore]
@@ -174,6 +178,9 @@ apparmor_template_profile_names_own_flags_mode:
   # local_pathbased_qtwebengineprocess ships flags=(complain) - a default-deny profile modeled on
   # chromium, still being tuned on the real machine. Move it to the list above once promoted.
   - local_pathbased_qtwebengineprocess
+  # local_pathbased_handy ships flags=(complain) - authored from the upstream source, never audited
+  # on a real machine (mic capture, Vulkan compute, WebKit helpers). Promotion checklist: TODO.md.
+  - local_pathbased_handy
 
 apparmor_template_abstraction_names:
   - local_base_firefox

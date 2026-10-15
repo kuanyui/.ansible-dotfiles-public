@@ -1,5 +1,27 @@
 # TODO
 
+## `local_pathbased_handy` (complain draft) - promotion checklist
+
+Authored 2026-10-14 from the upstream source (cjpais/Handy v0.9.8) and the Tauri / wry / plugin
+sources, never audited on a real machine. Ships `flags=(complain)`, registered in
+`apparmor_template_profile_names_own_flags_mode`. The deny mixins and the `pkexec` / `sudo`
+exec denies are enforced even now. Install side: `roles/handy` (`make apply-handy`).
+
+- [ ] Use Handy end to end under complain: model download (Settings), push-to-talk dictation
+  into a Wayland app AND an X11 / XWayland app, the start / stop sounds, `handy
+  --toggle-transcription` from a desktop-wide shortcut, the settings window. Then `aaa-logs 300`.
+- [ ] Decide each audit item (least-privilege: only what the log shows). Expected: audio capture
+  (`/dev/snd/*`, `/proc/asound/*` from cpal's ALSA enumeration), Vulkan compute (NVIDIA:
+  `/dev/nvidia[0-9]*`, `/dev/nvidia-uvm`; Mesa: newer shader-cache dirs), WebKitGTK helper fallout
+  (journal socket -> `flags=(attach_disconnected)` as in dbeaver), `~/.config/com.pais.handy/`
+  (upstream README names it; Tauri 2 resolves app_data_dir to `~/.local/share/`), a hand-built
+  `kwtype` / `dotool` exec (+ `/dev/uinput rw` for dotool).
+- [ ] Promote: drop `complain` from the template header, move `local_pathbased_handy` from
+  `apparmor_template_profile_names_own_flags_mode` to `apparmor_template_profile_names`
+  (`defaults/main.yml`), update `_post_check_handy_complain_draft` in
+  `scripts/sandbox/configs/apparmor.py` to assert the enforce header, `make sandbox-apparmor`,
+  `make apply-apparmor`.
+
 ## `local_pathbased_dbeaver` (portable tarball)
 
 Profile is working - the workbench starts. Every rule's rationale lives in the profile's own

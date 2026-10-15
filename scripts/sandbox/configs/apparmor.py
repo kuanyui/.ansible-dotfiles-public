@@ -200,10 +200,37 @@ def _post_check_aaa_logs(project_dir: Path, container) -> int:
     return container.exec("bash", "-c", script, user="root", check=False).returncode
 
 
+def _post_check_handy_complain_draft(project_dir: Path, container) -> int:
+    """Verify local_pathbased_handy deployed as the COMPLAIN draft it is meant to be.
+
+    `flags=(complain)` is load-bearing: the profile was authored from source, never audited, so
+    it must log (not block) until tuned. It is registered in
+    apparmor_template_profile_names_own_flags_mode precisely to be EXCLUDED from the aa-enforce
+    step in _install.yml; this check fails loudly if that exclusion regresses (aa-enforce would
+    rewrite the header and strip the flag, silently promoting an untuned profile). The second
+    assertion covers the one rule that must bite even in complain mode: the audit deny on
+    pkexec, the in-app updater's escalation path.
+    """
+    ours = "/etc/apparmor.d/local_pathbased_handy"
+    script = f"""
+        fail=0
+        [ -f "{ours}" ] || {{ echo "  FAIL  {ours} not deployed"; exit 1; }}
+        head -4 "{ours}" | grep -q 'THIS_FILE_IS_MANAGED_BY_ANSIBLE__DO_NOT_EDIT_MANUALLY' \
+            || {{ echo "  FAIL  managed marker missing"; fail=1; }}
+        grep -q '^profile local_pathbased_handy /usr/bin/handy flags=(complain) {{' "{ours}" \
+            || {{ echo "  FAIL  flags=(complain) header missing - mode step promoted the draft to enforce?"; fail=1; }}
+        grep -q '^ *audit deny /usr/bin/pkexec x,' "{ours}" \
+            || {{ echo "  FAIL  audit deny on pkexec missing - the in-app updater could escalate"; fail=1; }}
+        if [ "$fail" -eq 0 ]; then echo "  OK    handy: complain draft intact (marker + flags=(complain) + pkexec audit deny)"; fi
+        exit $fail
+    """
+    return container.exec("bash", "-c", script, user="root", check=False).returncode
+
+
 def _post_check_all(project_dir: Path, container) -> int:
     """AppArmor profile syntax validation + seccomp-derive + aaa-rpmnew + aaa-logs + orphan
-    cleanup + qtwebengine hardening, combined so a single post_check covers all. Returns the sum
-    of return codes (non-zero fails)."""
+    cleanup + qtwebengine hardening + the handy complain draft, combined so a single post_check
+    covers all. Returns the sum of return codes (non-zero fails)."""
     return (
         _post_check_apparmor_syntax(project_dir, container)
         + _post_check_seccomp_derive(project_dir, container)
@@ -211,6 +238,7 @@ def _post_check_all(project_dir: Path, container) -> int:
         + _post_check_aaa_logs(project_dir, container)
         + _post_check_orphan_cleanup(project_dir, container)
         + _post_check_qtwebengine(project_dir, container)
+        + _post_check_handy_complain_draft(project_dir, container)
     )
 
 
