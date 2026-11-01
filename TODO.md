@@ -16,8 +16,9 @@ Status: `[ ]` pending · `[~]` in progress · `[x]` done · `[blocked: #N]`
 - [ ] complain pass on the real machine, then promote to enforce - checklist in
   `roles/apparmor/TODO.md`
 - [ ] KDE Wayland typing: ydotool daemon + `/dev/uinput` group (manual, see `roles/handy/README.md`)
-- [ ] decide: build Handy from source in an OBS home project instead of installing the upstream
-  `.rpm` (feasible, 1-2 days + per-release upkeep; evaluation in `roles/handy/README.md`)
+- [ ] Handy from source on OBS: spec builds offline (prototype in `REFS/handy-obs/`, local;
+  findings in `roles/handy/README.md`); next: packaging repo on GitHub + `home:<user>:handy` on
+  OBS, run the Action once, then switch `roles/handy` to the OBS repo
 
 ## ivm info Usage group (post-init how-to, no more forgetting `llm-key`)
 

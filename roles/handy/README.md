@@ -156,9 +156,27 @@ Payoff: no upstream blob at all, the distro's ONNX Runtime, a GPG-signed repo, u
 | Settings UI (`tsc && vite build`) offline | `obs-service-node_modules` 3.0.19 wants `package-lock.json`; upstream ships only `bun.lock` -> generate one (`npm install --package-lock-only --ignore-scripts`; the resolution may differ from upstream's) or copy the `bun_prefetch` approach of Factory's own `bun` 1.4.2 package | the build still executes npm-shipped prebuilt binaries (esbuild, rollup, Tailwind oxide); `@tauri-apps/cli` (also prebuilt) is avoidable: plain `cargo build` embeds `dist/` |
 | ONNX Runtime | `onnxruntime-devel` 1.27.0 + `libonnxruntime1`; build with `ORT_LIB_LOCATION=/usr/lib64 ORT_PREFER_DYNAMIC_LINK=1` as the upstream Nix flake and nixpkgs do; `ort 2.0.0-rc.12` asks for C API 24 and a 1.27 runtime serves it (`GetApi` fails only on an older runtime; `ort` rejects only a minor version < 24) | removes both the blob and the pyke download |
 | whisper.cpp / ggml + Vulkan | bundled in the `transcribe-cpp-sys` crate (1650 files, 161 GLSL shaders); needs `shaderc` (glslc), `spirv-headers`, `vulkan-headers`, `cmake`, `clang`; the only CMake downloads are the Windows OpenMP and AArch64 KleidiAI paths, both unreachable on x86_64 Linux | `ggml-devel` 0.5.0 exists, but transcribe.cpp builds its own ggml tree - a bundled copy, which Factory review asks about |
-| GTK stack | `webkitgtk4-devel` 2.54 (the WebKitGTK 4.1 API), `libayatana-appindicator3-devel`, `gtk-layer-shell-devel`, `alsa-devel`, `libevdev-devel`, `openblas-common-devel` | all present |
+| GTK stack | `webkitgtk3-devel` 2.54.1 (provides `pkgconfig(webkit2gtk-4.1)`; `webkitgtk4-devel` is the GTK4 / 6.0 API), `libayatana-appindicator3-devel`, `gtk-layer-shell-devel`, `alsa-devel`, `libopenblas_pthreads-devel` + `openblas-common-devel` | all present |
 | Packaging wrinkles | `handy` carries the rpath (library search path baked into the binary) `$ORIGIN/../lib/Handy` from upstream `build.rs`: install the ggml modules to `/usr/lib/Handy` or patch it for `/usr/lib64`; `.desktop` + icons by hand (no tauri-bundler); `_constraints` around 8 GB RAM, like the `onnxruntime` package | |
 | Precedents | nixpkgs `handy` 0.9.6 (offline from-source, same ONNX Runtime approach, two releases behind upstream); AUR `handy` builds from source but with network; no OBS, COPR or Flathub package found | |
 
 Debian hosts: OBS can target Debian too, but Rust + Node vendoring there was not evaluated; the
 `.deb` path above would stay.
+
+### Prototype built (2026-10-20)
+
+Spec, `_service`, source-package script and a two-job GitHub Action draft live in `REFS/handy-obs/`
+(local, gitignored; to become its own repository, pattern of `kuanyui/qkiss`). Test build in a
+rootless-podman Tumbleweed container (image signature verified against the openSUSE Container
+Signing Key): the rpm builds offline, installs, `handy --help` runs, rpmlint of the main package is
+clean, file layout equals upstream's `.deb` minus `libonnxruntime.so.1` (system `libonnxruntime1`).
+
+| Found while building | Fix in the spec |
+|---|---|
+| `pkgconfig(openssl)` resolves to `libressl-devel` (LibreSSL 4.3); `openssl-sys` 0.9.111 rejects it | `BuildRequires: libopenssl-devel` by name |
+| `ferrous-opencc` build.rs runs cbindgen, which calls `cargo metadata` and wants the network | `%prep` drops that statement and refreshes the vendor checksum (nixpkgs does the same) |
+| the private libs in `/usr/lib/Handy` would become global Provides, and the binary's own Requires on them unsatisfiable | `%__provides_exclude_from` + `%__requires_exclude` |
+| frontend needs `bun` + npm prebuilt binaries | `dist/` built by the packaging CI into the source tarball; OBS runs cargo only |
+
+Not done yet: fat LTO under the 10 GB `_constraints` (local build used thin LTO), the GitHub Action
+and OBS token flow (never executed), the `.changes` upkeep per release, Debian targets.
